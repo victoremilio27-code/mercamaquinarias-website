@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>{{TIPO_DOCUMENTO}} {{NCF}} — MercaMaquinarias</title>
+<!--
+  PLANTILLA DE COMPROBANTE FISCAL — MercaMaquinarias / Inversiones XZT, S.R.L.
+  Motor: reemplazo literal de {{VARIABLE}} (sin dependencias).
+  Uso previsto: tools/facturas.js la carga, sustituye las variables y la
+  imprime a PDF con Chromium headless (--print-to-pdf, A4).
+
+  VARIABLES DE CABECERA
+    {{TIPO_DOCUMENTO}}   "FACTURA DE CRÉDITO FISCAL" | "FACTURA DE CONSUMO" | "NOTA DE CRÉDITO"
+    {{NCF}}              e-comprobante/preimpreso: B0100000016
+    {{NCF_VENCIMIENTO}}  "31/12/2026"
+    {{NCF_MODIFICADO}}   solo notas de crédito: NCF que se modifica. Vacío => bloque oculto
+    {{NUMERO_INTERNO}}   MM-2026-000123
+    {{FECHA_EMISION}}    23/09/2026
+    {{CONDICION_PAGO}}   "Pagado" | "Contado" | "Crédito 15 días"
+    {{METODO_PAGO}}      "Transferencia BPD" | "Tarjeta" | "Efectivo"
+    {{REFERENCIA_PAGO}}  referencia del procesador o del banco
+
+  EMISOR (fijas, ya completadas más abajo)
+
+  COMPRADOR
+    {{CLIENTE_NOMBRE}}   razón social o nombre
+    {{CLIENTE_RNC}}      RNC o cédula. Vacío => se oculta la línea
+    {{CLIENTE_DIRECCION}}
+    {{CLIENTE_TELEFONO}}
+    {{CLIENTE_CORREO}}
+
+  DETALLE
+    {{FILAS}}            HTML generado: una <tr> por línea, ver plantilla de fila abajo
+    {{SUBTOTAL}}         "RD$ 2,000.00"
+    {{DESCUENTO}}        "RD$ 0.00"     (bloque oculto si es 0)
+    {{ITBIS_TASA}}       "18%"
+    {{ITBIS}}            "RD$ 360.00"
+    {{TOTAL}}            "RD$ 2,360.00"
+    {{TOTAL_LETRAS}}     "Dos mil trescientos sesenta pesos dominicanos con 00/100"
+
+  PIE
+    {{NOTAS}}            texto libre opcional. Vacío => bloque oculto
+    {{PERIODO_SERVICIO}} "23/09/2026 al 23/10/2026". Vacío => oculto
+
+  PLANTILLA DE FILA (repetir por ítem):
+    <tr>
+      <td class="c">{{CANT}}</td>
+      <td><strong>{{CONCEPTO}}</strong><span class="det">{{DETALLE}}</span></td>
+      <td class="d">{{PRECIO}}</td>
+      <td class="d">{{IMPORTE}}</td>
+    </tr>
+
+  OCULTAR BLOQUES OPCIONALES: si el valor viene vacío, el motor debe eliminar
+  el elemento que lleva data-opcional="NOMBRE_VARIABLE".
+-->
+<style>
+  @page { size: A4; margin: 14mm 14mm 16mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0; font-family: "Helvetica Neue", Arial, sans-serif;
+    color: #141616; font-size: 10.5px; line-height: 1.45;
+  }
+  .doc { max-width: 182mm; margin: 0 auto; }
+
+  /* ---------- Cabecera ---------- */
+  .cab { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+  .marca__nombre { font-size: 19px; font-weight: 800; letter-spacing: -.3px; margin: 0 0 2px; }
+  .marca__nombre span { color: #F2A900; }
+  .marca__legal { font-size: 9.5px; color: #55605c; margin: 0; }
+  .marca__legal strong { color: #141616; }
+
+  .comprobante {
+    border: 1.4px solid #141616; border-radius: 6px; padding: 9px 12px;
+    min-width: 65mm; text-align: right;
+  }
+  .comprobante__tipo {
+    font-size: 10px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .6px; margin: 0 0 5px; color: #141616;
+  }
+  .comprobante__ncf { font-size: 16px; font-weight: 800; letter-spacing: .4px; margin: 0; }
+  .comprobante__meta { font-size: 8.8px; color: #55605c; margin: 3px 0 0; }
+
+  .regla { height: 3px; background: #F2A900; border-radius: 2px; margin: 12px 0 14px; }
+
+  /* ---------- Bloques de datos ---------- */
+  .cajas { display: flex; gap: 10px; }
+  .caja {
+    flex: 1; border: 1px solid #dfe3e1; border-radius: 6px;
+    padding: 9px 11px; background: #fafaf8;
+  }
+  .caja h2 {
+    font-size: 8.2px; text-transform: uppercase; letter-spacing: 1px;
+    color: #7a8481; margin: 0 0 5px; font-weight: 700;
+  }
+  .caja p { margin: 0 0 1px; }
+  .caja .nombre { font-weight: 700; font-size: 11.5px; }
+  .dato { color: #55605c; }
+  .dato b { color: #141616; font-weight: 600; }
+
+  /* ---------- Detalle ---------- */
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  thead th {
+    background: #141616; color: #fff; font-size: 8.4px; letter-spacing: 1px;
+    text-transform: uppercase; padding: 7px 9px; text-align: left; font-weight: 700;
+  }
+  thead th.c { text-align: center; width: 13mm; }
+  thead th.d { text-align: right; width: 28mm; }
+  tbody td { padding: 8px 9px; border-bottom: 1px solid #e8ebe9; vertical-align: top; }
+  tbody td.c { text-align: center; }
+  tbody td.d { text-align: right; font-variant-numeric: tabular-nums; }
+  .det { display: block; color: #6b7570; font-size: 9.2px; margin-top: 1px; }
+
+  /* ---------- Totales ---------- */
+  .cierre { display: flex; gap: 14px; margin-top: 12px; align-items: flex-start; }
+  .cierre__izq { flex: 1; }
+  .letras {
+    border-left: 3px solid #F2A900; padding: 2px 0 2px 9px;
+    font-size: 9.5px; color: #3c4442;
+  }
+  .letras span { display: block; font-size: 8.2px; text-transform: uppercase;
+    letter-spacing: .8px; color: #7a8481; margin-bottom: 2px; }
+  .totales { width: 72mm; }
+  .totales div {
+    display: flex; justify-content: space-between; padding: 4px 9px;
+    font-variant-numeric: tabular-nums;
+  }
+  .totales .total {
+    background: #141616; color: #fff; border-radius: 5px;
+    padding: 9px; font-size: 13px; font-weight: 800; margin-top: 5px;
+  }
+  .totales .total span:last-child { color: #F2A900; }
+
+  /* ---------- Pie ---------- */
+  .notas {
+    margin-top: 14px; border: 1px solid #e8ebe9; border-radius: 6px;
+    padding: 8px 11px; font-size: 9.3px; color: #3c4442; background: #fafaf8;
+  }
+  .notas b { display: block; font-size: 8.2px; text-transform: uppercase;
+    letter-spacing: .8px; color: #7a8481; margin-bottom: 2px; }
+  .legal {
+    margin-top: 12px; padding-top: 9px; border-top: 1px solid #e8ebe9;
+    font-size: 8.4px; color: #7a8481; line-height: 1.55;
+  }
+  .legal strong { color: #3c4442; }
+  .firma { margin-top: 10px; display: flex; justify-content: space-between; font-size: 8.4px; color: #7a8481; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="cab">
+    <div>
+      <p class="marca__nombre">Merca<span>Maquinarias</span></p>
+      <!-- Los datos del emisor vienen de `correo.EMPRESA`, que es donde
+           los lee también el PDF: si cambian, cambian en los dos sitios
+           a la vez. Escribirlos aquí a mano sería tener dos verdades. -->
+      <p class="marca__legal">
+        <strong>{{EMISOR_RAZON_SOCIAL}}</strong><br>
+        RNC {{EMISOR_RNC}}<br>
+        {{EMISOR_DOMICILIO}}<br>
+        {{EMISOR_CORREO}} · mercamaquinarias.com
+      </p>
+    </div>
+    <div class="comprobante">
+      <p class="comprobante__tipo">{{TIPO_DOCUMENTO}}</p>
+      <p class="comprobante__ncf">{{NCF}}</p>
+      <p class="comprobante__meta">Válido hasta {{NCF_VENCIMIENTO}}</p>
+      <p class="comprobante__meta" data-opcional="NCF_MODIFICADO">Modifica NCF {{NCF_MODIFICADO}}</p>
+      <p class="comprobante__meta">No. interno {{NUMERO_INTERNO}}</p>
+      <p class="comprobante__meta">Emitida el {{FECHA_EMISION}}</p>
+    </div>
+  </header>
+
+  <div class="regla"></div>
+
+  <section class="cajas">
+    <div class="caja">
+      <h2>Facturar a</h2>
+      <p class="nombre">{{CLIENTE_NOMBRE}}</p>
+      <p class="dato" data-opcional="CLIENTE_RNC">RNC / Cédula: <b>{{CLIENTE_RNC}}</b></p>
+      <p class="dato" data-opcional="CLIENTE_DIRECCION">{{CLIENTE_DIRECCION}}</p>
+      <p class="dato" data-opcional="CLIENTE_TELEFONO">Tel. {{CLIENTE_TELEFONO}}</p>
+      <p class="dato" data-opcional="CLIENTE_CORREO">{{CLIENTE_CORREO}}</p>
+    </div>
+    <div class="caja">
+      <h2>Condiciones</h2>
+      <p class="dato">Condición: <b>{{CONDICION_PAGO}}</b></p>
+      <p class="dato">Método: <b>{{METODO_PAGO}}</b></p>
+      <p class="dato" data-opcional="REFERENCIA_PAGO">Referencia: <b>{{REFERENCIA_PAGO}}</b></p>
+      <p class="dato" data-opcional="PERIODO_SERVICIO">Período: <b>{{PERIODO_SERVICIO}}</b></p>
+      <p class="dato">Moneda: <b>Peso dominicano (RD$)</b></p>
+    </div>
+  </section>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="c">Cant.</th>
+        <th>Descripción</th>
+        <th class="d">Precio unit.</th>
+        <th class="d">Importe</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{FILAS}}
+    </tbody>
+  </table>
+
+  <section class="cierre">
+    <div class="cierre__izq">
+      <p class="letras"><span>Son</span>{{TOTAL_LETRAS}}</p>
+    </div>
+    <div class="totales">
+      <div><span>Subtotal</span><span>{{SUBTOTAL}}</span></div>
+      <div data-opcional="DESCUENTO"><span>Descuento</span><span>−{{DESCUENTO}}</span></div>
+      <div><span>ITBIS {{ITBIS_TASA}}</span><span>{{ITBIS}}</span></div>
+      <div class="total"><span>Total</span><span>{{TOTAL}}</span></div>
+    </div>
+  </section>
+
+  <div class="notas" data-opcional="NOTAS">
+    <b>Notas</b>
+    {{NOTAS}}
+  </div>
+
+  <footer class="legal">
+    <strong>Comprobante fiscal emitido conforme a las normas de la Dirección General de Impuestos Internos (DGII).</strong>
+    Este documento es válido como comprobante fiscal únicamente con su Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento.
+    Los servicios facturados corresponden a capacidad de publicación en la plataforma MercaMaquinarias y no son reembolsables una vez iniciada su vigencia,
+    conforme a las Condiciones de Contratación publicadas en mercamaquinarias.com/legal.html#contratacion.
+    Cualquier reclamación sobre esta factura debe dirigirse a facturacion@mercamaquinarias.com dentro de los treinta (30) días de su emisión.
+    <div class="firma">
+      <span>Documento generado electrónicamente. No requiere firma ni sello.</span>
+      <span>{{NUMERO_INTERNO}} · {{FECHA_EMISION}}</span>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

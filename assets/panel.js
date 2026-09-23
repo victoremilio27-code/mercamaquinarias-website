@@ -987,7 +987,9 @@ async function montarFacturas() {
         ${f.anulada ? '<span class="pastilla pastilla--ambar">anulada</span>' : ''}</td>
       <td>${esc(f.concepto || '')}</td>
       <td class="num">RD$${Number(f.total).toLocaleString('en-US')}</td>
-      <td>${f.hayPdf
+      <td>
+        <a class="btn btn--linea btn--chico" href="/api/facturas/${esc(f.id)}.html" target="_blank" rel="noopener">Ver</a>
+        ${f.hayPdf
     ? `<a class="btn btn--linea btn--chico" href="/api/facturas/${esc(f.id)}.pdf" target="_blank" rel="noopener">PDF</a>`
     : ''}</td>
     </tr>`;

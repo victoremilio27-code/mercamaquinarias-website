@@ -36,6 +36,7 @@ const db = require('./db');
 const pdf = require('./pdf');
 const correo = require('./correo');
 const precios = require('../assets/precios.js');
+const { enLetras } = require('./numero-a-letras.js');
 
 const RAIZ = path.resolve(__dirname, '..');
 
@@ -45,11 +46,14 @@ const CARPETA = process.env.MERCA_FACTURAS || path.join(RAIZ, '.tmp', 'facturas'
 
 /* Aviso cuando una secuencia se está acabando.
  *
- * La tarea pide 50, y para B15 —que tiene 50— está bien. Para B01, que
- * tiene QUINCE en total, avisar a los 50 sería avisar desde el primer
- * día y para siempre, que es igual que no avisar. Se usa el menor de
- * los dos: 50, o un tercio del rango. */
-const AVISAR_BAJO = (rango) => Math.max(3, Math.min(50, Math.ceil(rango / 3)));
+ * Dos umbrales, no uno: al quedar pocos se avisa para que dé tiempo a
+ * pedir más, y al quedar uno se vuelve a avisar porque el siguiente
+ * cobro ya sale sin comprobante fiscal. El primero es configurable
+ * —B01 tiene quince números en total y B15 cincuenta, y lo que es
+ * «pocos» no es lo mismo en cada caso—; el segundo no, porque quedarse
+ * en uno significa lo mismo siempre. */
+const AVISAR_BAJO = Math.max(1, Number(process.env.MERCA_AVISO_NCF) || 5);
+const AVISAR_CRITICO = 1;
 
 const TITULOS = {
   recibo: 'RECIBO DE PAGO',
@@ -58,148 +62,391 @@ const TITULOS = {
   nota_credito: 'NOTA DE CRÉDITO',
 };
 
-const pesos = (n) => `RD$${Number(n || 0).toLocaleString('en-US')}`;
+const pesos = (n) => `RD$ ${Number(n || 0).toLocaleString('en-US', {
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+})}`;
 
 const fechaLarga = (iso) => new Date(iso).toLocaleDateString('es-DO', {
   day: '2-digit', month: 'long', year: 'numeric',
 });
 
+const fechaCorta = (iso) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+};
+
+/* Cómo se cobró, en palabras.
+ *
+ * `procesador` es lo que la base guarda del cobro. Traducirlo aquí y no
+ * en la base deja el nombre técnico donde sirve —en los registros— y
+ * pone en el papel lo que el cliente reconoce. */
+const METODOS = {
+  interna: 'Cortesía interna',
+  demo: 'Pago en línea',
+  transferencia: 'Transferencia bancaria',
+  efectivo: 'Efectivo',
+  tarjeta: 'Tarjeta',
+};
+
 /* ── El documento ───────────────────────────────────────── */
 
 /* Dibuja el comprobante. Devuelve el PDF en memoria.
  *
- * La maqueta es una rejilla de dos columnas con los márgenes de una
- * carta. No hay nada dinámico salvo el número de líneas del detalle,
- * y por eso el cursor vertical se va pasando de bloque en bloque. */
+ * La maqueta es la de `tools/plantilla-factura.html`, que es la fuente
+ * del diseño y lo que ve el cliente en el panel: membrete con el emisor
+ * a la izquierda y el recuadro del comprobante a la derecha, dos cajas
+ * de datos, el detalle en tabla con la cabecera en negativo, los
+ * totales a la derecha con el importe en letras enfrente, y el pie
+ * legal anclado abajo.
+ *
+ * POR QUÉ SE REDIBUJA EN VEZ DE IMPRIMIR EL HTML
+ *
+ * Imprimir la plantilla sería más fiel, pero pide un Chromium en el
+ * servidor: 300 MB de disco y picos de 200 MB de RAM en un droplet de
+ * 512 que además sirve el sitio y la base. La plantilla no lleva nada
+ * que no quepa aquí —texto en rejilla, dos recuadros, una tabla— así
+ * que se redibuja con `pdf.js` y el HTML se reserva para la vista web
+ * del mismo comprobante, que sí es idéntica.
+ *
+ * Campos opcionales de `f` que la maqueta contempla y que, si no
+ * vienen, no dejan hueco: `ncf_vencimiento`, `ncf_modificado`,
+ * `referencia_pago`, `metodo_pago`, `periodo_servicio`, `telefono`,
+ * `correo`, `descuento`, `cantidad`, `precio_unitario`, `notas`. */
 function dibujar(f, { emisor }) {
   const d = pdf.documento();
-  const M = 46;                       // margen
+  const M = 40;                       // margen
   const ANCHO_UTIL = d.ANCHO - M * 2;
-  const AZUL = '#071A2B';
+  const TINTA = '#141616';
   const AMBAR = '#F2A900';
-  const GRIS = '#60717D';
-  const TEXTO = '#33475A';
+  const GRIS = '#55605C';
+  const GRIS_SUAVE = '#7A8481';
+  const LINEA = '#E8EBE9';
+  const BORDE = '#DFE3E1';
+  const FONDO = '#FAFAF8';
 
-  /* Membrete. El nombre va compuesto, no como imagen: incrustar un
-     logotipo obligaría a decodificar PNG a mano por no traer
-     dependencias, y el resultado se vería peor que el texto. */
-  d.rect(0, 0, d.ANCHO, 92, AZUL);
-  d.rect(0, 92, d.ANCHO, 4, AMBAR);
-  d.texto('Merca', M, 44, { tamano: 21, tipo: 'negrita', color: '#FFFFFF' });
-  d.texto('Maquinarias', M + pdf.anchoDe('Merca', 21, true), 44, { tamano: 21, tipo: 'negrita', color: AMBAR });
-  d.texto(emisor.razonSocial, M, 64, { tamano: 8.5, color: '#8FA3B3' });
-  d.texto(`RNC ${emisor.rnc}`, M, 76, { tamano: 8.5, color: '#8FA3B3' });
-  d.texto(emisor.domicilioFiscal, d.ANCHO - M - 260, 64, {
-    tamano: 8, color: '#8FA3B3', alinear: 'derecha', ancho: 260,
+  /* ── Membrete ─────────────────────────────────────────── */
+
+  /* El nombre va compuesto, no como imagen: incrustar un logotipo
+     obligaría a decodificar PNG a mano por no traer dependencias, y el
+     resultado se vería peor que el texto. */
+  d.texto('Merca', M, 58, { tamano: 19, tipo: 'negrita', color: TINTA });
+  d.texto('Maquinarias', M + pdf.anchoDe('Merca', 19, true), 58, { tamano: 19, tipo: 'negrita', color: AMBAR });
+
+  let yEmisor = 74;
+  d.texto(emisor.razonSocial, M, yEmisor, { tamano: 9, tipo: 'negrita', color: TINTA });
+  yEmisor += 12;
+  d.texto(`RNC ${emisor.rnc}`, M, yEmisor, { tamano: 8.5, color: GRIS });
+  yEmisor += 12;
+  /* El domicilio fiscal SÍ va aquí. En el sitio no aparece —es una
+     vivienda—, pero un comprobante sin domicilio del emisor no cumple. */
+  yEmisor = d.parrafo(emisor.domicilioFiscal, M, yEmisor, 240, { tamano: 8.5, color: GRIS, interlinea: 1.35 });
+  d.texto(`${correo.BUZONES.facturacion} · mercamaquinarias.com`, M, yEmisor, { tamano: 8.5, color: GRIS });
+  yEmisor += 12;
+
+  /* ── Recuadro del comprobante ─────────────────────────── */
+
+  const anchoCaja = 208;
+  const xCaja = d.ANCHO - M - anchoCaja;
+  const padCaja = 11;
+  const yCaja = 44;
+
+  const metas = [
+    f.ncf_vencimiento ? `Válido hasta ${fechaCorta(f.ncf_vencimiento)}` : null,
+    f.ncf_modificado ? `Modifica ${f.ncf_modificado}` : null,
+    `No. interno ${f.numero}`,
+    `Emitida el ${fechaCorta(f.fecha)}`,
+  ].filter(Boolean);
+
+  const altoCaja = 50 + metas.length * 11 + 6;
+  d.marco(xCaja, yCaja, anchoCaja, altoCaja, { grosor: 1.2, color: TINTA });
+
+  const derecha = { alinear: 'derecha', ancho: anchoCaja - padCaja * 2 };
+  d.texto((TITULOS[f.tipo] || 'COMPROBANTE').toUpperCase(), xCaja + padCaja, yCaja + 17, {
+    tamano: 9, tipo: 'negrita', color: TINTA, ...derecha,
   });
-  d.texto('mercamaquinarias.com', d.ANCHO - M - 260, 76, {
-    tamano: 8, color: '#8FA3B3', alinear: 'derecha', ancho: 260,
+  d.texto(f.ncf || 'SIN VALOR FISCAL', xCaja + padCaja, yCaja + 37, {
+    tamano: f.ncf ? 15 : 11, tipo: 'negrita', color: f.ncf ? TINTA : GRIS_SUAVE, ...derecha,
+  });
+  metas.forEach((linea, i) => {
+    d.texto(linea, xCaja + padCaja, yCaja + 52 + i * 11, { tamano: 8.2, color: GRIS, ...derecha });
   });
 
-  /* Título y numeración. */
-  let y = 132;
-  d.texto(TITULOS[f.tipo] || 'COMPROBANTE', M, y, { tamano: 15, tipo: 'negrita', color: AZUL });
-  d.texto(f.numero, d.ANCHO - M - 220, y, {
-    tamano: 12, tipo: 'negrita', color: AZUL, alinear: 'derecha', ancho: 220,
-  });
+  /* La regla ámbar separa el membrete —que es siempre igual— de lo que
+     cambia de un comprobante a otro. */
+  let y = Math.max(yEmisor + 8, yCaja + altoCaja + 14);
+  d.rect(M, y, ANCHO_UTIL, 3, AMBAR);
+  y += 18;
 
-  y += 16;
-  d.texto(fechaLarga(f.fecha), M, y, { tamano: 9, color: GRIS });
-  if (f.ncf) {
-    d.texto(`NCF ${f.ncf}`, d.ANCHO - M - 220, y, {
-      tamano: 9.5, tipo: 'negrita', color: AZUL, alinear: 'derecha', ancho: 220,
+  /* ── Cajas de datos ───────────────────────────────────── */
+
+  const anchoDato = (ANCHO_UTIL - 10) / 2;
+  const padDato = 11;
+
+  /* Las dos listas se arman antes para poder darles la misma altura:
+     una caja más alta que la otra se lee como un error de maquetación,
+     no como que había menos que decir. */
+  const cliente = [
+    ['nombre', f.razon_social || 'Consumidor final'],
+    f.rnc ? ['dato', `RNC / Cédula: ${f.rnc}`] : null,
+    f.direccion ? ['dato', f.direccion] : null,
+    f.telefono ? ['dato', `Tel. ${f.telefono}`] : null,
+    f.correo ? ['dato', f.correo] : null,
+  ].filter(Boolean);
+
+  const condiciones = [
+    ['dato', `Condición: ${f.condicion_pago || (f.tipo === 'nota_credito' ? 'Anulación' : 'Pagado')}`],
+    ['dato', `Método: ${METODOS[f.metodo_pago] || f.metodo_pago || 'Pago en línea'}`],
+    f.referencia_pago ? ['dato', `Referencia: ${f.referencia_pago}`] : null,
+    f.periodo_servicio ? ['dato', `Período: ${f.periodo_servicio}`] : null,
+    ['dato', 'Moneda: Peso dominicano (RD$)'],
+  ].filter(Boolean);
+
+  const altoDato = 24 + Math.max(cliente.length, condiciones.length) * 13 + 8;
+
+  const pintarCaja = (x, titulo, lineas) => {
+    d.rect(x, y, anchoDato, altoDato, FONDO);
+    d.marco(x, y, anchoDato, altoDato, { color: BORDE });
+    d.texto(titulo, x + padDato, y + 15, { tamano: 7.6, tipo: 'negrita', color: GRIS_SUAVE });
+    lineas.forEach(([clase, linea], i) => {
+      d.texto(linea, x + padDato, y + 30 + i * 13, clase === 'nombre'
+        ? { tamano: 11, tipo: 'negrita', color: TINTA }
+        : { tamano: 8.8, color: GRIS });
     });
-  } else {
-    d.texto('Sin valor fiscal', d.ANCHO - M - 220, y, {
-      tamano: 9, tipo: 'oblicua', color: GRIS, alinear: 'derecha', ancho: 220,
-    });
-  }
-
-  y += 12;
-  d.linea(M, y, d.ANCHO - M, y, { color: '#DEDCD4' });
-
-  /* A quién se le factura. */
-  y += 26;
-  d.texto('CLIENTE', M, y, { tamano: 8, tipo: 'negrita', color: GRIS });
-  y += 15;
-  d.texto(f.razon_social || 'Consumidor final', M, y, { tamano: 11, tipo: 'negrita', color: AZUL });
-  if (f.rnc) { y += 14; d.texto(`RNC ${f.rnc}`, M, y, { tamano: 9, color: TEXTO }); }
-  if (f.direccion) { y = d.parrafo(f.direccion, M, y + 14, 300, { tamano: 9, color: TEXTO }) - 4; }
-
-  /* El detalle. */
-  y += 30;
-  d.rect(M, y - 12, ANCHO_UTIL, 22, '#F7F5EF');
-  d.texto('CONCEPTO', M + 8, y + 3, { tamano: 8, tipo: 'negrita', color: GRIS });
-  d.texto('IMPORTE', d.ANCHO - M - 108, y + 3, {
-    tamano: 8, tipo: 'negrita', color: GRIS, alinear: 'derecha', ancho: 100,
-  });
-
-  y += 30;
-  const finConcepto = d.parrafo(f.concepto || 'Servicio contratado', M + 8, y, 330, { tamano: 9.5, color: TEXTO });
-  d.texto(pesos(f.subtotal), d.ANCHO - M - 108, y, {
-    tamano: 9.5, color: TEXTO, alinear: 'derecha', ancho: 100,
-  });
-  y = Math.max(finConcepto, y + 14) + 6;
-  d.linea(M, y, d.ANCHO - M, y, { color: '#ECEAE3' });
-
-  /* Totales, pegados a la derecha. */
-  const xEtiqueta = d.ANCHO - M - 260;
-  const xCifra = d.ANCHO - M - 108;
-  y += 20;
-  d.texto('Subtotal', xEtiqueta, y, { tamano: 9.5, color: TEXTO, alinear: 'derecha', ancho: 140 });
-  d.texto(pesos(f.subtotal), xCifra, y, { tamano: 9.5, color: TEXTO, alinear: 'derecha', ancho: 100 });
-  y += 16;
-  d.texto(`ITBIS (${Math.round(precios.ITBIS * 100)} %)`, xEtiqueta, y, {
-    tamano: 9.5, color: TEXTO, alinear: 'derecha', ancho: 140,
-  });
-  d.texto(pesos(f.itbis), xCifra, y, { tamano: 9.5, color: TEXTO, alinear: 'derecha', ancho: 100 });
-
-  y += 10;
-  d.linea(xEtiqueta, y, d.ANCHO - M, y, { color: AZUL, grosor: 1.2 });
-  y += 20;
-  d.texto('TOTAL', xEtiqueta, y, { tamano: 11, tipo: 'negrita', color: AZUL, alinear: 'derecha', ancho: 140 });
-  d.texto(pesos(f.total), xCifra, y, {
-    tamano: 15, tipo: 'negrita', color: AZUL, alinear: 'derecha', ancho: 100,
-  });
-
-  /* Forma de pago y referencia. */
-  y += 36;
-  if (f.referencia) {
-    d.texto('Referencia del pago', M, y, { tamano: 8, tipo: 'negrita', color: GRIS });
-    d.texto(f.referencia, M, y + 14, { tamano: 9.5, color: TEXTO });
-  }
-  if (f.anula_a_numero) {
-    d.texto('Anula el comprobante', M + 220, y, { tamano: 8, tipo: 'negrita', color: GRIS });
-    d.texto(f.anula_a_numero, M + 220, y + 14, { tamano: 9.5, tipo: 'negrita', color: AZUL });
-  }
-
-  /* Nota legal, al pie. Distinta según el tipo, porque lo que hay que
-     advertir es distinto: un recibo no fiscal tiene que decirlo con
-     todas las letras. */
-  const notas = {
-    recibo: 'Este documento es un recibo de pago y NO constituye un comprobante fiscal '
-      + 'con valor tributario. Se emite como constancia del pago recibido y del servicio '
-      + 'contratado. Si necesita una factura con Número de Comprobante Fiscal, escríbanos '
-      + 'a facturacion@mercamaquinarias.com.',
-    factura_consumo: 'Comprobante fiscal para consumidor final, válido conforme a las '
-      + 'disposiciones de la Dirección General de Impuestos Internos.',
-    factura_credito_fiscal: 'Comprobante fiscal con derecho a crédito fiscal, válido conforme '
-      + 'a las disposiciones de la Dirección General de Impuestos Internos. Conserve este '
-      + 'documento para sus registros contables.',
-    nota_credito: 'Nota de crédito emitida para anular total o parcialmente el comprobante '
-      + 'que se indica. No sustituye a la devolución del importe, que se tramita por separado.',
   };
 
-  const yNota = d.ALTO - 132;
-  d.linea(M, yNota - 16, d.ANCHO - M, yNota - 16, { color: '#ECEAE3' });
-  d.parrafo(notas[f.tipo] || '', M, yNota, ANCHO_UTIL, { tamano: 8, color: GRIS, interlinea: 1.5 });
+  pintarCaja(M, 'FACTURAR A', cliente);
+  pintarCaja(M + anchoDato + 10, 'CONDICIONES', condiciones);
+  y += altoDato + 20;
 
-  d.texto(`${emisor.razonSocial} · RNC ${emisor.rnc} · ${emisor.domicilioFiscal}`,
-    M, d.ALTO - 52, { tamano: 7.5, color: '#8FA3B3' });
-  d.texto('Generado automáticamente por mercamaquinarias.com · No requiere firma ni sello.',
-    M, d.ALTO - 40, { tamano: 7.5, color: '#8FA3B3' });
+  /* ── Detalle ──────────────────────────────────────────── */
+
+  const pad = 9;
+  const wNum = 78;
+  const xImporte = d.ANCHO - M - pad - wNum;
+  const xPrecio = xImporte - 12 - wNum;
+  const wCant = 40;
+  const xDesc = M + 52;
+  const wDesc = xPrecio - 10 - xDesc;
+
+  d.rect(M, y, ANCHO_UTIL, 20, TINTA);
+  d.texto('CANT.', M + pad, y + 13.5, { tamano: 7.6, tipo: 'negrita', color: '#FFFFFF', alinear: 'centro', ancho: wCant });
+  d.texto('DESCRIPCIÓN', xDesc, y + 13.5, { tamano: 7.6, tipo: 'negrita', color: '#FFFFFF' });
+  d.texto('PRECIO UNIT.', xPrecio, y + 13.5, { tamano: 7.6, tipo: 'negrita', color: '#FFFFFF', alinear: 'derecha', ancho: wNum });
+  d.texto('IMPORTE', xImporte, y + 13.5, { tamano: 7.6, tipo: 'negrita', color: '#FFFFFF', alinear: 'derecha', ancho: wNum });
+  y += 20;
+
+  /* Una fila por concepto. El concepto que llega es del estilo «Plan
+     Estándar · 2 cupos · 30 días»: lo de antes del primer separador es
+     el nombre, y el resto baja en pequeño como detalle. */
+  const lineas = Array.isArray(f.lineas) && f.lineas.length ? f.lineas : [{
+    cantidad: f.cantidad || 1,
+    concepto: f.concepto || 'Servicio contratado',
+    precio: f.precio_unitario != null ? f.precio_unitario : f.subtotal,
+    importe: f.subtotal,
+  }];
+
+  for (const l of lineas) {
+    const partes = String(l.concepto || '').split('·').map((p) => p.trim()).filter(Boolean);
+    const titulo = partes.shift() || 'Servicio contratado';
+    const detalle = partes.join(' · ');
+
+    const yTexto = y + 15;
+    d.texto(String(l.cantidad), M + pad, yTexto, { tamano: 9.5, color: TINTA, alinear: 'centro', ancho: wCant });
+    let abajo = d.parrafo(titulo, xDesc, yTexto, wDesc, { tamano: 9.5, tipo: 'negrita', color: TINTA, interlinea: 1.3 });
+    if (detalle) abajo = d.parrafo(detalle, xDesc, abajo, wDesc, { tamano: 8.6, color: GRIS_SUAVE, interlinea: 1.3 });
+    d.texto(pesos(l.precio), xPrecio, yTexto, { tamano: 9.5, color: TINTA, alinear: 'derecha', ancho: wNum });
+    d.texto(pesos(l.importe), xImporte, yTexto, { tamano: 9.5, color: TINTA, alinear: 'derecha', ancho: wNum });
+
+    y = Math.max(abajo, yTexto + 8) + 5;
+    d.linea(M, y, d.ANCHO - M, y, { color: LINEA });
+  }
+
+  /* ── Totales e importe en letras ──────────────────────── */
+
+  const yCierre = y + 14;
+  y = yCierre + 8;
+
+  const anchoTotales = 196;
+  const xTotales = d.ANCHO - M - anchoTotales;
+  const filaTotal = (etiqueta, valor) => {
+    d.texto(etiqueta, xTotales + pad, y, { tamano: 9.3, color: GRIS });
+    d.texto(valor, xTotales, y, { tamano: 9.3, color: TINTA, alinear: 'derecha', ancho: anchoTotales - pad });
+    y += 15;
+  };
+
+  filaTotal('Subtotal', pesos(f.subtotal));
+  if (f.descuento) filaTotal('Descuento', `-${pesos(f.descuento)}`);
+  filaTotal(`ITBIS ${Math.round((f.itbis_tasa != null ? f.itbis_tasa : precios.ITBIS) * 100)} %`, pesos(f.itbis));
+
+  y += 3;
+  d.rect(xTotales, y, anchoTotales, 27, TINTA);
+  d.texto('Total', xTotales + pad, y + 18, { tamano: 11.5, tipo: 'negrita', color: '#FFFFFF' });
+  d.texto(pesos(f.total), xTotales, y + 18, {
+    tamano: 13, tipo: 'negrita', color: AMBAR, alinear: 'derecha', ancho: anchoTotales - pad,
+  });
+  y += 27;
+
+  /* El importe en letras, enfrente de la cifra: es lo que impide que la
+     cifra se retoque después. */
+  d.texto('SON', M + 12, yCierre + 9, { tamano: 7.6, tipo: 'negrita', color: GRIS_SUAVE });
+  const finLetras = d.parrafo(enLetras(f.total), M + 12, yCierre + 23, xTotales - M - 26, {
+    tamano: 9.3, color: '#3C4442', interlinea: 1.4,
+  });
+  d.rect(M, yCierre + 2, 3, finLetras - yCierre - 10, AMBAR);
+
+  y = Math.max(y, finLetras) + 16;
+
+  /* ── Notas ────────────────────────────────────────────── */
+
+  if (f.notas) {
+    const alto = 34;
+    d.rect(M, y, ANCHO_UTIL, alto, FONDO);
+    d.marco(M, y, ANCHO_UTIL, alto, { color: BORDE });
+    d.texto('NOTAS', M + 11, y + 14, { tamano: 7.6, tipo: 'negrita', color: GRIS_SUAVE });
+    d.parrafo(f.notas, M + 11, y + 26, ANCHO_UTIL - 22, { tamano: 8.8, color: '#3C4442' });
+  }
+
+  /* ── Pie legal ────────────────────────────────────────── */
+
+  /* Lo que hay que advertir cambia con el tipo: un recibo no fiscal
+     tiene que decir que no lo es, con todas las letras, y una factura
+     de crédito fiscal tiene que decir a qué da derecho. */
+  const legales = {
+    recibo: 'Este documento no constituye comprobante fiscal. Si requiere factura con valor '
+      + 'fiscal, escríbanos a facturacion@mercamaquinarias.com. Se emite como constancia del '
+      + 'pago recibido y del servicio contratado.',
+    factura_consumo: 'Comprobante fiscal emitido conforme a las normas de la Dirección General '
+      + 'de Impuestos Internos (DGII). Es válido como comprobante fiscal únicamente con su '
+      + 'Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento.',
+    factura_credito_fiscal: 'Comprobante fiscal con derecho a crédito fiscal, emitido conforme a '
+      + 'las normas de la Dirección General de Impuestos Internos (DGII). Es válido únicamente '
+      + 'con su Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento. '
+      + 'Consérvelo para sus registros contables.',
+    nota_credito: 'Nota de crédito emitida conforme a las normas de la Dirección General de '
+      + 'Impuestos Internos (DGII) para anular total o parcialmente el comprobante que se indica. '
+      + 'No sustituye a la devolución del importe, que se tramita por separado.',
+  };
+
+  const cierre = 'Los servicios facturados corresponden a capacidad de publicación en la plataforma '
+    + 'MercaMaquinarias y no son reembolsables una vez iniciada su vigencia, conforme a las Condiciones '
+    + 'de Contratación publicadas en mercamaquinarias.com/legal.html#contratacion. Cualquier reclamación '
+    + 'sobre este comprobante debe dirigirse a facturacion@mercamaquinarias.com dentro de los treinta (30) '
+    + 'días de su emisión.';
+
+  /* El pie va anclado abajo, no a continuación del detalle: así todos
+     los comprobantes terminan a la misma altura, lleven una línea o
+     cinco. */
+  const yPie = d.ALTO - 108;
+  d.linea(M, yPie - 14, d.ANCHO - M, yPie - 14, { color: LINEA });
+  const finLegal = d.parrafo(legales[f.tipo] || '', M, yPie, ANCHO_UTIL, {
+    tamano: 8, color: GRIS, interlinea: 1.55,
+  });
+  d.parrafo(cierre, M, finLegal + 4, ANCHO_UTIL, { tamano: 8, color: GRIS_SUAVE, interlinea: 1.55 });
+
+  d.texto('Documento generado electrónicamente. No requiere firma ni sello.',
+    M, d.ALTO - 32, { tamano: 8, color: GRIS_SUAVE });
+  d.texto(`${f.numero} · ${fechaCorta(f.fecha)}`, d.ANCHO - M - 220, d.ALTO - 32, {
+    tamano: 8, color: GRIS_SUAVE, alinear: 'derecha', ancho: 220,
+  });
 
   return d.terminar();
+}
+
+/* ── El mismo comprobante, como página ──────────────────── */
+
+/* `plantilla-factura.html` es la fuente del diseño. El PDF la reproduce
+ * con `pdf.js` porque en el servidor no cabe un Chromium; esta función
+ * la rellena de verdad, para la vista web del panel y para que un
+ * cambio de maqueta se vea en algún sitio sin recompilar nada.
+ *
+ * El motor es reemplazo literal de {{VARIABLE}} más el borrado de los
+ * elementos con `data-opcional` cuyo valor viene vacío: una factura sin
+ * RNC no puede enseñar una línea de RNC en blanco. */
+const PLANTILLA = path.join(__dirname, 'plantilla-factura.html');
+
+/* Todo lo que venga del cliente pasa por aquí antes de entrar en el
+   HTML: una razón social con «<script>» no puede llegar al navegador
+   de nadie tal cual. */
+const escapar = (v) => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+function variablesDe(f, { emisor = correo.EMPRESA } = {}) {
+  const lineas = Array.isArray(f.lineas) && f.lineas.length ? f.lineas : [{
+    cantidad: f.cantidad || 1,
+    concepto: f.concepto || 'Servicio contratado',
+    precio: f.precio_unitario != null ? f.precio_unitario : f.subtotal,
+    importe: f.subtotal,
+  }];
+
+  const filas = lineas.map((l) => {
+    const partes = String(l.concepto || '').split('·').map((p) => p.trim()).filter(Boolean);
+    const titulo = escapar(partes.shift() || 'Servicio contratado');
+    const detalle = escapar(partes.join(' · '));
+    return '<tr>'
+      + `<td class="c">${escapar(l.cantidad)}</td>`
+      + `<td><strong>${titulo}</strong>${detalle ? `<span class="det">${detalle}</span>` : ''}</td>`
+      + `<td class="d">${escapar(pesos(l.precio))}</td>`
+      + `<td class="d">${escapar(pesos(l.importe))}</td>`
+      + '</tr>';
+  }).join('\n');
+
+  return {
+    TIPO_DOCUMENTO: TITULOS[f.tipo] || 'COMPROBANTE',
+    NCF: f.ncf || 'SIN VALOR FISCAL',
+    NCF_VENCIMIENTO: f.ncf_vencimiento ? fechaCorta(f.ncf_vencimiento) : '',
+    NCF_MODIFICADO: f.ncf_modificado || '',
+    NUMERO_INTERNO: f.numero,
+    FECHA_EMISION: fechaCorta(f.fecha),
+    CONDICION_PAGO: f.condicion_pago || (f.tipo === 'nota_credito' ? 'Anulación' : 'Pagado'),
+    METODO_PAGO: METODOS[f.metodo_pago] || f.metodo_pago || 'Pago en línea',
+    REFERENCIA_PAGO: f.referencia_pago || '',
+    PERIODO_SERVICIO: f.periodo_servicio || '',
+    CLIENTE_NOMBRE: f.razon_social || 'Consumidor final',
+    CLIENTE_RNC: f.rnc || '',
+    CLIENTE_DIRECCION: f.direccion || '',
+    CLIENTE_TELEFONO: f.telefono || '',
+    CLIENTE_CORREO: f.correo || '',
+    FILAS: filas,
+    SUBTOTAL: pesos(f.subtotal),
+    DESCUENTO: f.descuento ? pesos(f.descuento) : '',
+    ITBIS_TASA: `${Math.round((f.itbis_tasa != null ? f.itbis_tasa : precios.ITBIS) * 100)}%`,
+    ITBIS: pesos(f.itbis),
+    TOTAL: pesos(f.total),
+    TOTAL_LETRAS: enLetras(f.total),
+    NOTAS: f.notas || '',
+    EMISOR_RAZON_SOCIAL: emisor.razonSocial,
+    EMISOR_RNC: emisor.rnc,
+    EMISOR_DOMICILIO: emisor.domicilioFiscal,
+    EMISOR_CORREO: correo.BUZONES.facturacion,
+  };
+}
+
+function comoHtml(f, opciones = {}) {
+  /* Los comentarios se quitan: documentan la plantilla para quien la
+     edita, y lo que se le sirve al cliente es su comprobante, no las
+     instrucciones de la maqueta. */
+  let html = fs.readFileSync(PLANTILLA, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const valores = variablesDe(f, opciones);
+
+  /* Primero se quitan los bloques opcionales vacíos, con la variable
+     todavía sin sustituir: así se reconoce el elemento por su atributo
+     y no hay que adivinar si lo que quedó dentro era del molde o del
+     comprobante. */
+  for (const [clave, valor] of Object.entries(valores)) {
+    if (valor !== '') continue;
+    html = html.replace(
+      new RegExp(`\\s*<([a-z]+)[^>]*data-opcional="${clave}"[^>]*>[\\s\\S]*?</\\1>`, 'g'), '');
+  }
+
+  for (const [clave, valor] of Object.entries(valores)) {
+    /* FILAS ya es HTML generado aquí; lo demás se escapa. */
+    const texto = clave === 'FILAS' ? valor : escapar(valor);
+    html = html.split(`{{${clave}}}`).join(texto);
+  }
+
+  return html;
 }
 
 /* ── Guardar en disco ───────────────────────────────────── */
@@ -258,7 +505,7 @@ function decidirTipo({ quiereFiscal }) {
  * del proveedor de correo no impida que el comprobante quede emitido y
  * guardado. Emitir y notificar son dos cosas distintas y fallan por
  * motivos distintos. */
-function emitirPorPago(pago, { concepto, cliente = {}, emisor = correo.EMPRESA }) {
+function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = correo.EMPRESA }) {
   const yaEsta = db.facturaDePago(pago.id);
   if (yaEsta) return yaEsta;                    // no se emite dos veces
 
@@ -269,19 +516,30 @@ function emitirPorPago(pago, { concepto, cliente = {}, emisor = correo.EMPRESA }
     organizacionId: pago.organizacion_id,
     tipo: decision.tipo,
     ncf: decision.ncf,
+    ncfVencimiento: decision.vence || null,
     razonSocial: cliente.razonSocial || null,
     rnc: cliente.rnc || null,
     direccion: cliente.direccion || null,
+    telefono: cliente.telefono || null,
+    correo: cliente.correo || null,
     concepto,
     subtotal: pago.subtotal,
     itbis: pago.itbis,
+    /* La tasa se deduce de lo cobrado, no de la constante: si un día el
+       ITBIS cambia, un pago viejo que se facture tarde tiene que
+       llevar la tasa con la que se cobró. */
+    itbisTasa: pago.subtotal ? Math.round((pago.itbis / pago.subtotal) * 10000) / 10000 : precios.ITBIS,
     total: pago.total,
     moneda: pago.moneda || 'DOP',
+    condicionPago: 'Pagado',
+    metodoPago: pago.procesador || null,
+    referenciaPago: pago.referencia || null,
+    periodoServicio: detalle.periodo || null,
     fecha: pago.creado,
   });
 
   const fila = db.facturaPorId(idFactura);
-  const bytes = dibujar({ ...fila, referencia: pago.referencia }, { emisor });
+  const bytes = dibujar({ ...fila, ...detalle }, { emisor });
   const ruta = guardarPdf(numero, fila.fecha, bytes);
   db.anotarPdf(idFactura, ruta);
 
@@ -301,21 +559,33 @@ function emitirNotaCredito(original, { motivo, emisor = correo.EMPRESA } = {}) {
     organizacionId: original.organizacion_id,
     tipo: 'nota_credito',
     ncf: ncf ? ncf.ncf : null,
+    ncfVencimiento: ncf ? ncf.vence : null,
+    /* En el papel va el NCF del comprobante que se modifica, que es lo
+       que pide la DGII. Si el original fue un recibo sin NCF, va su
+       número interno: es lo único que lo identifica. */
+    ncfModificado: original.ncf || original.numero,
     razonSocial: original.razon_social,
     rnc: original.rnc,
     direccion: original.direccion,
+    telefono: original.telefono,
+    correo: original.correo,
     concepto: `Anulación de ${original.numero}${motivo ? ` · ${motivo}` : ''}`,
     subtotal: original.subtotal,
     itbis: original.itbis,
+    itbisTasa: original.itbis_tasa,
     total: original.total,
     moneda: original.moneda,
+    condicionPago: 'Anulación',
+    metodoPago: original.metodo_pago,
+    referenciaPago: original.referencia_pago,
+    notas: motivo || null,
     anulaA: original.id,
   });
 
   db.marcarAnulada(original.id, idNota);
 
   const fila = db.facturaPorId(idNota);
-  const bytes = dibujar({ ...fila, anula_a_numero: original.numero }, { emisor });
+  const bytes = dibujar(fila, { emisor });
   db.anotarPdf(idNota, guardarPdf(numero, fila.fecha, bytes));
 
   return db.facturaPorId(idNota);
@@ -390,12 +660,77 @@ async function enviar(factura, { correoCliente } = {}) {
 function secuenciasBajas() {
   return db.secuenciasNcf()
     .filter((s) => s.activa)
-    .map((s) => ({ ...s, umbral: AVISAR_BAJO(s.hasta - s.desde + 1) }))
+    .map((s) => ({ ...s, umbral: AVISAR_BAJO, critica: s.quedan <= AVISAR_CRITICO }))
     .filter((s) => s.quedan <= s.umbral);
+}
+
+/* Comprobantes emitidos sin NCF, a la espera de que llegue la secuencia
+ * que les correspondía.
+ *
+ * Mientras falte la B02, cada cliente sin RNC recibe un recibo no
+ * fiscal. Eso no es un error que se pierda: queda aquí listado para
+ * emitir sus facturas en lote el día que la DGII apruebe el rango. */
+function pendientesDeRegularizar({ limite = 500 } = {}) {
+  return db.facturas({ limite })
+    .filter((f) => f.tipo === 'recibo' && !f.anulado_por);
 }
 
 module.exports = {
   CARPETA, TITULOS,
-  dibujar, guardarPdf, leerPdf, rutaAbsoluta,
-  emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, decidirTipo,
+  dibujar, comoHtml, guardarPdf, leerPdf, rutaAbsoluta,
+  emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, pendientesDeRegularizar, decidirTipo,
 };
+
+/* ── Línea de comandos ──────────────────────────────────── */
+
+/* `node tools/facturas.js cargar-secuencia --tipo B02 --desde 1 --hasta 50
+ *                        --vence 2027-12-31 --nombre "Consumidor final" --usa-sitio`
+ *
+ * Existe para que cargar un rango nuevo NO requiera tocar código ni
+ * abrir la base a mano. Es lo único que queda pendiente para que el
+ * sistema emita facturas de consumo. */
+function cargarDesdeConsola(args) {
+  const valor = (nombre) => {
+    const i = args.indexOf(`--${nombre}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+
+  const datos = {
+    tipo: valor('tipo'),
+    nombre: valor('nombre'),
+    desde: valor('desde'),
+    hasta: valor('hasta'),
+    vence: valor('vence') || null,
+    activa: !args.includes('--inactiva'),
+    usaSitio: args.includes('--usa-sitio'),
+  };
+
+  if (!datos.tipo || !datos.desde || !datos.hasta) {
+    console.error('Uso: node tools/facturas.js cargar-secuencia --tipo B02 --desde 1 --hasta 50'
+      + ' [--vence AAAA-MM-DD] [--nombre "Consumidor final"] [--usa-sitio] [--inactiva]');
+    process.exitCode = 1;
+    return;
+  }
+
+  const s = db.cargarSecuencia(datos);
+  console.log(`${s.nueva ? 'Cargada' : 'Actualizada'} ${s.tipo}: `
+    + `${s.prefijo}${String(s.desde).padStart(8, '0')} a ${s.prefijo}${String(s.hasta).padStart(8, '0')}`
+    + ` · próximo ${s.prefijo}${String(s.siguiente).padStart(8, '0')}`
+    + ` · ${s.activa ? 'activa' : 'inactiva'}${s.usa_sitio ? ', la usa el sitio' : ''}`
+    + `${s.vence ? ` · vence ${s.vence}` : ' · sin fecha de vencimiento'}`);
+}
+
+if (require.main === module) {
+  const [orden, ...resto] = process.argv.slice(2);
+
+  if (orden === 'cargar-secuencia') cargarDesdeConsola(resto);
+  else if (orden === 'secuencias') {
+    for (const s of db.secuenciasNcf()) {
+      console.log(`${s.tipo}  ${String(s.quedan).padStart(4)} de ${s.hasta - s.desde + 1}`
+        + `  ${s.activa ? 'activa  ' : 'inactiva'}  ${s.usa_sitio ? 'sitio' : '     '}  ${s.nombre}`);
+    }
+  } else {
+    console.error('Órdenes: cargar-secuencia, secuencias');
+    process.exitCode = 1;
+  }
+}

@@ -135,9 +135,14 @@ async function avisarNcf() {
   const detalle = bajas.map((s) => `${s.tipo}: quedan ${s.quedan} de ${s.hasta - s.desde + 1}`).join(' · ');
   if (SECO) return anotar('ncf', `avisaría: ${detalle}`);
 
+  /* El asunto cambia cuando queda uno: ese correo ya no es un recordatorio,
+     es que el próximo cobro sale sin comprobante fiscal. */
+  const critico = bajas.some((s) => s.critica);
+
   correo.avisarInternamente({
     buzon: 'facturacion',
-    asunto: `Se están acabando los comprobantes fiscales · ${bajas.map((s) => s.tipo).join(', ')}`,
+    asunto: `${critico ? 'URGENTE: se agota la secuencia' : 'Se están acabando los comprobantes fiscales'}`
+      + ` · ${bajas.map((s) => s.tipo).join(', ')}`,
     texto: [
       'Quedan pocos comprobantes autorizados en estas secuencias:',
       '',

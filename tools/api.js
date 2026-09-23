@@ -1154,6 +1154,30 @@ const descargarFactura = conSesion((req, res, ctx, idFactura) => {
   return res.end(bytes);
 });
 
+/* El mismo comprobante, como página.
+ *
+ * Es la plantilla rellenada, no un resumen: quien no quiera abrir el
+ * PDF —en un teléfono, con el correo desde el navegador— ve exactamente
+ * el mismo documento y puede imprimirlo desde ahí. Se sirve con las
+ * mismas comprobaciones de propiedad que el PDF. */
+const verFactura = conSesion((req, res, ctx, idFactura) => {
+  const f = db.facturaPorId(idFactura);
+  if (!f) return fallo(res, 404, 'Ese comprobante no existe');
+
+  const esSuyo = ctx.organizacion && f.organizacion_id === ctx.organizacion.id;
+  if (!esSuyo && !ctx.usuario.esAdmin) return fallo(res, 404, 'Ese comprobante no existe');
+
+  const html = Buffer.from(facturas.comoHtml(f), 'utf8');
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': html.length,
+    // Privado y sin caché: lleva el RNC y la dirección de una empresa.
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  return res.end(html);
+});
+
 /* Administración: el listado, con filtro por mes. */
 const listarFacturas = conAdmin((req, res, ctx, consulta) => {
   const mes = /^\d{4}-\d{2}$/.test(consulta?.get('mes') || '') ? consulta.get('mes') : null;
@@ -1161,8 +1185,39 @@ const listarFacturas = conAdmin((req, res, ctx, consulta) => {
     mes,
     secuencias: db.secuenciasNcf(),
     bajas: facturas.secuenciasBajas().map((s) => ({ tipo: s.tipo, quedan: s.quedan })),
+    /* Los pendientes NO se filtran por mes: son trabajo acumulado que
+       hay que ver entero, no un corte del periodo que se esté mirando. */
+    pendientes: facturas.pendientesDeRegularizar().map((f) => ({
+      id: f.id, numero: f.numero, fecha: f.fecha,
+      razon_social: f.razon_social, total: f.total,
+    })),
     facturas: db.facturas({ mes }),
   });
+});
+
+/* Cargar un rango de NCF autorizado por la DGII.
+ *
+ * Es la puesta en marcha de la facturación fiscal, y por eso vive en
+ * una pantalla y no en el código: cuando llegue la B02, se carga aquí
+ * y el sistema empieza a emitir facturas de consumo sin que nadie
+ * despliegue nada. */
+const cargarSecuencia = conAdmin(async (req, res) => {
+  const c = await leerCuerpo(req);
+  try {
+    const secuencia = db.cargarSecuencia({
+      tipo: texto(c.tipo, 3),
+      nombre: texto(c.nombre, 60),
+      desde: c.desde,
+      hasta: c.hasta,
+      vence: texto(c.vence, 10) || null,
+      usaSitio: !!c.usaSitio,
+    });
+    return responder(res, 201, {
+      secuencia: { ...secuencia, quedan: secuencia.hasta - secuencia.siguiente + 1 },
+    });
+  } catch (e) {
+    return fallo(res, e.codigo || 400, e.message);
+  }
 });
 
 /* Exportación para el contador. Se entrega como CSV y no como JSON
@@ -1451,7 +1506,7 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
    * de haber cobrado obliga a emitir una nota de crédito por un error
    * de tecleo. El RNC se comprueba con la misma función que el alta de
    * dealer, que es la que sabe cuántos dígitos tiene. */
-  let cliente = { razonSocial: ctx.usuario.nombre };
+  let cliente = { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo };
   if (c.conRnc) {
     const rnc = rncValido(c.rnc);
     if (!rnc) return fallo(res, 400, 'El RNC tiene 9 dígitos');
@@ -1463,6 +1518,7 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
       razonSocial: texto(c.razonSocial, 160),
       rnc,
       direccion: texto(c.direccionFiscal, 200),
+      correo: ctx.usuario.correo,
     };
   }
 
@@ -1476,8 +1532,22 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     const pago = db.pagoPorReferencia(cobro.referencia);
     if (pago) {
       try {
+        /* La línea del detalle tiene que cuadrar: cantidad × precio
+           unitario = importe. Con cupos gratis por cantidad el subtotal
+           ya no es divisible, así que en ese caso se factura como una
+           sola línea por el total y el reparto se explica en el texto.
+           Una factura donde la multiplicación no da es una factura que
+           el cliente reclama. */
+        const divisible = cupo > 0 && cobro.subtotal % cupo === 0;
+
         comprobante = facturas.emitirPorPago(pago, {
           concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
+          detalle: {
+            cantidad: divisible ? cupo : 1,
+            precio_unitario: divisible ? cobro.subtotal / cupo : cobro.subtotal,
+            periodo: [membresia.inicio, membresia.fin]
+              .map((f) => String(f).slice(0, 10).split('-').reverse().join('/')).join(' al '),
+          },
           cliente,
         });
         /* El envío va aparte y sin esperarlo: emitir y notificar fallan
@@ -1953,6 +2023,7 @@ const RUTAS = [
   ['POST', /^\/api\/legales\/aceptar$/,     aceptarLegales],
   ['GET',  /^\/api\/facturas$/,             misFacturas],
   ['GET',  /^\/api\/facturas\/([\w-]+)\.pdf$/, descargarFactura],
+  ['GET',  /^\/api\/facturas\/([\w-]+)\.html$/, verFactura],
   ['POST', /^\/api\/dealer\/registro$/,     registrarDealer],
   ['GET',  /^\/api\/sucursales$/,           listarSucursales],
   ['POST', /^\/api\/sucursales$/,           crearSucursal],
@@ -2014,6 +2085,7 @@ const RUTAS = [
   ['GET',  /^\/api\/admin\/legales$/,                   verAceptaciones],
   ['GET',  /^\/api\/admin\/facturas$/,                  listarFacturas],
   ['GET',  /^\/api\/admin\/facturas\.csv$/,             exportarFacturas],
+  ['POST', /^\/api\/admin\/secuencias$/,                cargarSecuencia],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/reenviar$/, reenviarFactura],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/anular$/,   anularFactura],
   ['GET',  /^\/api\/admin\/solicitudes$/,               listarSolicitudes],

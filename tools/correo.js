@@ -92,7 +92,7 @@ const EMPRESA = {
   rnc: process.env.MERCA_RNC || '1-31-27975-9',
   // Solo para documentos fiscales. NO usar en correos ni en el sitio.
   domicilioFiscal: process.env.MERCA_DOMICILIO_FISCAL
-    || 'C/ Ramón Santana No. 4, Gazcue, Distrito Nacional, República Dominicana',
+    || 'Av. Luperón No. 28, Residencial El Progreso, Santo Domingo, República Dominicana',
 };
 
 // URL pública, para los enlaces que van dentro de los correos.

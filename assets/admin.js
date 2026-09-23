@@ -819,6 +819,25 @@ function pintarFacturasAdmin(datos) {
       <td>${s.usa_sitio ? 'la usa el sitio' : 'solo contabilidad'}</td>
     </tr>`).join('');
 
+  /* Los recibos que salieron sin NCF, a la espera del rango que
+     faltaba. Va debajo del listado y no en un aviso: no es una alarma,
+     es trabajo pendiente que se despacha cuando llegue la secuencia. */
+  const pendientes = datos.pendientes || [];
+  const caja = $('#cajaPendientes');
+  if (caja) {
+    caja.hidden = !pendientes.length;
+    $('#cuentaPendientes').textContent = String(pendientes.length);
+    $('#listaPendientes').innerHTML = pendientes.map((f) => {
+      const cuando = new Date(f.fecha);
+      return `<tr>
+        <td class="num">${cuando.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+        <td class="num">${esc(f.numero)}</td>
+        <td>${esc(f.razon_social || 'Consumidor final')}</td>
+        <td class="num">RD${Number(f.total).toLocaleString('en-US')}</td>
+      </tr>`;
+    }).join('');
+  }
+
   const bajas = datos.bajas || [];
   $('#avisoNcf').innerHTML = bajas.length
     ? `<div class="aviso-legal">
@@ -847,6 +866,36 @@ async function montarFacturasAdmin() {
     MES_FACTURAS = ev.target.value || null;
     cargarFacturasAdmin();
   });
+
+  /* Cargar una secuencia nueva. Es el gesto que pone al sistema a
+     emitir facturas de consumo: al guardarse una B02 activa y marcada
+     para el sitio, los clientes sin RNC dejan de recibir el recibo. */
+  const formSec = $('#formSecuencia');
+  if (formSec) {
+    formSec.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const eco = $('#ecoSecuencia');
+      eco.textContent = 'Cargando…';
+      try {
+        const r = await api('/admin/secuencias', {
+          metodo: 'POST',
+          cuerpo: {
+            tipo: $('#secTipo').value,
+            nombre: $('#secNombre').value,
+            desde: $('#secDesde').value,
+            hasta: $('#secHasta').value,
+            vence: $('#secVence').value || null,
+            usaSitio: $('#secUsaSitio').checked,
+          },
+        });
+        if (!r) throw new Error('No hay conexión con el servidor.');
+        eco.textContent = `${r.secuencia.nueva ? 'Cargada' : 'Actualizada'} ${r.secuencia.tipo}: quedan ${r.secuencia.quedan}.`;
+        formSec.reset();
+        $('#secUsaSitio').checked = true;
+        cargarFacturasAdmin();
+      } catch (e) { eco.textContent = e.message; }
+    });
+  }
 
   $('#listaFacturasAdmin').addEventListener('click', async (ev) => {
     const boton = ev.target.closest('button[data-factura]');

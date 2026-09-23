@@ -601,6 +601,58 @@ const MIGRACIONES = [
        ('ncf-b14', 'B14', 'Regímenes especiales',    'B14', 1,   5,   1,   NULL, 1, 0, '2026-09-18'),
        ('ncf-b15', 'B15', 'Gubernamental',           'B15', 101, 150, 101, NULL, 1, 0, '2026-09-18')`,
   ]],
+
+  /* Lo que la plantilla del comprobante imprime y la tabla todavía no
+     guardaba.
+
+     Hasta ahora el PDF se dibujaba con lo que había en memoria en el
+     momento de emitir —la referencia del cobro, el período contratado—
+     y eso no se volvía a ver nunca. Un comprobante tiene que poder
+     reimprimirse igual dentro de cinco años sin depender de qué pago lo
+     originó, así que lo que sale impreso se guarda con él.
+
+     Todas las columnas son opcionales o tienen valor por defecto: las
+     facturas ya emitidas siguen valiendo tal como están. */
+  ['2026-09-comprobantes-plantilla', [
+    'ALTER TABLE facturas ADD COLUMN ncf_vencimiento TEXT',
+    /* El NCF del comprobante que modifica una nota de crédito. Va
+       aparte de `anula_a`, que es el enlace interno: en el papel la
+       DGII quiere el NCF, no un identificador nuestro. */
+    'ALTER TABLE facturas ADD COLUMN ncf_modificado TEXT',
+    'ALTER TABLE facturas ADD COLUMN telefono TEXT',
+    'ALTER TABLE facturas ADD COLUMN correo TEXT',
+    'ALTER TABLE facturas ADD COLUMN descuento INTEGER NOT NULL DEFAULT 0',
+    /* La tasa se guarda CON el comprobante, no se lee de la
+       configuración al imprimirlo: si el ITBIS cambia, las facturas
+       viejas tienen que seguir mostrando el 18 % con el que se
+       calcularon. */
+    'ALTER TABLE facturas ADD COLUMN itbis_tasa REAL NOT NULL DEFAULT 0.18',
+    'ALTER TABLE facturas ADD COLUMN condicion_pago TEXT',
+    'ALTER TABLE facturas ADD COLUMN metodo_pago TEXT',
+    'ALTER TABLE facturas ADD COLUMN referencia_pago TEXT',
+    'ALTER TABLE facturas ADD COLUMN periodo_servicio TEXT',
+    'ALTER TABLE facturas ADD COLUMN notas TEXT',
+    /* En qué lote mensual salió hacia el contador. NULL = todavía en
+       ninguno, que es como se sabe qué entra en el lote del mes. */
+    'ALTER TABLE facturas ADD COLUMN incluida_en_lote TEXT',
+    'CREATE INDEX IF NOT EXISTS ix_facturas_lote ON facturas (incluida_en_lote)',
+
+    /* El envío mensual al contador.
+     *
+     * `periodo` es UNIQUE: es lo que impide que ejecutar la tarea dos
+     * veces el mismo mes le mande dos correos. Reenviar es una acción
+     * explícita, no el efecto secundario de un reintento. */
+    `CREATE TABLE IF NOT EXISTS lotes_contador (
+       id           TEXT PRIMARY KEY,
+       periodo      TEXT NOT NULL UNIQUE,
+       generado_en  TEXT NOT NULL,
+       cantidad     INTEGER NOT NULL DEFAULT 0,
+       total        INTEGER NOT NULL DEFAULT 0,
+       ruta_zip     TEXT,
+       enviado_en   TEXT,
+       destinatario TEXT
+     )`,
+  ]],
 ];
 
 function migrar() {
@@ -2335,6 +2387,10 @@ function tomarNcf(tipo) {
     if (r.changes === 1) {
       return {
         ncf: `${s.prefijo}${String(s.siguiente).padStart(8, '0')}`,
+        /* La fecha de vencimiento viaja con el número: el comprobante
+           la imprime, y buscarla después obligaría a suponer que la
+           secuencia sigue cargada igual que el día que se emitió. */
+        vence: s.vence || null,
         quedan: s.hasta - s.siguiente,
       };
     }
@@ -2347,6 +2403,52 @@ function tomarNcf(tipo) {
 const secuenciasNcf = () => abrir().prepare(`
   SELECT *, (hasta - siguiente + 1) AS quedan
     FROM secuencias_ncf ORDER BY usa_sitio DESC, tipo`).all();
+
+/* Cargar un rango autorizado por la DGII.
+ *
+ * Es el gesto que pone el sistema a emitir: en cuanto exista una
+ * secuencia B02 activa y marcada `usa_sitio`, los clientes sin RNC
+ * dejan de recibir el recibo no fiscal y empiezan a recibir su factura
+ * de consumo, sin tocar una línea de código.
+ *
+ * Un rango ya cargado NO se pisa: `siguiente` es cuántos comprobantes
+ * llevan emitidos, y reescribirlo repetiría números ya usados. Lo que
+ * sí se puede corregir es lo que no afecta a la numeración —el
+ * vencimiento, si está activa, si la usa el sitio—. */
+function cargarSecuencia({ tipo, nombre, desde, hasta, vence = null, activa = true, usaSitio = false }) {
+  const d = abrir();
+  const t = String(tipo || '').trim().toUpperCase();
+  const a = Math.trunc(Number(desde));
+  const b = Math.trunc(Number(hasta));
+
+  if (!/^B\d{2}$/.test(t)) throw Object.assign(new Error('El tipo es B seguido de dos dígitos'), { codigo: 400 });
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a < 1 || b < a) {
+    throw Object.assign(new Error('El rango va de un número menor a uno mayor'), { codigo: 400 });
+  }
+  if (vence && !/^\d{4}-\d{2}-\d{2}$/.test(vence)) {
+    throw Object.assign(new Error('El vencimiento va como AAAA-MM-DD'), { codigo: 400 });
+  }
+
+  const yaEsta = d.prepare('SELECT * FROM secuencias_ncf WHERE tipo = ? AND desde = ?').get(t, a);
+  if (yaEsta) {
+    d.prepare(`UPDATE secuencias_ncf SET vence = ?, activa = ?, usa_sitio = ?, nombre = ?
+                WHERE id = ?`)
+      .run(vence, activa ? 1 : 0, usaSitio ? 1 : 0, nombre || yaEsta.nombre, yaEsta.id);
+    return { ...d.prepare('SELECT * FROM secuencias_ncf WHERE id = ?').get(yaEsta.id), nueva: false };
+  }
+
+  /* Dos rangos activos del mismo tipo harían que `tomarNcf` eligiera
+     uno cualquiera. El anterior se desactiva al cargar el nuevo. */
+  if (activa) d.prepare('UPDATE secuencias_ncf SET activa = 0 WHERE tipo = ? AND activa = 1').run(t);
+
+  const idSec = id();
+  d.prepare(`INSERT INTO secuencias_ncf
+     (id, tipo, nombre, prefijo, desde, hasta, siguiente, vence, activa, usa_sitio, creada)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(idSec, t, nombre || t, t, a, b, a, vence, activa ? 1 : 0, usaSitio ? 1 : 0, ahora());
+
+  return { ...d.prepare('SELECT * FROM secuencias_ncf WHERE id = ?').get(idSec), nueva: true };
+}
 
 /* El siguiente número interno, correlativo y sin huecos.
  *
@@ -2374,9 +2476,12 @@ function crearFactura(datos) {
   const d = abrir();
   const hecho = d.prepare(`
     INSERT INTO facturas
-      (id, pago_id, organizacion_id, numero, tipo, ncf, razon_social, rnc, direccion,
-       concepto, subtotal, itbis, total, moneda, fecha, ruta_pdf, anula_a, creada)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (id, pago_id, organizacion_id, numero, tipo, ncf, ncf_vencimiento, ncf_modificado,
+       razon_social, rnc, direccion, telefono, correo,
+       concepto, subtotal, descuento, itbis_tasa, itbis, total, moneda,
+       condicion_pago, metodo_pago, referencia_pago, periodo_servicio, notas,
+       fecha, ruta_pdf, anula_a, creada)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const idFactura = id();
   const fecha = datos.fecha || ahora();
@@ -2389,11 +2494,17 @@ function crearFactura(datos) {
     try {
       hecho.run(
         idFactura, datos.pagoId || null, datos.organizacionId || null, numero,
-        datos.tipo, datos.ncf || null,
+        datos.tipo, datos.ncf || null, datos.ncfVencimiento || null, datos.ncfModificado || null,
         datos.razonSocial || null, datos.rnc || null, datos.direccion || null,
+        datos.telefono || null, datos.correo || null,
         datos.concepto || null,
-        Math.round(datos.subtotal), Math.round(datos.itbis), Math.round(datos.total),
-        datos.moneda || 'DOP', fecha, datos.rutaPdf || null, datos.anulaA || null, ahora(),
+        Math.round(datos.subtotal), Math.round(datos.descuento || 0),
+        datos.itbisTasa != null ? Number(datos.itbisTasa) : 0.18,
+        Math.round(datos.itbis), Math.round(datos.total),
+        datos.moneda || 'DOP',
+        datos.condicionPago || null, datos.metodoPago || null,
+        datos.referenciaPago || null, datos.periodoServicio || null, datos.notas || null,
+        fecha, datos.rutaPdf || null, datos.anulaA || null, ahora(),
       );
       return { id: idFactura, numero };
     } catch (e) {
@@ -2468,7 +2579,7 @@ const marcarAnulada = (idFactura, idNota) => abrir().prepare(
 
 module.exports = {
   registrarAceptacion, aceptacionesDe, historialAceptaciones,
-  tomarNcf, secuenciasNcf, siguienteNumero, crearFactura, facturaPorId, facturaDePago,
+  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,

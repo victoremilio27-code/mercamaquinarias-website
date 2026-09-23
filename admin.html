@@ -118,6 +118,21 @@
       </div>
       <p class="revision__vacio" id="facturasVacio" hidden>No hay comprobantes en ese periodo.</p>
 
+      <!-- Comprobantes que salieron sin NCF porque no había secuencia.
+           No son un error perdido: se listan para emitir sus facturas
+           en cuanto la DGII apruebe el rango que faltaba. -->
+      <details class="secuencias" id="cajaPendientes" hidden>
+        <summary>Pendientes de regularizar (<span id="cuentaPendientes">0</span>)</summary>
+        <p class="revision__vacio">Se emitieron como recibo no fiscal porque no había secuencia
+          disponible. Al cargar la secuencia que falta, se les puede emitir la factura.</p>
+        <div class="tabla-envoltura">
+          <table class="tabla-legales">
+            <thead><tr><th>Fecha</th><th>Número</th><th>Cliente</th><th>Total</th></tr></thead>
+            <tbody id="listaPendientes"></tbody>
+          </table>
+        </div>
+      </details>
+
       <details class="secuencias">
         <summary>Secuencias de NCF autorizadas</summary>
         <div class="tabla-envoltura">
@@ -126,6 +141,36 @@
             <tbody id="listaSecuencias"></tbody>
           </table>
         </div>
+
+        <!-- Cargar un rango nuevo sin tocar código ni la base.
+             Es lo único que queda pendiente para emitir facturas de
+             consumo: cuando llegue la B02, se escribe aquí. -->
+        <form class="form-secuencia" id="formSecuencia">
+          <h3 class="panel__titulo panel__titulo--chico">Cargar una secuencia</h3>
+          <div class="form-secuencia__campos">
+            <label class="campo-v campo-v--chico"><span>Tipo</span>
+              <input id="secTipo" placeholder="B02" maxlength="3" required>
+            </label>
+            <label class="campo-v campo-v--chico"><span>Nombre</span>
+              <input id="secNombre" placeholder="Consumidor final">
+            </label>
+            <label class="campo-v campo-v--chico"><span>Desde</span>
+              <input id="secDesde" type="number" min="1" placeholder="1" required>
+            </label>
+            <label class="campo-v campo-v--chico"><span>Hasta</span>
+              <input id="secHasta" type="number" min="1" placeholder="50" required>
+            </label>
+            <label class="campo-v campo-v--chico"><span>Vence</span>
+              <input id="secVence" type="date">
+            </label>
+            <label class="campo-v campo-v--chico campo-v--casilla">
+              <input id="secUsaSitio" type="checkbox" checked>
+              <span>La usa el sitio al cobrar</span>
+            </label>
+          </div>
+          <button class="btn btn--linea btn--chico" type="submit">Cargar secuencia</button>
+          <p class="form-secuencia__eco" id="ecoSecuencia" role="status"></p>
+        </form>
       </details>
     </section>
 

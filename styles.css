@@ -2429,6 +2429,20 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .acciones-fila { display: flex; flex-wrap: wrap; gap: 5px; }
 .secuencias { margin-top: 16px; font-size: 12.5px; }
 .secuencias summary { cursor: pointer; font-weight: 600; color: var(--azul); padding: 6px 0; }
+
+/* Cargar un rango de NCF. Los campos van en rejilla que se reparte
+   sola: son seis cortos y uno debajo de otro haría un formulario de
+   pantalla entera para escribir dos números. */
+.form-secuencia { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--linea-suave); }
+.form-secuencia__campos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.form-secuencia__eco { margin: 8px 0 0; color: var(--gris-acero, #60717D); min-height: 1.2em; }
+.campo-v--casilla { flex-direction: row; align-items: center; gap: 8px; }
+.campo-v--casilla input { width: auto; }
 .campo-v--chico { max-width: 190px; }
 
 /* Bloque del comprobante fiscal, en el paso de pago. */
