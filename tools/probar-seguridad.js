@@ -414,7 +414,44 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     `con fotos subidas al sitio si se publica (fue ${bienPublicado.codigo}: `
     + `${(bienPublicado.datos || {}).error || 'ok'})`);
 
-  /* ── 7 · las secuencias que se vigilan ───────────────────── */
+  /* ── 7 · un comprobante sin papel se repone ──────────────── */
+  console.log('\nEl PDF de un comprobante');
+
+  const emitida = db.facturas({ limite: 1 })[0];
+
+  /* `ruta_pdf` se guarda relativa a la carpeta de comprobantes: hay que
+     resolverla para preguntarle al disco. */
+  const pdfDe = (f) => (f && f.ruta_pdf ? facturas.rutaAbsoluta(f.ruta_pdf) : '');
+
+  comprobar(!!(emitida && fs.existsSync(pdfDe(emitida))),
+    'el comprobante emitido tiene su PDF en disco');
+
+  /* Lo que pasaba: si dibujar fallaba, quedaba una factura con NCF y
+     sin papel, el correo salía SIN adjunto diciendo «adjuntamos su
+     comprobante», y al marcarse como enviada ninguna tarea volvía a
+     mirarla. El documento existía en la base y en ningún otro sitio. */
+  fs.rmSync(pdfDe(emitida), { force: true });
+  comprobar(!fs.existsSync(pdfDe(emitida)), 'se borra el PDF a proposito para la prueba');
+
+  const reparadas = facturas.regenerarPdfsPendientes({ limite: 50 });
+  comprobar(reparadas.hechos.includes(emitida.numero),
+    `el comprobante sin papel se vuelve a dibujar (${reparadas.hechos.join(', ') || 'ninguno'})`);
+
+  const repuesta = db.facturaPorId(emitida.id);
+  comprobar(!!(repuesta.ruta_pdf && fs.existsSync(pdfDe(repuesta))),
+    'y el archivo vuelve a estar en disco');
+
+  /* Y que NO haya tocado los demás: reponer lo que falta es una cosa,
+     redibujar comprobantes ya entregados es otra que el propio archivo
+     prohíbe en su cabecera. */
+  const segundaPasada = facturas.regenerarPdfsPendientes({ limite: 50 });
+  comprobar(segundaPasada.hechos.length === 0,
+    'y en una segunda pasada no redibuja nada, porque ya no falta nada');
+  comprobar(repuesta.numero === emitida.numero && repuesta.total === emitida.total
+    && repuesta.ncf === emitida.ncf,
+    'con el mismo numero, el mismo NCF y el mismo importe: se repone, no se reescribe');
+
+  /* ── 8 · las secuencias que se vigilan ───────────────────── */
   console.log('\nEl aviso de comprobantes fiscales');
   const vigiladas = db.secuenciasNcf()
     .filter((s) => s.activa && s.usa_sitio)

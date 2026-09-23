@@ -108,6 +108,17 @@ async function avisarVencidos() {
 const MAXIMO_REINTENTOS = 10;
 
 async function reenviarComprobantes() {
+  /* Primero el papel que falte. Un comprobante emitido hay que poder
+     recuperarlo, y si dibujarlo falló en su momento —o el archivo se
+     perdió— la fila existe y el PDF no. Se repone antes de intentar
+     mandar nada: mandar el correo sin adjunto y darlo por enviado
+     sacaba el comprobante de la lista de pendientes para siempre. */
+  if (!SECO) {
+    const { hechos, fallos } = facturas.regenerarPdfsPendientes({ limite: 200 });
+    if (hechos.length) anotar('comprobantes', `${hechos.length} PDF repuesto(s): ${hechos.join(', ')}`);
+    fallos.forEach((f) => console.error(`  ✗ no se pudo redibujar ${f}`));
+  }
+
   const pendientes = db.facturas({ pendientes: true, limite: 100 })
     .filter((f) => f.intentos_envio < MAXIMO_REINTENTOS);
 

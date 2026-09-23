@@ -25,8 +25,15 @@
  * a salir la factura. No hay que tocar nada más.
  *
  * UN COMPROBANTE EMITIDO NO SE MODIFICA NI SE BORRA. Si hay que anular,
- * se emite una nota de crédito. El PDF tampoco se regenera: el archivo
- * que se le mandó al cliente y el que queda guardado son el mismo.
+ * se emite una nota de crédito.
+ *
+ * Su PDF tampoco se reescribe: el archivo que se le mandó al cliente y
+ * el que queda guardado son el mismo. La única excepción es el papel
+ * que NUNCA llegó a existir —porque dibujarlo falló, o porque el
+ * archivo se perdió— y ahí `regenerarPdfsPendientes` lo dibuja de
+ * nuevo a partir de la fila, que es la que manda. No cambia un número
+ * ni un importe: repone un documento que faltaba. Dejarlo sin reponer
+ * sería peor, porque un comprobante emitido hay que poder recuperarlo.
  */
 
 const fs = require('fs');
@@ -538,12 +545,57 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
     fecha: pago.creado,
   });
 
-  const fila = db.facturaPorId(idFactura);
-  const bytes = dibujar({ ...fila, ...detalle }, { emisor });
-  const ruta = guardarPdf(numero, fila.fecha, bytes);
-  db.anotarPdf(idFactura, ruta);
+  /* El PDF va APARTE y a prueba de fallos.
+   *
+   * Dibujar un documento puede fallar por cosas que no tienen nada que
+   * ver con el cobro: una razón social con un carácter raro, el disco
+   * lleno. Si eso tumbara la emisión, el NCF ya consumido se quedaría
+   * sin factura y la DGII vería un salto en la secuencia que hay que
+   * justificar por escrito. Así que la fila se emite igual y el papel
+   * se regenera después: `regenerarPdfsPendientes` lo recoge.
+   *
+   * Lo que NO puede pasar es que el correo salga sin adjunto y la
+   * factura quede marcada como enviada, porque entonces ninguna tarea
+   * vuelve a mirarla nunca. De eso se ocupa `enviar()`. */
+  try {
+    const fila = db.facturaPorId(idFactura);
+    const bytes = dibujar({ ...fila, ...detalle }, { emisor });
+    const ruta = guardarPdf(numero, fila.fecha, bytes);
+    db.anotarPdf(idFactura, ruta);
+  } catch (e) {
+    console.error(`facturas: ${numero} quedó emitida sin PDF · ${e.message}`);
+  }
 
   return { ...db.facturaPorId(idFactura), agotada: decision.agotada };
+}
+
+/* Vuelve a dibujar los comprobantes que quedaron sin papel.
+ *
+ * Los busca por `ruta_pdf` nulo o por archivo que ya no está en disco.
+ * Un comprobante emitido hay que poder recuperarlo, y el número y los
+ * importes no se tocan: se redibuja exactamente lo que dice la fila. */
+function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {}) {
+  const hechos = [];
+  const fallos = [];
+
+  for (const f of db.facturas({ limite })) {
+    /* `ruta_pdf` se guarda RELATIVA a la carpeta de comprobantes, así
+       que hay que resolverla antes de preguntar si el archivo está.
+       Comprobarla tal cual daba siempre que no, y esta función pasaba
+       de reponer lo que falta a redibujarlo todo: exactamente lo que la
+       cabecera de este archivo prohíbe. */
+    const falta = !f.ruta_pdf || !fs.existsSync(rutaAbsoluta(f.ruta_pdf));
+    if (!falta) continue;
+    try {
+      const bytes = dibujar(f, { emisor });
+      db.anotarPdf(f.id, guardarPdf(f.numero, f.fecha, bytes));
+      hechos.push(f.numero);
+    } catch (e) {
+      fallos.push(`${f.numero}: ${e.message}`);
+    }
+  }
+
+  return { hechos, fallos };
 }
 
 /* Nota de crédito que anula un comprobante. El original no se toca:
@@ -620,10 +672,28 @@ function emitirNotaCredito(original, { motivo, emisor = correo.EMPRESA } = {}) {
  * igual: es la que hace de archivo. Por eso NO van como un solo mensaje
  * con copia, y por eso el fallo de uno no corta el otro. */
 async function enviar(factura, { correoCliente } = {}) {
-  const pdfBytes = factura.ruta_pdf ? leerPdf(factura.ruta_pdf) : null;
-  const adjunto = pdfBytes
-    ? [{ content: pdfBytes.toString('base64'), name: `${factura.numero}.pdf` }]
-    : [];
+  let pdfBytes = factura.ruta_pdf ? leerPdf(factura.ruta_pdf) : null;
+
+  /* Si falta el papel, se intenta dibujar aquí mismo antes de mandar
+     nada. Enviar el comprobante sin adjunto y marcarlo como enviado lo
+     saca de la lista de pendientes para siempre: el cliente recibe un
+     correo que dice «adjuntamos su comprobante» y no adjunta nada, y
+     ninguna tarea vuelve a mirarlo. Vale más no mandarlo todavía. */
+  if (!pdfBytes) {
+    const { hechos } = regenerarPdfsPendientes({ limite: 1000 });
+    if (hechos.includes(factura.numero)) {
+      const refrescada = db.facturaPorId(factura.id);
+      pdfBytes = refrescada && refrescada.ruta_pdf ? leerPdf(refrescada.ruta_pdf) : null;
+    }
+  }
+
+  if (!pdfBytes) {
+    db.sumarIntentoEnvio(factura.id);
+    console.error(`facturas: ${factura.numero} sigue sin PDF; no se envía para no darlo por entregado`);
+    return db.facturaPorId(factura.id);
+  }
+
+  const adjunto = [{ content: pdfBytes.toString('base64'), name: `${factura.numero}.pdf` }];
 
   const titulo = TITULOS[factura.tipo] || 'Comprobante';
 
@@ -749,6 +819,7 @@ module.exports = {
   CARPETA, TITULOS,
   dibujar, comoHtml, guardarPdf, leerPdf, rutaAbsoluta,
   emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, pendientesDeRegularizar, decidirTipo,
+  regenerarPdfsPendientes,
 };
 
 /* ── Línea de comandos ──────────────────────────────────── */
