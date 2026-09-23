@@ -1072,6 +1072,22 @@ function purgar() {
   d.prepare('DELETE FROM dispositivos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM intentos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM codigos WHERE expira < ?').run(new Date(Date.now() - 86400000).toISOString());
+
+  /* Los eventos crudos, a noventa días.
+   *
+   * El esquema prometía esta purga —«se purga pasados unos meses»— y no
+   * existía en ninguna parte: la tabla crecía sin techo. Guarda una
+   * fila por vista y por pulsación de cada visitante, así que con
+   * tráfico normal son miles al día. Cuando el disco se llena, SQLite
+   * empieza a fallar en cada escritura y dejan de entrar publicaciones
+   * y comprobantes.
+   *
+   * Noventa días son de sobra para lo que la tabla sirve: depurar y
+   * detectar fraude de clics. Los agregados del panel viven en
+   * `metricas_diarias` y no se tocan, así que el anunciante no pierde
+   * ni un dato de su histórico. */
+  const hace90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  d.prepare('DELETE FROM eventos WHERE dia < ?').run(hace90);
 }
 
 /* ── Perfil de dealer ───────────────────────────────────── */
@@ -2632,6 +2648,32 @@ const facturasDe = (idOrg) => abrir().prepare(
   'SELECT * FROM facturas WHERE organizacion_id = ? ORDER BY fecha DESC').all(idOrg);
 
 /* Para administración: por mes y, si se pide, por estado de envío. */
+/* Todas las rutas de imagen y video que alguien está usando.
+ *
+ * Sirve para saber qué archivos del disco ya no hace falta guardar.
+ * Va en una sola función y no repartida por ahí para que añadir un
+ * sitio nuevo donde se guarde una imagen —el logotipo de un dealer, su
+ * banner— sea acordarse de UNA línea, y no descubrir seis meses
+ * después que la recogida de basura borró los logotipos de todos.
+ *
+ * Ante la duda se devuelve de más: borrar un archivo en uso es un
+ * agujero en una ficha publicada; conservar uno de sobra son unos kB. */
+function rutasEnUso() {
+  const d = abrir();
+  const rutas = new Set();
+  const meter = (filas, ...campos) => filas.forEach((f) => campos.forEach((c) => {
+    if (f[c]) rutas.add(String(f[c]));
+  }));
+
+  meter(d.prepare('SELECT url, miniatura FROM anuncio_fotos').all(), 'url', 'miniatura');
+  meter(d.prepare('SELECT url, poster FROM anuncio_videos').all(), 'url', 'poster');
+  meter(d.prepare('SELECT url FROM flota_fotos').all(), 'url');
+  meter(d.prepare("SELECT valor FROM ajustes WHERE clave LIKE '%imagen%'").all(), 'valor');
+  meter(d.prepare('SELECT imagen FROM publicidad').all(), 'imagen');
+
+  return rutas;
+}
+
 /* Los datos fiscales con los que esta organización facturó la última
  * vez, para reutilizarlos en el cobro siguiente.
  *
@@ -2688,7 +2730,7 @@ const marcarAnulada = (idFactura, idNota) => abrir().prepare(
   'UPDATE facturas SET anulado_por = ? WHERE id = ?').run(idNota, idFactura);
 
 module.exports = {
-  registrarAceptacion, aceptacionesDe, historialAceptaciones,
+  registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
   tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,

@@ -24,9 +24,11 @@ const db = require('./db');
 const correo = require('./correo');
 const facturas = require('./facturas');
 
+const RAIZ = path.resolve(__dirname, '..');
+
 const SECO = process.argv.includes('--seco');
 const DIAS_AVISO = Number(process.env.MERCA_DIAS_AVISO) || 5;
-const RESPALDOS = process.env.MERCA_RESPALDOS || path.resolve(__dirname, '..', '.tmp', 'respaldos');
+const RESPALDOS = process.env.MERCA_RESPALDOS || path.join(RAIZ, '.tmp', 'respaldos');
 const RESPALDOS_MAX = Number(process.env.MERCA_RESPALDOS_MAX) || 14;
 
 const registro = [];
@@ -247,6 +249,69 @@ function optimizar() {
 
 /* ── Orquestación ───────────────────────────────────────── */
 
+/* Archivos que se subieron y no acabaron en ninguna parte.
+ *
+ * El asistente de publicación sube cada foto en cuanto se elige, no al
+ * enviar el formulario. Quien lo empieza tres veces y se rinde deja
+ * veinticuatro archivos en el disco para siempre: nada los borraba,
+ * porque el único borrado que existe es el de eliminar un anuncio. Con
+ * los topes vigentes, una cuenta legítima puede dejar casi doscientos
+ * megas de video huérfano al día sin saltarse ninguna regla.
+ *
+ * LAS 48 HORAS NO SON DECORATIVAS. Entre que se sube una foto y que se
+ * envía el anuncio puede pasar un rato largo —el asistente guarda
+ * borrador—, así que borrar lo reciente destruiría el trabajo de
+ * alguien que está a mitad. Dos días es de sobra. */
+const GRACIA_HORAS = 48;
+
+/* Tope por ejecución. Esta es la única tarea que BORRA archivos del
+   cliente, y el borrado no se deshace. Si un día alguien cambia el
+   formato de las rutas y `rutasEnUso` deja de reconocer las suyas, esta
+   línea convierte una catástrofe en un aviso raro en el registro: se
+   borran doscientos, se nota, y el resto sigue ahí. Lo que sobre se
+   recoge mañana. */
+const MAXIMO_POR_EJECUCION = 200;
+
+function recogerHuerfanos() {
+  const carpetas = [
+    [process.env.MERCA_FOTOS || path.join(RAIZ, '.tmp', 'fotos'), '/fotos'],
+    [process.env.MERCA_VIDEOS || path.join(RAIZ, '.tmp', 'videos'), '/videos'],
+  ];
+
+  const enUso = db.rutasEnUso();
+  const limite = Date.now() - GRACIA_HORAS * 3600 * 1000;
+  let borrados = 0;
+  let tope = false;
+  let bytes = 0;
+
+  for (const [carpeta, prefijo] of carpetas) {
+    if (!fs.existsSync(carpeta)) continue;
+
+    /* Las subcarpetas son por mes: /fotos/2026-09/<hex>.jpg */
+    for (const mes of fs.readdirSync(carpeta)) {
+      const dirMes = path.join(carpeta, mes);
+      if (!fs.statSync(dirMes).isDirectory()) continue;
+
+      for (const archivo of fs.readdirSync(dirMes)) {
+        const completa = path.join(dirMes, archivo);
+        const info = fs.statSync(completa);
+        if (!info.isFile() || info.mtimeMs > limite) continue;
+        if (enUso.has(`${prefijo}/${mes}/${archivo}`)) continue;
+        if (borrados >= MAXIMO_POR_EJECUCION) { tope = true; continue; }
+
+        if (!SECO) fs.rmSync(completa, { force: true });
+        borrados++;
+        bytes += info.size;
+      }
+    }
+  }
+
+  const mb = (bytes / 1048576).toFixed(1);
+  if (!borrados) return anotar('huerfanos', 'sin archivos huérfanos que recoger');
+  anotar('huerfanos', `${SECO ? 'borraría' : 'borrados'} ${borrados} archivo(s) sin usar · ${mb} MB`
+    + (tope ? ` · se alcanzó el tope de ${MAXIMO_POR_EJECUCION}, el resto mañana` : ''));
+}
+
 const TAREAS = {
   caducar,
   'por-vencer': avisarPorVencer,
@@ -254,6 +319,7 @@ const TAREAS = {
   comprobantes: reenviarComprobantes,
   ncf: avisarNcf,
   limpiar,
+  huerfanos: recogerHuerfanos,
   respaldo: respaldar,
   optimizar,
 };
