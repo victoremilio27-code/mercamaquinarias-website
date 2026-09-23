@@ -606,11 +606,27 @@ async function enviar(factura, { correoCliente } = {}) {
     : [];
 
   const titulo = TITULOS[factura.tipo] || 'Comprobante';
-  const asunto = `Comprobante ${factura.numero} · MercaMaquinarias`;
+
+  /* El asunto se busca, no se lee.
+   *
+   * Lleva delante una etiqueta fija —[Facturación]— para poder filtrar
+   * el buzón de una vez, y detrás el número interno y la referencia del
+   * cobro, que son los dos códigos por los que alguien busca un
+   * comprobante: el primero lo cita el cliente, el segundo cuadra con
+   * el banco o el procesador.
+   *
+   * La etiqueta NO dice «Factura» a secas a propósito: mientras falte
+   * la secuencia B02, la mitad de estos documentos son recibos no
+   * fiscales, y rotular de factura lo que no lo es es justo el error
+   * que la DGII no perdona. «Facturación» vale para los tres tipos y
+   * se filtra igual. */
+  const referencia = factura.referencia_pago ? ` · ref. ${factura.referencia_pago}` : '';
+  const asunto = `[Facturación] ${titulo} ${factura.numero}${referencia}`;
 
   const resumen = [
     `${titulo} ${factura.numero}`,
     factura.ncf ? `NCF: ${factura.ncf}` : 'Documento sin valor fiscal',
+    factura.referencia_pago ? `Referencia del pago: ${factura.referencia_pago}` : null,
     `Fecha: ${fechaLarga(factura.fecha)}`,
     `Cliente: ${factura.razon_social || 'Consumidor final'}`,
     factura.rnc ? `RNC: ${factura.rnc}` : null,
@@ -646,7 +662,7 @@ async function enviar(factura, { correoCliente } = {}) {
     const r = await correo.enviar({
       para: correo.BUZONES.facturacion,
       responderA: correo.BUZONES.facturacion,
-      asunto: `Comprobante ${factura.numero} · ${factura.razon_social || 'Consumidor final'} · ${pesos(factura.total)}`,
+      asunto: `${asunto} · ${factura.razon_social || 'Consumidor final'} · ${pesos(factura.total)}`,
       texto: resumen,
       adjuntos: adjunto,
     });

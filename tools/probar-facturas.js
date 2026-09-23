@@ -144,6 +144,34 @@ const bajas = facturas.secuenciasBajas();
 ok(bajas.every((s) => s.quedan <= s.umbral),
   `umbral ${bajas.length ? bajas[0].umbral : '—'} · ${bajas.map((s) => `${s.tipo}:${s.quedan}`).join(' ') || 'ninguna'}`);
 
-console.log(`\nPDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
-console.log(fallos ? `\n${fallos} comprobación(es) fallidas` : '\nTodo correcto');
-process.exitCode = fallos ? 1 : 0;
+console.log();
+console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
+
+/* Con el transporte de archivo, `enviar` escribe los correos en disco
+   en vez de mandarlos: así se puede leer el asunto que habría salido. */
+(async () => {
+  await facturas.enviar(db.facturaPorId(f2.id), { correoCliente: 'cliente@ejemplo.do' });
+  const enviada = db.facturaPorId(f2.id);
+  ok(!!enviada.enviada_interna, 'la copia interna queda marcada como enviada');
+
+  const SALTO = /\r?\n/;
+  const bandeja = path.join(__dirname, '..', '.tmp', 'correos');
+  /* El transporte de archivo guarda cada correo como .txt con sus
+     cabeceras arriba: el asunto es la línea que empieza por «Asunto:». */
+  const asuntos = fs.existsSync(bandeja)
+    ? fs.readdirSync(bandeja).filter((f) => f.endsWith('.txt')).sort().slice(-2)
+      .map((f) => fs.readFileSync(path.join(bandeja, f), 'utf8'))
+      .map((c) => (c.split(SALTO).find((x) => x.startsWith('Asunto: ')) || '').slice(8))
+      .filter(Boolean)
+    : [];
+
+  const bueno = asuntos.find((s) => s.startsWith('[Facturación]')
+    && s.includes(enviada.numero) && s.includes(enviada.referencia_pago));
+  ok(!!bueno, bueno || `no salió el asunto esperado; salieron: ${asuntos.join(' | ') || 'ninguno'}`);
+
+  console.log();
+  console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
+  console.log();
+  console.log(fallos ? `${fallos} comprobación(es) fallidas` : 'Todo correcto');
+  process.exitCode = fallos ? 1 : 0;
+})();

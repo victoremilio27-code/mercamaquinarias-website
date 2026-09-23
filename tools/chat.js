@@ -51,9 +51,6 @@ const LARGO_MAXIMO = 1000;
 
 /* ── Datos del negocio ──────────────────────────────────── */
 
-/* PENDIENTE: sigue siendo el número de relleno de todo el sitio.
-   Cambiarlo aquí y en assets/app.js (WHATSAPP). */
-const TELEFONO = '(809) 000-0000';
 /* Los buzones salen de correo.js, que es donde viven todos.
  *
  * Aquí estaban escritos a mano, y al mudar el dominio uno se quedó
@@ -183,7 +180,6 @@ ${tarifas()}
 Solo respondes preguntas sobre MercaMaquinarias y cómo moverse por el sitio. Si la pregunta se sale de eso, o si la información que necesitas no está escrita arriba, NO adivines. Di en una frase que no lo sabes y pasa los dos contactos, tal cual:
 
 Correo: ${CORREO_GENERAL} (dudas generales) o ${CORREO_COTIZAR} (cotizaciones de alquiler e importación)
-Teléfono: ${TELEFONO}
 
 Ejemplos DENTRO de alcance — respóndelos con lo que sabes:
 - "¿Cómo publico una excavadora?" → Explica que primero se compran cupos en Planes y después se publica.
@@ -318,5 +314,5 @@ function limpiarTurnos(bruto) {
 module.exports = {
   conversar, limpiarTurnos, sistema,
   MODELO, TURNOS_MAXIMOS, LARGO_MAXIMO,
-  TELEFONO, CORREO_GENERAL, CORREO_COTIZAR,
+  CORREO_GENERAL, CORREO_COTIZAR,
 };

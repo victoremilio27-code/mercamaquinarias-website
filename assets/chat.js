@@ -20,8 +20,6 @@
 (() => {
   'use strict';
 
-  const TELEFONO = '(809) 000-0000';   // PENDIENTE: número de relleno
-
   /* ayuda@ y no hola@: cuando el asistente se queda corto, la persona
      que escribe necesita soporte, no el buzón general. Hoy los dos
      acaban en la misma bandeja, pero el día que haya alguien atendiendo
@@ -185,15 +183,14 @@
            aquí, porque dejar a la persona con un error en blanco es
            peor que cualquier otra cosa. */
         burbuja('bot', formatear(datos.error
-          || `No pude conectar. Escríbanos a ${CORREO} o llame al ${TELEFONO}.`), 'chat__msg--aviso');
+          || `No pude conectar. Escríbanos a ${CORREO} y le respondemos por ahí.`), 'chat__msg--aviso');
       } else {
         burbuja('bot', formatear(datos.respuesta));
         historial.push({ rol: 'asistente', texto: datos.respuesta });
       }
     } catch {
       puntos.remove();
-      burbuja('bot', formatear(`No pude conectar. Revise su conexión, o escríbanos a ${CORREO} `
-        + `o al ${TELEFONO}.`), 'chat__msg--aviso');
+      burbuja('bot', formatear(`No pude conectar. Revise su conexión, o escríbanos a ${CORREO}.`), 'chat__msg--aviso');
     } finally {
       esperando = false;
       enviar.disabled = false;

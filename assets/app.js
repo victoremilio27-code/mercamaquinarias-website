@@ -72,7 +72,6 @@ if (document.body) inyectarSprite();
    signos, que es como lo quiere wa.me. Está aquí y no repartido por
    las páginas para que cambiarlo sea tocar una línea.
    PENDIENTE: sigue siendo el número de relleno. */
-const WHATSAPP = '18090000000';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -2037,25 +2036,6 @@ function montarCotizaciones() {
       });
       return { valores, detalle };
     };
-
-    /* Enviar por WhatsApp: mismo formulario, mismas validaciones, y el
-       chat se abre con la solicitud ya redactada. */
-    const wa = form.querySelector('[data-whatsapp]');
-    if (wa) wa.addEventListener('click', () => {
-      if (!form.reportValidity()) return;
-      const { valores, detalle } = leer();
-
-      const lineas = [`*Solicitud de ${ROTULO_SERVICIO[servicio] || servicio}* · MercaMaquinarias`, ''];
-      Object.entries(detalle).forEach(([k, v]) => lineas.push(`${k}: ${v}`));
-      lineas.push('', 'Mis datos:');
-      ['Nombre', 'Teléfono', 'Correo', 'Empresa'].forEach((k) => {
-        if (valores[k]) lineas.push(`${k}: ${valores[k]}`);
-      });
-
-      window.open(`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(lineas.join('\n'))}`,
-        '_blank', 'noopener');
-    });
-
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const destino = $('#' + form.dataset.cotizacion);
@@ -2096,8 +2076,8 @@ function montarCotizaciones() {
             <div><dt>Referencia</dt><dd class="num">${esc(r.referencia)}</dd></div>
             ${Object.entries(detalle).map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}
           </dl>
-          <p class="resumen__nota">Guarde la referencia. Si prefiere adelantarlo, escríbanos por
-            <a href="https://wa.me/${WHATSAPP}" rel="noopener">WhatsApp</a> citándola.</p>`;
+          <p class="resumen__nota">Guarde la referencia. Si quiere añadir algo, escríbanos a
+            <a href="mailto:ventas@mercamaquinarias.com">ventas@mercamaquinarias.com</a> citándola.</p>`;
         destino.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (e) {
         fallar(e.message);

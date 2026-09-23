@@ -833,7 +833,7 @@ async function conversarConSoporte(req, res) {
        El motivo técnico queda en el registro del servidor, no en
        pantalla. */
     return fallo(res, 503, 'Ahora mismo no puedo responder. Escríbanos a '
-      + `${chat.CORREO_GENERAL} o llame al ${chat.TELEFONO} y le atendemos.`);
+      + `${chat.CORREO_GENERAL} y le atendemos por ahí.`);
   }
 
   return responder(res, 200, { respuesta: r.texto });
