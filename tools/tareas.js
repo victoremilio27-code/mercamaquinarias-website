@@ -139,7 +139,7 @@ async function avisarNcf() {
      es que el próximo cobro sale sin comprobante fiscal. */
   const critico = bajas.some((s) => s.critica);
 
-  correo.avisarInternamente({
+  await correo.avisarInternamente({
     buzon: 'facturacion',
     asunto: `${critico ? 'URGENTE: se agota la secuencia' : 'Se están acabando los comprobantes fiscales'}`
       + ` · ${bajas.map((s) => s.tipo).join(', ')}`,

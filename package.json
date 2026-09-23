@@ -23,6 +23,7 @@
     "tareas:seco": "node tools/tareas.js --seco",
     "respaldo": "node tools/tareas.js respaldo",
     "correo:probar": "node tools/probar-correo.js",
+    "seguridad:probar": "node tools/probar-seguridad.js",
     "chat:probar": "node tools/prueba-chat.js",
     "facturas:probar": "node tools/probar-facturas.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",

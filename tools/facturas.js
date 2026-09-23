@@ -672,10 +672,17 @@ async function enviar(factura, { correoCliente } = {}) {
   return db.facturaPorId(factura.id);
 }
 
-/* Secuencias que se están acabando. Lo consulta la tarea diaria. */
+/* Secuencias que se están acabando. Lo consulta la tarea diaria.
+ *
+ * Solo las que el sitio emite (`usa_sitio`). Las demás —compras,
+ * gastos menores, regímenes especiales, gubernamental— las consume
+ * el contador por fuera, así que su contador aquí no se mueve: con
+ * cinco números cargados y el umbral en cinco, avisarían todos los
+ * días para siempre. El día que se agote la B01 de verdad, ese
+ * correo tiene que llegar a una bandeja donde signifique algo. */
 function secuenciasBajas() {
   return db.secuenciasNcf()
-    .filter((s) => s.activa)
+    .filter((s) => s.activa && s.usa_sitio)
     .map((s) => ({ ...s, umbral: AVISAR_BAJO, critica: s.quedan <= AVISAR_CRITICO }))
     .filter((s) => s.quedan <= s.umbral);
 }

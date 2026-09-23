@@ -46,6 +46,12 @@ const LIMITES = {
      normal se resuelve en cinco o seis preguntas, y treinta en un
      cuarto de hora ya no es una persona con una duda. */
   chat:     { tope: 30, minutos: 15 },
+
+  /* La única ruta de escritura que va sin sesión. El tope es alto a
+     propósito —quien recorre el catálogo genera una vista por ficha—
+     pero existe: sin él, un guion infla las métricas de cualquier
+     anuncio y llena la tabla de eventos en una tarde. */
+  eventos:  { tope: 300, minutos: 15 },
 };
 
 /* ── Utilidades de transporte ───────────────────────────── */
@@ -111,11 +117,26 @@ const cookieSesion = (testigo, dias = 30) =>
 const cookieEquipo = (testigo, dias = 60) =>
   `${COOKIE_EQUIPO}=${testigo}; Path=/; HttpOnly; SameSite=Lax${SEGURA}; Max-Age=${dias * 24 * 3600}`;
 
-/* Quién pide, para los límites por origen. Detrás de un proxy el
-   cliente real va en X-Forwarded-For; se toma el primero. */
-const origen = (req) =>
-  String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-  || req.socket.remoteAddress || 'desconocido';
+/* Quién pide, para los límites por origen.
+
+   Delante del servidor hay dos intermediarios: Cloudflare y nginx.
+   `CF-Connecting-IP` la escribe Cloudflare con la IP real del
+   visitante y la sustituye siempre, así que el cliente no puede
+   falsificarla mientras nadie llegue al VPS saltándose el proxy.
+
+   De X-Forwarded-For se toma el ÚLTIMO elemento, nunca el primero.
+   Esa cabecera se acumula por la izquierda: el primer valor es el
+   que puso quien llama, de modo que bastaba con inventarse uno
+   distinto en cada petición para anular TODOS los topes del sitio
+   —contraseñas, altas de cuenta, códigos y el asistente, que cuesta
+   dinero—. El último es el que añadió el proxy de casa. */
+const origen = (req) => {
+  const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+  if (cf) return cf;
+  const cadena = String(req.headers['x-forwarded-for'] || '')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+  return cadena[cadena.length - 1] || req.socket.remoteAddress || 'desconocido';
+};
 
 const equipoDescrito = (req) => String(req.headers['user-agent'] || '').slice(0, 200);
 
@@ -1279,7 +1300,10 @@ const anularFactura = conAdmin(async (req, res, ctx, idFactura) => {
   if (f.pago_id) db.marcarPagoDevuelto(f.pago_id);
 
   const dueno = f.organizacion_id && db.propietarioDe(f.organizacion_id);
-  facturas.enviar(nota, { correoCliente: dueno && dueno.correo });
+  /* Sin esperarla, pero con catch: es una promesa suelta, y una que
+     se rechace sin manejador tumba el proceso. */
+  facturas.enviar(nota, { correoCliente: dueno && dueno.correo })
+    .catch((e) => console.error(`facturas: no se pudo enviar la nota ${nota.numero} · ${e.message}`));
 
   return responder(res, 201, { nota, original: db.facturaPorId(idFactura) });
 });
@@ -1554,7 +1578,9 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
            por motivos distintos, y una caída del proveedor de correo no
            puede dejar sin comprobante un pago que ya entró. Lo que no
            salga lo reintenta la tarea diaria. */
-        facturas.enviar(comprobante, { correoCliente: ctx.usuario.correo });
+        facturas.enviar(comprobante, { correoCliente: ctx.usuario.correo })
+          .catch((e) => console.error(
+            `facturas: no se pudo enviar el comprobante ${comprobante.numero} · ${e.message}`));
       } catch (e) {
         // Que no se pueda emitir NO revierte el cobro: el pago existe y
         // el comprobante se puede emitir después desde administración.
@@ -1971,9 +1997,23 @@ const estadisticas = (req, res) => {
   return responder(res, 200, db.estadisticas());
 };
 
+/* Campos que solo le importan al dueño. `precio_minimo` es el serio:
+   el esquema lo marca como privado porque es el suelo por debajo del
+   cual el vendedor no piensa bajar, y la ficha lo estaba entregando a
+   cualquiera que abriera la consola del navegador. En una plataforma
+   cuya modalidad de ofertas existe para negociar, publicarlo deja a
+   todos los anunciantes sin posición. Los otros cuatro no filtran
+   nada grave, pero tampoco pintan nada en una ficha pública. */
+const PRIVADOS_DEL_ANUNCIO = ['precio_minimo', 'usuario_id', 'suscripcion_id',
+  'aviso_por_vencer', 'aviso_vencido'];
+
 function verAnuncio(req, res, ctx, idAnuncio) {
   const a = db.anuncio(idAnuncio);
   if (!a) return fallo(res, 404, 'Ese anuncio no existe');
+  /* `ctx` es null cuando no hay sesión, que es el caso normal aquí:
+     esta ruta la llama cualquier visitante del catálogo. */
+  const esSuyo = !!ctx && !!ctx.organizacion && a.organizacion_id === ctx.organizacion.id;
+  if (!esSuyo) PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
   return responder(res, 200, { anuncio: a });
 }
 
@@ -1981,19 +2021,29 @@ function verAnuncio(req, res, ctx, idAnuncio) {
    cualquier visitante del catálogo. */
 async function evento(req, res, ctx) {
   const c = await leerCuerpo(req);
-  const ip = req.socket.remoteAddress || '';
+
+  /* Con origen() y no con socket.remoteAddress: detrás del proxy ese
+     valor es siempre 127.0.0.1, así que la huella del visitante
+     colapsaba y cincuenta personas distintas contaban como una. */
+  const ip = origen(req);
+  if (!db.permitir(`evento:${ip}`, LIMITES.eventos.tope, LIMITES.eventos.minutos)) {
+    return fallo(res, 429, 'Demasiadas peticiones desde esta conexión');
+  }
+
   const agente = req.headers['user-agent'] || '';
   const tipo = String(c.tipo || '');
   const idAnuncio = String(c.anuncio || '');
-  const ok = db.anotarEvento(idAnuncio, tipo, db.huella(ip, agente));
+  const resultado = db.anotarEvento(idAnuncio, tipo, db.huella(ip, agente));
+  if (resultado === 'invalido') return fallo(res, 400, 'Evento no reconocido');
 
   /* Un contacto es la señal de que el anuncio funciona, y la razón
-     principal por la que alguien renueva. `anotarEvento` devuelve
-     false cuando ya se contó a ese visitante hoy, así que esto no
-     manda un correo por cada pulsación: uno por persona y día.
+     principal por la que alguien renueva. Solo avisa el primero de
+     cada persona y día: 'repetido' llega en cuanto alguien vuelve a
+     pulsar, y sin esa distinción trescientas pulsaciones eran
+     trescientos correos y la cuota del proveedor agotada.
 
      Las vistas no avisan; serían decenas de correos diarios. */
-  if (ok && (tipo === 'telefono' || tipo === 'whatsapp')) {
+  if (resultado === 'contado' && (tipo === 'telefono' || tipo === 'whatsapp')) {
     const dueno = db.duenoDeAnuncio(idAnuncio);
     if (dueno) {
       correo.enviarContactoRecibido({
@@ -2006,7 +2056,10 @@ async function evento(req, res, ctx) {
     }
   }
 
-  return responder(res, ok ? 202 : 400, { ok });
+  /* Repetido no es un error: la visita es legítima y el evento se
+     guardó. Responder 400 llenaba la consola del navegador de
+     errores rojos en cada recarga de una ficha. */
+  return responder(res, 202, { ok: true, contado: resultado === 'contado' });
 }
 
 /* ── Enrutador ──────────────────────────────────────────── */

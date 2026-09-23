@@ -223,6 +223,35 @@ if (args.api) {
   }
 }
 
+/* pipe() deja los errores del origen sin escuchar, y un ReadStream
+   que emite «error» sin manejador es una excepción no capturada que
+   mata el proceso. Aquí se corta la respuesta y se sigue viviendo. */
+function enviarArchivo(flujo, res, archivo) {
+  flujo.on('error', (e) => {
+    console.error(`estáticos: no se pudo leer ${archivo} · ${e.message}`);
+    res.destroy();
+  });
+  flujo.pipe(res);
+}
+
+/* Última red del proceso. Node mata el proceso ante una promesa
+   rechazada sin manejador, y hasta ahora eso no dejaba ni una traza
+   útil más allá de lo que recogiera systemd. Se registra y se sigue:
+   tumbar el sitio entero por un correo que no salió es peor que el
+   correo que no salió. */
+process.on('unhandledRejection', (razon) => {
+  console.error('promesa rechazada sin manejador:', (razon && razon.stack) || razon);
+});
+
+/* La excepción no capturada sí deja el proceso en estado dudoso, así
+   que aquí se registra y se sale con código de error para que systemd
+   reinicie limpio. La diferencia con no tener el manejador es que
+   queda escrito QUÉ pasó. */
+process.on('uncaughtException', (e) => {
+  console.error('excepción no capturada:', e && e.stack);
+  process.exit(1);
+});
+
 const servidor = http.createServer((req, res) => {
   /* Las cabeceras de seguridad se fijan antes de mirar siquiera qué se
      pide, de modo que las lleven también el 400, el 403 y el 404. Con
@@ -318,7 +347,7 @@ const servidor = http.createServer((req, res) => {
       if (!pedido) {
         res.writeHead(200, { ...comunes, 'Content-Length': total });
         if (req.method === 'HEAD') { res.end(); return; }
-        fs.createReadStream(archivo).pipe(res);
+        enviarArchivo(fs.createReadStream(archivo), res, archivo);
         return;
       }
 
@@ -341,7 +370,7 @@ const servidor = http.createServer((req, res) => {
         'Content-Length': hasta - desde + 1,
       });
       if (req.method === 'HEAD') { res.end(); return; }
-      fs.createReadStream(archivo, { start: desde, end: hasta }).pipe(res);
+      enviarArchivo(fs.createReadStream(archivo, { start: desde, end: hasta }), res, archivo);
     });
     return;
   }

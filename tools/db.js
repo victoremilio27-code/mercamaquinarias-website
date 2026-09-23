@@ -25,6 +25,11 @@ function abrir() {
   if (db) return db;
   fs.mkdirSync(CARPETA, { recursive: true });
   db = new DatabaseSync(ARCHIVO);
+  /* El sitio y las tareas de mantenimiento escriben la misma base.
+     Sin esto, una escritura que coincida con el respaldo de las 5:00
+     devuelve SQLITE_BUSY al instante y el visitante ve un 500. Con
+     cinco segundos de espera, la inmensa mayoría se resuelve sola. */
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec(fs.readFileSync(path.join(CARPETA, 'schema.sql'), 'utf8'));
   migrar();
   return db;
@@ -2241,13 +2246,16 @@ const COLUMNA_EVENTO = {
    El evento crudo sí se guarda siempre: sirve para auditar y para
    recalcular el agregado si hiciera falta.
 
-   El UPSERT evita leer antes de escribir y aguanta escrituras
-   concurrentes sin condición de carrera. */
+/* Devuelve 'invalido', 'contado' o 'repetido'. Son tres cosas
+   distintas y quien llama necesita separarlas: solo la primera es
+   un error del cliente, y solo la segunda justifica avisar al
+   dueño. Con un booleano, arreglar el repetido convertía una visita
+   normal en un 400. */
 function anotarEvento(idAnuncio, tipo, visitante) {
   const columna = COLUMNA_EVENTO[tipo];
-  if (!columna) return false;
+  if (!columna) return 'invalido';
   const d = abrir();
-  if (!d.prepare('SELECT 1 FROM anuncios WHERE id = ?').get(idAnuncio)) return false;
+  if (!d.prepare('SELECT 1 FROM anuncios WHERE id = ?').get(idAnuncio)) return 'invalido';
 
   const dia = hoy();
 
@@ -2258,14 +2266,17 @@ function anotarEvento(idAnuncio, tipo, visitante) {
   d.prepare('INSERT INTO eventos (anuncio_id, tipo, dia, visitante, creado) VALUES (?, ?, ?, ?, ?)')
     .run(idAnuncio, tipo, dia, visitante || null, ahora());
 
-  if (repetido) return true;
+  /* El evento crudo queda guardado arriba pase lo que pase: es lo
+     que permite detectar el fraude de clics. Lo que no se repite es
+     ni el agregado ni el aviso al dueño. */
+  if (repetido) return 'repetido';
 
   d.prepare(`INSERT INTO metricas_diarias (anuncio_id, dia, ${columna})
              VALUES (?, ?, 1)
              ON CONFLICT (anuncio_id, dia) DO UPDATE SET ${columna} = ${columna} + 1`)
     .run(idAnuncio, dia);
 
-  return true;
+  return 'contado';
 }
 
 /* Totales de la organización y serie de los últimos días, para el
