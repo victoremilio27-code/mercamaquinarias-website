@@ -978,7 +978,7 @@ async function montarDetalle() {
 
         ${fichaTecnicaHTML(e)}
 
-        ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> Identidad y titularidad del equipo comprobadas por MercaMaquinarias.</p>` : ''}
+        ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> MercaMaquinarias cotejó la existencia registral del negocio y sus datos de contacto. No certifica la calidad del equipo ni garantiza la operación.</p>` : ''}
 
         <!-- Espacio D del tarifario. Va entre los datos del equipo y el
              contacto del vendedor: en el teléfono la columna se apila y
@@ -992,12 +992,11 @@ async function montarDetalle() {
           ? `Publicado por <a href="dealer.html?d=${encodeURIComponent(e.dealerSlug)}">${esc(e.dealer)}</a>`
           : 'Publicado por un anunciante particular.'}</p>
 
-        <p class="etiqueta etiqueta--bloque">Servicios de MercaMaquinarias</p>
-        ${e.precio != null ? `<a class="btn btn--linea btn--bloque" href="financiamiento.html?monto=${e.precio}">Calcular el financiamiento</a>` : ''}
-        <a class="btn btn--linea btn--bloque" href="transporte.html?equipo=${encodeURIComponent(e.id)}">Cotizar el traslado</a>
+        ${e.precio != null ? `<p class="etiqueta etiqueta--bloque">Servicios de MercaMaquinarias</p>
+        <a class="btn btn--linea btn--bloque" href="financiamiento.html?monto=${e.precio}">Calcular el financiamiento</a>` : ''}
 
-        <p class="detalle__aviso">Verifique el equipo y su documentación antes de pagar.
-          MercaMaquinarias publica el anuncio pero no interviene en la transacción ni retiene fondos.
+        <p class="detalle__aviso">MercaMaquinarias publica este anuncio pero no interviene en la transacción
+          ni retiene fondos. Verifique el equipo y su documentación antes de pagar.
           <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a>.</p>
       </aside>
     </div>`;
@@ -2215,11 +2214,6 @@ async function montarSaludoUsuario() {
 }
 
 /* ── Arranque ───────────────────────────────────────────── */
-
-/* Transporte está en pausa: quien llegue por un enlace viejo va a la
-   portada. Para reactivarlo, borrar esta línea y el bloque
-   «Transporte: servicio pausado» de styles.css. */
-if (/\/transporte\.html$/i.test(location.pathname)) location.replace('index.html');
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Primero lo que no depende del catálogo, para que la página sea

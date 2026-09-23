@@ -30,7 +30,6 @@ const ESPERADO = {
   'planes.html': ['#nivelesLista', '#tablaPlanes'],
   'financiamiento.html': ['#financiadoras'],
   'alquiler.html': ['#alquilerLista'],
-  'transporte.html': ['#mapaEnvio', '#seguimientoDatos', '#flotaLista'],
   'dealers.html': ['#dealersLista'],
 };
 
