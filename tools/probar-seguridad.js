@@ -414,6 +414,38 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     `con fotos subidas al sitio si se publica (fue ${bienPublicado.codigo}: `
     + `${(bienPublicado.datos || {}).error || 'ok'})`);
 
+  /* ── 6b · la vista previa al compartir ───────────────────── */
+  console.log('\nLa tarjeta que ve quien comparte el enlace');
+
+  const metadatos = require('./meta.js');
+  const idPublicado = (bienPublicado.datos || {}).anuncio
+    && (bienPublicado.datos.anuncio.id || bienPublicado.datos.anuncio);
+  const ficha = metadatos.para('/equipo.html', new URLSearchParams({ id: String(idPublicado) }));
+
+  comprobar(!!ficha, 'la ficha compone sus propios metadatos');
+  comprobar(!!ficha && /peterbilt|Peterbilt/.test(ficha.titulo) && /567/.test(ficha.titulo),
+    `el titulo nombra la maquina: ${ficha ? ficha.titulo : '(ninguno)'}`);
+  comprobar(!!ficha && /1,000,000|RD\$/.test(ficha.titulo), 'y lleva el precio');
+  comprobar(!!ficha && ficha.imagen.includes('/fotos/'),
+    `la imagen es la foto del equipo, no el logotipo (${ficha ? ficha.imagen.split('/').pop() : ''})`);
+
+  /* Y que el HTML servido lleve de verdad lo compuesto: una cosa es
+     calcularlo y otra que llegue al rastreador. */
+  const htmlFicha = metadatos.aplicar(
+    fs.readFileSync(path.join(__dirname, '..', 'equipo.html'), 'utf8'), ficha);
+  comprobar(!/<meta property="og:title" content="Equipo">/.test(htmlFicha),
+    'el og:title generico "Equipo" ya no esta');
+  comprobar((htmlFicha.match(/<meta property="og:title"/g) || []).length === 1,
+    'y no se duplico la etiqueta: sigue habiendo una sola');
+  comprobar(/<link rel="canonical"/.test(htmlFicha), 'la pagina gana su canonical');
+  comprobar(/application\/ld\+json/.test(htmlFicha), 'y sus datos estructurados');
+
+  /* Sin parámetro no se toca nada: esa página va por la caché normal. */
+  comprobar(metadatos.para('/equipo.html', new URLSearchParams()) === null,
+    'equipo.html sin id se sirve tal cual, sin pasar por aqui');
+  comprobar(metadatos.para('/index.html', new URLSearchParams({ id: '1' })) === null,
+    'y la portada tampoco entra por este camino');
+
   /* ── 7 · un comprobante sin papel se repone ──────────────── */
   console.log('\nEl PDF de un comprobante');
 

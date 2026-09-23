@@ -810,7 +810,19 @@ const editarPortada = conAdmin(async (req, res) => {
 
    Va sin sesión a propósito: pedir cotización no debe exigir cuenta.
    Lo que sí se exige es con qué responder. */
-const SERVICIOS_SOLICITUD = ['alquiler', 'transporte', 'importacion', 'contacto'];
+/* Los servicios por los que se puede pedir cotización.
+ *
+ * 'transporte' salió de aquí cuando el servicio se retiró. La página ya
+ * decía «suspendido» y el asistente también, pero esta lista lo seguía
+ * aceptando: por la API se podía pedir un servicio que la empresa no
+ * presta, y la solicitud generaba su correo y su número de referencia
+ * como cualquier otra. Alguien se habría quedado esperando una
+ * cotización que no iba a llegar nunca.
+ *
+ * Las solicitudes de transporte YA GUARDADAS no se tocan: son
+ * históricas y el filtro de administración las sigue listando. */
+const SERVICIOS_SOLICITUD = ['alquiler', 'importacion', 'contacto'];
+const SERVICIOS_HISTORICOS = ['transporte'];
 
 async function crearSolicitudServicio(req, res) {
   const c = await leerCuerpo(req);
@@ -904,7 +916,11 @@ const listarSolicitudesServicio = conAdmin((req, res, ctx, consulta) => {
   const q = consulta || new URLSearchParams();
   return responder(res, 200, {
     solicitudes: db.solicitudesServicio({
-      servicio: SERVICIOS_SOLICITUD.includes(q.get('servicio')) ? q.get('servicio') : undefined,
+      /* El filtro del panel sí admite los retirados: las solicitudes de
+         transporte que entraron antes siguen ahí y hay que poder
+         buscarlas. Lo que no se admite es crear una nueva. */
+      servicio: [...SERVICIOS_SOLICITUD, ...SERVICIOS_HISTORICOS].includes(q.get('servicio'))
+        ? q.get('servicio') : undefined,
       estado: ['nueva', 'atendida', 'cerrada'].includes(q.get('estado')) ? q.get('estado') : undefined,
     }),
   });

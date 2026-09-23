@@ -24,7 +24,30 @@ const PAGINAS = [
 ];
 
 const fallos = [];
-const anota = (pagina, tipo, detalle) => fallos.push({ pagina, tipo, detalle });
+
+/* Lo que esta auditoría provoca A PROPÓSITO y no es un fallo.
+ *
+ * Se visita /admin.html sin sesión para comprobar que está cerrado, y
+ * un perfil de dealer inventado para comprobar que avisa. Que esas dos
+ * devuelvan 401 y 404 es justo lo que se estaba comprobando, pero se
+ * anotaban como hallazgos —con sus errores de consola de propina— y
+ * salían cuatro avisos en cada ejecución. Un informe que nunca sale
+ * limpio enseña a no leerlo, y entonces el día que aparece un aviso de
+ * verdad tampoco se lee. */
+const ESPERADOS = [
+  ['Admin (sin sesión)', /\/api\/admin\//],
+  ['Admin (sin sesión)', /401/],
+  ['Perfil de dealer', /no-existe-este-dealer/],
+  ['Perfil de dealer', /404/],
+];
+
+const esEsperado = (pagina, detalle) =>
+  ESPERADOS.some(([p, patron]) => p === pagina && patron.test(String(detalle)));
+
+const anota = (pagina, tipo, detalle) => {
+  if (esEsperado(pagina, detalle)) return;
+  fallos.push({ pagina, tipo, detalle });
+};
 
 async function vigilar(p, pagina) {
   p.removeAllListeners('console');

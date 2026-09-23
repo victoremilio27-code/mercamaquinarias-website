@@ -74,6 +74,18 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
   comprobar(/NO ofrece el servicio de transporte/.test(sis)
     && /NO ofrece el directorio de financiamiento/.test(sis),
     'el prompt dice que transporte y financiamiento no se ofrecen');
+
+  /* Y que no se contradiga a sí mismo, que es peor que callarse.
+     Arriba definía la empresa como «tres servicios propios, uno de
+     ellos un directorio de financiamiento» y abajo negaba los dos
+     retirados: preguntado por «¿qué servicios tienen?», el modelo leía
+     la definición y ofrecía lo que la empresa nunca ha prestado. */
+  comprobar(!/tres servicios propios/.test(sis),
+    'el prompt ya no define la empresa por tres servicios');
+  comprobar(!/directorio de financiamiento: alquiler|importación y un directorio/.test(sis),
+    'ni presenta el financiamiento como algo que se ofrece');
+  comprobar(!/El transporte se cotiza aparte/.test(sis),
+    'ni dice que se cotice un transporte que no se presta');
   comprobar((sis.match(/DENTRO de alcance/g) || []).length === 1
     && (sis.match(/FUERA de alcance/g) || []).length === 1, 'el prompt separa dentro y fuera de alcance');
   comprobar(!/RD\$0\b/.test(sis), 'el plan gratis no se anuncia como «RD$0»');

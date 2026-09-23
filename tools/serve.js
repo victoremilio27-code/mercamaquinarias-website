@@ -201,9 +201,17 @@ const RAIZ = path.resolve(RAIZ_PROYECTO, args.root);
    falla, el sitio sigue sirviéndose como estático en vez de no
    levantar: es un entorno de desarrollo, no conviene un todo o nada. */
 let api = null;
+
+/* Los metadatos de compartir leen de la base, así que cargan con la
+   API y no antes: sin base no hay ficha que describir, y un require
+   arriba tumbaría el servidor estático que este bloque está tratando
+   de salvar. */
+let metadatos = { para: () => null, aplicar: (html) => html };
+
 if (args.api) {
   try {
     api = require('./api');
+    metadatos = require('./meta');
     const db = require('./db');
     db.abrir();
     // Sesiones, códigos y contadores caducados se barren cada hora.
@@ -260,10 +268,26 @@ const servidor = http.createServer((req, res) => {
   Object.entries(cabecerasDe()).forEach(([k, v]) => res.setHeader(k, v));
 
   let ruta;
+  let consulta;
   try {
-    ruta = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    const u = new URL(req.url, 'http://localhost');
+    ruta = decodeURIComponent(u.pathname);
+    consulta = u.searchParams;
   } catch {
     res.writeHead(400).end('URL inválida');
+    return;
+  }
+
+  /* El mapa del sitio se compone en el momento: cambia cada vez que
+     alguien publica o le vence un anuncio, y un archivo estático
+     acabaría mandando al buscador a fichas que ya no existen. */
+  if (api && ruta === '/sitemap.xml') {
+    res.writeHead(200, {
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+    });
+    res.end(metadatos.sitemap());
+    console.log(`200  ${ruta}`);
     return;
   }
 
@@ -405,6 +429,31 @@ const servidor = http.createServer((req, res) => {
     }
 
     const ext = path.extname(archivo).toLowerCase();
+
+    /* La vista previa al compartir.
+     *
+     * Solo entra aquí `equipo.html?id=…` y `dealer.html?d=…`. La misma
+     * página sin parámetro se sirve por el camino de siempre, con su
+     * ETag y su caché: quien entra sin id no está compartiendo nada.
+     *
+     * Va sin caché a propósito: el título y la foto cambian con el
+     * anuncio, así que un ETag de archivo mentiría. Son unos kilobytes
+     * y solo en las fichas. */
+    const meta = api && ext === '.html' ? metadatos.para(ruta, consulta) : null;
+    if (meta) {
+      fs.readFile(archivo, 'utf8', (err, html) => {
+        if (err) { res.writeHead(404).end('No existe'); return; }
+        const compuesto = metadatos.aplicar(html, meta);
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        });
+        res.end(compuesto);
+        console.log(`200  ${ruta} (con vista previa)`);
+      });
+      return;
+    }
+
     const etag = etagDe(est);
     const cabeceras = {
       'Content-Type': TIPOS[ext] || 'application/octet-stream',
