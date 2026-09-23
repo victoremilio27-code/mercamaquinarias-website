@@ -130,6 +130,11 @@ CREATE TABLE IF NOT EXISTS sucursales (
   municipio       TEXT,
   direccion       TEXT,
   telefono        TEXT,
+  -- Añadidas por migración y traídas aquí después: una base nueva y una
+  -- migrada tienen que quedar idénticas. Faltaban, y quien leyera este
+  -- archivo como la verdad se encontraba dos columnas de menos.
+  whatsapp        TEXT,
+  horario         TEXT,
   principal       INTEGER NOT NULL DEFAULT 0,
   activa          INTEGER NOT NULL DEFAULT 1,
   creada          TEXT NOT NULL
@@ -249,7 +254,13 @@ CREATE TABLE IF NOT EXISTS ajustes (
 -- de apagarla un domingo.
 CREATE TABLE IF NOT EXISTS publicidad (
   id          TEXT PRIMARY KEY,
-  espacio     TEXT NOT NULL CHECK (espacio IN ('superior', 'lateral-izq', 'lateral-der', 'bloque')),
+  -- Los nueve formatos del tarifario. La lista de tools/api.js es la
+  -- autoridad; esto es la red de abajo. Cuando se añada uno, hace falta
+  -- una migración: SQLite no deja ampliar un CHECK con ALTER TABLE.
+  espacio     TEXT NOT NULL CHECK (espacio IN (
+                'superior', 'catalogo', 'bloque', 'ficha',
+                'lateral-izq', 'lateral-der',
+                'movil-superior', 'movil-cuadro', 'movil-lista')),
   nombre      TEXT NOT NULL,             -- para reconocerla en el panel
   anunciante  TEXT,                      -- quién la paga
   imagen      TEXT NOT NULL,             -- ruta en /fotos, subida como el resto

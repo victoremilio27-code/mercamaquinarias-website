@@ -132,7 +132,16 @@ async function avisarNcf() {
   const bajas = facturas.secuenciasBajas();
   if (!bajas.length) return anotar('ncf', 'todas las secuencias con margen');
 
-  const detalle = bajas.map((s) => `${s.tipo}: quedan ${s.quedan} de ${s.hasta - s.desde + 1}`).join(' · ');
+  /* El motivo, porque son dos y piden cosas distintas: quedarse sin
+     números se arregla pidiendo un rango nuevo; que venza el plazo,
+     también, pero con la prisa de una fecha en el calendario. */
+  const porQue = (s) => {
+    if (s.vencida) return `VENCIDA el ${s.vence}`;
+    if (s.porVencer) return `vence el ${s.vence}`;
+    return `quedan ${s.quedan} de ${s.hasta - s.desde + 1}`;
+  };
+
+  const detalle = bajas.map((s) => `${s.tipo}: ${porQue(s)}`).join(' · ');
   if (SECO) return anotar('ncf', `avisaría: ${detalle}`);
 
   /* El asunto cambia cuando queda uno: ese correo ya no es un recordatorio,
@@ -144,14 +153,18 @@ async function avisarNcf() {
     asunto: `${critico ? 'URGENTE: se agota la secuencia' : 'Se están acabando los comprobantes fiscales'}`
       + ` · ${bajas.map((s) => s.tipo).join(', ')}`,
     texto: [
-      'Quedan pocos comprobantes autorizados en estas secuencias:',
+      'Estas secuencias de comprobantes piden atención:',
       '',
-      ...bajas.map((s) => `  ${s.tipo} (${s.nombre}): ${s.quedan} de ${s.hasta - s.desde + 1}`),
+      ...bajas.map((s) => `  ${s.tipo} (${s.nombre}): ${porQue(s)}`),
       '',
       'Sin NCF disponible no se puede emitir una factura fiscal: quien pida',
       'comprobante con RNC recibirá un recibo no fiscal.',
       '',
-      'Solicite un rango nuevo a la DGII a través del contador antes de que se agote.',
+      'Y un NCF de una secuencia vencida no sirve: el sistema deja de emitirlos',
+      'en cuanto pasa la fecha, para no entregar un crédito fiscal que el cliente',
+      'no va a poder usar.',
+      '',
+      'Solicite un rango nuevo a la DGII a través del contador.',
       '',
       'MercaMaquinarias',
     ].join('\n'),

@@ -48,7 +48,7 @@ function comprobar(condicion, que) {
 /* Una petición de verdad contra el enrutador, con req y res fingidos.
    Se prueba por aquí y no llamando a las funciones sueltas porque lo
    que importa es exactamente lo que ve quien pregunta desde fuera. */
-function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   return new Promise((resolver) => {
     const req = new EventEmitter();
     req.method = metodo;
@@ -74,7 +74,13 @@ function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
     const ruta = new URL(url, 'http://localhost').pathname;
     api.manejar(req, res, ruta);
     setImmediate(() => {
-      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      if (trozos) {
+        /* Para probar el cuerpo partido: los trozos llegan tal cual,
+           cortados por donde quiera quien llama. */
+        trozos.forEach((t) => req.emit('data', t));
+      } else if (cuerpo !== undefined) {
+        req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      }
       req.emit('end');
     });
   });
@@ -97,7 +103,7 @@ function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
     idOrg: org.id,
     usuarioId: idUsuario,
     categoria: 'camiones',
-    subcategoria: 'volteo',
+    subcategoria: 'cam-volteo',
     marca: 'peterbilt',
     modelo: '567',
     anio: 2019,
@@ -226,7 +232,189 @@ function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
   comprobar(conCf.codigo === 202,
     'una IP distinta segun CF-Connecting-IP estrena su propia cuenta');
 
-  /* ── 4 · las secuencias que se vigilan ───────────────────── */
+  /* ── 4 · los acentos partidos entre dos trozos ───────────── */
+  console.log('\nEl cuerpo de la peticion con acentos');
+
+  /* El caso real: un anuncio con ocho fotos dentro del JSON llega en
+     decenas de trozos, y el corte cae donde cae. Aquí se parte a
+     propósito por la mitad de una «ó», que en UTF-8 son dos bytes.
+     Antes se decodificaba cada trozo por separado y salían dos signos
+     de interrogación, sin lanzar ninguna excepción: el JSON seguía
+     siendo válido porque sus llaves y comillas son ASCII. */
+  const textoConTilde = 'Excavación de orugas, año 2019, 1.200 horas. Niñera incluida.';
+  const cuerpoCrudo = Buffer.from(JSON.stringify({ anuncio: idAnuncio, tipo: 'vista', nota: textoConTilde }), 'utf8');
+
+  const dondeLaO = cuerpoCrudo.indexOf(Buffer.from('ó', 'utf8'));
+  comprobar(dondeLaO > 0, 'la prueba encuentra la vocal acentuada para partirla');
+
+  const partido = await pedir({
+    metodo: 'POST',
+    url: '/api/eventos',
+    trozos: [cuerpoCrudo.subarray(0, dondeLaO + 1), cuerpoCrudo.subarray(dondeLaO + 1)],
+    cabeceras: { 'cf-connecting-ip': '201.9.9.9' },
+  });
+  comprobar(partido.codigo === 202,
+    'un cuerpo partido por la mitad de un caracter se sigue leyendo bien');
+
+  /* Y la comprobación directa: que el texto llegue entero. Se hace
+     contra la ruta de solicitudes, que sí guarda texto libre. */
+  const conTilde = await pedir({
+    metodo: 'POST',
+    url: '/api/solicitudes',
+    trozos: (() => {
+      const b = Buffer.from(JSON.stringify({
+        servicio: 'contacto',
+        nombre: 'Señor Muñoz',
+        telefono: '8095559876',
+        detalle: { 'Qué necesita': textoConTilde },
+      }), 'utf8');
+      const corte = b.indexOf(Buffer.from('ó', 'utf8'));
+      return [b.subarray(0, corte + 1), b.subarray(corte + 1)];
+    })(),
+    cabeceras: { 'cf-connecting-ip': '201.9.9.10' },
+  });
+  comprobar(conTilde.codigo === 201, 'la solicitud con el cuerpo partido se acepta');
+
+  const guardada = db.solicitudesServicio ? db.solicitudesServicio({ limite: 1 })[0] : null;
+  const detalleGuardado = guardada ? JSON.stringify(guardada) : '';
+  comprobar(detalleGuardado.includes('Excavaci') && !detalleGuardado.includes('�'),
+    'y el texto queda guardado SIN caracteres corrompidos');
+
+  /* ── 5 · todo cobro deja su comprobante ──────────────────── */
+  console.log('\nEl comprobante de cada cobro');
+
+  const legales = require('../assets/legales.js');
+  Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+    db.registrarAceptacion({
+      usuarioId: idUsuario,
+      documento: doc.id,
+      version: doc.version,
+      ip: '127.0.0.1',
+      userAgent: 'prueba',
+    });
+  });
+
+  const testigo = db.abrirSesion(idUsuario);
+  const conSesion = { cookie: `te_sesion=${testigo}`, 'cf-connecting-ip': '201.7.7.7' };
+
+  /* El Estándar está a cero por la promoción de lanzamiento, así que
+     no sirve para esto: un cobro de cero no tiene nada que comprobar y
+     es correcto que no emita documento. Se usa un nivel que sí cobra. */
+  const gratis = await pedir({
+    metodo: 'POST',
+    url: '/api/membresias',
+    cuerpo: { plan: 'estandar', cupo: 1, dias: 30 },
+    cabeceras: conSesion,
+  });
+  comprobar(gratis.codigo === 201 && gratis.datos.cobro.total === 0,
+    'el Estandar en promocion no cobra nada');
+  comprobar(!gratis.datos.comprobante,
+    'y un cobro de cero no emite comprobante, que es lo correcto');
+
+  const compra = await pedir({
+    metodo: 'POST',
+    url: '/api/membresias',
+    cuerpo: { plan: 'destacado', cupo: 1, dias: 30 },
+    cabeceras: conSesion,
+  });
+  comprobar(compra.codigo === 201 && compra.datos.cobro.total > 0,
+    `comprar un nivel de pago si cobra (fue ${compra.codigo})`);
+  comprobar(!!(compra.datos && compra.datos.comprobante),
+    'comprar cupos emite su comprobante');
+
+  /* El que faltaba. Se cobraba la diferencia, el pago quedaba aprobado
+     y no salía ningun documento: ingreso cobrado y no declarado que
+     ninguna tarea recuperaba después. */
+  const idSusc = compra.datos && compra.datos.membresia && compra.datos.membresia.id;
+  const antes = db.facturas({ limite: 500 }).length;
+  const ampliacion = await pedir({
+    metodo: 'POST',
+    url: `/api/membresias/${idSusc}/ampliar`,
+    cuerpo: { cupo: 3 },
+    cabeceras: conSesion,
+  });
+  const despues = db.facturas({ limite: 500 }).length;
+
+  comprobar(ampliacion.codigo === 200, `ampliar cupos responde 200 (fue ${ampliacion.codigo})`);
+  comprobar(!!(ampliacion.datos && ampliacion.datos.comprobante),
+    'AMPLIAR cupos tambien emite su comprobante');
+  comprobar(despues === antes + 1,
+    `y queda una factura mas en la base (${antes} -> ${despues})`);
+
+  /* ── 6 · las fotos del anuncio son del sitio ─────────────── */
+  console.log('\nLas fotos de un anuncio');
+
+  /* Un PNG de un pixel, válido de verdad: fotos.js comprueba el tipo
+     por los bytes de cabecera, no por la extensión ni por lo que diga
+     el cliente. */
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+    + 'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  const subida = await pedir({
+    metodo: 'POST',
+    url: '/api/fotos',
+    cuerpo: { completa: PNG },
+    cabeceras: conSesion,
+  });
+  comprobar(subida.codigo === 201 && /^\/fotos\//.test(subida.datos.completa || ''),
+    'una foto subida al sitio devuelve su ruta /fotos/...');
+  const rutaBuena = subida.datos.completa;
+
+  /* Lo que se colaba: las imágenes en base64 dentro del propio JSON del
+     anuncio. Treinta de estas son veinticuatro megas guardados en la
+     base, dentro de una fila. */
+  const conDataUri = await pedir({
+    metodo: 'POST',
+    url: '/api/anuncios',
+    cuerpo: {
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567',
+      anio: 2019, condicion: 'usado', usoValor: 1000, usoUnidad: 'km',
+      descripcion: 'Prueba de fotos incrustadas en el cuerpo de la peticion.',
+      provincia: 'santo-domingo', precio: 1000000, moneda: 'DOP',
+      fotos: [PNG, PNG, PNG],
+      telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+    },
+    cabeceras: conSesion,
+  });
+  comprobar(conDataUri.codigo === 400,
+    `las fotos en base64 dentro del anuncio se rechazan (fue ${conDataUri.codigo})`);
+
+  const conUrlAjena = await pedir({
+    metodo: 'POST',
+    url: '/api/anuncios',
+    cuerpo: {
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567',
+      anio: 2019, condicion: 'usado', usoValor: 1000, usoUnidad: 'km',
+      descripcion: 'Prueba de fotos alojadas en otro sitio cualquiera.',
+      provincia: 'santo-domingo', precio: 1000000, moneda: 'DOP',
+      fotos: ['https://otro-sitio.example/foto.jpg', rutaBuena, rutaBuena],
+      telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+    },
+    cabeceras: conSesion,
+  });
+  comprobar(conUrlAjena.codigo === 400,
+    `una foto alojada fuera tambien (quedaban 2 de 3, fue ${conUrlAjena.codigo})`);
+
+  /* Y que con fotos de verdad sí se publique: una validación que lo
+     rechaza todo no es una validación, es una avería. */
+  const bienPublicado = await pedir({
+    metodo: 'POST',
+    url: '/api/anuncios',
+    cuerpo: {
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567',
+      anio: 2019, condicion: 'usado', usoValor: 1000, usoUnidad: 'km',
+      descripcion: 'Prueba de publicacion con fotos subidas al sitio como debe ser.',
+      provincia: 'santo-domingo', precio: 1000000, moneda: 'DOP',
+      fotos: [rutaBuena, rutaBuena, rutaBuena],
+      telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+    },
+    cabeceras: conSesion,
+  });
+  comprobar(bienPublicado.codigo === 201,
+    `con fotos subidas al sitio si se publica (fue ${bienPublicado.codigo}: `
+    + `${(bienPublicado.datos || {}).error || 'ok'})`);
+
+  /* ── 7 · las secuencias que se vigilan ───────────────────── */
   console.log('\nEl aviso de comprobantes fiscales');
   const vigiladas = db.secuenciasNcf()
     .filter((s) => s.activa && s.usa_sitio)

@@ -658,6 +658,50 @@ const MIGRACIONES = [
        destinatario TEXT
      )`,
   ]],
+
+  /* Los nueve espacios publicitarios que la API ofrece y el tarifario
+     vende. La tabla solo admitía cuatro.
+
+     Cinco de los ocho formatos del tarifario —el banner del catálogo,
+     el de la ficha y los tres de móvil— se podían elegir en la pantalla
+     de administración, pasaban la validación de la API y reventaban en
+     el INSERT con un «Error del servidor» que no decía nada. Se vendían
+     y no se podían dar de alta.
+
+     `espacio` tiene un CHECK y SQLite no deja añadirle valores con
+     ALTER TABLE, así que la tabla se rehace, igual que en la migración
+     de agosto. La lista de la API sigue siendo la autoridad: este CHECK
+     es la red de abajo, no la definición. */
+  ['2026-09-espacios-publicidad', [
+    `CREATE TABLE publicidad_nueva (
+       id          TEXT PRIMARY KEY,
+       espacio     TEXT NOT NULL CHECK (espacio IN (
+                     'superior', 'catalogo', 'bloque', 'ficha',
+                     'lateral-izq', 'lateral-der',
+                     'movil-superior', 'movil-cuadro', 'movil-lista')),
+       nombre      TEXT NOT NULL,
+       anunciante  TEXT,
+       imagen      TEXT NOT NULL,
+       enlace      TEXT,
+       alt         TEXT NOT NULL,
+       desde       TEXT,
+       hasta       TEXT,
+       activo      INTEGER NOT NULL DEFAULT 1,
+       orden       INTEGER NOT NULL DEFAULT 0,
+       impresiones INTEGER NOT NULL DEFAULT 0,
+       clics       INTEGER NOT NULL DEFAULT 0,
+       creado      TEXT NOT NULL,
+       actualizado TEXT
+     )`,
+    `INSERT INTO publicidad_nueva
+       (id, espacio, nombre, anunciante, imagen, enlace, alt, desde, hasta,
+        activo, orden, impresiones, clics, creado, actualizado)
+     SELECT id, espacio, nombre, anunciante, imagen, enlace, alt, desde, hasta,
+        activo, orden, impresiones, clics, creado, actualizado FROM publicidad`,
+    'DROP TABLE publicidad',
+    'ALTER TABLE publicidad_nueva RENAME TO publicidad',
+    'CREATE INDEX IF NOT EXISTS ix_publicidad_espacio ON publicidad (espacio, activo, orden)',
+  ]],
 ];
 
 function migrar() {
@@ -667,16 +711,35 @@ function migrar() {
 
   for (const [nombre, sentencias] of MIGRACIONES) {
     if (yaEsta.get(nombre)) continue;
-    for (const sql of sentencias) {
-      try {
-        db.exec(sql);
-      } catch (e) {
-        // Una columna que ya existe no es un error: pasa cuando la
-        // base se creó con un schema.sql que ya la incluía.
-        if (!/duplicate column/i.test(e.message)) throw e;
+
+    /* Cada migración, entera, dentro de una transacción, y la fila que
+       la da por aplicada DENTRO de la misma.
+
+       Sin esto, una migración que falle a mitad deja las sentencias
+       anteriores aplicadas y la migración sin anotar, así que el
+       siguiente arranque la reintenta desde el principio. Hay al menos
+       una —la que rehace la tabla de publicidad— que en ese segundo
+       intento falla con «table already exists»: abrir() lanza, el
+       servidor sale con error, systemd reinicia, y el sitio no vuelve
+       a levantar sin ir a la base a mano. Con la transacción, o se
+       aplica completa o no se aplica nada. */
+    db.exec('BEGIN');
+    try {
+      for (const sql of sentencias) {
+        try {
+          db.exec(sql);
+        } catch (e) {
+          // Una columna que ya existe no es un error: pasa cuando la
+          // base se creó con un schema.sql que ya la incluía.
+          if (!/duplicate column/i.test(e.message)) throw e;
+        }
       }
+      anotar.run(nombre, new Date().toISOString());
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw new Error(`migración «${nombre}»: ${e.message}`);
     }
-    anotar.run(nombre, new Date().toISOString());
   }
 }
 
@@ -849,7 +912,7 @@ function abrirSesion(idUsuario) {
 function sesion(testigo) {
   if (!testigo) return null;
   const fila = abrir().prepare(`
-    SELECT s.usuario_id, s.expira, u.correo, u.nombre
+    SELECT s.usuario_id, s.expira, u.correo, u.nombre, u.es_admin
     FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
     WHERE s.testigo = ?`).get(testigo);
   if (!fila) return null;
@@ -2391,6 +2454,18 @@ function tomarNcf(tipo) {
     if (!s) return null;
     if (s.siguiente > s.hasta) return null;          // agotada
 
+    /* Y vencida tampoco vale. Un NCF emitido pasada la fecha de la
+       autorización sale con un recuadro que dice «Válido hasta …» ya
+       cumplido y un pie que promete que el documento vale dentro de su
+       plazo: el cliente no lo puede usar como crédito fiscal y el
+       emisor ha gastado un número fuera de término. Antes solo se
+       miraba si quedaban números, nunca la fecha.
+
+       Con `vence` en NULL no se bloquea nada: hoy las autorizaciones
+       están cargadas sin fecha porque el contador todavía no la ha
+       confirmado, y dar por vencido lo que no se sabe sería peor. */
+    if (s.vence && s.vence < hoy()) return null;     // vencida
+
     const r = d.prepare(`
       UPDATE secuencias_ncf SET siguiente = siguiente + 1
        WHERE id = ? AND siguiente = ?`).run(s.id, s.siguiente);
@@ -2557,6 +2632,30 @@ const facturasDe = (idOrg) => abrir().prepare(
   'SELECT * FROM facturas WHERE organizacion_id = ? ORDER BY fecha DESC').all(idOrg);
 
 /* Para administración: por mes y, si se pide, por estado de envío. */
+/* Los datos fiscales con los que esta organización facturó la última
+ * vez, para reutilizarlos en el cobro siguiente.
+ *
+ * Quien compró con RNC espera que la ampliación de esa misma membresía
+ * salga a su mismo nombre, no como consumidor final. Se toma del último
+ * comprobante con RNC y no de la organización porque el domicilio
+ * fiscal solo existe ahí: `organizaciones` no lo guarda. */
+function ultimosDatosFiscales(idOrg) {
+  if (!idOrg) return null;
+  const f = abrir().prepare(`
+    SELECT razon_social, rnc, direccion, telefono, correo
+      FROM facturas
+     WHERE organizacion_id = ? AND rnc IS NOT NULL AND anulado_por IS NULL
+     ORDER BY fecha DESC LIMIT 1`).get(idOrg);
+  if (!f) return null;
+  return {
+    razonSocial: f.razon_social,
+    rnc: f.rnc,
+    direccion: f.direccion,
+    telefono: f.telefono,
+    correo: f.correo,
+  };
+}
+
 function facturas({ mes, pendientes = false, limite = 500 } = {}) {
   const donde = [];
   const args = [];
@@ -2590,7 +2689,7 @@ const marcarAnulada = (idFactura, idNota) => abrir().prepare(
 
 module.exports = {
   registrarAceptacion, aceptacionesDe, historialAceptaciones,
-  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago,
+  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,

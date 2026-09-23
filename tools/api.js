@@ -74,7 +74,17 @@ const fallo = (res, codigo, texto, extra) =>
 
 function leerCuerpo(req) {
   return new Promise((resolver, rechazar) => {
-    let datos = '';
+    /* Los trozos se guardan como Buffer y se unen AL FINAL.
+
+       Antes se concatenaban a una cadena según llegaban, y eso
+       convierte cada trozo a texto por separado: un carácter UTF-8 que
+       caiga a caballo entre dos trozos se parte y se decodifica como
+       dos signos de interrogación. En un sitio en español, con anuncios
+       que viajan con ocho fotos dentro del JSON, «Excavación» se
+       guardaba corrupta. Y no saltaba ninguna excepción, porque los
+       bytes que dan estructura al JSON son todos ASCII: el anuncio se
+       publicaba con la descripción rota y nadie sabía por qué. */
+    const trozos = [];
     let tamano = 0;
     req.on('data', (trozo) => {
       tamano += trozo.length;
@@ -86,9 +96,11 @@ function leerCuerpo(req) {
         req.destroy();
         return;
       }
-      datos += trozo;
+      trozos.push(trozo);
     });
     req.on('end', () => {
+      if (!trozos.length) return resolver({});
+      const datos = Buffer.concat(trozos).toString('utf8');
       if (!datos) return resolver({});
       try { resolver(JSON.parse(datos)); } catch { rechazar(Object.assign(new Error('JSON inválido'), { codigo: 400 })); }
     });
@@ -147,7 +159,17 @@ function contexto(req) {
   const s = db.sesion(testigo);
   if (!s) return null;
   const org = db.organizacionDe(s.usuario_id);
-  return { testigo, usuario: { id: s.usuario_id, correo: s.correo, nombre: s.nombre }, organizacion: org };
+  /* `esAdmin` viene de la propia consulta de sesión, que ya une con
+     usuarios: no cuesta una consulta más. Faltaba, y dos comprobaciones
+     de comprobantes lo leían igualmente —`ctx.usuario.esAdmin`— contra
+     un campo que no existía. Siempre daba undefined, así que el
+     administrador recibía un 404 al abrir el PDF de cualquier
+     comprobante que no fuera de su propia organización. */
+  return {
+    testigo,
+    usuario: { id: s.usuario_id, correo: s.correo, nombre: s.nombre, esAdmin: !!s.es_admin },
+    organizacion: org,
+  };
 }
 
 /* Envuelve las rutas que exigen sesión. Devuelve 401 en vez de
@@ -443,6 +465,16 @@ async function verificar(req, res) {
 /* Reenvío. Responde igual exista o no la cuenta. */
 async function reenviar(req, res) {
   const c = await leerCuerpo(req);
+
+  /* Tope por IP, que faltaba. El de `emitirCodigo` es por correo
+     destino, así que no frena a quien recorre una lista de correos: con
+     cinco por cuenta y cuarto de hora, un guion manda veinte avisos por
+     hora a cada anunciante y de paso agota la cuota del proveedor, con
+     lo que dejan de salir los códigos legítimos y los comprobantes. */
+  if (!db.permitir(`reenviar:${origen(req)}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
+  }
+
   const tipo = ['verificacion', 'acceso', 'restablecer'].includes(c.tipo) ? c.tipo : 'verificacion';
   const u = db.usuarioPorCorreo(c.correo);
 
@@ -455,6 +487,14 @@ async function reenviar(req, res) {
 
 async function recuperar(req, res) {
   const c = await leerCuerpo(req);
+
+  /* El mismo tope por IP que su vecina, y por el mismo motivo: sin él,
+     esta ruta sirve para mandarle a medio directorio un «alguien quiere
+     cambiar su contraseña» cada quince minutos. */
+  if (!db.permitir(`recuperar:${origen(req)}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
+  }
+
   if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
 
   const u = db.usuarioPorCorreo(c.correo);
@@ -1501,6 +1541,80 @@ const misPlanes = conSesion((req, res, ctx) => {
   });
 });
 
+/* Todo cobro emite su comprobante. Una sola función, y las dos rutas
+ * que cobran la llaman.
+ *
+ * Estaba escrito dos veces y solo existía en una: comprar cupos emitía
+ * comprobante y AMPLIARLOS no. El cliente pagaba la ampliación, el pago
+ * quedaba aprobado, y no había documento. Ninguna tarea lo recuperaba
+ * después —la diaria solo reintenta el envío de facturas ya creadas—,
+ * así que era ingreso cobrado y no declarado, invisible hasta una
+ * inspección. Con una sola función no pueden volver a separarse.
+ *
+ * Nunca lanza: que no se pueda emitir NO revierte un cobro que ya
+ * entró. El comprobante se puede emitir después desde administración,
+ * y el pago sin factura sale en la lista de pendientes. */
+function emitirComprobanteDeCobro({ cobro, concepto, detalle, cliente, correoCliente }) {
+  /* Una cuenta exenta no paga nada, así que no hay nada que comprobar. */
+  if (!cobro || cobro.total <= 0) return null;
+
+  const pago = db.pagoPorReferencia(cobro.referencia);
+  if (!pago) {
+    console.error(`facturas: no se encontró el pago ${cobro.referencia} para emitir su comprobante`);
+    return null;
+  }
+
+  try {
+    const comprobante = facturas.emitirPorPago(pago, { concepto, detalle, cliente });
+
+    /* El envío va aparte y sin esperarlo: emitir y notificar fallan por
+       motivos distintos, y una caída del proveedor de correo no puede
+       dejar sin comprobante un pago que ya entró. Lo que no salga lo
+       reintenta la tarea diaria. Con catch, porque una promesa suelta
+       que se rechace sin manejador tumba el proceso. */
+    facturas.enviar(comprobante, { correoCliente })
+      .catch((e) => console.error(
+        `facturas: no se pudo enviar el comprobante ${comprobante.numero} · ${e.message}`));
+
+    return comprobante;
+  } catch (e) {
+    console.error(`facturas: no se pudo emitir el comprobante del pago ${pago.id} · ${e.message}`);
+    return null;
+  }
+}
+
+/* A nombre de quién sale el comprobante de un cobro que no pregunta.
+ *
+ * Ampliar cupos no abre el formulario fiscal —es un botón, no un paso
+ * de compra—, así que se heredan los datos del último comprobante con
+ * RNC de esa organización. Quien facturó su membresía a nombre de su
+ * empresa espera que la ampliación salga igual; emitirla como
+ * consumidor final le obliga a pedir una nota de crédito por algo que
+ * el sistema ya sabía. Si nunca facturó con RNC, va como consumidor
+ * final, que es lo que estaba pidiendo. */
+function datosFiscalesDe(ctx) {
+  const previos = ctx.organizacion && db.ultimosDatosFiscales(ctx.organizacion.id);
+  if (previos && previos.rnc) return { ...previos, correo: ctx.usuario.correo };
+  return { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo };
+}
+
+/* Lo que se imprime como línea de detalle.
+ *
+ * La multiplicación tiene que cuadrar: cantidad × precio unitario =
+ * importe. Con cupos gratis por cantidad el subtotal deja de ser
+ * divisible, así que en ese caso va una sola línea por el total y el
+ * reparto se explica en el texto. Una factura donde la multiplicación
+ * no da es una factura que el cliente reclama. */
+function lineaDeCupos({ cupo, subtotal, inicio, fin }) {
+  const divisible = cupo > 0 && subtotal % cupo === 0;
+  return {
+    cantidad: divisible ? cupo : 1,
+    precio_unitario: divisible ? subtotal / cupo : subtotal,
+    periodo: [inicio, fin]
+      .map((f) => String(f).slice(0, 10).split('-').reverse().join('/')).join(' al '),
+  };
+}
+
 const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
 
@@ -1549,45 +1663,16 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
   const membresia = db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias, cobro });
 
   /* El comprobante se emite SIEMPRE que haya cobro, lo pida el cliente
-     o no. Una cuenta exenta no paga nada, así que no hay nada que
-     comprobar: por eso queda fuera. */
-  let comprobante = null;
-  if (cobro.total > 0) {
-    const pago = db.pagoPorReferencia(cobro.referencia);
-    if (pago) {
-      try {
-        /* La línea del detalle tiene que cuadrar: cantidad × precio
-           unitario = importe. Con cupos gratis por cantidad el subtotal
-           ya no es divisible, así que en ese caso se factura como una
-           sola línea por el total y el reparto se explica en el texto.
-           Una factura donde la multiplicación no da es una factura que
-           el cliente reclama. */
-        const divisible = cupo > 0 && cobro.subtotal % cupo === 0;
-
-        comprobante = facturas.emitirPorPago(pago, {
-          concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
-          detalle: {
-            cantidad: divisible ? cupo : 1,
-            precio_unitario: divisible ? cobro.subtotal / cupo : cobro.subtotal,
-            periodo: [membresia.inicio, membresia.fin]
-              .map((f) => String(f).slice(0, 10).split('-').reverse().join('/')).join(' al '),
-          },
-          cliente,
-        });
-        /* El envío va aparte y sin esperarlo: emitir y notificar fallan
-           por motivos distintos, y una caída del proveedor de correo no
-           puede dejar sin comprobante un pago que ya entró. Lo que no
-           salga lo reintenta la tarea diaria. */
-        facturas.enviar(comprobante, { correoCliente: ctx.usuario.correo })
-          .catch((e) => console.error(
-            `facturas: no se pudo enviar el comprobante ${comprobante.numero} · ${e.message}`));
-      } catch (e) {
-        // Que no se pueda emitir NO revierte el cobro: el pago existe y
-        // el comprobante se puede emitir después desde administración.
-        console.error(`facturas: no se pudo emitir el comprobante del pago ${pago.id} · ${e.message}`);
-      }
-    }
-  }
+     o no. */
+  const comprobante = emitirComprobanteDeCobro({
+    cobro,
+    concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
+    detalle: lineaDeCupos({
+      cupo, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
+    }),
+    cliente,
+    correoCliente: ctx.usuario.correo,
+  });
 
   return responder(res, 201, {
     membresia,
@@ -1630,7 +1715,32 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
     };
 
   const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
-  return responder(res, 200, { membresia, cobro });
+
+  /* Ampliar cupos es un cobro como cualquier otro y lleva su
+     comprobante. Faltaba: se cobraba la diferencia, el pago quedaba
+     aprobado y no se emitía nada. */
+  const cuantos = cupoNuevo - s.anuncios_incluidos;
+  const comprobante = emitirComprobanteDeCobro({
+    cobro,
+    concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
+      + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
+    detalle: lineaDeCupos({
+      cupo: cuantos, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
+    }),
+    /* Los mismos datos fiscales de la compra original: quien facturó
+       con RNC espera que la ampliación de esa misma membresía salga
+       igual, no a nombre de otro. */
+    cliente: datosFiscalesDe(ctx),
+    correoCliente: ctx.usuario.correo,
+  });
+
+  return responder(res, 200, {
+    membresia,
+    cobro,
+    comprobante: comprobante && {
+      numero: comprobante.numero, tipo: comprobante.tipo, ncf: comprobante.ncf,
+    },
+  });
 });
 
 /* Mover un equipo de una membresía a otra: lo que el anunciante
@@ -1699,6 +1809,15 @@ function exigirAceptacion(res, idUsuario, ids) {
 
 const publicar = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PUBLICAR)) return undefined;
+
+  /* Publicar no tenía ningún tope. El cupo pagado limita cuántos
+     anuncios quedan vivos, pero no cuántas peticiones se pueden lanzar:
+     cada una lee un cuerpo de hasta veinticinco megas y escribe en la
+     base. Veinte por hora es de sobra para cualquiera que esté
+     publicando de verdad su flota. */
+  if (!db.permitir(`publicar:${ctx.usuario.id}`, 20, 60)) {
+    return fallo(res, 429, 'Ha publicado muchos equipos seguidos. Inténtelo en un rato.');
+  }
 
   const c = await leerCuerpo(req);
   const org = ctx.organizacion;
@@ -1780,8 +1899,30 @@ const publicar = conSesion(async (req, res, ctx) => {
     };
   }
 
-  const fotos = Array.isArray(c.fotos) ? c.fotos.slice(0, plan.fotos_maximas) : [];
-  if (fotos.length < 3) return fallo(res, 400, 'Cargue al menos 3 fotografías');
+  /* Cada foto tiene que ser una que se subió aquí.
+   *
+   * Los videos de tres líneas más abajo sí lo comprobaban, y la portada
+   * del sitio también; las fotos del anuncio no. Una petición fabricada
+   * podía meter treinta imágenes en base64 dentro del JSON y quedarse
+   * guardadas en la base: veinticuatro megas en un solo anuncio. Es
+   * exactamente el problema que tools/fotos.js dice en su cabecera
+   * haber venido a resolver, con la puerta de al lado abierta. Con una
+   * URL de un tercero el resultado es otro y tampoco bueno: la política
+   * de contenidos del navegador la bloquea y el catálogo se llena de
+   * imágenes rotas. */
+  const fotos = (Array.isArray(c.fotos) ? c.fotos : [])
+    .map((f) => (typeof f === 'string' ? { url: f, miniatura: null } : {
+      url: f && f.url,
+      /* La miniatura se conserva —es lo que ve el catálogo mientras
+         carga la grande— pero se valida igual, y si no pasa se deja en
+         nulo en vez de descartar la foto entera. */
+      miniatura: f && esRutaDeFoto(f.miniatura) ? f.miniatura : null,
+    }))
+    .filter((f) => f.url && esRutaDeFoto(f.url))
+    .slice(0, plan.fotos_maximas);
+  if (fotos.length < 3) {
+    return fallo(res, 400, 'Cargue al menos 3 fotografías subidas al sitio');
+  }
 
   /* Los videos se recortan al tope del plan igual que las fotos, y se
      comprueba que cada ruta sea de las que sirve este servidor: sin

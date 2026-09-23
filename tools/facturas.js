@@ -554,12 +554,32 @@ function emitirNotaCredito(original, { motivo, emisor = correo.EMPRESA } = {}) {
 
   const ncf = db.tomarNcf('B04');
 
+  /* Sin B04 no hay nota de crédito que valga.
+   *
+   * Antes se seguía adelante con el NCF en nulo y la API respondía 201
+   * tan campante: salía un papel con el sello SIN VALOR FISCAL y un pie
+   * afirmando que se emite conforme a las normas de la DGII. El cliente
+   * se quedaba con la factura original vigente y una anulación que
+   * fiscalmente no anulaba nada, y nadie se enteraba hasta la
+   * inspección. El rango son diez números; a la undécima devolución
+   * pasaba esto.
+   *
+   * Vale más un error claro en pantalla —«pida el rango»— que un
+   * documento que aparenta lo que no es. Se lanza antes de tocar nada,
+   * así que el comprobante original queda intacto. */
+  if (!ncf) {
+    const e = new Error('No quedan notas de crédito autorizadas (B04). '
+      + 'Solicite un rango nuevo a la DGII antes de anular este comprobante.');
+    e.codigo = 409;
+    throw e;
+  }
+
   const { id: idNota, numero } = db.crearFactura({
     pagoId: original.pago_id,
     organizacionId: original.organizacion_id,
     tipo: 'nota_credito',
-    ncf: ncf ? ncf.ncf : null,
-    ncfVencimiento: ncf ? ncf.vence : null,
+    ncf: ncf.ncf,
+    ncfVencimiento: ncf.vence,
     /* En el papel va el NCF del comprobante que se modifica, que es lo
        que pide la DGII. Si el original fue un recibo sin NCF, va su
        número interno: es lo único que lo identifica. */
@@ -680,11 +700,38 @@ async function enviar(factura, { correoCliente } = {}) {
  * cinco números cargados y el umbral en cinco, avisarían todos los
  * días para siempre. El día que se agote la B01 de verdad, ese
  * correo tiene que llegar a una bandeja donde signifique algo. */
+/* La fecha de hoy y la de dentro de N días, como las guarda la base. */
+const enDias = (n) => new Date(Date.now() + n * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
 function secuenciasBajas() {
+  /* Treinta días de margen para el vencimiento: pedir una autorización
+     nueva a la DGII no es inmediato, y enterarse el día que caduca es
+     enterarse tarde. */
+  const hoy = enDias(0);
+  const dentroDeUnMes = enDias(30);
+
   return db.secuenciasNcf()
     .filter((s) => s.activa && s.usa_sitio)
-    .map((s) => ({ ...s, umbral: AVISAR_BAJO, critica: s.quedan <= AVISAR_CRITICO }))
-    .filter((s) => s.quedan <= s.umbral);
+    .map((s) => {
+      /* Se avisa por dos motivos distintos y conviene saber cuál: que
+         se acaben los números, o que se acabe el plazo. Hasta ahora
+         solo se miraba lo primero, así que una secuencia con números
+         de sobra y la fecha cumplida no decía nada. */
+      const porAgotarse = s.quedan <= AVISAR_BAJO;
+      const porVencer = !!s.vence && s.vence <= dentroDeUnMes;
+      const vencida = !!s.vence && s.vence < hoy;
+      return {
+        ...s,
+        umbral: AVISAR_BAJO,
+        porAgotarse,
+        porVencer,
+        vencida,
+        /* Crítica es cuando el próximo cobro ya sale sin comprobante
+           fiscal: o no queda ningún número, o el plazo ya pasó. */
+        critica: s.quedan <= AVISAR_CRITICO || vencida,
+      };
+    })
+    .filter((s) => s.porAgotarse || s.porVencer);
 }
 
 /* Comprobantes emitidos sin NCF, a la espera de que llegue la secuencia
