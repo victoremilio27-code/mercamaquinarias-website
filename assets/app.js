@@ -991,9 +991,6 @@ async function montarDetalle() {
           ? `Publicado por <a href="dealer.html?d=${encodeURIComponent(e.dealerSlug)}">${esc(e.dealer)}</a>`
           : 'Publicado por un anunciante particular.'}</p>
 
-        ${e.precio != null ? `<p class="etiqueta etiqueta--bloque">Servicios de MercaMaquinarias</p>
-        <a class="btn btn--linea btn--bloque" href="financiamiento.html?monto=${e.precio}">Calcular el financiamiento</a>` : ''}
-
         <p class="detalle__aviso">MercaMaquinarias publica este anuncio pero no interviene en la transacción
           ni retiene fondos. Verifique el equipo y su documentación antes de pagar.
           <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a>.</p>
@@ -2168,7 +2165,6 @@ function montarNavMovil() {
     ['index.html', 'Inicio', '<path d="M3 11.5 12 4l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z"/><path d="M8.5 21v-6h7v6"/>'],
     ['equipos.html', 'Equipos', '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'],
     ['publicar.html', 'Publicar', '<path d="M12 3v18M3 12h18"/>'],
-    ['financiamiento.html', 'Financiar', '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/>'],
     ['cuenta.html', 'Cuenta', '<circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>'],
   ];
   const activo = ['categorias.html', 'equipo.html'].includes(pagina) ? 'equipos.html' : pagina;

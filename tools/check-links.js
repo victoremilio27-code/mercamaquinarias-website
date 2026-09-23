@@ -28,7 +28,6 @@ const ESPERADO = {
   // El asistente pinta los pasos y las tarjetas de plan al arrancar.
   'publicar.html': ['#pasosNav', '#vistaPrevia'],
   'planes.html': ['#nivelesLista', '#tablaPlanes'],
-  'financiamiento.html': ['#financiadoras'],
   'alquiler.html': ['#alquilerLista'],
   'dealers.html': ['#dealersLista'],
 };

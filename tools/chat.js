@@ -168,8 +168,8 @@ ${tarifas()}
 - El costo total se compone de: precio del equipo más comisión de la subasta o el dealer; servicio de inspección independiente si aplica; transporte interno en origen hasta el puerto; flete marítimo y seguro; aranceles e impuestos de aduana; y gastos de puerto, agente aduanal y transporte hasta la obra.
 - La cotización se entrega con la cifra final a la vista, sin cargos imprevistos al arribo.
 
-# Financiamiento (/financiamiento.html)
-- Es un directorio de entidades que financian maquinaria, con sus requisitos y contactos. MercaMaquinarias NO presta dinero ni aprueba créditos.
+# Financiamiento
+- Por ahora MercaMaquinarias NO ofrece el directorio de financiamiento: la sección está fuera de servicio. MercaMaquinarias nunca ha prestado dinero ni aprobado créditos. Si preguntan, dilo con claridad y pasa el contacto de ventas por si quieren orientación.
 
 # Otras páginas
 - Catálogo de equipos en venta: /equipos.html. Por categorías: /categorias.html.

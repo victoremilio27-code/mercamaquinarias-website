@@ -70,7 +70,10 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
   const sis = cuerpo.system[0].text;
   comprobar(sis.includes('ayuda@mercamaquinarias.com') && sis.includes('ventas@mercamaquinarias.com'),
     'el prompt lleva los dos correos');
-  comprobar(sis.includes('(809)'), 'el prompt lleva el teléfono');
+  comprobar(!/\(809\)/.test(sis), 'el prompt NO lleva teléfono: no hay');
+  comprobar(/NO ofrece el servicio de transporte/.test(sis)
+    && /NO ofrece el directorio de financiamiento/.test(sis),
+    'el prompt dice que transporte y financiamiento no se ofrecen');
   comprobar((sis.match(/DENTRO de alcance/g) || []).length === 1
     && (sis.match(/FUERA de alcance/g) || []).length === 1, 'el prompt separa dentro y fuera de alcance');
   comprobar(!/RD\$0\b/.test(sis), 'el plan gratis no se anuncia como «RD$0»');
