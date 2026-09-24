@@ -1199,7 +1199,12 @@ function montarHeroeFoto(portada) {
     const img = new Image();
     img.decoding = 'async';
     img.fetchPriority = 'high';
-    img.alt = '';
+    /* El texto alternativo viene en los datos y se estaba tirando: hay
+       un campo para él en administración, viaja por la API, llega hasta
+       aquí y se sobrescribía con cadena vacía. La imagen más grande de
+       la portada quedaba sin nombre accesible y quien lo rellenaba lo
+       hacía para nada. */
+    img.alt = siguiente.alt || '';
     img.addEventListener('error', intentar);
     img.addEventListener('load', () => {
       caja.replaceChildren(img);

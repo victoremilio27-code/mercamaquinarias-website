@@ -42,7 +42,26 @@
     boton(t);
   }
 
-  raiz.setAttribute('data-theme', leer() === 'dark' ? 'dark' : 'light');
+  /* Sin elección guardada, manda el sistema.
+   *
+   * Antes se caía siempre a claro, así que el tema oscuro —que está
+   * construido entero, con su paleta y sus logotipos— solo lo veía
+   * quien encontrara el botón y lo pulsara. Quien lleva el teléfono en
+   * oscuro espera que una página que sabe hacerlo la respete.
+   *
+   * Una elección explícita sigue mandando sobre el sistema: lo que se
+   * guardó fue una decisión y no se le lleva la contraria. */
+  function preferido() {
+    var guardado = leer();
+    if (guardado === 'dark' || guardado === 'light') return guardado;
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch (e) {
+      return 'light';
+    }
+  }
+
+  raiz.setAttribute('data-theme', preferido());
 
   document.addEventListener('DOMContentLoaded', function () {
     var cab = document.querySelector('.cab__inner');
