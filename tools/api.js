@@ -1500,12 +1500,335 @@ const listarDealers = (req, res) => responder(res, 200, { dealers: db.dealersPub
 function verDealer(req, res, ctx, slug) {
   const d = db.dealerPorSlug(slug);
   if (!d) return fallo(res, 404, 'Ese dealer no existe');
+
+  const pagina = db.paginaDe(d.id, { soloVisibles: true });
+
+  /* Sin límite: `anunciosPublicos` pagina de 24 en 24 por defecto y
+     aquí no se le pasaba nada, así que un dealer con cuarenta equipos
+     enseñaba veinticuatro y su propia página le decía que tenía
+     veinticuatro. La página de un dealer es su escaparate entero. */
   return responder(res, 200, {
     dealer: { ...d, verificada: !!d.verificada },
     sucursales: db.sucursalesDe(d.id),
-    anuncios: db.anunciosPublicos({ organizacion: d.id }),
+    anuncios: db.anunciosPublicos({ organizacion: d.id, porPagina: 500 }),
+    enlaces: pagina.enlaces,
+    galeria: pagina.galeria,
+    secciones: pagina.secciones,
   });
 }
+
+/* El sello de verificado, desde la pantalla de administración.
+ *
+ * Solo se concedía con `node tools/admin.js`, en el alta por línea de
+ * comandos: un dealer que se registraba por el sitio no podía
+ * obtenerlo nunca. La pastilla verde se pinta en cinco pantallas para
+ * una condición que era inalcanzable por la vía normal. */
+const verificarOrganizacion = conAdmin(async (req, res, ctx, idOrg) => {
+  const c = await leerCuerpo(req);
+  if (!db.marcarVerificada(idOrg, !!c.verificada)) {
+    return fallo(res, 404, 'Esa empresa no existe');
+  }
+  return responder(res, 200, { verificada: !!c.verificada });
+});
+
+/* ── Rutas: la página propia del dealer ─────────────────── */
+
+/* Las reglas para tener página, comprobadas en el servidor y
+ * enseñadas en pantalla.
+ *
+ * Se devuelven SIEMPRE las seis, cumplidas o no, porque la lista es lo
+ * que hace que armar la página sea intuitivo: el dealer ve en todo
+ * momento qué le falta, en vez de descubrirlo al pulsar publicar.
+ *
+ * Las tres primeras son para PODER tener página; las tres últimas, para
+ * publicarla. Todo lo demás —logotipo, banner, galería, redes,
+ * secciones— es opcional y se puede ir añadiendo después, que es lo que
+ * se pidió: que no haga falta tenerlo todo para empezar. */
+const MINIMO_ANUNCIOS = 5;
+const MINIMO_DESCRIPCION = 80;
+
+function reglasDePagina(org, pagina) {
+  const publicados = db.contarAnunciosPublicados(org.id);
+  const descripcion = String((pagina && pagina.descripcion) || '').trim();
+  const tieneContacto = !!(pagina && (pagina.correo_publico || pagina.telefono_publico));
+
+  const reglas = [
+    {
+      id: 'aprobada',
+      titulo: 'Su cuenta de dealer está aprobada',
+      /* `ctx.organizacion` es la fila de la base tal cual, en
+         snake_case: quien la mira en camelCase —como la respuesta de
+         sesión— obtiene undefined y la regla queda siempre en falso. */
+      cumple: org.estado_revision === 'aprobada',
+      falta: 'Su solicitud todavía está en revisión. Le avisamos por correo en cuanto se resuelva.',
+      paraCrear: true,
+    },
+    {
+      id: 'plan',
+      titulo: 'Tiene un plan que incluye página propia',
+      cumple: !!org.perfil_publico,
+      falta: 'La página propia va incluida en el nivel Premium. Se activa al contratar cupos de ese nivel.',
+      paraCrear: true,
+    },
+    {
+      id: 'anuncios',
+      titulo: `Tiene ${MINIMO_ANUNCIOS} o más equipos publicados`,
+      cumple: publicados >= MINIMO_ANUNCIOS,
+      detalle: `${publicados} de ${MINIMO_ANUNCIOS}`,
+      falta: `Le faltan ${Math.max(0, MINIMO_ANUNCIOS - publicados)} equipo(s). `
+        + 'Una página con dos máquinas no convence a nadie, y por eso el mínimo. '
+        + 'Cuentan los que están publicados; los pausados y los vendidos no.',
+      paraCrear: true,
+    },
+    {
+      id: 'nombre',
+      titulo: 'La empresa tiene nombre',
+      cumple: !!String((pagina && pagina.nombre) || '').trim(),
+      falta: 'Escriba el nombre con el que quiere que se le conozca.',
+      paraCrear: false,
+    },
+    {
+      id: 'descripcion',
+      titulo: 'Ha escrito una descripción',
+      cumple: descripcion.length >= MINIMO_DESCRIPCION,
+      /* Cumplida, el contador deja de comparar: «209 de 80 caracteres»
+         se lee como un error, no como algo resuelto. */
+      detalle: descripcion.length >= MINIMO_DESCRIPCION
+        ? `${descripcion.length} caracteres`
+        : `${descripcion.length} de ${MINIMO_DESCRIPCION} caracteres`,
+      falta: `Cuente en pocas líneas a qué se dedica y qué le distingue. `
+        + `Mínimo ${MINIMO_DESCRIPCION} caracteres.`,
+      paraCrear: false,
+    },
+    {
+      id: 'contacto',
+      titulo: 'Hay una forma de contactarle',
+      cumple: tieneContacto,
+      falta: 'Añada al menos un correo o un teléfono públicos. '
+        + 'No se usa el de su cuenta: ese es con el que usted entra.',
+      paraCrear: false,
+    },
+  ];
+
+  const paraCrear = reglas.filter((r) => r.paraCrear);
+  return {
+    reglas,
+    publicados,
+    minimoAnuncios: MINIMO_ANUNCIOS,
+    puedeCrear: paraCrear.every((r) => r.cumple),
+    puedePublicar: reglas.every((r) => r.cumple),
+  };
+}
+
+/* Quien administra la organización y es dealer. Un vendedor publica
+   equipos, pero la página de la empresa no es suya. */
+const conPagina = (manejador) => conSesion((req, res, ctx, ...resto) => {
+  const org = ctx.organizacion;
+  if (!org || org.tipo !== 'dealer') {
+    return fallo(res, 404, 'Su cuenta no tiene página de empresa');
+  }
+  if (!puedeAdministrar(ctx)) {
+    return fallo(res, 403, 'Solo quien administra la empresa puede editar su página');
+  }
+  return manejador(req, res, ctx, ...resto);
+});
+
+const verMiPagina = conPagina((req, res, ctx) => {
+  const pagina = db.paginaDe(ctx.organizacion.id);
+  return responder(res, 200, {
+    pagina,
+    ...reglasDePagina(ctx.organizacion, pagina),
+    /* La dirección donde se verá, para que pueda copiarla y
+       comprobarla antes de publicar. */
+    direccion: pagina.slug ? `/dealer.html?d=${pagina.slug}` : null,
+  });
+});
+
+const editarMiPagina = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const datos = {};
+
+  if (c.nombre !== undefined) {
+    const n = texto(c.nombre, 160);
+    if (!n) return fallo(res, 400, 'El nombre de la empresa no puede quedar vacío');
+    datos.nombre = n;
+  }
+  if (c.descripcion !== undefined) datos.descripcion = texto(c.descripcion, 2000) || '';
+  if (c.lema !== undefined) datos.lema = texto(c.lema, 120) || '';
+  if (c.web !== undefined) {
+    const w = texto(c.web, 200) || '';
+    if (w && !/^https?:\/\//i.test(w)) return fallo(res, 400, 'La web debe empezar por http:// o https://');
+    datos.web = w;
+  }
+  if (c.correoPublico !== undefined) {
+    const correoPub = texto(c.correoPublico, 160) || '';
+    if (correoPub && !correoValido(correoPub)) return fallo(res, 400, 'Escriba un correo válido');
+    datos.correoPublico = correoPub;
+  }
+  if (c.telefonoPublico !== undefined) {
+    const tel = texto(c.telefonoPublico, 20) || '';
+    if (tel && !telefonoValido(tel)) return fallo(res, 400, 'El teléfono debe tener 10 dígitos');
+    datos.telefonoPublico = tel;
+  }
+
+  /* Logotipo y banner: SOLO rutas que devolvió la subida de este sitio.
+     Es la misma comprobación que la portada, y por el mismo motivo: una
+     URL de un tercero se salta la política de contenidos del navegador
+     y además la puede cambiar o retirar su dueño cuando quiera. */
+  for (const [clave, rotulo] of [['logo', 'El logotipo'], ['banner', 'La imagen de portada']]) {
+    if (c[clave] === undefined) continue;
+    const ruta = String(c[clave] || '');
+    if (ruta && !esRutaDeFoto(ruta)) {
+      return fallo(res, 400, `${rotulo} tiene que ser una imagen subida al sitio`);
+    }
+    datos[clave] = ruta;
+  }
+
+  const pagina = db.guardarPagina(ctx.organizacion.id, datos);
+  return responder(res, 200, { pagina, ...reglasDePagina(ctx.organizacion, pagina) });
+});
+
+const publicarMiPagina = conPagina((req, res, ctx) => {
+  const pagina = db.paginaDe(ctx.organizacion.id);
+  const estado = reglasDePagina(ctx.organizacion, pagina);
+
+  /* Se comprueba aquí y no solo en pantalla: la lista de la pantalla
+     es para que el dealer sepa qué le falta, no la que decide. */
+  if (!estado.puedePublicar) {
+    const pendientes = estado.reglas.filter((r) => !r.cumple);
+    return fallo(res, 400, `Falta ${pendientes.length === 1 ? 'una cosa' : `${pendientes.length} cosas`} por resolver`,
+      { pendientes: pendientes.map((r) => ({ id: r.id, titulo: r.titulo, falta: r.falta })) });
+  }
+
+  db.publicarPagina(ctx.organizacion.id);
+  return responder(res, 200, {
+    pagina: db.paginaDe(ctx.organizacion.id),
+    direccion: `/dealer.html?d=${pagina.slug}`,
+  });
+});
+
+const despublicarMiPagina = conPagina((req, res, ctx) => {
+  db.despublicarPagina(ctx.organizacion.id);
+  return responder(res, 200, { pagina: db.paginaDe(ctx.organizacion.id) });
+});
+
+/* ── Secciones de la página ─────────────────────────────── */
+
+const TIPOS_SECCION = ['texto', 'galeria', 'marcas', 'servicios', 'destacados', 'sucursales', 'inventario'];
+
+/* Lo que cada tipo de bloque guarda. Se valida aquí y no se confía en
+   lo que mande el navegador: `cuerpo` acaba en la página pública. */
+function cuerpoDeSeccion(tipo, crudo) {
+  const c = crudo || {};
+  if (tipo === 'texto') return { texto: texto(c.texto, 4000) || '' };
+  if (tipo === 'marcas' || tipo === 'servicios') {
+    return {
+      lista: (Array.isArray(c.lista) ? c.lista : [])
+        .map((x) => texto(x, 80)).filter(Boolean).slice(0, 40),
+    };
+  }
+  if (tipo === 'destacados') {
+    return {
+      anuncios: (Array.isArray(c.anuncios) ? c.anuncios : [])
+        .map((x) => texto(x, 80)).filter(Boolean).slice(0, 12),
+    };
+  }
+  /* galeria, sucursales e inventario no guardan nada: se pintan con lo
+     que ya hay en la base. */
+  return {};
+}
+
+const crearMiSeccion = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const tipo = String(c.tipo || '');
+  if (!TIPOS_SECCION.includes(tipo)) return fallo(res, 400, 'Ese tipo de bloque no existe');
+
+  /* Un tope, porque una página con cincuenta bloques no es una página.
+     Con siete tipos disponibles, veinte da margen de sobra para
+     repetir los de texto y destacados varias veces. */
+  if (db.seccionesDe(ctx.organizacion.id).length >= 20) {
+    return fallo(res, 400, 'Su página ya tiene veinte bloques');
+  }
+
+  const idSeccion = db.crearSeccion(ctx.organizacion.id, {
+    tipo,
+    titulo: texto(c.titulo, 120),
+    cuerpo: cuerpoDeSeccion(tipo, c.cuerpo),
+  });
+  return responder(res, 201, { id: idSeccion, secciones: db.seccionesDe(ctx.organizacion.id) });
+});
+
+const editarMiSeccion = conPagina(async (req, res, ctx, idSeccion) => {
+  const c = await leerCuerpo(req);
+  const actual = db.seccionesDe(ctx.organizacion.id).find((s) => s.id === idSeccion);
+  if (!actual) return fallo(res, 404, 'Ese bloque no existe');
+
+  const cambios = {};
+  if (c.titulo !== undefined) cambios.titulo = texto(c.titulo, 120);
+  if (c.visible !== undefined) cambios.visible = !!c.visible;
+  if (c.cuerpo !== undefined) cambios.cuerpo = cuerpoDeSeccion(actual.tipo, c.cuerpo);
+
+  db.editarSeccion(idSeccion, ctx.organizacion.id, cambios);
+  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
+});
+
+const borrarMiSeccion = conPagina((req, res, ctx, idSeccion) => {
+  if (!db.borrarSeccion(idSeccion, ctx.organizacion.id)) {
+    return fallo(res, 404, 'Ese bloque no existe');
+  }
+  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
+});
+
+const ordenarMisSecciones = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const ids = (Array.isArray(c.ids) ? c.ids : []).map((x) => String(x));
+  if (!ids.length) return fallo(res, 400, 'Indique el orden de los bloques');
+  return responder(res, 200, { secciones: db.ordenarSecciones(ctx.organizacion.id, ids) });
+});
+
+/* ── Galería y enlaces ──────────────────────────────────── */
+
+const anadirAMiGaleria = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const url = String(c.url || '');
+  if (!esRutaDeFoto(url)) return fallo(res, 400, 'La fotografía tiene que subirse al sitio');
+  if (db.galeriaDe(ctx.organizacion.id).length >= 24) {
+    return fallo(res, 400, 'Su galería ya tiene veinticuatro fotografías');
+  }
+  db.anadirAGaleria(ctx.organizacion.id, { url, alt: texto(c.alt, 160) });
+  return responder(res, 201, { galeria: db.galeriaDe(ctx.organizacion.id) });
+});
+
+const quitarDeMiGaleria = conPagina((req, res, ctx, idFoto) => {
+  if (!db.quitarDeGaleria(idFoto, ctx.organizacion.id)) {
+    return fallo(res, 404, 'Esa fotografía no existe');
+  }
+  return responder(res, 200, { galeria: db.galeriaDe(ctx.organizacion.id) });
+});
+
+const TIPOS_ENLACE = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'web', 'whatsapp'];
+
+const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const lista = [];
+
+  for (const e of (Array.isArray(c.enlaces) ? c.enlaces : []).slice(0, 8)) {
+    const tipo = String((e && e.tipo) || '');
+    const valor = texto(e && e.valor, 200);
+    if (!TIPOS_ENLACE.includes(tipo) || !valor) continue;
+
+    /* El de WhatsApp es un número; los demás, direcciones. Un enlace
+       roto en la página de un dealer es peor que no tenerlo. */
+    if (tipo === 'whatsapp') {
+      if (!telefonoValido(valor)) return fallo(res, 400, 'El WhatsApp debe tener 10 dígitos');
+    } else if (!/^https?:\/\//i.test(valor)) {
+      return fallo(res, 400, `El enlace de ${tipo} debe empezar por http:// o https://`);
+    }
+    lista.push({ tipo, valor });
+  }
+
+  return responder(res, 200, { enlaces: db.guardarEnlaces(ctx.organizacion.id, lista) });
+});
 
 /* ── Rutas: planes y cobro ──────────────────────────────── */
 
@@ -2241,6 +2564,22 @@ const RUTAS = [
   ['DELETE', /^\/api\/sucursales\/([\w-]+)$/, borrarSucursal],
   ['GET',  /^\/api\/dealers$/,           listarDealers],
   ['GET',  /^\/api\/dealers\/([\w-]+)$/, verDealer],
+
+  /* La página propia del dealer. Las subrutas van ANTES que la genérica
+     de secciones: el enrutador recorre esta lista en orden, y
+     `/secciones/orden` tiene que ganarle a `/secciones/:id`. */
+  ['GET',    /^\/api\/mi-pagina$/,                          verMiPagina],
+  ['PATCH',  /^\/api\/mi-pagina$/,                          editarMiPagina],
+  ['POST',   /^\/api\/mi-pagina\/publicar$/,                publicarMiPagina],
+  ['POST',   /^\/api\/mi-pagina\/despublicar$/,             despublicarMiPagina],
+  ['PATCH',  /^\/api\/mi-pagina\/secciones\/orden$/,        ordenarMisSecciones],
+  ['POST',   /^\/api\/mi-pagina\/secciones$/,               crearMiSeccion],
+  ['PATCH',  /^\/api\/mi-pagina\/secciones\/([\w-]+)$/,     editarMiSeccion],
+  ['DELETE', /^\/api\/mi-pagina\/secciones\/([\w-]+)$/,     borrarMiSeccion],
+  ['POST',   /^\/api\/mi-pagina\/galeria$/,                 anadirAMiGaleria],
+  ['DELETE', /^\/api\/mi-pagina\/galeria\/([\w-]+)$/,       quitarDeMiGaleria],
+  ['PUT',    /^\/api\/mi-pagina\/enlaces$/,                 guardarMisEnlaces],
+  ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
   ['GET',  /^\/api\/planes$/,            listarPlanes],
   ['GET',  /^\/api\/estadisticas$/,      estadisticas],
   ['POST', /^\/api\/anuncios$/,          publicar],

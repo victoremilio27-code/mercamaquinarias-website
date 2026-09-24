@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="es-DO">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mi página de empresa · MercaMaquinarias</title>
+<meta name="description" content="Arme la página pública de su empresa: portada, logotipo, descripción, contactos y los bloques que quiera enseñar.">
+<meta name="theme-color" content="#071A2B">
+<meta name="robots" content="noindex">
+<!-- Vista previa al compartir en WhatsApp, Facebook y X. La imagen
+     es la del paquete de marca y va con URL absoluta: las redes no
+     resuelven rutas relativas. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MercaMaquinarias">
+<meta property="og:locale" content="es_DO">
+<meta property="og:title" content="Mi página de empresa">
+<meta property="og:description" content="Arme la página pública de su empresa en MercaMaquinarias.">
+<meta property="og:url" content="https://mercamaquinarias.com/mi-pagina.html">
+<meta property="og:image" content="https://mercamaquinarias.com/brand_assets/img/og-1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="brand_assets/svg/favicon-512.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="assets/tema.js"></script>
+</head>
+<body>
+
+<a class="skip" href="#contenido">Saltar al contenido</a>
+
+<header class="cab">
+  <div class="cab__barra">
+    <div class="envoltura cab__inner">
+      <a class="cab__logo" href="index.html" aria-label="MercaMaquinarias, inicio">
+        <img src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias">
+      </a>
+      <button class="cab__toggle" id="navToggle" aria-expanded="false" aria-controls="navMenu" aria-label="Abrir menú">
+        <span></span><span></span><span></span>
+      </button>
+      <nav class="cab__nav" id="navMenu" aria-label="Principal">
+        <a href="equipos.html">Equipos</a>
+        <a href="categorias.html">Categorías</a>
+        <a href="alquiler.html">Alquiler</a>
+        <a href="importar.html">Importación</a>
+        <a href="planes.html">Planes</a>
+        <a class="cab__nav-cta" href="publicar.html">Publicar equipo</a>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="contenido">
+<div class="envoltura">
+
+  <div class="panel-vacio" id="sinSesion" hidden>
+    <h1 class="vacio__titulo">Necesita iniciar sesión</h1>
+    <p class="vacio__texto">Aquí se arma la página pública de su empresa.</p>
+    <div class="vacio__acciones">
+      <a class="btn btn--ambar" href="cuenta.html">Entrar</a>
+    </div>
+  </div>
+
+  <!-- Quien no es dealer no tiene página de empresa. Se le dice por qué
+       y cómo se consigue, en vez de enseñarle un editor inservible. -->
+  <div class="panel-vacio" id="noEsDealer" hidden>
+    <h1 class="vacio__titulo">La página propia es para cuentas de empresa</h1>
+    <p class="vacio__texto">
+      Su cuenta es particular. Las cuentas de empresa tienen una página pública
+      con su logotipo, su descripción y su inventario, dentro del directorio de dealers.
+    </p>
+    <div class="vacio__acciones">
+      <a class="btn btn--ambar" href="panel.html">Pasar a cuenta de empresa</a>
+      <a class="btn btn--linea" href="dealers.html">Ver el directorio</a>
+    </div>
+  </div>
+
+  <div id="cargando" class="panel-cargando">Cargando su página...</div>
+
+  <div id="contenidoPagina" hidden>
+
+    <header class="pagina pagina--panel">
+      <div>
+        <nav class="miga" aria-label="Ruta">
+          <a href="index.html">Inicio</a> &rsaquo;
+          <a href="panel.html">Panel</a> &rsaquo;
+          <span>Mi página</span>
+        </nav>
+        <h1 class="pagina__titulo"><em>Su página</em> de empresa</h1>
+        <p class="pagina__sub" id="estadoPagina"></p>
+      </div>
+      <div class="pagina__acciones">
+        <a class="btn btn--linea" href="#" id="btnVerla" hidden>Verla como la ven</a>
+        <button class="btn btn--linea" type="button" id="btnDespublicar" hidden>Despublicar</button>
+        <button class="btn btn--ambar" type="button" id="btnPublicar">Publicar página</button>
+      </div>
+    </header>
+
+    <!-- ==== LAS REGLAS ====
+         Esto es lo que hace que armar la página sea intuitivo: la lista
+         está siempre a la vista y dice qué falta, en vez de que el
+         dealer lo descubra al pulsar publicar y reciba un error. -->
+    <section class="panel" aria-labelledby="t-reglas">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-reglas"><em>Qué</em> hace falta</h2>
+        <p class="panel__meta" id="resumenReglas"></p>
+      </div>
+      <ul class="reglas" id="listaReglas"></ul>
+    </section>
+
+    <!-- ==== LO BÁSICO ==== -->
+    <section class="panel" aria-labelledby="t-basico">
+      <h2 class="panel__titulo panel__titulo--limpio" id="t-basico"><em>Lo</em> básico</h2>
+      <p class="panel__meta">Se guarda solo al salir de cada campo.</p>
+
+      <div class="editor-imagenes">
+        <div class="editor-imagen">
+          <span class="editor-imagen__rotulo">Logotipo</span>
+          <div class="editor-imagen__previa editor-imagen__previa--logo" id="previaLogo"></div>
+          <label class="btn btn--linea btn--chico">
+            Subir logotipo
+            <input type="file" id="campoLogo" accept="image/jpeg,image/png,image/webp" hidden>
+          </label>
+          <button class="enlace-plano" type="button" id="quitarLogo" hidden>Quitar</button>
+          <p class="editor-imagen__nota">Cuadrado, mínimo 400×400. PNG si tiene fondo transparente.</p>
+        </div>
+
+        <div class="editor-imagen editor-imagen--ancha">
+          <span class="editor-imagen__rotulo">Imagen de portada</span>
+          <div class="editor-imagen__previa editor-imagen__previa--banner" id="previaBanner"></div>
+          <label class="btn btn--linea btn--chico">
+            Subir portada
+            <input type="file" id="campoBanner" accept="image/jpeg,image/png,image/webp" hidden>
+          </label>
+          <button class="enlace-plano" type="button" id="quitarBanner" hidden>Quitar</button>
+          <p class="editor-imagen__nota">Apaisada, mínimo 1600 de ancho. Una foto de su taller o su flota.</p>
+        </div>
+      </div>
+
+      <div class="rejilla-campos">
+        <label class="campo-v"><span>Nombre de la empresa *</span>
+          <input type="text" id="c-nombre" maxlength="160" autocomplete="organization">
+        </label>
+        <label class="campo-v"><span>Lema</span>
+          <input type="text" id="c-lema" maxlength="120" placeholder="Una línea que resuma a qué se dedica">
+        </label>
+      </div>
+
+      <label class="campo-v"><span>Descripción *</span>
+        <textarea id="c-descripcion" maxlength="2000" rows="5"
+          placeholder="Cuente a qué se dedica, desde cuándo y qué le distingue."></textarea>
+        <span class="campo-v__ayuda" id="ayudaDescripcion"></span>
+      </label>
+
+      <div class="rejilla-campos">
+        <label class="campo-v"><span>Correo público</span>
+          <input type="email" id="c-correo" maxlength="160" placeholder="ventas@suempresa.com">
+          <span class="campo-v__ayuda">No es el de su cuenta: ese es con el que usted entra.</span>
+        </label>
+        <label class="campo-v"><span>Teléfono público</span>
+          <input type="tel" id="c-telefono" maxlength="20" placeholder="(809) 000-0000">
+        </label>
+        <label class="campo-v"><span>Sitio web</span>
+          <input type="url" id="c-web" maxlength="200" placeholder="https://">
+        </label>
+      </div>
+    </section>
+
+    <!-- ==== REDES ==== -->
+    <section class="panel" aria-labelledby="t-redes">
+      <h2 class="panel__titulo panel__titulo--limpio" id="t-redes"><em>Dónde</em> más encontrarle</h2>
+      <p class="panel__meta">Opcional. Se enseñan como iconos en su página.</p>
+      <div class="rejilla-campos" id="camposRedes"></div>
+      <button class="btn btn--linea btn--chico" type="button" id="btnGuardarRedes">Guardar redes</button>
+      <p class="aviso-linea" id="avisoRedes" hidden></p>
+    </section>
+
+    <!-- ==== GALERÍA ==== -->
+    <section class="panel" aria-labelledby="t-galeria">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-galeria"><em>Fotos</em> de la empresa</h2>
+        <p class="panel__meta">El taller, la nave, su equipo de trabajo. No son anuncios.</p>
+      </div>
+      <ul class="galeria-editor" id="galeriaEditor"></ul>
+      <label class="btn btn--linea btn--chico">
+        Añadir fotografía
+        <input type="file" id="campoGaleria" accept="image/jpeg,image/png,image/webp" hidden>
+      </label>
+    </section>
+
+    <!-- ==== BLOQUES ==== -->
+    <section class="panel" aria-labelledby="t-bloques">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-bloques"><em>Bloques</em> de su página</h2>
+        <p class="panel__meta">Añada los que quiera y póngalos en el orden que prefiera.</p>
+      </div>
+
+      <ul class="bloques" id="listaBloques"></ul>
+
+      <div class="anadir-bloque">
+        <label class="campo-v campo-v--pegado"><span class="visualmente-oculto">Tipo de bloque</span>
+          <select id="tipoBloque">
+            <option value="inventario">Mis equipos publicados</option>
+            <option value="texto">Texto libre</option>
+            <option value="destacados">Equipos destacados</option>
+            <option value="marcas">Marcas que representa</option>
+            <option value="servicios">Servicios que ofrece</option>
+            <option value="galeria">Galería de fotos</option>
+            <option value="sucursales">Sus sucursales</option>
+          </select>
+        </label>
+        <button class="btn btn--linea btn--chico" type="button" id="btnAnadirBloque">Añadir bloque</button>
+      </div>
+    </section>
+
+    <p class="aviso-linea" id="aviso" hidden></p>
+
+  </div>
+</div>
+</main>
+</main>
+
+<footer class="pie">
+  <div class="envoltura pie__inner">
+    <div class="pie__col">
+      <img class="pie__logo" src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias">
+      <p class="pie__legal">© 2026 MercaMaquinarias · Inversiones XZT, S.R.L., RNC 1-31-27975-9. Todos los derechos reservados.</p>
+      <ul class="pie__lista">
+        <li><a href="legal.html">Centro legal</a></li>
+        <li><a href="legal.html#terminos">Términos y condiciones de uso</a></li>
+        <li><a href="legal.html#privacidad">Política de privacidad</a></li>
+        <li><a href="contacto.html">Contacto</a></li>
+      </ul>
+    </div>
+    <div class="pie__col">
+      <h3 class="pie__titulo">Otros servicios</h3>
+      <ul class="pie__lista">
+        <li><a href="alquiler.html">Alquiler de equipos con operador, por hora</a></li>
+        <li><a href="importar.html">Importación de maquinaria</a></li>
+        <li><a href="dealers.html">Talleres y dealers de maquinaria</a></li>
+      </ul>
+    </div>
+    <div class="pie__col">
+      <h3 class="pie__titulo">Enlaces</h3>
+      <ul class="pie__lista pie__lista--marcada">
+        <li><a href="planes.html"><b>Planes y precios:</b> cupos, niveles y beneficios</a></li>
+        <li><a href="dealers.html"><b>Directorio:</b> dealers y talleres</a></li>
+      </ul>
+      <p class="pie__sede">Santo Domingo, República Dominicana</p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/sesion.js"></script>
+<script src="assets/taxonomia.js"></script>
+<script src="assets/precios.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/legales.js"></script>
+<script src="assets/app.js"></script>
+<script src="assets/mi-pagina.js"></script>
+<script src="assets/chat.js" defer></script>
+</body>
+</html>

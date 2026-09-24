@@ -702,6 +702,99 @@ const MIGRACIONES = [
     'ALTER TABLE publicidad_nueva RENAME TO publicidad',
     'CREATE INDEX IF NOT EXISTS ix_publicidad_espacio ON publicidad (espacio, activo, orden)',
   ]],
+
+  /* La página propia del dealer.
+   *
+   * Hasta ahora «página de dealer» eran cuatro datos —nombre,
+   * descripción, web y un icono genérico— y NINGUNA ruta para que el
+   * dealer los cambiara: el panel le decía literalmente que escribiera
+   * a contacto. Se vendía con el plan una página que no se podía
+   * hacer.
+   *
+   * `logo` ya existía en el esquema y no la leía ni la escribía nadie.
+   * Aquí se resucita y se le añade lo que falta.
+   *
+   * POR QUÉ UNA TABLA DE SECCIONES Y NO VEINTE COLUMNAS MÁS
+   *
+   * Lo que se pidió es que el dealer arme su página: que añada, quite y
+   * reordene bloques según lo que tenga. Con columnas fijas, cada
+   * bloque nuevo es una migración; con filas, es una opción más en un
+   * desplegable. El contenido de cada bloque va en `cuerpo` como JSON
+   * porque un bloque de texto y uno de equipos destacados no tienen los
+   * mismos campos, y forzarlos a compartir tabla plana llenaría el
+   * esquema de columnas nulas.
+   *
+   * `estado_pagina` es independiente de `perfil_publico`. El plan da
+   * DERECHO a tener página; el estado dice si está terminada. Sin esa
+   * separación, pagar publicaría al instante una página vacía. */
+  ['2026-09-pagina-dealer', [
+    'ALTER TABLE organizaciones ADD COLUMN banner TEXT',
+    'ALTER TABLE organizaciones ADD COLUMN lema TEXT',
+    /* Separado del de la cuenta. El de acceso se estaba publicando en
+       el directorio: cualquiera recorría /api/dealers y se llevaba la
+       lista de correos con los que los dealers inician sesión. */
+    'ALTER TABLE organizaciones ADD COLUMN correo_publico TEXT',
+    'ALTER TABLE organizaciones ADD COLUMN telefono_publico TEXT',
+    "ALTER TABLE organizaciones ADD COLUMN estado_pagina TEXT NOT NULL DEFAULT 'borrador'",
+    'ALTER TABLE organizaciones ADD COLUMN publicada_en TEXT',
+
+    `CREATE TABLE IF NOT EXISTS organizacion_enlaces (
+       id              TEXT PRIMARY KEY,
+       organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+       tipo            TEXT NOT NULL CHECK (tipo IN (
+                         'instagram', 'facebook', 'youtube', 'tiktok',
+                         'linkedin', 'web', 'whatsapp')),
+       valor           TEXT NOT NULL,
+       orden           INTEGER NOT NULL DEFAULT 0
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_org_enlaces ON organizacion_enlaces (organizacion_id, orden)',
+
+    `CREATE TABLE IF NOT EXISTS organizacion_galeria (
+       id              TEXT PRIMARY KEY,
+       organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+       url             TEXT NOT NULL,
+       alt             TEXT,
+       orden           INTEGER NOT NULL DEFAULT 0
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_org_galeria ON organizacion_galeria (organizacion_id, orden)',
+
+    `CREATE TABLE IF NOT EXISTS organizacion_secciones (
+       id              TEXT PRIMARY KEY,
+       organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+       tipo            TEXT NOT NULL CHECK (tipo IN (
+                         'texto', 'galeria', 'marcas', 'servicios',
+                         'destacados', 'sucursales', 'inventario')),
+       titulo          TEXT,
+       cuerpo          TEXT,
+       orden           INTEGER NOT NULL DEFAULT 0,
+       visible         INTEGER NOT NULL DEFAULT 1
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_org_secciones ON organizacion_secciones (organizacion_id, orden)',
+  ]],
+
+  /* Quien YA tenía su página visible sigue teniéndola.
+   *
+   * La migración de arriba estrena `estado_pagina` con 'borrador', que
+   * es lo correcto para una página nueva. Pero aplicada tal cual a una
+   * base en producción apagaba de golpe a todos los dealers que ya
+   * estaban publicados: sus páginas dejaban de responder y sus enlaces
+   * compartidos se convertían en 404, sin que nadie hubiera tocado
+   * nada. Se enterarían por un cliente.
+   *
+   * La condición es exactamente la que hacía visible una página con
+   * las reglas viejas: plan con perfil y revisión aprobada. Va en su
+   * propia migración y no dentro de la anterior porque esa ya está
+   * aplicada en las bases de desarrollo, y reescribirla no la volvería
+   * a ejecutar. */
+  ['2026-09-pagina-dealer-respetar-publicadas', [
+    `UPDATE organizaciones
+        SET estado_pagina = 'publicada',
+            publicada_en = COALESCE(publicada_en, creada)
+      WHERE tipo = 'dealer'
+        AND perfil_publico = 1
+        AND estado_revision = 'aprobada'
+        AND estado_pagina = 'borrador'`,
+  ]],
 ];
 
 function migrar() {
@@ -1504,7 +1597,7 @@ const solicitudes = (estado = 'pendiente') =>
   abrir().prepare(`
     SELECT s.id, s.organizacion_id, s.encargado, s.cargo, s.nombre_comercial,
            s.equipos_inventario, s.equipos_publicar, s.estado, s.creada, s.revisada, s.motivo,
-           o.nombre AS razon_social, o.slug,
+           o.nombre AS razon_social, o.slug, o.verificada,
            u.correo AS correo_solicitante
     FROM solicitudes_dealer s
     JOIN organizaciones o ON o.id = s.organizacion_id
@@ -1567,19 +1660,276 @@ function marcarAdmin(correo, esAdmin = true) {
 function dealersPublicos() {
   return abrir().prepare(`
     SELECT o.id, o.nombre, o.slug, o.verificada, o.descripcion, o.web,
+           o.logo, o.lema,
            (SELECT provincia FROM sucursales WHERE organizacion_id = o.id ORDER BY principal DESC LIMIT 1) AS provincia,
            COUNT(a.id) AS equipos
     FROM organizaciones o
     LEFT JOIN anuncios a ON a.organizacion_id = o.id AND a.estado = 'activo'
-    WHERE o.tipo = 'dealer' AND o.perfil_publico = 1 AND o.estado_revision = 'aprobada'
+    WHERE o.tipo = 'dealer' AND o.perfil_publico = 1
+      AND o.estado_revision = 'aprobada' AND o.estado_pagina = 'publicada'
     GROUP BY o.id
     ORDER BY equipos DESC, o.nombre`).all();
 }
 
+/* Las TRES condiciones, y las mismas que el directorio.
+ *
+ * Antes esta consulta solo exigía la aprobación, mientras el directorio
+ * exigía además el plan: un dealer aprobado sin pagar no salía en la
+ * lista pero su página respondía igual si alguien tenía la URL. Es
+ * decir, la página que se vende con el plan estaba medio regalada.
+ *
+ * Y `estado_pagina`, que es nuevo: hasta que el dealer no pulse
+ * publicar, su borrador no lo ve nadie más que él.
+ *
+ * Sigue sin seleccionar `rnc`, y ahora tampoco el correo ni el teléfono
+ * de la CUENTA: se entregan los públicos, que son los que el dealer
+ * decidió enseñar. El de la cuenta es con el que inicia sesión, y se
+ * estaba publicando en el directorio. */
 const dealerPorSlug = (slug) =>
-  abrir().prepare(`SELECT id, nombre, slug, verificada, descripcion, web, telefono, correo, creada
+  abrir().prepare(`SELECT id, nombre, slug, verificada, descripcion, web, creada,
+                          logo, banner, lema,
+                          correo_publico AS correo, telefono_publico AS telefono
                    FROM organizaciones
-                   WHERE slug = ? AND tipo = 'dealer' AND estado_revision = 'aprobada'`).get(slug);
+                   WHERE slug = ? AND tipo = 'dealer'
+                     AND estado_revision = 'aprobada'
+                     AND perfil_publico = 1
+                     AND estado_pagina = 'publicada'`).get(slug);
+
+/* ── La página propia del dealer ─────────────────────────── */
+
+/* Anuncios publicados de una organización.
+ *
+ * Cuenta SOLO los activos, no los pausados. Pausado ocupa cupo pero no
+ * se ve, así que contarlos dejaría publicar una página que presume de
+ * cinco equipos y enseña cuatro. Es el mismo criterio del directorio y
+ * del catálogo.
+ *
+ * Caduca antes de contar: `caducarAnuncios` solo corre al arrancar el
+ * servidor y al abrir el panel, así que sin esta llamada un anuncio ya
+ * vencido seguiría contando como activo durante horas. */
+function contarAnunciosPublicados(idOrg) {
+  caducarAnuncios();
+  return abrir().prepare(
+    "SELECT COUNT(*) AS n FROM anuncios WHERE organizacion_id = ? AND estado = 'activo'")
+    .get(idOrg).n;
+}
+
+const enlacesDe = (idOrg) =>
+  abrir().prepare('SELECT id, tipo, valor, orden FROM organizacion_enlaces WHERE organizacion_id = ? ORDER BY orden')
+    .all(idOrg);
+
+const galeriaDe = (idOrg) =>
+  abrir().prepare('SELECT id, url, alt, orden FROM organizacion_galeria WHERE organizacion_id = ? ORDER BY orden')
+    .all(idOrg);
+
+/* Las secciones, con el cuerpo ya convertido. Se guarda como JSON y se
+   devuelve como objeto: quien llama no tiene por qué saber cómo está
+   guardado, y un JSON corrupto no puede tumbar la página. */
+function seccionesDe(idOrg, { soloVisibles = false } = {}) {
+  const filas = abrir().prepare(`
+    SELECT id, tipo, titulo, cuerpo, orden, visible
+      FROM organizacion_secciones
+     WHERE organizacion_id = ?${soloVisibles ? ' AND visible = 1' : ''}
+     ORDER BY orden`).all(idOrg);
+
+  return filas.map((s) => {
+    let cuerpo = {};
+    try { cuerpo = s.cuerpo ? JSON.parse(s.cuerpo) : {}; } catch { cuerpo = {}; }
+    return { ...s, visible: !!s.visible, cuerpo };
+  });
+}
+
+/* Todo lo que hace falta para pintar la página, pública o en borrador. */
+function paginaDe(idOrg, { soloVisibles = false } = {}) {
+  const org = abrir().prepare(`
+    SELECT id, nombre, slug, descripcion, web, logo, banner, lema,
+           correo_publico, telefono_publico, verificada, perfil_publico,
+           estado_revision, estado_pagina, publicada_en
+      FROM organizaciones WHERE id = ?`).get(idOrg);
+  if (!org) return null;
+
+  return {
+    ...org,
+    verificada: !!org.verificada,
+    perfil_publico: !!org.perfil_publico,
+    enlaces: enlacesDe(idOrg),
+    galeria: galeriaDe(idOrg),
+    secciones: seccionesDe(idOrg, { soloVisibles }),
+  };
+}
+
+/* Guarda lo que venga y deja lo demás como estaba.
+ *
+ * Solo escribe las claves presentes: el editor guarda un campo suelto
+ * en cuanto el dealer sale de él, y un UPDATE con todas las columnas
+ * borraría lo que no viajó en esa petición. */
+function guardarPagina(idOrg, datos) {
+  const campos = {
+    nombre: 'nombre',
+    descripcion: 'descripcion',
+    lema: 'lema',
+    web: 'web',
+    logo: 'logo',
+    banner: 'banner',
+    correoPublico: 'correo_publico',
+    telefonoPublico: 'telefono_publico',
+  };
+
+  const sets = [];
+  const args = [];
+  for (const [clave, columna] of Object.entries(campos)) {
+    if (datos[clave] === undefined) continue;
+    sets.push(`${columna} = ?`);
+    /* Cadena vacía = quitar. Es como el editor borra un logotipo o un
+       lema, y guardar '' en vez de NULL dejaría un hueco que la página
+       pintaría igual. */
+    args.push(datos[clave] === '' ? null : datos[clave]);
+  }
+  if (!sets.length) return paginaDe(idOrg);
+
+  sets.push('actualizada = ?');
+  args.push(ahora(), idOrg);
+  abrir().prepare(`UPDATE organizaciones SET ${sets.join(', ')} WHERE id = ?`).run(...args);
+  return paginaDe(idOrg);
+}
+
+/* ── Secciones ───────────────────────────────────────────── */
+
+function crearSeccion(idOrg, { tipo, titulo, cuerpo }) {
+  const d = abrir();
+  const siguiente = d.prepare(
+    'SELECT COALESCE(MAX(orden), -1) + 1 AS n FROM organizacion_secciones WHERE organizacion_id = ?')
+    .get(idOrg).n;
+  const idSeccion = id();
+  d.prepare(`INSERT INTO organizacion_secciones (id, organizacion_id, tipo, titulo, cuerpo, orden, visible)
+             VALUES (?, ?, ?, ?, ?, ?, 1)`)
+    .run(idSeccion, idOrg, tipo, titulo || null, JSON.stringify(cuerpo || {}), siguiente);
+  return idSeccion;
+}
+
+function editarSeccion(idSeccion, idOrg, { titulo, cuerpo, visible }) {
+  const sets = [];
+  const args = [];
+  if (titulo !== undefined) { sets.push('titulo = ?'); args.push(titulo || null); }
+  if (cuerpo !== undefined) { sets.push('cuerpo = ?'); args.push(JSON.stringify(cuerpo || {})); }
+  if (visible !== undefined) { sets.push('visible = ?'); args.push(visible ? 1 : 0); }
+  if (!sets.length) return false;
+
+  args.push(idSeccion, idOrg);
+  const r = abrir().prepare(
+    `UPDATE organizacion_secciones SET ${sets.join(', ')} WHERE id = ? AND organizacion_id = ?`)
+    .run(...args);
+  return r.changes > 0;
+}
+
+const borrarSeccion = (idSeccion, idOrg) => abrir()
+  .prepare('DELETE FROM organizacion_secciones WHERE id = ? AND organizacion_id = ?')
+  .run(idSeccion, idOrg).changes > 0;
+
+/* Reordena en una transacción: a mitad de camino la página tendría dos
+   bloques con el mismo número y se pintaría en un orden arbitrario. */
+function ordenarSecciones(idOrg, ids) {
+  const d = abrir();
+  d.exec('BEGIN');
+  try {
+    const mover = d.prepare(
+      'UPDATE organizacion_secciones SET orden = ? WHERE id = ? AND organizacion_id = ?');
+    ids.forEach((idSeccion, i) => mover.run(i, idSeccion, idOrg));
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return seccionesDe(idOrg);
+}
+
+/* ── Galería y enlaces ───────────────────────────────────── */
+
+function anadirAGaleria(idOrg, { url, alt }) {
+  const d = abrir();
+  const siguiente = d.prepare(
+    'SELECT COALESCE(MAX(orden), -1) + 1 AS n FROM organizacion_galeria WHERE organizacion_id = ?')
+    .get(idOrg).n;
+  const idFoto = id();
+  d.prepare('INSERT INTO organizacion_galeria (id, organizacion_id, url, alt, orden) VALUES (?, ?, ?, ?, ?)')
+    .run(idFoto, idOrg, url, alt || null, siguiente);
+  return idFoto;
+}
+
+const quitarDeGaleria = (idFoto, idOrg) => abrir()
+  .prepare('DELETE FROM organizacion_galeria WHERE id = ? AND organizacion_id = ?')
+  .run(idFoto, idOrg).changes > 0;
+
+/* Los enlaces se reemplazan enteros: son cinco o seis y el editor los
+   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra. */
+function guardarEnlaces(idOrg, lista) {
+  const d = abrir();
+  d.exec('BEGIN');
+  try {
+    d.prepare('DELETE FROM organizacion_enlaces WHERE organizacion_id = ?').run(idOrg);
+    const meter = d.prepare(
+      'INSERT INTO organizacion_enlaces (id, organizacion_id, tipo, valor, orden) VALUES (?, ?, ?, ?, ?)');
+    lista.forEach((e, i) => meter.run(id(), idOrg, e.tipo, e.valor, i));
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return enlacesDe(idOrg);
+}
+
+/* ── Publicar y despublicar ──────────────────────────────── */
+
+const publicarPagina = (idOrg) => abrir()
+  .prepare("UPDATE organizaciones SET estado_pagina = 'publicada', publicada_en = ?, actualizada = ? WHERE id = ?")
+  .run(ahora(), ahora(), idOrg).changes > 0;
+
+const despublicarPagina = (idOrg) => abrir()
+  .prepare("UPDATE organizaciones SET estado_pagina = 'borrador', actualizada = ? WHERE id = ?")
+  .run(ahora(), idOrg).changes > 0;
+
+/* Apaga el perfil de quien ya no tiene un plan que lo incluya.
+ *
+ * No lo hacía nadie: el único sitio del código que ponía
+ * `perfil_publico = 0` era el alta de dealer. Una vez encendido, el
+ * perfil quedaba encendido para siempre, así que el plan se pagaba una
+ * vez y la página seguía publicada años después.
+ *
+ * La página NO se borra ni se despublica: se le retira la visibilidad
+ * pública y el borrador sigue entero, esperando a que renueve. */
+/* El sello de «anunciante verificado».
+ *
+ * Solo se podía otorgar con tools/admin.js, en el alta por línea de
+ * comandos, así que un dealer que se registraba por el sitio no podía
+ * obtenerlo NUNCA por mucho que pasara la revisión. La pastilla verde
+ * existía en cinco pantallas para una condición inalcanzable.
+ *
+ * Es distinto de `estado_revision`: aprobar significa que la empresa
+ * existe y puede publicar; verificar significa que alguien comprobó su
+ * documentación a fondo. Por eso son dos llaves y no una. */
+const marcarVerificada = (idOrg, valor) => abrir()
+  .prepare('UPDATE organizaciones SET verificada = ?, actualizada = ? WHERE id = ?')
+  .run(valor ? 1 : 0, ahora(), idOrg).changes > 0;
+
+function apagarPerfilesSinPlan() {
+  const d = abrir();
+  const sinPlan = d.prepare(`
+    SELECT o.id FROM organizaciones o
+     WHERE o.perfil_publico = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM suscripciones s
+           JOIN planes p ON p.id = s.plan_id
+          WHERE s.organizacion_id = o.id
+            AND s.estado = 'activa'
+            AND p.perfil_publico = 1)`).all();
+
+  if (!sinPlan.length) return { apagados: [] };
+
+  const apagar = d.prepare('UPDATE organizaciones SET perfil_publico = 0, actualizada = ? WHERE id = ?');
+  const t = ahora();
+  sinPlan.forEach((o) => apagar.run(t, o.id));
+  return { apagados: sinPlan.map((o) => o.id) };
+}
 
 const sucursalesDe = (idOrg) =>
   abrir().prepare('SELECT * FROM sucursales WHERE organizacion_id = ? AND activa = 1 ORDER BY principal DESC, nombre').all(idOrg);
@@ -2742,6 +3092,13 @@ module.exports = {
   recordarDispositivo, dispositivoDeConfianza,
   permitir, limpiarIntentos,
   registrarDealer, dealersPublicos, dealerPorSlug,
+
+  /* La página propia del dealer. */
+  contarAnunciosPublicados, paginaDe, guardarPagina,
+  crearSeccion, editarSeccion, borrarSeccion, ordenarSecciones, seccionesDe,
+  anadirAGaleria, quitarDeGaleria, galeriaDe,
+  guardarEnlaces, enlacesDe,
+  publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,

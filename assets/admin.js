@@ -36,7 +36,7 @@ function solicitudHTML(s) {
   const detalle = ABIERTA === s.id;
   const pendiente = s.estado === 'pendiente';
 
-  return `<li class="sol ${ROTULO[s.estado].clase}" data-id="${esc(s.id)}">
+  return `<li class="sol ${ROTULO[s.estado].clase}" data-id="${esc(s.id)}" data-org="${esc(s.organizacion_id)}">
     <div class="sol__cabeza">
       <b class="sol__nombre">${esc(s.razon_social)}</b>
       ${s.nombre_comercial ? `<span class="sol__meta">opera como ${esc(s.nombre_comercial)}</span>` : ''}
@@ -58,6 +58,15 @@ function solicitudHTML(s) {
       ${pendiente ? `
         <button type="button" class="btn btn--ambar btn--chico" data-accion="aprobar">Aprobar</button>
         <button type="button" class="btn btn--linea btn--chico" data-accion="rechazar">Rechazar</button>` : ''}
+      ${s.estado === 'aprobada' ? `
+        <!-- El sello es distinto de la aprobación: aprobar significa
+             que la empresa existe y puede publicar; verificar, que
+             alguien comprobó su documentación a fondo. Hasta ahora
+             solo se podía dar por línea de comandos, así que un dealer
+             registrado por el sitio no lo obtenía nunca. -->
+        <button type="button" class="btn btn--linea btn--chico" data-accion="verificar">
+          ${s.verificada ? 'Retirar el sello de verificado' : 'Dar el sello de verificado'}
+        </button>` : ''}
     </div>
 
     <div class="sol__detalle" id="detalle-${esc(s.id)}" ${detalle ? '' : 'hidden'}></div>
@@ -176,6 +185,23 @@ function pedirMotivo(fila, alConfirmar) {
     if (!motivo) return avisar('Escriba el motivo del rechazo.');
     alConfirmar(motivo);
   });
+}
+
+/* El sello de verificado. Es una accion aparte de aprobar: aprobar
+   dice que la empresa existe y puede publicar; verificar, que
+   alguien comprobo su documentacion a fondo. */
+async function alternarVerificada(fila) {
+  const idOrg = fila.dataset.org;
+  const boton = fila.querySelector('[data-accion="verificar"]');
+  const dar = /Dar el sello/.test(boton.textContent);
+  try {
+    await api(`/admin/organizaciones/${encodeURIComponent(idOrg)}/verificar`, {
+      metodo: 'POST', cuerpo: { verificada: dar },
+    });
+    cargar();
+  } catch (e) {
+    avisar(e.message || 'No se pudo cambiar el sello.');
+  }
 }
 
 async function resolver(id, decision, motivo) {
@@ -638,6 +664,8 @@ async function montarAdmin() {
         return resolver(id, 'aprobar');
       case 'rechazar':
         return pedirMotivo(fila, (motivo) => resolver(id, 'rechazar', motivo));
+      case 'verificar':
+        return alternarVerificada(fila);
       default:
     }
   });

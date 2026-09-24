@@ -312,8 +312,27 @@ function recogerHuerfanos() {
     + (tope ? ` · se alcanzó el tope de ${MAXIMO_POR_EJECUCION}, el resto mañana` : ''));
 }
 
+/* El perfil público se apaga cuando vence el plan que lo incluía.
+ *
+ * No lo hacía nadie: el único sitio del código que ponía
+ * `perfil_publico = 0` era el alta de dealer, así que una vez
+ * encendido quedaba encendido para siempre. El plan se pagaba una vez
+ * y la página seguía publicada años después.
+ *
+ * La página no se borra ni se despublica: pierde la visibilidad y el
+ * borrador queda intacto, esperando a que renueve. */
+function apagarPerfiles() {
+  if (SECO) {
+    return anotar('perfiles', 'comprobaría qué perfiles se quedaron sin plan');
+  }
+  const { apagados } = db.apagarPerfilesSinPlan();
+  if (!apagados.length) return anotar('perfiles', 'todos los perfiles publicados tienen plan vigente');
+  anotar('perfiles', `${apagados.length} perfil(es) retirados del directorio por plan vencido`);
+}
+
 const TAREAS = {
   caducar,
+  perfiles: apagarPerfiles,
   'por-vencer': avisarPorVencer,
   vencidos: avisarVencidos,
   comprobantes: reenviarComprobantes,

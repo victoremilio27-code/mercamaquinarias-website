@@ -235,9 +235,16 @@ function destacadoHTML(e) {
    siempre lleva a una página que existe. */
 function dealerHTML(d) {
   const total = d.equipos || 0;
+  /* El logotipo cuando lo hay, y el icono genérico cuando no. Un
+     directorio en el que todas las fichas llevan el mismo dibujo no
+     distingue a nadie, que es justo lo contrario de para lo que se
+     paga una página propia. */
   return `<li><a class="dealer" href="dealer.html?d=${encodeURIComponent(d.slug)}">
-    <span class="dealer__sello">${icono('i-edificio')}</span>
+    <span class="${d.logo ? 'perfil__logo dealer__logo' : 'dealer__sello'}">
+      ${d.logo ? `<img src="${esc(d.logo)}" alt="" loading="lazy">` : icono('i-edificio')}
+    </span>
     <span class="dealer__nombre">${esc(d.nombre)}</span>
+    ${d.lema ? `<span class="dealer__lema">${esc(d.lema)}</span>` : ''}
     <span class="dealer__meta">${esc(d.provincia || 'República Dominicana')} · <span class="num">${total}</span> ${total === 1 ? 'equipo publicado' : 'equipos publicados'}</span>
     ${d.verificada ? `<span class="pastilla pastilla--verde">${icono('i-check')} Verificado</span>` : ''}
   </a></li>`;
