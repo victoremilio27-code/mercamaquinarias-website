@@ -90,9 +90,23 @@ const EMPRESA = {
   marca: 'MercaMaquinarias',
   razonSocial: process.env.MERCA_RAZON_SOCIAL || 'Inversiones XZT, S.R.L.',
   rnc: process.env.MERCA_RNC || '1-31-27975-9',
-  // Solo para documentos fiscales. NO usar en correos ni en el sitio.
+  /* Solo para documentos fiscales. NO usar en correos ni en el sitio.
+   *
+   * Es el que consta en el Registro Mercantil 116099SD de la Cámara de
+   * Comercio y Producción de Santo Domingo, comprobado contra el
+   * certificado: «DOMICILIO DE LA EMPRESA · CALLE RAMON SANTANA, NO. 4
+   * GAZCUE». Aquí había otro distinto, y una factura con un domicilio
+   * del emisor que no es el registrado es una factura impugnable; peor
+   * todavía, corregirlo después obliga a emitir una nota de crédito por
+   * cada comprobante ya entregado. */
   domicilioFiscal: process.env.MERCA_DOMICILIO_FISCAL
-    || 'Av. Luperón No. 28, Residencial El Progreso, Santo Domingo, República Dominicana',
+    || 'C/ Ramón Santana No. 4, Gazcue, Distrito Nacional, República Dominicana',
+
+  /* El número de Registro Mercantil. No es obligatorio en el
+   * comprobante —lo que la DGII exige es el RNC— pero es habitual en
+   * las facturas dominicanas y ayuda a que el cliente identifique al
+   * emisor sin buscarlo. Vacío no imprime nada. */
+  registroMercantil: process.env.MERCA_REGISTRO_MERCANTIL || '116099SD',
 };
 
 // URL pública, para los enlaces que van dentro de los correos.

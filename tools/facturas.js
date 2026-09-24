@@ -143,7 +143,12 @@ function dibujar(f, { emisor }) {
   let yEmisor = 74;
   d.texto(emisor.razonSocial, M, yEmisor, { tamano: 9, tipo: 'negrita', color: TINTA });
   yEmisor += 12;
-  d.texto(`RNC ${emisor.rnc}`, M, yEmisor, { tamano: 8.5, color: GRIS });
+  /* RNC y Registro Mercantil en la misma línea: son los dos números con
+     los que se identifica a una empresa dominicana, y separarlos en dos
+     renglones robaba altura al membrete sin ganar nada. Si no hay RM
+     configurado, sale solo el RNC. */
+  d.texto(`RNC ${emisor.rnc}${emisor.registroMercantil ? ` · RM ${emisor.registroMercantil}` : ''}`,
+    M, yEmisor, { tamano: 8.5, color: GRIS });
   yEmisor += 12;
   /* El domicilio fiscal SÍ va aquí. En el sitio no aparece —es una
      vivienda—, pero un comprobante sin domicilio del emisor no cumple. */
