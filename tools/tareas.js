@@ -249,6 +249,154 @@ function optimizar() {
 
 /* ── Orquestación ───────────────────────────────────────── */
 
+/* ── Informes de negocio ────────────────────────────────────
+ *
+ * A gerencia, con copia a facturación. Uno semanal los lunes y otro
+ * mensual el día 1, que es cuando alguien se sienta a mirar el mes
+ * cerrado.
+ *
+ * Van en TEXTO PLANO alineado y no en tablas HTML. Un informe interno
+ * se lee de un vistazo en el teléfono, se reenvía y a veces se pega en
+ * un mensaje: el texto plano sobrevive a las tres cosas y una tabla
+ * HTML no. Los números van alineados a la derecha porque una columna
+ * de cifras desalineada no se compara, se descifra.
+ */
+
+const pesos = (n) => `RD$ ${Number(n || 0).toLocaleString('en-US')}`;
+const num = (n, ancho = 7) => String(n == null ? 0 : n).padStart(ancho);
+
+/* Una fila de «rótulo ......... valor», que es lo que hace legible un
+   informe de texto en un ancho de teléfono. */
+const fila = (rotulo, valor, ancho = 44) => {
+  const v = String(valor);
+  const puntos = Math.max(1, ancho - rotulo.length - v.length);
+  return `  ${rotulo} ${'.'.repeat(puntos)} ${v}`;
+};
+
+const titulo = (t) => `\n${t}\n${'─'.repeat(t.length)}`;
+
+function componerInforme(i, periodo) {
+  const l = [];
+
+  l.push(`MercaMaquinarias · informe ${periodo}`);
+  l.push(`Del ${i.desde} al ${i.hasta}`);
+
+  l.push(titulo('Dinero'));
+  l.push(fila('Cobros aprobados', `${i.dinero.cobros.n} · ${pesos(i.dinero.cobros.total)}`));
+  if (i.dinero.devueltos.n) {
+    l.push(fila('Devoluciones', `${i.dinero.devueltos.n} · ${pesos(i.dinero.devueltos.total)}`));
+  }
+
+  l.push(titulo('Comprobantes emitidos'));
+  if (!i.comprobantes.porTipo.length) {
+    l.push('  Ninguno en el periodo.');
+  } else {
+    i.comprobantes.porTipo.forEach((c) => l.push(fila(c.tipo, `${c.n} · ${pesos(c.total)}`)));
+  }
+  if (i.comprobantes.sinEnviar) {
+    l.push(fila('PENDIENTES DE ENVIAR', i.comprobantes.sinEnviar));
+  }
+  if (i.comprobantes.recibos) {
+    l.push(fila('Recibos sin NCF (esperan la B02)', i.comprobantes.recibos));
+  }
+
+  l.push(titulo('Comprobantes autorizados que quedan'));
+  i.ncf.forEach((n) => l.push(fila(
+    `${n.tipo} · ${n.nombre}`,
+    `${n.quedan}${n.vence ? ` · vence ${n.vence}` : ''}`)));
+
+  l.push(titulo('Catálogo'));
+  l.push(fila('Equipos publicados en el periodo', i.anuncios.publicados));
+  l.push(fila('Activos ahora mismo', i.anuncios.activos));
+  l.push(fila('Vencidos', i.anuncios.vencidos));
+  l.push(fila('Vendidos', i.anuncios.vendidos));
+  if (i.anuncios.porCategoria.length) {
+    l.push('');
+    l.push('  Por categoría:');
+    i.anuncios.porCategoria.forEach((c) => l.push(`    ${num(c.n, 5)}  ${c.categoria}`));
+  }
+
+  l.push(titulo('Cuentas'));
+  l.push(fila('Cuentas nuevas', i.cuentas.nuevas));
+  l.push(fila('Total de cuentas', i.cuentas.total));
+  l.push(fila('Dealers nuevos', i.cuentas.dealersNuevos));
+  l.push(fila('Dealers aprobados', i.cuentas.dealersAprobados));
+  if (i.cuentas.dealersPendientes) {
+    l.push(fila('SOLICITUDES SIN REVISAR', i.cuentas.dealersPendientes));
+  }
+
+  l.push(titulo('Tráfico del sitio'));
+  l.push(fila('Páginas vistas', i.trafico.vistas));
+  l.push(fila('Visitantes distintos', i.trafico.unicos));
+  if (i.trafico.porPagina.length) {
+    l.push('');
+    l.push('  Las más vistas:');
+    i.trafico.porPagina.slice(0, 8).forEach((p) => l.push(
+      `    ${num(p.vistas, 6)} vistas ${num(p.visitantes, 6)} personas   ${p.pagina}`));
+  }
+
+  l.push(titulo('Interés en los anuncios'));
+  l.push(fila('Fichas vistas', i.contactos.vistas));
+  l.push(fila('Pidieron el teléfono', i.contactos.telefono));
+  l.push(fila('Escribieron por WhatsApp', i.contactos.whatsapp));
+
+  if (i.solicitudes.length) {
+    l.push(titulo('Cotizaciones pedidas'));
+    i.solicitudes.forEach((s) => l.push(fila(`${s.servicio} · ${s.estado}`, s.n)));
+  }
+
+  l.push('');
+  l.push('Este informe lo genera el propio sitio. Si una cifra no cuadra,');
+  l.push('el dato está en la base y se puede recalcular.');
+  l.push('');
+  l.push('MercaMaquinarias');
+
+  return l.join('\n');
+}
+
+const soloFecha = (d) => d.toISOString().slice(0, 10);
+
+async function mandarInforme(periodo, desde, hasta) {
+  const i = db.informe({ desde, hasta });
+  const texto = componerInforme(i, periodo);
+
+  if (SECO) {
+    console.log(texto);
+    return anotar(`informe-${periodo}`, `enviaría el informe ${periodo} (${desde} a ${hasta})`);
+  }
+
+  await correo.avisarInternamente({
+    buzon: 'gerencia',
+    copia: 'facturacion',
+    asunto: `Informe ${periodo} · ${desde} a ${hasta} · ${i.dinero.cobros.n} cobro(s) · ${pesos(i.dinero.cobros.total)}`,
+    texto,
+  });
+
+  anotar(`informe-${periodo}`,
+    `informe ${periodo} enviado a gerencia · ${i.dinero.cobros.n} cobro(s), ${i.trafico.unicos} visitante(s)`);
+}
+
+/* Lunes: los siete días anteriores, de lunes a domingo. No «los
+   últimos siete días» a secas, porque entonces el informe de cada
+   semana solaparía con el de la anterior y las cifras no se podrían
+   sumar. */
+function informeSemanal() {
+  const hoyD = new Date();
+  const fin = new Date(hoyD);
+  fin.setUTCDate(fin.getUTCDate() - 1);
+  const ini = new Date(fin);
+  ini.setUTCDate(ini.getUTCDate() - 6);
+  return mandarInforme('semanal', soloFecha(ini), soloFecha(fin));
+}
+
+/* Día 1: el mes anterior completo. */
+function informeMensual() {
+  const hoyD = new Date();
+  const fin = new Date(Date.UTC(hoyD.getUTCFullYear(), hoyD.getUTCMonth(), 0));
+  const ini = new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), 1));
+  return mandarInforme('mensual', soloFecha(ini), soloFecha(fin));
+}
+
 /* Archivos que se subieron y no acabaron en ninguna parte.
  *
  * El asistente de publicación sube cada foto en cuanto se elige, no al
@@ -333,6 +481,8 @@ function apagarPerfiles() {
 const TAREAS = {
   caducar,
   perfiles: apagarPerfiles,
+  'informe-semanal': informeSemanal,
+  'informe-mensual': informeMensual,
   'por-vencer': avisarPorVencer,
   vencidos: avisarVencidos,
   comprobantes: reenviarComprobantes,
@@ -345,7 +495,16 @@ const TAREAS = {
 
 (async () => {
   const pedidas = process.argv.slice(2).filter((a) => !a.startsWith('--'));
-  const aEjecutar = pedidas.length ? pedidas : Object.keys(TAREAS);
+
+  /* Sin argumentos se ejecuta el mantenimiento DIARIO, que no es todo.
+   *
+   * Los informes tienen su propio temporizador —lunes y día 1— y meterlos
+   * en la tanda diaria haría que gerencia recibiera el informe semanal
+   * todos los días. Un informe que llega a diario se deja de leer en
+   * una semana, y entonces el que importa tampoco se lee. */
+  const aEjecutar = pedidas.length
+    ? pedidas
+    : Object.keys(TAREAS).filter((t) => !t.startsWith('informe-'));
 
   const desconocidas = aEjecutar.filter((t) => !TAREAS[t]);
   if (desconocidas.length) {

@@ -330,6 +330,37 @@ Corre a las 5:00. Para ver qué haría sin hacer nada:
 sudo -u mercamaquinarias node tools/tareas.js --seco
 ```
 
+### Los informes a gerencia
+
+Aparte del mantenimiento, porque tienen su propio horario: semanal los
+lunes a las 07:00 y mensual el día 1 a las 07:30. Van a
+`gerencia@inversionesxzt.com` con copia a `facturacion@`.
+
+```bash
+cp /var/www/mercamaquinarias/deploy/mercamaquinarias-informes.service /etc/systemd/system/
+cp /var/www/mercamaquinarias/deploy/mercamaquinarias-informe-*.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now mercamaquinarias-informe-semanal.timer
+systemctl enable --now mercamaquinarias-informe-mensual.timer
+systemctl list-timers 'mercamaquinarias-informe-*'
+```
+
+**No van en la tanda diaria** a propósito: un informe semanal que
+llegara todos los días se dejaría de leer en una semana, y entonces
+tampoco se leería el que importa.
+
+Para verlo sin mandarlo, o para mandarlo a mano:
+
+```bash
+sudo -u mercamaquinarias node tools/tareas.js --seco informe-semanal
+sudo -u mercamaquinarias node tools/tareas.js informe-mensual
+```
+
+El semanal cubre de lunes a domingo de la semana **cerrada**, y el
+mensual el mes anterior completo. No son «los últimos siete días»: si
+los periodos solaparan, las cifras de dos informes no se podrían sumar
+y no habría forma de cuadrar el mes.
+
 Cada tarea es idempotente: repetirla no manda dos veces el mismo aviso.
 
 **Saca los respaldos del servidor.** Un respaldo en la misma máquina no

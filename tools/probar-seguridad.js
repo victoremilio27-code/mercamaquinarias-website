@@ -483,6 +483,55 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     && repuesta.ncf === emitida.ncf,
     'con el mismo numero, el mismo NCF y el mismo importe: se repone, no se reescribe');
 
+  /* ── 7b · el tráfico y la huella del visitante ───────────── */
+  console.log('\nEl trafico del sitio');
+
+  /* La sal vivía en memoria y se estrenaba en cada arranque, pese a
+     que el comentario la llamaba «diaria»: con Restart=always y cada
+     despliegue, todo el mundo volvía a contar desde cero el mismo día
+     y la deduplicación no deduplicaba nada. */
+  const h1 = db.huella('190.1.1.1', 'navegador');
+  const h2 = db.huella('190.1.1.1', 'navegador');
+  comprobar(h1 === h2, 'la misma persona da la misma huella');
+  comprobar(db.huella('190.1.1.2', 'navegador') !== h1, 'y otra IP da otra distinta');
+
+  const salGuardada = db.abrir()
+    .prepare('SELECT COUNT(*) AS n FROM sales_visitante').get().n;
+  comprobar(salGuardada === 1, 'la sal del dia vive en la base, no en memoria del proceso');
+
+  db.anotarVisita('/index.html', h1);
+  db.anotarVisita('/index.html', h1);
+  db.anotarVisita('/equipos.html', h1);
+  const otroVisitante = db.huella('190.2.2.2', 'otro');
+  db.anotarVisita('/index.html', otroVisitante);
+
+  const hoyDia = new Date().toISOString().slice(0, 10);
+  const t = db.trafico({ desde: hoyDia, hasta: hoyDia });
+
+  comprobar(t.vistas === 4, `se cuentan las 4 vistas (fueron ${t.vistas})`);
+  /* El error clásico: sumar la columna de visitantes de cada página
+     cuenta dos veces a quien miró dos páginas. Aquí son DOS personas,
+     no tres, por mucho que una viera dos páginas distintas. */
+  comprobar(t.unicos === 2, `y DOS visitantes distintos, no tres (fueron ${t.unicos})`);
+  comprobar(t.porDia[0] && t.porDia[0].visitantes === 2,
+    'el resumen por dia tampoco los cuenta dos veces');
+
+  /* ── 7c · el informe de negocio ──────────────────────────── */
+  console.log('\nEl informe a gerencia');
+
+  const inf = db.informe({ desde: hoyDia, hasta: hoyDia });
+  comprobar(inf.dinero.cobros.total > 0,
+    `el informe recoge lo cobrado (${inf.dinero.cobros.n} cobro(s))`);
+  comprobar(inf.comprobantes.porTipo.length > 0, 'y los comprobantes emitidos');
+  comprobar(inf.ncf.length === 2, 'y cuantos NCF quedan de las que el sitio emite');
+  comprobar(inf.trafico.unicos === 2, 'y el trafico, con el mismo criterio');
+
+  const correo = require('./correo.js');
+  comprobar(correo.BUZONES.gerencia === 'gerencia@inversionesxzt.com',
+    'el informe va a gerencia@inversionesxzt.com');
+  comprobar(correo.BUZONES.facturacion === 'facturacion@mercamaquinarias.com',
+    'con copia a facturacion@mercamaquinarias.com');
+
   /* ── 8 · las secuencias que se vigilan ───────────────────── */
   console.log('\nEl aviso de comprobantes fiscales');
   const vigiladas = db.secuenciasNcf()

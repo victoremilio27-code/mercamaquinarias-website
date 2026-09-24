@@ -1,0 +1,19 @@
+# El informe mensual, el día 1 a las 07:30.
+#
+# Media hora después del semanal para que, cuando el día 1 caiga en
+# lunes, no lleguen los dos al mismo tiempo y se pisen en la bandeja.
+#
+# Cubre el mes ANTERIOR completo, ya cerrado: es la cifra que se puede
+# comparar con la del banco y con la declaración.
+
+[Unit]
+Description=Informe mensual de MercaMaquinarias
+
+[Timer]
+OnCalendar=*-*-01 07:30:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=mercamaquinarias-informes@informe-mensual.service
+
+[Install]
+WantedBy=timers.target

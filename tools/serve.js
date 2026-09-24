@@ -208,11 +208,37 @@ let api = null;
    de salvar. */
 let metadatos = { para: () => null, aplicar: (html) => html };
 
+/* El contador de visitas. Mientras no haya base, no cuenta nada: es
+   una estadística, y no puede impedir que el sitio se sirva. */
+let paginas = { anotar: () => {}, huellaDe: () => null };
+
+/* Lo que no se cuenta como tráfico: las pantallas con sesión. Que
+   alguien abra su panel doce veces no dice nada de cuánta gente llega
+   al sitio, y mezclarlo infla la cifra justo en los días en que el
+   equipo está trabajando dentro. */
+const PRIVADAS = new Set([
+  '/panel.html', '/admin.html', '/cuenta.html', '/mi-pagina.html', '/publicar.html',
+]);
+
 if (args.api) {
   try {
     api = require('./api');
     metadatos = require('./meta');
     const db = require('./db');
+
+    paginas = {
+      anotar: (ruta, quien) => db.anotarVisita(ruta, quien),
+      /* La misma huella que usan las métricas de anuncio: hash con sal
+         del día, sin forma de reconstruir la IP ni de seguir a nadie
+         de un día para otro. */
+      huellaDe: (req) => {
+        const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+        const reenviado = String(req.headers['x-forwarded-for'] || '')
+          .split(',').map((x) => x.trim()).filter(Boolean);
+        const ip = cf || reenviado[reenviado.length - 1] || req.socket.remoteAddress || '';
+        return db.huella(ip, req.headers['user-agent'] || '');
+      },
+    };
     db.abrir();
     // Sesiones, códigos y contadores caducados se barren cada hora.
     // `unref` evita que este temporizador mantenga vivo el proceso.
@@ -439,6 +465,21 @@ const servidor = http.createServer((req, res) => {
      * Va sin caché a propósito: el título y la foto cambian con el
      * anuncio, así que un ETag de archivo mentiría. Son unos kilobytes
      * y solo en las fichas. */
+    /* El tráfico del sitio.
+     *
+     * Solo páginas HTML y solo GET: no cuentan los recursos ni las
+     * peticiones de la API, que multiplicarían la cifra por diez y no
+     * dicen nada de cuánta gente entra. Las páginas con sesión quedan
+     * fuera porque medir cuántas veces alguien abre su propio panel no
+     * es tráfico, es uso interno.
+     *
+     * Va después de comprobar que el archivo existe, para no contar
+     * como visita un 404. */
+    if (api && ext === '.html' && req.method === 'GET' && !PRIVADAS.has(ruta)) {
+      const quien = paginas.huellaDe(req);
+      paginas.anotar(ruta, quien);
+    }
+
     const meta = api && ext === '.html' ? metadatos.para(ruta, consulta) : null;
     if (meta) {
       fs.readFile(archivo, 'utf8', (err, html) => {

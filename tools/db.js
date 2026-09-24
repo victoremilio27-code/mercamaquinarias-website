@@ -786,6 +786,42 @@ const MIGRACIONES = [
    * propia migración y no dentro de la anterior porque esa ya está
    * aplicada en las bases de desarrollo, y reescribirla no la volvería
    * a ejecutar. */
+  /* El tráfico del sitio, y la sal que lo deduplica.
+   *
+   * Hasta ahora lo único que se medía eran las fichas de anuncio:
+   * cuántas veces se vio cada equipo. Nadie sabía cuánta gente entra
+   * al sitio, por dónde, ni si el catálogo se usa. Para decidir dónde
+   * invertir, ese dato vale más que el de un anuncio suelto.
+   *
+   * Dos tablas, igual que los eventos de anuncio: una cruda para poder
+   * recalcular y otra agregada para consultar sin recorrer nada. La
+   * cruda guarda UNA fila por visitante, página y día —no una por
+   * pulsación— porque aquí no hay fraude de clics que detectar y sí un
+   * disco de droplet que llenar. */
+  ['2026-09-trafico', [
+    `CREATE TABLE IF NOT EXISTS sales_visitante (
+       dia TEXT PRIMARY KEY,
+       sal TEXT NOT NULL
+     )`,
+
+    `CREATE TABLE IF NOT EXISTS visitas (
+       id        INTEGER PRIMARY KEY AUTOINCREMENT,
+       dia       TEXT NOT NULL,
+       pagina    TEXT NOT NULL,
+       visitante TEXT,
+       creado    TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_visitas_dia ON visitas (dia, pagina, visitante)',
+
+    `CREATE TABLE IF NOT EXISTS visitas_diarias (
+       dia         TEXT NOT NULL,
+       pagina      TEXT NOT NULL,
+       vistas      INTEGER NOT NULL DEFAULT 0,
+       visitantes  INTEGER NOT NULL DEFAULT 0,
+       PRIMARY KEY (dia, pagina)
+     )`,
+  ]],
+
   ['2026-09-pagina-dealer-respetar-publicadas', [
     `UPDATE organizaciones
         SET estado_pagina = 'publicada',
@@ -891,10 +927,38 @@ function slugLibre(base) {
 
 /* La huella del visitante sirve para no contar diez veces la misma
    visita. Es un hash con sal diaria: no permite reidentificar a nadie
-   ni reconstruir la IP, y caduca solo cada 24 horas. */
-const SAL_VISITANTE = crypto.randomBytes(32).toString('hex');
+   ni reconstruir la IP, y caduca sola cada 24 horas.
+ *
+ * LA SAL VIVE EN LA BASE, NO EN MEMORIA.
+ *
+ * Antes se generaba al arrancar el proceso, y el comentario de aquí
+ * decía «sal diaria» sin serlo: cada reinicio —y con Restart=always y
+ * cada despliegue son varios— estrenaba sal, así que todo el mundo
+ * volvía a contar desde cero el mismo día. Las visitas salían
+ * infladas y la deduplicación no deduplicaba nada.
+ *
+ * Guardarla por día cumple las dos cosas a la vez: cuenta bien, y
+ * sigue caducando sola, que es lo que impide seguir a nadie de un día
+ * para otro. La de ayer se borra en la purga. */
+function salDelDia() {
+  const dia = hoy();
+  if (salDelDia.dia === dia && salDelDia.valor) return salDelDia.valor;
+
+  const d = abrir();
+  /* Tabla propia y no `ajustes`: el esquema de aquella avisa de que
+     no es un baúl de configuración, y esto son filas que nacen y se
+     borran solas cada día. */
+  d.prepare('INSERT OR IGNORE INTO sales_visitante (dia, sal) VALUES (?, ?)')
+    .run(dia, crypto.randomBytes(32).toString('hex'));
+  const fila = d.prepare('SELECT sal FROM sales_visitante WHERE dia = ?').get(dia);
+
+  salDelDia.dia = dia;
+  salDelDia.valor = fila.sal;
+  return fila.sal;
+}
+
 const huella = (ip, agente) =>
-  crypto.createHash('sha256').update(`${SAL_VISITANTE}|${hoy()}|${ip}|${agente}`).digest('hex').slice(0, 32);
+  crypto.createHash('sha256').update(`${salDelDia()}|${hoy()}|${ip}|${agente}`).digest('hex').slice(0, 32);
 
 /* ── Usuarios, organizaciones y sesiones ────────────────── */
 
@@ -1181,6 +1245,16 @@ function purgar() {
    * ni un dato de su histórico. */
   const hace90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
   d.prepare('DELETE FROM eventos WHERE dia < ?').run(hace90);
+
+  /* Las visitas crudas, a los mismos noventa días. El agregado de
+     `visitas_diarias` no se toca: es lo que alimenta los informes y
+     ocupa una fila por página y día, nada. */
+  d.prepare('DELETE FROM visitas WHERE dia < ?').run(hace90);
+
+  /* Y las sales de días pasados. Que caduquen es justo lo que impide
+     seguir a un visitante de un día para otro: sin borrarlas, la
+     huella de ayer se podría volver a calcular. */
+  d.prepare('DELETE FROM sales_visitante WHERE dia < ?').run(hoy());
 }
 
 /* ── Perfil de dealer ───────────────────────────────────── */
@@ -2708,6 +2782,165 @@ function anotarEvento(idAnuncio, tipo, visitante) {
   return 'contado';
 }
 
+/* ── Tráfico del sitio ──────────────────────────────────── */
+
+/* Anota una visita a una página.
+ *
+ * Se llama desde el servidor al entregar un HTML, así que tiene que
+ * ser barata: como mucho dos escrituras la primera vez que un
+ * visitante ve esa página ese día, y una lectura las demás.
+ *
+ * NUNCA lanza. Una tabla de estadísticas no puede tumbar la entrega de
+ * la página que estaba contando; prefiero perder un dato de tráfico
+ * que devolverle un error a alguien que venía a mirar excavadoras. */
+function anotarVisita(pagina, visitante) {
+  try {
+    const d = abrir();
+    const dia = hoy();
+
+    const repetida = visitante && d.prepare(
+      'SELECT 1 FROM visitas WHERE dia = ? AND pagina = ? AND visitante = ?')
+      .get(dia, pagina, visitante);
+
+    /* Las vistas suben siempre; los visitantes únicos, solo la primera
+       vez. Son las dos cifras que hacen falta para saber si alguien
+       vuelve o si entran muchos una sola vez. */
+    d.prepare(`INSERT INTO visitas_diarias (dia, pagina, vistas, visitantes)
+               VALUES (?, ?, 1, ?)
+               ON CONFLICT (dia, pagina) DO UPDATE
+                 SET vistas = vistas + 1, visitantes = visitantes + ?`)
+      .run(dia, pagina, repetida ? 0 : 1, repetida ? 0 : 1);
+
+    if (!repetida) {
+      d.prepare('INSERT INTO visitas (dia, pagina, visitante, creado) VALUES (?, ?, ?, ?)')
+        .run(dia, pagina, visitante || null, ahora());
+    }
+  } catch (e) {
+    console.error(`visitas: no se pudo anotar ${pagina} · ${e.message}`);
+  }
+}
+
+/* El tráfico de un periodo, por página y en total. */
+function trafico({ desde, hasta }) {
+  const d = abrir();
+  const porPagina = d.prepare(`
+    SELECT pagina, SUM(vistas) AS vistas, SUM(visitantes) AS visitantes
+      FROM visitas_diarias
+     WHERE dia >= ? AND dia <= ?
+     GROUP BY pagina
+     ORDER BY vistas DESC`).all(desde, hasta);
+
+  /* Las vistas del día se suman del agregado, pero los VISITANTES se
+     cuentan distintos sobre la tabla cruda. Sumar la columna de
+     visitantes por página contaba dos veces a quien mirase dos
+     páginas: con tres personas y dos páginas cada una salían seis
+     visitantes. Es el error clásico de estos informes, y el más
+     difícil de ver porque la cifra sale plausible. */
+  const porDia = d.prepare(`
+    SELECT a.dia,
+           a.vistas,
+           (SELECT COUNT(DISTINCT v.visitante) FROM visitas v
+             WHERE v.dia = a.dia AND v.visitante IS NOT NULL) AS visitantes
+      FROM (SELECT dia, SUM(vistas) AS vistas
+              FROM visitas_diarias
+             WHERE dia >= ? AND dia <= ?
+             GROUP BY dia) a
+     ORDER BY a.dia`).all(desde, hasta);
+
+  /* Visitantes únicos del PERIODO, que no es la suma de los diarios:
+     quien entra tres días distintos son tres visitantes diarios y una
+     sola persona. Sumarlos es el error clásico de estos informes. */
+  const unicos = d.prepare(
+    'SELECT COUNT(DISTINCT visitante) AS n FROM visitas WHERE dia >= ? AND dia <= ? AND visitante IS NOT NULL')
+    .get(desde, hasta).n;
+
+  return {
+    porPagina,
+    porDia,
+    unicos,
+    vistas: porPagina.reduce((s, p) => s + p.vistas, 0),
+  };
+}
+
+/* Todo lo que lleva un informe de negocio, en una sola función.
+ *
+ * Va aquí y no repartido por las tareas para que el informe semanal y
+ * el mensual pidan exactamente lo mismo y no puedan divergir: dos
+ * consultas parecidas escritas en dos sitios acaban contando cosas
+ * distintas y nadie sabe cuál creer. */
+function informe({ desde, hasta }) {
+  const d = abrir();
+  const uno = (sql, ...args) => d.prepare(sql).get(...args);
+  const varias = (sql, ...args) => d.prepare(sql).all(...args);
+
+  return {
+    desde,
+    hasta,
+
+    cuentas: {
+      nuevas: uno('SELECT COUNT(*) AS n FROM usuarios WHERE creado >= ? AND creado <= ?', desde, `${hasta}T23:59:59Z`).n,
+      total: uno('SELECT COUNT(*) AS n FROM usuarios').n,
+      dealersNuevos: uno(
+        "SELECT COUNT(*) AS n FROM organizaciones WHERE tipo = 'dealer' AND creada >= ? AND creada <= ?",
+        desde, `${hasta}T23:59:59Z`).n,
+      dealersAprobados: uno(
+        "SELECT COUNT(*) AS n FROM organizaciones WHERE tipo = 'dealer' AND estado_revision = 'aprobada'").n,
+      dealersPendientes: uno(
+        "SELECT COUNT(*) AS n FROM solicitudes_dealer WHERE estado = 'pendiente'").n,
+    },
+
+    anuncios: {
+      publicados: uno('SELECT COUNT(*) AS n FROM anuncios WHERE publicado >= ? AND publicado <= ?',
+        desde, `${hasta}T23:59:59Z`).n,
+      activos: uno("SELECT COUNT(*) AS n FROM anuncios WHERE estado = 'activo'").n,
+      vencidos: uno("SELECT COUNT(*) AS n FROM anuncios WHERE estado = 'vencido'").n,
+      vendidos: uno("SELECT COUNT(*) AS n FROM anuncios WHERE estado = 'vendido'").n,
+      porCategoria: varias(`
+        SELECT categoria, COUNT(*) AS n FROM anuncios
+         WHERE estado = 'activo' GROUP BY categoria ORDER BY n DESC LIMIT 8`),
+    },
+
+    dinero: {
+      /* Solo los aprobados: un pago rechazado no es ingreso, y
+         mezclarlos daría una cifra que no cuadra con el banco. */
+      cobros: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
+                     FROM pagos WHERE estado = 'aprobado' AND creado >= ? AND creado <= ?`,
+        desde, `${hasta}T23:59:59Z`),
+      devueltos: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
+                        FROM pagos WHERE estado = 'devuelto' AND creado >= ? AND creado <= ?`,
+        desde, `${hasta}T23:59:59Z`),
+    },
+
+    comprobantes: {
+      porTipo: varias(`SELECT tipo, COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
+                         FROM facturas WHERE fecha >= ? AND fecha <= ?
+                        GROUP BY tipo ORDER BY n DESC`, desde, `${hasta}T23:59:59Z`),
+      sinEnviar: uno(`SELECT COUNT(*) AS n FROM facturas
+                       WHERE enviada_cliente IS NULL OR enviada_interna IS NULL`).n,
+      /* Los recibos no fiscales son los que habrá que regularizar el
+         día que llegue la B02. Es la cifra que más conviene vigilar. */
+      recibos: uno(`SELECT COUNT(*) AS n FROM facturas
+                     WHERE tipo = 'recibo' AND anulado_por IS NULL`).n,
+    },
+
+    ncf: varias(`SELECT tipo, nombre, hasta - siguiente + 1 AS quedan, vence
+                   FROM secuencias_ncf WHERE activa = 1 AND usa_sitio = 1 ORDER BY tipo`),
+
+    solicitudes: varias(`SELECT servicio, estado, COUNT(*) AS n
+                           FROM solicitudes_servicio
+                          WHERE creada >= ? AND creada <= ?
+                          GROUP BY servicio, estado ORDER BY servicio`,
+      desde, `${hasta}T23:59:59Z`),
+
+    contactos: uno(`SELECT COALESCE(SUM(clics_telefono), 0) AS telefono,
+                           COALESCE(SUM(clics_whatsapp), 0) AS whatsapp,
+                           COALESCE(SUM(vistas), 0) AS vistas
+                      FROM metricas_diarias WHERE dia >= ? AND dia <= ?`, desde, hasta),
+
+    trafico: trafico({ desde, hasta }),
+  };
+}
+
 /* Totales de la organización y serie de los últimos días, para el
    panel. Dos consultas agregadas, ninguna sobre eventos crudos. */
 function resumenOrganizacion(idOrg, dias = 30) {
@@ -3099,6 +3332,9 @@ module.exports = {
   anadirAGaleria, quitarDeGaleria, galeriaDe,
   guardarEnlaces, enlacesDe,
   publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
+
+  /* Tráfico e informes. */
+  anotarVisita, trafico, informe,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,

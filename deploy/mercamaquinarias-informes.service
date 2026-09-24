@@ -1,0 +1,39 @@
+# Informes de negocio a gerencia. Lo disparan los dos .timer de al
+# lado: uno semanal y otro mensual. Instalar los tres en
+# /etc/systemd/system/
+#
+# Es una unidad con plantilla: el nombre tras la @ es la tarea que se
+# ejecuta, así que un solo archivo sirve para los dos informes y no hay
+# dos copias que mantener sincronizadas.
+#
+#   systemctl start mercamaquinarias-informes@informe-semanal
+#   systemctl start mercamaquinarias-informes@informe-mensual
+
+[Unit]
+Description=MercaMaquinarias — informe %i a gerencia
+After=network.target
+
+[Service]
+Type=oneshot
+User=mercamaquinarias
+Group=mercamaquinarias
+WorkingDirectory=/var/www/mercamaquinarias
+
+Environment=NODE_ENV=production
+Environment=MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db
+EnvironmentFile=/etc/mercamaquinarias.env
+
+ExecStart=/usr/bin/node tools/tareas.js %i
+
+# Si el informe falla, que se note. Sin esto, un informe que deja de
+# salir se confunde con un mes tranquilo: nadie echa de menos un correo
+# que no sabía que tenía que llegar.
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Solo lectura de la base para componer el informe, pero SQLite
+# necesita escribir su journal aunque no se modifique nada.
+ReadWritePaths=/var/lib/mercamaquinarias
