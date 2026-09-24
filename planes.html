@@ -150,7 +150,14 @@
           <input type="text" id="fac-razon" autocomplete="organization" placeholder="Ej. Constructora del Este, SRL">
         </label>
         <label class="campo-v"><span>RNC *</span>
-          <input type="text" id="fac-rnc" inputmode="numeric" maxlength="11" placeholder="9 dígitos">
+          <!-- maxlength 9 y no 11: con 11, quien escribiera el RNC en su
+               formato oficial con guiones —1-31-27975-9, doce
+               caracteres— lo veía truncado a «1-31-27975-», ocho
+               dígitos, y el servidor se lo rechazaba sin que pudiera
+               entender por qué. planes.js le quita los no-dígitos
+               mientras escribe, igual que ya hacía la pantalla de la
+               cuenta, así que pegarlo con guiones funciona. -->
+          <input type="text" id="fac-rnc" inputmode="numeric" maxlength="9" placeholder="9 dígitos">
         </label>
         <label class="campo-v"><span>Dirección fiscal *</span>
           <input type="text" id="fac-direccion" autocomplete="street-address" placeholder="Calle, número, sector, ciudad">

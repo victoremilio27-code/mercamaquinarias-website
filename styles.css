@@ -1444,7 +1444,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   accent-color: var(--ambar-hondo);
 }
 .campo-v--inactivo > .campo-v__rotulo { opacity: .55; }
-.campo-v--inactivo .campo-na > input:disabled { background: var(--hueso); color: var(--gris-neutro); }
+/* Gris claro sobre hueso daba 1,15:1: al marcar la casilla «No
+   aplica», lo que el usuario habia escrito dejaba de leerse. Se
+   apaga con opacidad, que se ve apagado y se sigue leyendo. */
+.campo-v--inactivo .campo-na > input:disabled { background: var(--hueso); color: var(--gris-acero); opacity: .75; }
 
 .alquiler-lista { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 6px; }
 
@@ -2490,7 +2493,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: .34em; text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.campo-v--codigo input::placeholder { color: var(--gris-neutro); letter-spacing: .34em; }
+/* El formato esperado del codigo, invisible justo donde mas falta
+   hace: 1,25:1 sobre el fondo del campo. */
+.campo-v--codigo input::placeholder { color: var(--gris-acero); opacity: .6; letter-spacing: .34em; }
 
 /* ── Sucursales en el panel ─────────────────────────────── */
 
@@ -4372,7 +4377,11 @@ section[aria-labelledby="t-buscar"] { display: none; }
   .chat__panel { position: fixed; left: 16px; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); width: auto; height: min(560px, calc(100dvh - 180px - env(safe-area-inset-bottom))); }
 
   .nav-movil {
-    position: fixed; display: grid; grid-template-columns: repeat(5, 1fr);
+    /* Una columna por enlace, no cinco fijas. app.js construye
+       cuatro, asi que la quinta quedaba vacia: los iconos se
+       apinaban a la izquierda y sobraba un hueco a la derecha, en
+       el elemento de navegacion principal del telefono. */
+    position: fixed; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
     left: max(14px, env(safe-area-inset-left)); right: max(14px, env(safe-area-inset-right));
     bottom: max(12px, env(safe-area-inset-bottom)); z-index: 100;
     min-height: 68px; padding: 6px;
@@ -4728,3 +4737,5 @@ main > .envoltura > section.panel {
   font-size: 12.5px; font-style: italic;
   color: var(--gris-acero);
 }
+
+
