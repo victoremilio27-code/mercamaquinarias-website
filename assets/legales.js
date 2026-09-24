@@ -26,16 +26,16 @@ const DOCUMENTOS = [
   {
     id: 'terminos',
     nombre: 'Términos y condiciones de uso',
-    version: '2.0',
-    vigenteDesde: '2026-09-23',
+    version: '2.1',
+    vigenteDesde: '2026-09-24',
     // Se exige aceptarlo para crear la cuenta.
     obligatorio: true,
   },
   {
     id: 'privacidad',
     nombre: 'Política de privacidad y protección de datos',
-    version: '2.0',
-    vigenteDesde: '2026-09-23',
+    version: '2.1',
+    vigenteDesde: '2026-09-24',
     obligatorio: true,
   },
   {
