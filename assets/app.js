@@ -2208,10 +2208,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   montarSaludoUsuario();
   montarSelects();
   montarAlquiler();
-  montarFinanciadoras();
+  /* Los servicios apagados. El código se queda entero y sin correr: el
+     transporte y el directorio de financiamiento vienen después del
+     lanzamiento, y borrar mil líneas que ya funcionan para tener que
+     reescribirlas dentro de unos meses no sale a cuenta. El
+     interruptor está en assets/servicios.js y es una línea. */
+  if (seOfrece('financiamiento')) {
+    montarFinanciadoras();
+    montarCalculadora();
+  }
+  if (seOfrece('transporte')) montarSeguimiento();
+
   montarAhorroPortada();
-  montarCalculadora();
-  montarSeguimiento();
   montarCotizaciones();
   montarBuscador();
   montarPublicidad();
@@ -2239,7 +2247,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     montarDealers(),
     montarResultados(),
     montarDetalle(),
-    montarTransporte(),
+    seOfrece('transporte') ? montarTransporte() : null,
     montarContactoDesdeFicha(),
   ]);
 

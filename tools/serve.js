@@ -220,6 +220,10 @@ const PRIVADAS = new Set([
   '/panel.html', '/admin.html', '/cuenta.html', '/mi-pagina.html', '/publicar.html',
 ]);
 
+/* Las páginas de los servicios que hoy no se ofrecen. Sale de
+   assets/servicios.js, que es el único sitio donde se decide. */
+const PAGINAS_APAGADAS = require('../assets/servicios.js').paginasApagadas();
+
 if (args.api) {
   try {
     api = require('./api');
@@ -301,6 +305,23 @@ const servidor = http.createServer((req, res) => {
     consulta = u.searchParams;
   } catch {
     res.writeHead(400).end('URL inválida');
+    return;
+  }
+
+  /* Las páginas de los servicios apagados no se sirven.
+   *
+   * El archivo sigue en el repositorio y su código intacto: lo que se
+   * apaga es la puerta, no la habitación. Encenderlo es cambiar una
+   * línea en assets/servicios.js.
+   *
+   * Redirección y no 404: quien llegue por un enlace viejo acaba en la
+   * portada viendo lo que sí se ofrece, en vez de en una página de
+   * error. Es 302 y no 301 porque esto es temporal y un 301 se queda
+   * cacheado en el navegador durante meses. */
+  if (PAGINAS_APAGADAS.includes(ruta)) {
+    res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
+    res.end();
+    console.log(`302  ${ruta} (servicio no disponible)`);
     return;
   }
 

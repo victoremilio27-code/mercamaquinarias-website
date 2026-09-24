@@ -22,6 +22,7 @@ const chat = require('./chat');
    ya pasó una vez que el precio viviera solo en el JavaScript y la
    página anunciara un plan sin costo mientras el servidor cobraba. */
 const precios = require('../assets/precios.js');
+const servicios = require('../assets/servicios.js');
 
 /* Las versiones de los documentos legales, también compartidas con el
    navegador. La casilla del formulario y la comprobación de aquí tienen
@@ -821,8 +822,13 @@ const editarPortada = conAdmin(async (req, res) => {
  *
  * Las solicitudes de transporte YA GUARDADAS no se tocan: son
  * históricas y el filtro de administración las sigue listando. */
-const SERVICIOS_SOLICITUD = ['alquiler', 'importacion', 'contacto'];
-const SERVICIOS_HISTORICOS = ['transporte'];
+const SERVICIOS_SOLICITUD = servicios.serviciosQueAdmitenSolicitud();
+
+/* Los que alguna vez se ofrecieron. El filtro de administración los
+   sigue admitiendo para poder buscar lo que entró entonces; lo que no
+   se admite es crear una solicitud nueva. */
+const SERVICIOS_HISTORICOS = Object.keys(servicios.SERVICIOS)
+  .filter((s) => !servicios.seOfrece(s));
 
 async function crearSolicitudServicio(req, res) {
   const c = await leerCuerpo(req);

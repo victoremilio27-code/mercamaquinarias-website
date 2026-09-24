@@ -302,6 +302,21 @@ async function subirEnFlota(id) {
 function montarFlota() {
   if (!document.getElementById('listaFlota')) return;
 
+  /* Las pestañas de los servicios apagados se retiran, y con ellas la
+     tentación de alimentar una flota que no se enseña en ningún sitio.
+     Si mañana se enciende el transporte, la pestaña vuelve sola: el
+     interruptor está en assets/servicios.js. */
+  $$('[data-servicio]').forEach((boton) => {
+    const cual = boton.dataset.servicio;
+    boton.hidden = !seOfrece(cual) && cual !== 'alquiler';
+  });
+
+  const activos = ['alquiler', 'transporte'].filter((s) => s === 'alquiler' || seOfrece(s));
+  const meta = document.getElementById('metaFlota');
+  if (meta) {
+    meta.textContent = `Lo que aparece en ${activos.map((s) => (s === 'alquiler' ? 'Alquiler' : 'Transporte')).join(' y en ')}`;
+  }
+
   // Alquiler pide unidad de cobro; transporte, capacidad.
   const pintarCampos = () => {
     $('#campoUnidad').hidden = SERVICIO !== 'alquiler';

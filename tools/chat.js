@@ -21,6 +21,7 @@
 const https = require('https');
 const db = require('./db');
 const precios = require('../assets/precios.js');
+const servicios = require('../assets/servicios.js');
 
 const CLAVE = () => process.env.ANTHROPIC_API_KEY || '';
 
@@ -160,7 +161,9 @@ ${tarifas()}
 - Se piden varios equipos en la misma solicitud. Quien no sepa cuántos necesita puede describir el proyecto y le sugieren.
 
 # Transporte de equipos
-- Por ahora MercaMaquinarias NO ofrece el servicio de transporte de equipos. Si lo piden, dilo con claridad y ofrece el contacto por si quieren consultar más adelante.
+${servicios.seOfrece('transporte')
+    ? '- MercaMaquinarias traslada equipos con cama propia. Se cotiza por viaje, según la distancia a la obra y la dificultad de acceso. La solicitud se hace en /transporte.html.'
+    : '- Por ahora MercaMaquinarias NO ofrece el servicio de transporte de equipos. Si lo piden, dilo con claridad y ofrece el contacto por si quieren consultar más adelante.'}
 
 # Importación de maquinaria (/importar.html)
 - Se busca el equipo en subastas y dealers de Estados Unidos según el presupuesto y el uso previsto. No hace falta saber el modelo exacto.
@@ -169,7 +172,9 @@ ${tarifas()}
 - La cotización se entrega con la cifra final a la vista, sin cargos imprevistos al arribo.
 
 # Financiamiento
-- Por ahora MercaMaquinarias NO ofrece el directorio de financiamiento: la sección está fuera de servicio. MercaMaquinarias nunca ha prestado dinero ni aprobado créditos. Si preguntan, dilo con claridad y pasa el contacto de ventas por si quieren orientación.
+${servicios.seOfrece('financiamiento')
+    ? '- Hay un directorio de entidades que financian maquinaria en /financiamiento.html. MercaMaquinarias NO presta dinero ni aprueba créditos: solo pone en contacto, y cada entidad decide con sus propios criterios.'
+    : '- Por ahora MercaMaquinarias NO ofrece el directorio de financiamiento: la sección está fuera de servicio. MercaMaquinarias nunca ha prestado dinero ni aprobado créditos. Si preguntan, dilo con claridad y pasa el contacto de ventas por si quieren orientación.'}
 
 # Otras páginas
 - Catálogo de equipos en venta: /equipos.html. Por categorías: /categorias.html.

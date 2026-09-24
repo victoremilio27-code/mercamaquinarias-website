@@ -532,6 +532,54 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   comprobar(correo.BUZONES.facturacion === 'facturacion@mercamaquinarias.com',
     'con copia a facturacion@mercamaquinarias.com');
 
+  /* ── 7d · los servicios que hoy no se ofrecen ───────────── */
+  console.log('\nLos servicios apagados');
+
+  const servicios = require('../assets/servicios.js');
+  comprobar(!servicios.seOfrece('transporte') && !servicios.seOfrece('financiamiento'),
+    'transporte y financiamiento estan apagados');
+  comprobar(servicios.seOfrece('alquiler') && servicios.seOfrece('importacion'),
+    'alquiler e importacion siguen encendidos');
+
+  /* Por la API no se puede pedir un servicio que no se presta: antes
+     se aceptaba, se mandaba el correo y se daba un numero de
+     referencia, y alguien se quedaba esperando una cotizacion que no
+     iba a llegar nunca. */
+  const pideTransporte = await pedir({
+    metodo: 'POST',
+    url: '/api/solicitudes',
+    cuerpo: {
+      servicio: 'transporte',
+      nombre: 'Alguien con un camion',
+      telefono: '8095551111',
+      correo: 'alguien@ejemplo.test',
+    },
+    cabeceras: { 'cf-connecting-ip': '201.3.3.3' },
+  });
+  comprobar(pideTransporte.codigo === 400,
+    `no se admite una solicitud de transporte (fue ${pideTransporte.codigo})`);
+
+  const pideAlquiler = await pedir({
+    metodo: 'POST',
+    url: '/api/solicitudes',
+    cuerpo: {
+      servicio: 'alquiler',
+      nombre: 'Alguien con una obra',
+      telefono: '8095552222',
+      correo: 'otro@ejemplo.test',
+    },
+    cabeceras: { 'cf-connecting-ip': '201.3.3.4' },
+  });
+  comprobar(pideAlquiler.codigo === 201, 'y si una de alquiler, que si se ofrece');
+
+  /* Que el codigo siga ahi, apagado y no borrado: es lo que hace que
+     encenderlos mas adelante sea una linea y no un mes. */
+  comprobar(fs.existsSync(path.join(__dirname, '..', 'transporte.html'))
+    && fs.existsSync(path.join(__dirname, '..', 'financiamiento.html')),
+    'las paginas siguen en el repositorio, listas para volver');
+  comprobar(servicios.paginasApagadas().length === 2,
+    'y el servidor sabe cuales no debe servir');
+
   /* ── 8 · las secuencias que se vigilan ───────────────────── */
   console.log('\nEl aviso de comprobantes fiscales');
   const vigiladas = db.secuenciasNcf()

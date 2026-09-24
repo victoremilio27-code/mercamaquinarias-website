@@ -200,12 +200,17 @@
     <section class="panel" aria-labelledby="t-flota">
       <div class="panel__cabeza">
         <h2 class="panel__titulo panel__titulo--limpio" id="t-flota"><em>Flota</em> propia</h2>
-        <p class="panel__meta">Lo que aparece en Alquiler y en Transporte</p>
+        <p class="panel__meta" id="metaFlota">Lo que aparece en Alquiler</p>
       </div>
 
+      <!-- La pestaña de Transporte la esconde admin.js mientras el
+           servicio esté apagado. Se queda en el marcado, no se borra:
+           dar de alta camas para una flota que no se enseña en ningún
+           sitio es trabajo tirado, y quien lo hiciera no tendría forma
+           de saberlo. -->
       <div class="revision__filtros" role="tablist" aria-label="Servicio">
         <button type="button" class="btn btn--ambar btn--chico" data-servicio="alquiler" role="tab" aria-selected="true">Alquiler</button>
-        <button type="button" class="btn btn--linea btn--chico" data-servicio="transporte" role="tab" aria-selected="false">Transporte</button>
+        <button type="button" class="btn btn--linea btn--chico" data-servicio="transporte" role="tab" aria-selected="false" hidden>Transporte</button>
       </div>
 
       <p class="acceso__aviso" id="avisoFlota" role="alert" hidden></p>
@@ -389,6 +394,7 @@
 <script src="assets/sesion.js"></script>
 <script src="assets/taxonomia.js"></script>
 <script src="assets/precios.js"></script>
+<script src="assets/servicios.js"></script>
 <script src="assets/data.js"></script>
 <script src="assets/legales.js"></script>
 <script src="assets/app.js"></script>
