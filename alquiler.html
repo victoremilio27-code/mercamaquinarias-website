@@ -44,9 +44,7 @@
         <a href="equipos.html">Equipos</a>
         <a href="categorias.html">Categorías</a>
         <a href="alquiler.html">Alquiler</a>
-        <a href="transporte.html">Transporte</a>
         <a href="importar.html">Importación</a>
-        <a href="financiamiento.html">Financiamiento</a>
         <a href="planes.html">Planes</a>
         <a class="cab__nav-cta" href="publicar.html">Publicar equipo</a>
       </nav>
@@ -69,7 +67,7 @@
       <ul class="servicio__puntos">
         <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> Todos nuestros equipos se alquilan con operador. La tarifa incluye el combustible del turno.</li>
         <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> Se cotiza por hora. La tarifa puede variar de la estándar según la ubicación de la obra, sus condiciones y el tipo de trabajo.</li>
-        <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> El transporte se cotiza aparte y por viaje, según la distancia a la obra y la dificultad de acceso.</li>
+        <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> El traslado del equipo hasta la obra corre por cuenta del cliente: por ahora no ofrecemos ese servicio.</li>
         <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> Mantenimiento preventivo y averías mecánicas por nuestra cuenta.</li>
         <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> Si el equipo se detiene por una falla imputable a nosotros, ese tiempo no se factura.</li>
         <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> Si el daño o la falla se produce por negligencia del cliente, la reparación corre íntegra por su cuenta y las horas que el equipo pase en taller se siguen facturando.</li>
@@ -138,7 +136,7 @@
           <input type="text" name="Nombre" autocomplete="name" required>
         </label>
         <label class="campo-v"><span>Teléfono o WhatsApp *</span>
-          <input type="tel" name="Teléfono" autocomplete="tel" placeholder="(809) 000-0000" required>
+          <input type="tel" name="Teléfono" autocomplete="tel" placeholder="Opcional, por si prefiere que le escribamos">
         </label>
         <label class="campo-v"><span>Correo electrónico</span>
           <input type="email" name="Correo" autocomplete="email" placeholder="Para enviarle copia de la cotización">
@@ -151,9 +149,6 @@
       <div class="acciones acciones--pie">
         <button class="btn btn--ambar btn--grande" type="submit">
           <svg class="ico" aria-hidden="true"><use href="#i-llave"/></svg> Preparar mi cotización
-        </button>
-        <button class="btn btn--linea btn--grande" type="button" data-whatsapp>
-          <svg class="ico" aria-hidden="true"><use href="#i-whatsapp"/></svg> Enviar solicitud por WhatsApp
         </button>
       </div>
     </form>
@@ -168,7 +163,7 @@
   <div class="envoltura pie__inner">
     <div class="pie__col">
       <img class="pie__logo" src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias">
-      <p class="pie__legal">© 2026 MercaMaquinarias · Inversiones XZT, S.R.L. Todos los derechos reservados.</p>
+      <p class="pie__legal">© 2026 MercaMaquinarias · Inversiones XZT, S.R.L., RNC 1-31-27975-9. Todos los derechos reservados.</p>
       <p class="pie__texto">El uso de este sitio implica la aceptación de nuestra política de privacidad y los términos y condiciones de uso.</p>
       <ul class="pie__lista">
         <li><a href="legal.html">Centro legal</a></li>
@@ -182,7 +177,6 @@
       <h3 class="pie__titulo">Otros servicios</h3>
       <ul class="pie__lista">
         <li><a href="alquiler.html">Alquiler de equipos con operador, por hora</a></li>
-        <li><a href="transporte.html">Transporte de equipos (lowboy)</a></li>
         <li><a href="importar.html">Importación de maquinaria</a></li>
         <li><a href="dealers.html">Talleres y dealers de maquinaria</a></li>
         <li><a href="categorias.html">Todas las categorías</a></li>
@@ -197,14 +191,12 @@
     <div class="pie__col">
       <h3 class="pie__titulo">Enlaces</h3>
       <ul class="pie__lista pie__lista--marcada">
-        <li><a href="transporte.html"><b>Transporte:</b> cotización con seguimiento por GPS</a></li>
         <li><a href="alquiler.html"><b>Alquiler de equipos:</b> flota propia con operador, por hora</a></li>
         <li><a href="importar.html"><b>Importación:</b> cotización según presupuesto</a></li>
-        <li><a href="financiamiento.html"><b>Financiamiento:</b> entidades y requisitos</a></li>
         <li><a href="planes.html"><b>Planes y precios:</b> cupos, niveles y beneficios</a></li>
         <li><a href="dealers.html"><b>Directorio:</b> dealers y talleres</a></li>
       </ul>
-      <p class="pie__sede">Av. 27 de Febrero, Santo Domingo · República Dominicana</p>
+      <p class="pie__sede">Santo Domingo, República Dominicana</p>
     </div>
   </div>
 </footer>
@@ -212,6 +204,7 @@
 <script src="assets/sesion.js"></script>
 <script src="assets/taxonomia.js"></script>
 <script src="assets/precios.js"></script>
+<script src="assets/servicios.js"></script>
 <script src="assets/data.js"></script>
 <script src="assets/app.js"></script>
 <script src="assets/chat.js" defer></script>

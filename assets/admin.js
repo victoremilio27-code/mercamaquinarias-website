@@ -36,7 +36,7 @@ function solicitudHTML(s) {
   const detalle = ABIERTA === s.id;
   const pendiente = s.estado === 'pendiente';
 
-  return `<li class="sol ${ROTULO[s.estado].clase}" data-id="${esc(s.id)}">
+  return `<li class="sol ${ROTULO[s.estado].clase}" data-id="${esc(s.id)}" data-org="${esc(s.organizacion_id)}">
     <div class="sol__cabeza">
       <b class="sol__nombre">${esc(s.razon_social)}</b>
       ${s.nombre_comercial ? `<span class="sol__meta">opera como ${esc(s.nombre_comercial)}</span>` : ''}
@@ -58,6 +58,15 @@ function solicitudHTML(s) {
       ${pendiente ? `
         <button type="button" class="btn btn--ambar btn--chico" data-accion="aprobar">Aprobar</button>
         <button type="button" class="btn btn--linea btn--chico" data-accion="rechazar">Rechazar</button>` : ''}
+      ${s.estado === 'aprobada' ? `
+        <!-- El sello es distinto de la aprobación: aprobar significa
+             que la empresa existe y puede publicar; verificar, que
+             alguien comprobó su documentación a fondo. Hasta ahora
+             solo se podía dar por línea de comandos, así que un dealer
+             registrado por el sitio no lo obtenía nunca. -->
+        <button type="button" class="btn btn--linea btn--chico" data-accion="verificar">
+          ${s.verificada ? 'Retirar el sello de verificado' : 'Dar el sello de verificado'}
+        </button>` : ''}
     </div>
 
     <div class="sol__detalle" id="detalle-${esc(s.id)}" ${detalle ? '' : 'hidden'}></div>
@@ -178,6 +187,23 @@ function pedirMotivo(fila, alConfirmar) {
   });
 }
 
+/* El sello de verificado. Es una accion aparte de aprobar: aprobar
+   dice que la empresa existe y puede publicar; verificar, que
+   alguien comprobo su documentacion a fondo. */
+async function alternarVerificada(fila) {
+  const idOrg = fila.dataset.org;
+  const boton = fila.querySelector('[data-accion="verificar"]');
+  const dar = /Dar el sello/.test(boton.textContent);
+  try {
+    await api(`/admin/organizaciones/${encodeURIComponent(idOrg)}/verificar`, {
+      metodo: 'POST', cuerpo: { verificada: dar },
+    });
+    cargar();
+  } catch (e) {
+    avisar(e.message || 'No se pudo cambiar el sello.');
+  }
+}
+
 async function resolver(id, decision, motivo) {
   try {
     const datos = await api(`/admin/solicitudes/${encodeURIComponent(id)}`, {
@@ -275,6 +301,21 @@ async function subirEnFlota(id) {
 
 function montarFlota() {
   if (!document.getElementById('listaFlota')) return;
+
+  /* Las pestañas de los servicios apagados se retiran, y con ellas la
+     tentación de alimentar una flota que no se enseña en ningún sitio.
+     Si mañana se enciende el transporte, la pestaña vuelve sola: el
+     interruptor está en assets/servicios.js. */
+  $$('[data-servicio]').forEach((boton) => {
+    const cual = boton.dataset.servicio;
+    boton.hidden = !seOfrece(cual) && cual !== 'alquiler';
+  });
+
+  const activos = ['alquiler', 'transporte'].filter((s) => s === 'alquiler' || seOfrece(s));
+  const meta = document.getElementById('metaFlota');
+  if (meta) {
+    meta.textContent = `Lo que aparece en ${activos.map((s) => (s === 'alquiler' ? 'Alquiler' : 'Transporte')).join(' y en ')}`;
+  }
 
   // Alquiler pide unidad de cobro; transporte, capacidad.
   const pintarCampos = () => {
@@ -638,6 +679,8 @@ async function montarAdmin() {
         return resolver(id, 'aprobar');
       case 'rechazar':
         return pedirMotivo(fila, (motivo) => resolver(id, 'rechazar', motivo));
+      case 'verificar':
+        return alternarVerificada(fila);
       default:
     }
   });
@@ -819,6 +862,25 @@ function pintarFacturasAdmin(datos) {
       <td>${s.usa_sitio ? 'la usa el sitio' : 'solo contabilidad'}</td>
     </tr>`).join('');
 
+  /* Los recibos que salieron sin NCF, a la espera del rango que
+     faltaba. Va debajo del listado y no en un aviso: no es una alarma,
+     es trabajo pendiente que se despacha cuando llegue la secuencia. */
+  const pendientes = datos.pendientes || [];
+  const caja = $('#cajaPendientes');
+  if (caja) {
+    caja.hidden = !pendientes.length;
+    $('#cuentaPendientes').textContent = String(pendientes.length);
+    $('#listaPendientes').innerHTML = pendientes.map((f) => {
+      const cuando = new Date(f.fecha);
+      return `<tr>
+        <td class="num">${cuando.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+        <td class="num">${esc(f.numero)}</td>
+        <td>${esc(f.razon_social || 'Consumidor final')}</td>
+        <td class="num">RD${Number(f.total).toLocaleString('en-US')}</td>
+      </tr>`;
+    }).join('');
+  }
+
   const bajas = datos.bajas || [];
   $('#avisoNcf').innerHTML = bajas.length
     ? `<div class="aviso-legal">
@@ -847,6 +909,36 @@ async function montarFacturasAdmin() {
     MES_FACTURAS = ev.target.value || null;
     cargarFacturasAdmin();
   });
+
+  /* Cargar una secuencia nueva. Es el gesto que pone al sistema a
+     emitir facturas de consumo: al guardarse una B02 activa y marcada
+     para el sitio, los clientes sin RNC dejan de recibir el recibo. */
+  const formSec = $('#formSecuencia');
+  if (formSec) {
+    formSec.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const eco = $('#ecoSecuencia');
+      eco.textContent = 'Cargando…';
+      try {
+        const r = await api('/admin/secuencias', {
+          metodo: 'POST',
+          cuerpo: {
+            tipo: $('#secTipo').value,
+            nombre: $('#secNombre').value,
+            desde: $('#secDesde').value,
+            hasta: $('#secHasta').value,
+            vence: $('#secVence').value || null,
+            usaSitio: $('#secUsaSitio').checked,
+          },
+        });
+        if (!r) throw new Error('No hay conexión con el servidor.');
+        eco.textContent = `${r.secuencia.nueva ? 'Cargada' : 'Actualizada'} ${r.secuencia.tipo}: quedan ${r.secuencia.quedan}.`;
+        formSec.reset();
+        $('#secUsaSitio').checked = true;
+        cargarFacturasAdmin();
+      } catch (e) { eco.textContent = e.message; }
+    });
+  }
 
   $('#listaFacturasAdmin').addEventListener('click', async (ev) => {
     const boton = ev.target.closest('button[data-factura]');

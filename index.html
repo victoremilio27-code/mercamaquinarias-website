@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MercaMaquinarias · Maquinaria y equipo pesado en venta en República Dominicana</title>
+<!-- 60 caracteres es donde corta el buscador. El anterior tenía 78 y
+     se quedaba en «…en venta en Repúbli», que además de feo pierde el
+     término por el que más se busca. -->
+<title>Maquinaria y equipo pesado en RD · MercaMaquinarias</title>
 <meta name="description" content="Portal dominicano de maquinaria y equipo pesado. Compra, vende, alquila e importa excavadoras, cargadores, volteos y grúas con horas de uso y precio publicado.">
 <meta name="theme-color" content="#071A2B">
 <!-- Vista previa al compartir en WhatsApp, Facebook y X. La imagen
@@ -12,7 +15,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="MercaMaquinarias">
 <meta property="og:locale" content="es_DO">
-<meta property="og:title" content="MercaMaquinarias · Maquinaria y equipo pesado en venta en República Dominicana">
+<meta property="og:title" content="Maquinaria y equipo pesado en RD · MercaMaquinarias">
 <meta property="og:description" content="Portal dominicano de maquinaria y equipo pesado. Compra, vende, alquila e importa excavadoras, cargadores, volteos y grúas con horas de uso y precio publicado.">
 <meta property="og:url" content="https://mercamaquinarias.com/index.html">
 <meta property="og:image" content="https://mercamaquinarias.com/brand_assets/img/og-1200x630.jpg">
@@ -44,9 +47,7 @@
         <a href="equipos.html">Equipos</a>
         <a href="categorias.html">Categorías</a>
         <a href="alquiler.html">Alquiler</a>
-        <a href="transporte.html">Transporte</a>
         <a href="importar.html">Importación</a>
-        <a href="financiamiento.html">Financiamiento</a>
         <a href="planes.html">Planes</a>
         <a class="cab__nav-cta" href="publicar.html">Publicar equipo</a>
       </nav>
@@ -181,7 +182,6 @@
     <nav class="heroe__atajos" aria-label="Accesos rápidos">
       <a href="equipos.html">Ver equipos</a>
       <a href="publicar.html">Vender</a>
-      <a href="financiamiento.html">Financiamiento</a>
     </nav>
 
     <ul class="heroe__cifras" id="heroeCifras" aria-label="Estado del catálogo"></ul>
@@ -321,14 +321,9 @@
   </section>
 
   <!-- ==== FILA 2: publicidad · vende ====
-       Aquí vivía la calculadora de financiamiento. La herramienta no se
-       ha retirado: sigue completa en financiamiento.html, con su enlace
-       en el menú y en el pie. Lo que se retira es el sitio que ocupaba
-       en la portada, que rinde más vendido.
-
-       El bloque va sin campaña por defecto. Si no hay ninguna vigente,
-       app.js lo deja oculto y la fila se vuelve de una sola columna:
-       la portada nunca enseña un recuadro de «espacio disponible». -->
+       Aquí vivía la calculadora de financiamiento. La sección está
+       fuera de servicio mientras no se ofrezca el servicio; el código
+       de la calculadora sigue en el repositorio para cuando vuelva. -->
   <div class="fila fila--dos">
 
     <aside class="panel pub pub--bloque" id="pubBloque" aria-label="Publicidad" hidden></aside>
@@ -383,32 +378,22 @@
      de lado a lado y corta la sucesión de recuadros blancos, que es lo
      que hacía la portada monótona.
 
-     Son los tres servicios que presta MercaMaquinarias además del catálogo.
-     Como tres paneles blancos más se perdían entre los otros ocho;
+     Son los servicios que presta MercaMaquinarias además del catálogo.
+     Como paneles blancos más se perdían entre los otros ocho;
      aquí se leen como lo que son, un bloque aparte. -->
 <section class="banda" aria-labelledby="t-servicios">
   <div class="envoltura">
     <h2 class="banda__titulo" id="t-servicios"><em>Además</em> del catálogo</h2>
-    <p class="banda__sub">Alquilamos, trasladamos e importamos con flota y equipo propios. No somos intermediarios: respondemos por el servicio.</p>
+    <p class="banda__sub">Alquilamos e importamos con equipo propio. No somos intermediarios: respondemos por el servicio.</p>
 
     <div class="banda__rejilla">
       <article class="banda__servicio">
         <span class="banda__ico"><svg class="ico" aria-hidden="true"><use href="#i-llave"/></svg></span>
         <h3 class="banda__nombre">Alquiler de maquinaria</h3>
-        <p class="banda__texto">Flota propia, con operador o sin él, por día, semana o mes. El mantenimiento y las averías corren de nuestra cuenta.</p>
+        <p class="banda__texto">Flota propia, siempre con operador, cotizada por hora. El mantenimiento y las averías corren de nuestra cuenta.</p>
         <div class="banda__acciones">
           <a class="btn btn--ambar btn--chico" href="alquiler.html">Cotizar alquiler</a>
           <a class="btn btn--linea btn--chico" href="alquiler.html#detalle">Más información</a>
-        </div>
-      </article>
-
-      <article class="banda__servicio">
-        <span class="banda__ico"><svg class="ico" aria-hidden="true"><use href="#i-lowboy"/></svg></span>
-        <h3 class="banda__nombre">Transporte de maquinaria</h3>
-        <p class="banda__texto">Lowboys propios a todo el país, se haya comprado el equipo aquí o no. Con seguimiento por GPS hasta la entrega.</p>
-        <div class="banda__acciones">
-          <a class="btn btn--ambar btn--chico" href="transporte.html">Cotizar transporte</a>
-          <a class="btn btn--linea btn--chico" href="transporte.html#detalle">Más información</a>
         </div>
       </article>
 
@@ -478,7 +463,7 @@
   <div class="envoltura pie__inner">
     <div class="pie__col">
       <img class="pie__logo" src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias">
-      <p class="pie__legal">© 2026 MercaMaquinarias · Inversiones XZT, S.R.L. Todos los derechos reservados.</p>
+      <p class="pie__legal">© 2026 MercaMaquinarias · Inversiones XZT, S.R.L., RNC 1-31-27975-9. Todos los derechos reservados.</p>
       <p class="pie__texto">El uso de este sitio implica la aceptación de nuestra política de privacidad y los términos y condiciones de uso.</p>
       <ul class="pie__lista">
         <li><a href="legal.html">Centro legal</a></li>
@@ -493,7 +478,6 @@
       <h3 class="pie__titulo">Otros servicios</h3>
       <ul class="pie__lista">
         <li><a href="alquiler.html">Alquiler de equipos con operador, por hora</a></li>
-        <li><a href="transporte.html">Transporte de equipos (lowboy)</a></li>
         <li><a href="importar.html">Importación de maquinaria</a></li>
         <li><a href="dealers.html">Talleres y dealers de maquinaria</a></li>
         <li><a href="categorias.html">Todas las categorías</a></li>
@@ -510,14 +494,12 @@
     <div class="pie__col">
       <h3 class="pie__titulo">Enlaces</h3>
       <ul class="pie__lista pie__lista--marcada">
-        <li><a href="transporte.html"><b>Transporte:</b> cotización con seguimiento por GPS</a></li>
         <li><a href="alquiler.html"><b>Alquiler de equipos:</b> flota propia con operador, por hora</a></li>
         <li><a href="importar.html"><b>Importación:</b> cotización según presupuesto</a></li>
-        <li><a href="financiamiento.html"><b>Financiamiento:</b> entidades y requisitos</a></li>
         <li><a href="planes.html"><b>Planes y precios:</b> cupos, niveles y beneficios</a></li>
         <li><a href="dealers.html"><b>Directorio:</b> dealers y talleres</a></li>
       </ul>
-      <p class="pie__sede">Av. 27 de Febrero, Santo Domingo · República Dominicana</p>
+      <p class="pie__sede">Santo Domingo, República Dominicana</p>
     </div>
   </div>
 </footer>
@@ -525,6 +507,7 @@
 <script src="assets/sesion.js"></script>
 <script src="assets/taxonomia.js"></script>
 <script src="assets/precios.js"></script>
+<script src="assets/servicios.js"></script>
 <script src="assets/data.js"></script>
 <script src="assets/app.js"></script>
 <script src="assets/chat.js" defer></script>

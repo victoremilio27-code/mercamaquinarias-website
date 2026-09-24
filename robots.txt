@@ -1,0 +1,24 @@
+# MercaMaquinarias — qué puede recorrer un buscador.
+#
+# Se abre el catálogo entero y se cierran las zonas con sesión: no
+# porque sean secretas —ya responden 401 o 404 a quien no tiene
+# permiso— sino porque indexarlas llena los resultados de páginas que
+# le dicen al visitante «necesita iniciar sesión», que es la peor
+# primera impresión posible.
+
+User-agent: *
+Allow: /
+
+Disallow: /admin.html
+Disallow: /panel.html
+Disallow: /cuenta.html
+Disallow: /api/
+
+# Servicios retirados. Las páginas siguen en pie para no dejar en 404
+# los enlaces ya compartidos, pero no tienen por qué aparecer en una
+# búsqueda anunciando algo que no se presta.
+Disallow: /transporte.html
+Disallow: /financiamiento.html
+Disallow: /proximamente.html
+
+Sitemap: https://mercamaquinarias.com/sitemap.xml

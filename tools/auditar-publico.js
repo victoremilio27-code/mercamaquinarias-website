@@ -24,7 +24,30 @@ const PAGINAS = [
 ];
 
 const fallos = [];
-const anota = (pagina, tipo, detalle) => fallos.push({ pagina, tipo, detalle });
+
+/* Lo que esta auditoría provoca A PROPÓSITO y no es un fallo.
+ *
+ * Se visita /admin.html sin sesión para comprobar que está cerrado, y
+ * un perfil de dealer inventado para comprobar que avisa. Que esas dos
+ * devuelvan 401 y 404 es justo lo que se estaba comprobando, pero se
+ * anotaban como hallazgos —con sus errores de consola de propina— y
+ * salían cuatro avisos en cada ejecución. Un informe que nunca sale
+ * limpio enseña a no leerlo, y entonces el día que aparece un aviso de
+ * verdad tampoco se lee. */
+const ESPERADOS = [
+  ['Admin (sin sesión)', /\/api\/admin\//],
+  ['Admin (sin sesión)', /401/],
+  ['Perfil de dealer', /no-existe-este-dealer/],
+  ['Perfil de dealer', /404/],
+];
+
+const esEsperado = (pagina, detalle) =>
+  ESPERADOS.some(([p, patron]) => p === pagina && patron.test(String(detalle)));
+
+const anota = (pagina, tipo, detalle) => {
+  if (esEsperado(pagina, detalle)) return;
+  fallos.push({ pagina, tipo, detalle });
+};
 
 async function vigilar(p, pagina) {
   p.removeAllListeners('console');
@@ -119,7 +142,16 @@ async function vigilar(p, pagina) {
   await new Promise((r) => setTimeout(r, 700));
   const cuerpo = await p.$eval('body', (b) => b.innerText);
   console.log(`  perfil de dealer carga: ${cuerpo.includes('Maquinarias del Caribe') ? 'sí' : 'NO'}`);
-  if (/RNC\s*[\d•]/.test(cuerpo)) anota('Perfil de dealer', 'PRIVACIDAD', 'se ve el RNC en la página pública');
+  /* El pie de TODAS las páginas lleva el RNC de Inversiones XZT: es el
+     aviso legal de quien opera el sitio y tiene que estar ahí. Lo que
+     no puede verse es el RNC del DEALER, que es dato reservado de un
+     tercero. Sin descontar el propio, esta comprobación daba un aviso
+     de privacidad en cada ejecución, y un aviso que siempre salta
+     enseña a no mirar ninguno. */
+  const sinElPropio = cuerpo.replace(/RNC\s*1-31-27975-9/g, '');
+  if (/RNC\s*[\d•]/.test(sinElPropio)) {
+    anota('Perfil de dealer', 'PRIVACIDAD', 'se ve el RNC del dealer en la página pública');
+  }
 
   // Dealer inexistente
   await p.goto(`${BASE}/dealer.html?d=no-existe-este-dealer`, { waitUntil: 'networkidle0' });

@@ -22,6 +22,7 @@ const chat = require('./chat');
    ya pasó una vez que el precio viviera solo en el JavaScript y la
    página anunciara un plan sin costo mientras el servidor cobraba. */
 const precios = require('../assets/precios.js');
+const servicios = require('../assets/servicios.js');
 
 /* Las versiones de los documentos legales, también compartidas con el
    navegador. La casilla del formulario y la comprobación de aquí tienen
@@ -46,6 +47,12 @@ const LIMITES = {
      normal se resuelve en cinco o seis preguntas, y treinta en un
      cuarto de hora ya no es una persona con una duda. */
   chat:     { tope: 30, minutos: 15 },
+
+  /* La única ruta de escritura que va sin sesión. El tope es alto a
+     propósito —quien recorre el catálogo genera una vista por ficha—
+     pero existe: sin él, un guion infla las métricas de cualquier
+     anuncio y llena la tabla de eventos en una tarde. */
+  eventos:  { tope: 300, minutos: 15 },
 };
 
 /* ── Utilidades de transporte ───────────────────────────── */
@@ -68,7 +75,17 @@ const fallo = (res, codigo, texto, extra) =>
 
 function leerCuerpo(req) {
   return new Promise((resolver, rechazar) => {
-    let datos = '';
+    /* Los trozos se guardan como Buffer y se unen AL FINAL.
+
+       Antes se concatenaban a una cadena según llegaban, y eso
+       convierte cada trozo a texto por separado: un carácter UTF-8 que
+       caiga a caballo entre dos trozos se parte y se decodifica como
+       dos signos de interrogación. En un sitio en español, con anuncios
+       que viajan con ocho fotos dentro del JSON, «Excavación» se
+       guardaba corrupta. Y no saltaba ninguna excepción, porque los
+       bytes que dan estructura al JSON son todos ASCII: el anuncio se
+       publicaba con la descripción rota y nadie sabía por qué. */
+    const trozos = [];
     let tamano = 0;
     req.on('data', (trozo) => {
       tamano += trozo.length;
@@ -80,9 +97,11 @@ function leerCuerpo(req) {
         req.destroy();
         return;
       }
-      datos += trozo;
+      trozos.push(trozo);
     });
     req.on('end', () => {
+      if (!trozos.length) return resolver({});
+      const datos = Buffer.concat(trozos).toString('utf8');
       if (!datos) return resolver({});
       try { resolver(JSON.parse(datos)); } catch { rechazar(Object.assign(new Error('JSON inválido'), { codigo: 400 })); }
     });
@@ -111,11 +130,26 @@ const cookieSesion = (testigo, dias = 30) =>
 const cookieEquipo = (testigo, dias = 60) =>
   `${COOKIE_EQUIPO}=${testigo}; Path=/; HttpOnly; SameSite=Lax${SEGURA}; Max-Age=${dias * 24 * 3600}`;
 
-/* Quién pide, para los límites por origen. Detrás de un proxy el
-   cliente real va en X-Forwarded-For; se toma el primero. */
-const origen = (req) =>
-  String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-  || req.socket.remoteAddress || 'desconocido';
+/* Quién pide, para los límites por origen.
+
+   Delante del servidor hay dos intermediarios: Cloudflare y nginx.
+   `CF-Connecting-IP` la escribe Cloudflare con la IP real del
+   visitante y la sustituye siempre, así que el cliente no puede
+   falsificarla mientras nadie llegue al VPS saltándose el proxy.
+
+   De X-Forwarded-For se toma el ÚLTIMO elemento, nunca el primero.
+   Esa cabecera se acumula por la izquierda: el primer valor es el
+   que puso quien llama, de modo que bastaba con inventarse uno
+   distinto en cada petición para anular TODOS los topes del sitio
+   —contraseñas, altas de cuenta, códigos y el asistente, que cuesta
+   dinero—. El último es el que añadió el proxy de casa. */
+const origen = (req) => {
+  const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+  if (cf) return cf;
+  const cadena = String(req.headers['x-forwarded-for'] || '')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+  return cadena[cadena.length - 1] || req.socket.remoteAddress || 'desconocido';
+};
 
 const equipoDescrito = (req) => String(req.headers['user-agent'] || '').slice(0, 200);
 
@@ -126,7 +160,17 @@ function contexto(req) {
   const s = db.sesion(testigo);
   if (!s) return null;
   const org = db.organizacionDe(s.usuario_id);
-  return { testigo, usuario: { id: s.usuario_id, correo: s.correo, nombre: s.nombre }, organizacion: org };
+  /* `esAdmin` viene de la propia consulta de sesión, que ya une con
+     usuarios: no cuesta una consulta más. Faltaba, y dos comprobaciones
+     de comprobantes lo leían igualmente —`ctx.usuario.esAdmin`— contra
+     un campo que no existía. Siempre daba undefined, así que el
+     administrador recibía un 404 al abrir el PDF de cualquier
+     comprobante que no fuera de su propia organización. */
+  return {
+    testigo,
+    usuario: { id: s.usuario_id, correo: s.correo, nombre: s.nombre, esAdmin: !!s.es_admin },
+    organizacion: org,
+  };
 }
 
 /* Envuelve las rutas que exigen sesión. Devuelve 401 en vez de
@@ -422,6 +466,16 @@ async function verificar(req, res) {
 /* Reenvío. Responde igual exista o no la cuenta. */
 async function reenviar(req, res) {
   const c = await leerCuerpo(req);
+
+  /* Tope por IP, que faltaba. El de `emitirCodigo` es por correo
+     destino, así que no frena a quien recorre una lista de correos: con
+     cinco por cuenta y cuarto de hora, un guion manda veinte avisos por
+     hora a cada anunciante y de paso agota la cuota del proveedor, con
+     lo que dejan de salir los códigos legítimos y los comprobantes. */
+  if (!db.permitir(`reenviar:${origen(req)}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
+  }
+
   const tipo = ['verificacion', 'acceso', 'restablecer'].includes(c.tipo) ? c.tipo : 'verificacion';
   const u = db.usuarioPorCorreo(c.correo);
 
@@ -434,6 +488,14 @@ async function reenviar(req, res) {
 
 async function recuperar(req, res) {
   const c = await leerCuerpo(req);
+
+  /* El mismo tope por IP que su vecina, y por el mismo motivo: sin él,
+     esta ruta sirve para mandarle a medio directorio un «alguien quiere
+     cambiar su contraseña» cada quince minutos. */
+  if (!db.permitir(`recuperar:${origen(req)}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
+  }
+
   if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
 
   const u = db.usuarioPorCorreo(c.correo);
@@ -749,7 +811,24 @@ const editarPortada = conAdmin(async (req, res) => {
 
    Va sin sesión a propósito: pedir cotización no debe exigir cuenta.
    Lo que sí se exige es con qué responder. */
-const SERVICIOS_SOLICITUD = ['alquiler', 'transporte', 'importacion', 'contacto'];
+/* Los servicios por los que se puede pedir cotización.
+ *
+ * 'transporte' salió de aquí cuando el servicio se retiró. La página ya
+ * decía «suspendido» y el asistente también, pero esta lista lo seguía
+ * aceptando: por la API se podía pedir un servicio que la empresa no
+ * presta, y la solicitud generaba su correo y su número de referencia
+ * como cualquier otra. Alguien se habría quedado esperando una
+ * cotización que no iba a llegar nunca.
+ *
+ * Las solicitudes de transporte YA GUARDADAS no se tocan: son
+ * históricas y el filtro de administración las sigue listando. */
+const SERVICIOS_SOLICITUD = servicios.serviciosQueAdmitenSolicitud();
+
+/* Los que alguna vez se ofrecieron. El filtro de administración los
+   sigue admitiendo para poder buscar lo que entró entonces; lo que no
+   se admite es crear una solicitud nueva. */
+const SERVICIOS_HISTORICOS = Object.keys(servicios.SERVICIOS)
+  .filter((s) => !servicios.seOfrece(s));
 
 async function crearSolicitudServicio(req, res) {
   const c = await leerCuerpo(req);
@@ -833,7 +912,7 @@ async function conversarConSoporte(req, res) {
        El motivo técnico queda en el registro del servidor, no en
        pantalla. */
     return fallo(res, 503, 'Ahora mismo no puedo responder. Escríbanos a '
-      + `${chat.CORREO_GENERAL} o llame al ${chat.TELEFONO} y le atendemos.`);
+      + `${chat.CORREO_GENERAL} y le atendemos por ahí.`);
   }
 
   return responder(res, 200, { respuesta: r.texto });
@@ -843,7 +922,11 @@ const listarSolicitudesServicio = conAdmin((req, res, ctx, consulta) => {
   const q = consulta || new URLSearchParams();
   return responder(res, 200, {
     solicitudes: db.solicitudesServicio({
-      servicio: SERVICIOS_SOLICITUD.includes(q.get('servicio')) ? q.get('servicio') : undefined,
+      /* El filtro del panel sí admite los retirados: las solicitudes de
+         transporte que entraron antes siguen ahí y hay que poder
+         buscarlas. Lo que no se admite es crear una nueva. */
+      servicio: [...SERVICIOS_SOLICITUD, ...SERVICIOS_HISTORICOS].includes(q.get('servicio'))
+        ? q.get('servicio') : undefined,
       estado: ['nueva', 'atendida', 'cerrada'].includes(q.get('estado')) ? q.get('estado') : undefined,
     }),
   });
@@ -1154,6 +1237,30 @@ const descargarFactura = conSesion((req, res, ctx, idFactura) => {
   return res.end(bytes);
 });
 
+/* El mismo comprobante, como página.
+ *
+ * Es la plantilla rellenada, no un resumen: quien no quiera abrir el
+ * PDF —en un teléfono, con el correo desde el navegador— ve exactamente
+ * el mismo documento y puede imprimirlo desde ahí. Se sirve con las
+ * mismas comprobaciones de propiedad que el PDF. */
+const verFactura = conSesion((req, res, ctx, idFactura) => {
+  const f = db.facturaPorId(idFactura);
+  if (!f) return fallo(res, 404, 'Ese comprobante no existe');
+
+  const esSuyo = ctx.organizacion && f.organizacion_id === ctx.organizacion.id;
+  if (!esSuyo && !ctx.usuario.esAdmin) return fallo(res, 404, 'Ese comprobante no existe');
+
+  const html = Buffer.from(facturas.comoHtml(f), 'utf8');
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': html.length,
+    // Privado y sin caché: lleva el RNC y la dirección de una empresa.
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  return res.end(html);
+});
+
 /* Administración: el listado, con filtro por mes. */
 const listarFacturas = conAdmin((req, res, ctx, consulta) => {
   const mes = /^\d{4}-\d{2}$/.test(consulta?.get('mes') || '') ? consulta.get('mes') : null;
@@ -1161,8 +1268,39 @@ const listarFacturas = conAdmin((req, res, ctx, consulta) => {
     mes,
     secuencias: db.secuenciasNcf(),
     bajas: facturas.secuenciasBajas().map((s) => ({ tipo: s.tipo, quedan: s.quedan })),
+    /* Los pendientes NO se filtran por mes: son trabajo acumulado que
+       hay que ver entero, no un corte del periodo que se esté mirando. */
+    pendientes: facturas.pendientesDeRegularizar().map((f) => ({
+      id: f.id, numero: f.numero, fecha: f.fecha,
+      razon_social: f.razon_social, total: f.total,
+    })),
     facturas: db.facturas({ mes }),
   });
+});
+
+/* Cargar un rango de NCF autorizado por la DGII.
+ *
+ * Es la puesta en marcha de la facturación fiscal, y por eso vive en
+ * una pantalla y no en el código: cuando llegue la B02, se carga aquí
+ * y el sistema empieza a emitir facturas de consumo sin que nadie
+ * despliegue nada. */
+const cargarSecuencia = conAdmin(async (req, res) => {
+  const c = await leerCuerpo(req);
+  try {
+    const secuencia = db.cargarSecuencia({
+      tipo: texto(c.tipo, 3),
+      nombre: texto(c.nombre, 60),
+      desde: c.desde,
+      hasta: c.hasta,
+      vence: texto(c.vence, 10) || null,
+      usaSitio: !!c.usaSitio,
+    });
+    return responder(res, 201, {
+      secuencia: { ...secuencia, quedan: secuencia.hasta - secuencia.siguiente + 1 },
+    });
+  } catch (e) {
+    return fallo(res, e.codigo || 400, e.message);
+  }
 });
 
 /* Exportación para el contador. Se entrega como CSV y no como JSON
@@ -1224,7 +1362,10 @@ const anularFactura = conAdmin(async (req, res, ctx, idFactura) => {
   if (f.pago_id) db.marcarPagoDevuelto(f.pago_id);
 
   const dueno = f.organizacion_id && db.propietarioDe(f.organizacion_id);
-  facturas.enviar(nota, { correoCliente: dueno && dueno.correo });
+  /* Sin esperarla, pero con catch: es una promesa suelta, y una que
+     se rechace sin manejador tumba el proceso. */
+  facturas.enviar(nota, { correoCliente: dueno && dueno.correo })
+    .catch((e) => console.error(`facturas: no se pudo enviar la nota ${nota.numero} · ${e.message}`));
 
   return responder(res, 201, { nota, original: db.facturaPorId(idFactura) });
 });
@@ -1365,12 +1506,335 @@ const listarDealers = (req, res) => responder(res, 200, { dealers: db.dealersPub
 function verDealer(req, res, ctx, slug) {
   const d = db.dealerPorSlug(slug);
   if (!d) return fallo(res, 404, 'Ese dealer no existe');
+
+  const pagina = db.paginaDe(d.id, { soloVisibles: true });
+
+  /* Sin límite: `anunciosPublicos` pagina de 24 en 24 por defecto y
+     aquí no se le pasaba nada, así que un dealer con cuarenta equipos
+     enseñaba veinticuatro y su propia página le decía que tenía
+     veinticuatro. La página de un dealer es su escaparate entero. */
   return responder(res, 200, {
     dealer: { ...d, verificada: !!d.verificada },
     sucursales: db.sucursalesDe(d.id),
-    anuncios: db.anunciosPublicos({ organizacion: d.id }),
+    anuncios: db.anunciosPublicos({ organizacion: d.id, porPagina: 500 }),
+    enlaces: pagina.enlaces,
+    galeria: pagina.galeria,
+    secciones: pagina.secciones,
   });
 }
+
+/* El sello de verificado, desde la pantalla de administración.
+ *
+ * Solo se concedía con `node tools/admin.js`, en el alta por línea de
+ * comandos: un dealer que se registraba por el sitio no podía
+ * obtenerlo nunca. La pastilla verde se pinta en cinco pantallas para
+ * una condición que era inalcanzable por la vía normal. */
+const verificarOrganizacion = conAdmin(async (req, res, ctx, idOrg) => {
+  const c = await leerCuerpo(req);
+  if (!db.marcarVerificada(idOrg, !!c.verificada)) {
+    return fallo(res, 404, 'Esa empresa no existe');
+  }
+  return responder(res, 200, { verificada: !!c.verificada });
+});
+
+/* ── Rutas: la página propia del dealer ─────────────────── */
+
+/* Las reglas para tener página, comprobadas en el servidor y
+ * enseñadas en pantalla.
+ *
+ * Se devuelven SIEMPRE las seis, cumplidas o no, porque la lista es lo
+ * que hace que armar la página sea intuitivo: el dealer ve en todo
+ * momento qué le falta, en vez de descubrirlo al pulsar publicar.
+ *
+ * Las tres primeras son para PODER tener página; las tres últimas, para
+ * publicarla. Todo lo demás —logotipo, banner, galería, redes,
+ * secciones— es opcional y se puede ir añadiendo después, que es lo que
+ * se pidió: que no haga falta tenerlo todo para empezar. */
+const MINIMO_ANUNCIOS = 5;
+const MINIMO_DESCRIPCION = 80;
+
+function reglasDePagina(org, pagina) {
+  const publicados = db.contarAnunciosPublicados(org.id);
+  const descripcion = String((pagina && pagina.descripcion) || '').trim();
+  const tieneContacto = !!(pagina && (pagina.correo_publico || pagina.telefono_publico));
+
+  const reglas = [
+    {
+      id: 'aprobada',
+      titulo: 'Su cuenta de dealer está aprobada',
+      /* `ctx.organizacion` es la fila de la base tal cual, en
+         snake_case: quien la mira en camelCase —como la respuesta de
+         sesión— obtiene undefined y la regla queda siempre en falso. */
+      cumple: org.estado_revision === 'aprobada',
+      falta: 'Su solicitud todavía está en revisión. Le avisamos por correo en cuanto se resuelva.',
+      paraCrear: true,
+    },
+    {
+      id: 'plan',
+      titulo: 'Tiene un plan que incluye página propia',
+      cumple: !!org.perfil_publico,
+      falta: 'La página propia va incluida en el nivel Premium. Se activa al contratar cupos de ese nivel.',
+      paraCrear: true,
+    },
+    {
+      id: 'anuncios',
+      titulo: `Tiene ${MINIMO_ANUNCIOS} o más equipos publicados`,
+      cumple: publicados >= MINIMO_ANUNCIOS,
+      detalle: `${publicados} de ${MINIMO_ANUNCIOS}`,
+      falta: `Le faltan ${Math.max(0, MINIMO_ANUNCIOS - publicados)} equipo(s). `
+        + 'Una página con dos máquinas no convence a nadie, y por eso el mínimo. '
+        + 'Cuentan los que están publicados; los pausados y los vendidos no.',
+      paraCrear: true,
+    },
+    {
+      id: 'nombre',
+      titulo: 'La empresa tiene nombre',
+      cumple: !!String((pagina && pagina.nombre) || '').trim(),
+      falta: 'Escriba el nombre con el que quiere que se le conozca.',
+      paraCrear: false,
+    },
+    {
+      id: 'descripcion',
+      titulo: 'Ha escrito una descripción',
+      cumple: descripcion.length >= MINIMO_DESCRIPCION,
+      /* Cumplida, el contador deja de comparar: «209 de 80 caracteres»
+         se lee como un error, no como algo resuelto. */
+      detalle: descripcion.length >= MINIMO_DESCRIPCION
+        ? `${descripcion.length} caracteres`
+        : `${descripcion.length} de ${MINIMO_DESCRIPCION} caracteres`,
+      falta: `Cuente en pocas líneas a qué se dedica y qué le distingue. `
+        + `Mínimo ${MINIMO_DESCRIPCION} caracteres.`,
+      paraCrear: false,
+    },
+    {
+      id: 'contacto',
+      titulo: 'Hay una forma de contactarle',
+      cumple: tieneContacto,
+      falta: 'Añada al menos un correo o un teléfono públicos. '
+        + 'No se usa el de su cuenta: ese es con el que usted entra.',
+      paraCrear: false,
+    },
+  ];
+
+  const paraCrear = reglas.filter((r) => r.paraCrear);
+  return {
+    reglas,
+    publicados,
+    minimoAnuncios: MINIMO_ANUNCIOS,
+    puedeCrear: paraCrear.every((r) => r.cumple),
+    puedePublicar: reglas.every((r) => r.cumple),
+  };
+}
+
+/* Quien administra la organización y es dealer. Un vendedor publica
+   equipos, pero la página de la empresa no es suya. */
+const conPagina = (manejador) => conSesion((req, res, ctx, ...resto) => {
+  const org = ctx.organizacion;
+  if (!org || org.tipo !== 'dealer') {
+    return fallo(res, 404, 'Su cuenta no tiene página de empresa');
+  }
+  if (!puedeAdministrar(ctx)) {
+    return fallo(res, 403, 'Solo quien administra la empresa puede editar su página');
+  }
+  return manejador(req, res, ctx, ...resto);
+});
+
+const verMiPagina = conPagina((req, res, ctx) => {
+  const pagina = db.paginaDe(ctx.organizacion.id);
+  return responder(res, 200, {
+    pagina,
+    ...reglasDePagina(ctx.organizacion, pagina),
+    /* La dirección donde se verá, para que pueda copiarla y
+       comprobarla antes de publicar. */
+    direccion: pagina.slug ? `/dealer.html?d=${pagina.slug}` : null,
+  });
+});
+
+const editarMiPagina = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const datos = {};
+
+  if (c.nombre !== undefined) {
+    const n = texto(c.nombre, 160);
+    if (!n) return fallo(res, 400, 'El nombre de la empresa no puede quedar vacío');
+    datos.nombre = n;
+  }
+  if (c.descripcion !== undefined) datos.descripcion = texto(c.descripcion, 2000) || '';
+  if (c.lema !== undefined) datos.lema = texto(c.lema, 120) || '';
+  if (c.web !== undefined) {
+    const w = texto(c.web, 200) || '';
+    if (w && !/^https?:\/\//i.test(w)) return fallo(res, 400, 'La web debe empezar por http:// o https://');
+    datos.web = w;
+  }
+  if (c.correoPublico !== undefined) {
+    const correoPub = texto(c.correoPublico, 160) || '';
+    if (correoPub && !correoValido(correoPub)) return fallo(res, 400, 'Escriba un correo válido');
+    datos.correoPublico = correoPub;
+  }
+  if (c.telefonoPublico !== undefined) {
+    const tel = texto(c.telefonoPublico, 20) || '';
+    if (tel && !telefonoValido(tel)) return fallo(res, 400, 'El teléfono debe tener 10 dígitos');
+    datos.telefonoPublico = tel;
+  }
+
+  /* Logotipo y banner: SOLO rutas que devolvió la subida de este sitio.
+     Es la misma comprobación que la portada, y por el mismo motivo: una
+     URL de un tercero se salta la política de contenidos del navegador
+     y además la puede cambiar o retirar su dueño cuando quiera. */
+  for (const [clave, rotulo] of [['logo', 'El logotipo'], ['banner', 'La imagen de portada']]) {
+    if (c[clave] === undefined) continue;
+    const ruta = String(c[clave] || '');
+    if (ruta && !esRutaDeFoto(ruta)) {
+      return fallo(res, 400, `${rotulo} tiene que ser una imagen subida al sitio`);
+    }
+    datos[clave] = ruta;
+  }
+
+  const pagina = db.guardarPagina(ctx.organizacion.id, datos);
+  return responder(res, 200, { pagina, ...reglasDePagina(ctx.organizacion, pagina) });
+});
+
+const publicarMiPagina = conPagina((req, res, ctx) => {
+  const pagina = db.paginaDe(ctx.organizacion.id);
+  const estado = reglasDePagina(ctx.organizacion, pagina);
+
+  /* Se comprueba aquí y no solo en pantalla: la lista de la pantalla
+     es para que el dealer sepa qué le falta, no la que decide. */
+  if (!estado.puedePublicar) {
+    const pendientes = estado.reglas.filter((r) => !r.cumple);
+    return fallo(res, 400, `Falta ${pendientes.length === 1 ? 'una cosa' : `${pendientes.length} cosas`} por resolver`,
+      { pendientes: pendientes.map((r) => ({ id: r.id, titulo: r.titulo, falta: r.falta })) });
+  }
+
+  db.publicarPagina(ctx.organizacion.id);
+  return responder(res, 200, {
+    pagina: db.paginaDe(ctx.organizacion.id),
+    direccion: `/dealer.html?d=${pagina.slug}`,
+  });
+});
+
+const despublicarMiPagina = conPagina((req, res, ctx) => {
+  db.despublicarPagina(ctx.organizacion.id);
+  return responder(res, 200, { pagina: db.paginaDe(ctx.organizacion.id) });
+});
+
+/* ── Secciones de la página ─────────────────────────────── */
+
+const TIPOS_SECCION = ['texto', 'galeria', 'marcas', 'servicios', 'destacados', 'sucursales', 'inventario'];
+
+/* Lo que cada tipo de bloque guarda. Se valida aquí y no se confía en
+   lo que mande el navegador: `cuerpo` acaba en la página pública. */
+function cuerpoDeSeccion(tipo, crudo) {
+  const c = crudo || {};
+  if (tipo === 'texto') return { texto: texto(c.texto, 4000) || '' };
+  if (tipo === 'marcas' || tipo === 'servicios') {
+    return {
+      lista: (Array.isArray(c.lista) ? c.lista : [])
+        .map((x) => texto(x, 80)).filter(Boolean).slice(0, 40),
+    };
+  }
+  if (tipo === 'destacados') {
+    return {
+      anuncios: (Array.isArray(c.anuncios) ? c.anuncios : [])
+        .map((x) => texto(x, 80)).filter(Boolean).slice(0, 12),
+    };
+  }
+  /* galeria, sucursales e inventario no guardan nada: se pintan con lo
+     que ya hay en la base. */
+  return {};
+}
+
+const crearMiSeccion = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const tipo = String(c.tipo || '');
+  if (!TIPOS_SECCION.includes(tipo)) return fallo(res, 400, 'Ese tipo de bloque no existe');
+
+  /* Un tope, porque una página con cincuenta bloques no es una página.
+     Con siete tipos disponibles, veinte da margen de sobra para
+     repetir los de texto y destacados varias veces. */
+  if (db.seccionesDe(ctx.organizacion.id).length >= 20) {
+    return fallo(res, 400, 'Su página ya tiene veinte bloques');
+  }
+
+  const idSeccion = db.crearSeccion(ctx.organizacion.id, {
+    tipo,
+    titulo: texto(c.titulo, 120),
+    cuerpo: cuerpoDeSeccion(tipo, c.cuerpo),
+  });
+  return responder(res, 201, { id: idSeccion, secciones: db.seccionesDe(ctx.organizacion.id) });
+});
+
+const editarMiSeccion = conPagina(async (req, res, ctx, idSeccion) => {
+  const c = await leerCuerpo(req);
+  const actual = db.seccionesDe(ctx.organizacion.id).find((s) => s.id === idSeccion);
+  if (!actual) return fallo(res, 404, 'Ese bloque no existe');
+
+  const cambios = {};
+  if (c.titulo !== undefined) cambios.titulo = texto(c.titulo, 120);
+  if (c.visible !== undefined) cambios.visible = !!c.visible;
+  if (c.cuerpo !== undefined) cambios.cuerpo = cuerpoDeSeccion(actual.tipo, c.cuerpo);
+
+  db.editarSeccion(idSeccion, ctx.organizacion.id, cambios);
+  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
+});
+
+const borrarMiSeccion = conPagina((req, res, ctx, idSeccion) => {
+  if (!db.borrarSeccion(idSeccion, ctx.organizacion.id)) {
+    return fallo(res, 404, 'Ese bloque no existe');
+  }
+  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
+});
+
+const ordenarMisSecciones = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const ids = (Array.isArray(c.ids) ? c.ids : []).map((x) => String(x));
+  if (!ids.length) return fallo(res, 400, 'Indique el orden de los bloques');
+  return responder(res, 200, { secciones: db.ordenarSecciones(ctx.organizacion.id, ids) });
+});
+
+/* ── Galería y enlaces ──────────────────────────────────── */
+
+const anadirAMiGaleria = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const url = String(c.url || '');
+  if (!esRutaDeFoto(url)) return fallo(res, 400, 'La fotografía tiene que subirse al sitio');
+  if (db.galeriaDe(ctx.organizacion.id).length >= 24) {
+    return fallo(res, 400, 'Su galería ya tiene veinticuatro fotografías');
+  }
+  db.anadirAGaleria(ctx.organizacion.id, { url, alt: texto(c.alt, 160) });
+  return responder(res, 201, { galeria: db.galeriaDe(ctx.organizacion.id) });
+});
+
+const quitarDeMiGaleria = conPagina((req, res, ctx, idFoto) => {
+  if (!db.quitarDeGaleria(idFoto, ctx.organizacion.id)) {
+    return fallo(res, 404, 'Esa fotografía no existe');
+  }
+  return responder(res, 200, { galeria: db.galeriaDe(ctx.organizacion.id) });
+});
+
+const TIPOS_ENLACE = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'web', 'whatsapp'];
+
+const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  const lista = [];
+
+  for (const e of (Array.isArray(c.enlaces) ? c.enlaces : []).slice(0, 8)) {
+    const tipo = String((e && e.tipo) || '');
+    const valor = texto(e && e.valor, 200);
+    if (!TIPOS_ENLACE.includes(tipo) || !valor) continue;
+
+    /* El de WhatsApp es un número; los demás, direcciones. Un enlace
+       roto en la página de un dealer es peor que no tenerlo. */
+    if (tipo === 'whatsapp') {
+      if (!telefonoValido(valor)) return fallo(res, 400, 'El WhatsApp debe tener 10 dígitos');
+    } else if (!/^https?:\/\//i.test(valor)) {
+      return fallo(res, 400, `El enlace de ${tipo} debe empezar por http:// o https://`);
+    }
+    lista.push({ tipo, valor });
+  }
+
+  return responder(res, 200, { enlaces: db.guardarEnlaces(ctx.organizacion.id, lista) });
+});
 
 /* ── Rutas: planes y cobro ──────────────────────────────── */
 
@@ -1422,6 +1886,80 @@ const misPlanes = conSesion((req, res, ctx) => {
   });
 });
 
+/* Todo cobro emite su comprobante. Una sola función, y las dos rutas
+ * que cobran la llaman.
+ *
+ * Estaba escrito dos veces y solo existía en una: comprar cupos emitía
+ * comprobante y AMPLIARLOS no. El cliente pagaba la ampliación, el pago
+ * quedaba aprobado, y no había documento. Ninguna tarea lo recuperaba
+ * después —la diaria solo reintenta el envío de facturas ya creadas—,
+ * así que era ingreso cobrado y no declarado, invisible hasta una
+ * inspección. Con una sola función no pueden volver a separarse.
+ *
+ * Nunca lanza: que no se pueda emitir NO revierte un cobro que ya
+ * entró. El comprobante se puede emitir después desde administración,
+ * y el pago sin factura sale en la lista de pendientes. */
+function emitirComprobanteDeCobro({ cobro, concepto, detalle, cliente, correoCliente }) {
+  /* Una cuenta exenta no paga nada, así que no hay nada que comprobar. */
+  if (!cobro || cobro.total <= 0) return null;
+
+  const pago = db.pagoPorReferencia(cobro.referencia);
+  if (!pago) {
+    console.error(`facturas: no se encontró el pago ${cobro.referencia} para emitir su comprobante`);
+    return null;
+  }
+
+  try {
+    const comprobante = facturas.emitirPorPago(pago, { concepto, detalle, cliente });
+
+    /* El envío va aparte y sin esperarlo: emitir y notificar fallan por
+       motivos distintos, y una caída del proveedor de correo no puede
+       dejar sin comprobante un pago que ya entró. Lo que no salga lo
+       reintenta la tarea diaria. Con catch, porque una promesa suelta
+       que se rechace sin manejador tumba el proceso. */
+    facturas.enviar(comprobante, { correoCliente })
+      .catch((e) => console.error(
+        `facturas: no se pudo enviar el comprobante ${comprobante.numero} · ${e.message}`));
+
+    return comprobante;
+  } catch (e) {
+    console.error(`facturas: no se pudo emitir el comprobante del pago ${pago.id} · ${e.message}`);
+    return null;
+  }
+}
+
+/* A nombre de quién sale el comprobante de un cobro que no pregunta.
+ *
+ * Ampliar cupos no abre el formulario fiscal —es un botón, no un paso
+ * de compra—, así que se heredan los datos del último comprobante con
+ * RNC de esa organización. Quien facturó su membresía a nombre de su
+ * empresa espera que la ampliación salga igual; emitirla como
+ * consumidor final le obliga a pedir una nota de crédito por algo que
+ * el sistema ya sabía. Si nunca facturó con RNC, va como consumidor
+ * final, que es lo que estaba pidiendo. */
+function datosFiscalesDe(ctx) {
+  const previos = ctx.organizacion && db.ultimosDatosFiscales(ctx.organizacion.id);
+  if (previos && previos.rnc) return { ...previos, correo: ctx.usuario.correo };
+  return { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo };
+}
+
+/* Lo que se imprime como línea de detalle.
+ *
+ * La multiplicación tiene que cuadrar: cantidad × precio unitario =
+ * importe. Con cupos gratis por cantidad el subtotal deja de ser
+ * divisible, así que en ese caso va una sola línea por el total y el
+ * reparto se explica en el texto. Una factura donde la multiplicación
+ * no da es una factura que el cliente reclama. */
+function lineaDeCupos({ cupo, subtotal, inicio, fin }) {
+  const divisible = cupo > 0 && subtotal % cupo === 0;
+  return {
+    cantidad: divisible ? cupo : 1,
+    precio_unitario: divisible ? subtotal / cupo : subtotal,
+    periodo: [inicio, fin]
+      .map((f) => String(f).slice(0, 10).split('-').reverse().join('/')).join(' al '),
+  };
+}
+
 const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
 
@@ -1451,7 +1989,7 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
    * de haber cobrado obliga a emitir una nota de crédito por un error
    * de tecleo. El RNC se comprueba con la misma función que el alta de
    * dealer, que es la que sabe cuántos dígitos tiene. */
-  let cliente = { razonSocial: ctx.usuario.nombre };
+  let cliente = { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo };
   if (c.conRnc) {
     const rnc = rncValido(c.rnc);
     if (!rnc) return fallo(res, 400, 'El RNC tiene 9 dígitos');
@@ -1463,35 +2001,23 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
       razonSocial: texto(c.razonSocial, 160),
       rnc,
       direccion: texto(c.direccionFiscal, 200),
+      correo: ctx.usuario.correo,
     };
   }
 
   const membresia = db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias, cobro });
 
   /* El comprobante se emite SIEMPRE que haya cobro, lo pida el cliente
-     o no. Una cuenta exenta no paga nada, así que no hay nada que
-     comprobar: por eso queda fuera. */
-  let comprobante = null;
-  if (cobro.total > 0) {
-    const pago = db.pagoPorReferencia(cobro.referencia);
-    if (pago) {
-      try {
-        comprobante = facturas.emitirPorPago(pago, {
-          concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
-          cliente,
-        });
-        /* El envío va aparte y sin esperarlo: emitir y notificar fallan
-           por motivos distintos, y una caída del proveedor de correo no
-           puede dejar sin comprobante un pago que ya entró. Lo que no
-           salga lo reintenta la tarea diaria. */
-        facturas.enviar(comprobante, { correoCliente: ctx.usuario.correo });
-      } catch (e) {
-        // Que no se pueda emitir NO revierte el cobro: el pago existe y
-        // el comprobante se puede emitir después desde administración.
-        console.error(`facturas: no se pudo emitir el comprobante del pago ${pago.id} · ${e.message}`);
-      }
-    }
-  }
+     o no. */
+  const comprobante = emitirComprobanteDeCobro({
+    cobro,
+    concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
+    detalle: lineaDeCupos({
+      cupo, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
+    }),
+    cliente,
+    correoCliente: ctx.usuario.correo,
+  });
 
   return responder(res, 201, {
     membresia,
@@ -1534,7 +2060,32 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
     };
 
   const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
-  return responder(res, 200, { membresia, cobro });
+
+  /* Ampliar cupos es un cobro como cualquier otro y lleva su
+     comprobante. Faltaba: se cobraba la diferencia, el pago quedaba
+     aprobado y no se emitía nada. */
+  const cuantos = cupoNuevo - s.anuncios_incluidos;
+  const comprobante = emitirComprobanteDeCobro({
+    cobro,
+    concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
+      + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
+    detalle: lineaDeCupos({
+      cupo: cuantos, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
+    }),
+    /* Los mismos datos fiscales de la compra original: quien facturó
+       con RNC espera que la ampliación de esa misma membresía salga
+       igual, no a nombre de otro. */
+    cliente: datosFiscalesDe(ctx),
+    correoCliente: ctx.usuario.correo,
+  });
+
+  return responder(res, 200, {
+    membresia,
+    cobro,
+    comprobante: comprobante && {
+      numero: comprobante.numero, tipo: comprobante.tipo, ncf: comprobante.ncf,
+    },
+  });
 });
 
 /* Mover un equipo de una membresía a otra: lo que el anunciante
@@ -1603,6 +2154,15 @@ function exigirAceptacion(res, idUsuario, ids) {
 
 const publicar = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PUBLICAR)) return undefined;
+
+  /* Publicar no tenía ningún tope. El cupo pagado limita cuántos
+     anuncios quedan vivos, pero no cuántas peticiones se pueden lanzar:
+     cada una lee un cuerpo de hasta veinticinco megas y escribe en la
+     base. Veinte por hora es de sobra para cualquiera que esté
+     publicando de verdad su flota. */
+  if (!db.permitir(`publicar:${ctx.usuario.id}`, 20, 60)) {
+    return fallo(res, 429, 'Ha publicado muchos equipos seguidos. Inténtelo en un rato.');
+  }
 
   const c = await leerCuerpo(req);
   const org = ctx.organizacion;
@@ -1684,8 +2244,30 @@ const publicar = conSesion(async (req, res, ctx) => {
     };
   }
 
-  const fotos = Array.isArray(c.fotos) ? c.fotos.slice(0, plan.fotos_maximas) : [];
-  if (fotos.length < 3) return fallo(res, 400, 'Cargue al menos 3 fotografías');
+  /* Cada foto tiene que ser una que se subió aquí.
+   *
+   * Los videos de tres líneas más abajo sí lo comprobaban, y la portada
+   * del sitio también; las fotos del anuncio no. Una petición fabricada
+   * podía meter treinta imágenes en base64 dentro del JSON y quedarse
+   * guardadas en la base: veinticuatro megas en un solo anuncio. Es
+   * exactamente el problema que tools/fotos.js dice en su cabecera
+   * haber venido a resolver, con la puerta de al lado abierta. Con una
+   * URL de un tercero el resultado es otro y tampoco bueno: la política
+   * de contenidos del navegador la bloquea y el catálogo se llena de
+   * imágenes rotas. */
+  const fotos = (Array.isArray(c.fotos) ? c.fotos : [])
+    .map((f) => (typeof f === 'string' ? { url: f, miniatura: null } : {
+      url: f && f.url,
+      /* La miniatura se conserva —es lo que ve el catálogo mientras
+         carga la grande— pero se valida igual, y si no pasa se deja en
+         nulo en vez de descartar la foto entera. */
+      miniatura: f && esRutaDeFoto(f.miniatura) ? f.miniatura : null,
+    }))
+    .filter((f) => f.url && esRutaDeFoto(f.url))
+    .slice(0, plan.fotos_maximas);
+  if (fotos.length < 3) {
+    return fallo(res, 400, 'Cargue al menos 3 fotografías subidas al sitio');
+  }
 
   /* Los videos se recortan al tope del plan igual que las fotos, y se
      comprueba que cada ruta sea de las que sirve este servidor: sin
@@ -1901,9 +2483,23 @@ const estadisticas = (req, res) => {
   return responder(res, 200, db.estadisticas());
 };
 
+/* Campos que solo le importan al dueño. `precio_minimo` es el serio:
+   el esquema lo marca como privado porque es el suelo por debajo del
+   cual el vendedor no piensa bajar, y la ficha lo estaba entregando a
+   cualquiera que abriera la consola del navegador. En una plataforma
+   cuya modalidad de ofertas existe para negociar, publicarlo deja a
+   todos los anunciantes sin posición. Los otros cuatro no filtran
+   nada grave, pero tampoco pintan nada en una ficha pública. */
+const PRIVADOS_DEL_ANUNCIO = ['precio_minimo', 'usuario_id', 'suscripcion_id',
+  'aviso_por_vencer', 'aviso_vencido'];
+
 function verAnuncio(req, res, ctx, idAnuncio) {
   const a = db.anuncio(idAnuncio);
   if (!a) return fallo(res, 404, 'Ese anuncio no existe');
+  /* `ctx` es null cuando no hay sesión, que es el caso normal aquí:
+     esta ruta la llama cualquier visitante del catálogo. */
+  const esSuyo = !!ctx && !!ctx.organizacion && a.organizacion_id === ctx.organizacion.id;
+  if (!esSuyo) PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
   return responder(res, 200, { anuncio: a });
 }
 
@@ -1911,19 +2507,29 @@ function verAnuncio(req, res, ctx, idAnuncio) {
    cualquier visitante del catálogo. */
 async function evento(req, res, ctx) {
   const c = await leerCuerpo(req);
-  const ip = req.socket.remoteAddress || '';
+
+  /* Con origen() y no con socket.remoteAddress: detrás del proxy ese
+     valor es siempre 127.0.0.1, así que la huella del visitante
+     colapsaba y cincuenta personas distintas contaban como una. */
+  const ip = origen(req);
+  if (!db.permitir(`evento:${ip}`, LIMITES.eventos.tope, LIMITES.eventos.minutos)) {
+    return fallo(res, 429, 'Demasiadas peticiones desde esta conexión');
+  }
+
   const agente = req.headers['user-agent'] || '';
   const tipo = String(c.tipo || '');
   const idAnuncio = String(c.anuncio || '');
-  const ok = db.anotarEvento(idAnuncio, tipo, db.huella(ip, agente));
+  const resultado = db.anotarEvento(idAnuncio, tipo, db.huella(ip, agente));
+  if (resultado === 'invalido') return fallo(res, 400, 'Evento no reconocido');
 
   /* Un contacto es la señal de que el anuncio funciona, y la razón
-     principal por la que alguien renueva. `anotarEvento` devuelve
-     false cuando ya se contó a ese visitante hoy, así que esto no
-     manda un correo por cada pulsación: uno por persona y día.
+     principal por la que alguien renueva. Solo avisa el primero de
+     cada persona y día: 'repetido' llega en cuanto alguien vuelve a
+     pulsar, y sin esa distinción trescientas pulsaciones eran
+     trescientos correos y la cuota del proveedor agotada.
 
      Las vistas no avisan; serían decenas de correos diarios. */
-  if (ok && (tipo === 'telefono' || tipo === 'whatsapp')) {
+  if (resultado === 'contado' && (tipo === 'telefono' || tipo === 'whatsapp')) {
     const dueno = db.duenoDeAnuncio(idAnuncio);
     if (dueno) {
       correo.enviarContactoRecibido({
@@ -1936,7 +2542,10 @@ async function evento(req, res, ctx) {
     }
   }
 
-  return responder(res, ok ? 202 : 400, { ok });
+  /* Repetido no es un error: la visita es legítima y el evento se
+     guardó. Responder 400 llenaba la consola del navegador de
+     errores rojos en cada recarga de una ficha. */
+  return responder(res, 202, { ok: true, contado: resultado === 'contado' });
 }
 
 /* ── Enrutador ──────────────────────────────────────────── */
@@ -1953,6 +2562,7 @@ const RUTAS = [
   ['POST', /^\/api\/legales\/aceptar$/,     aceptarLegales],
   ['GET',  /^\/api\/facturas$/,             misFacturas],
   ['GET',  /^\/api\/facturas\/([\w-]+)\.pdf$/, descargarFactura],
+  ['GET',  /^\/api\/facturas\/([\w-]+)\.html$/, verFactura],
   ['POST', /^\/api\/dealer\/registro$/,     registrarDealer],
   ['GET',  /^\/api\/sucursales$/,           listarSucursales],
   ['POST', /^\/api\/sucursales$/,           crearSucursal],
@@ -1960,6 +2570,22 @@ const RUTAS = [
   ['DELETE', /^\/api\/sucursales\/([\w-]+)$/, borrarSucursal],
   ['GET',  /^\/api\/dealers$/,           listarDealers],
   ['GET',  /^\/api\/dealers\/([\w-]+)$/, verDealer],
+
+  /* La página propia del dealer. Las subrutas van ANTES que la genérica
+     de secciones: el enrutador recorre esta lista en orden, y
+     `/secciones/orden` tiene que ganarle a `/secciones/:id`. */
+  ['GET',    /^\/api\/mi-pagina$/,                          verMiPagina],
+  ['PATCH',  /^\/api\/mi-pagina$/,                          editarMiPagina],
+  ['POST',   /^\/api\/mi-pagina\/publicar$/,                publicarMiPagina],
+  ['POST',   /^\/api\/mi-pagina\/despublicar$/,             despublicarMiPagina],
+  ['PATCH',  /^\/api\/mi-pagina\/secciones\/orden$/,        ordenarMisSecciones],
+  ['POST',   /^\/api\/mi-pagina\/secciones$/,               crearMiSeccion],
+  ['PATCH',  /^\/api\/mi-pagina\/secciones\/([\w-]+)$/,     editarMiSeccion],
+  ['DELETE', /^\/api\/mi-pagina\/secciones\/([\w-]+)$/,     borrarMiSeccion],
+  ['POST',   /^\/api\/mi-pagina\/galeria$/,                 anadirAMiGaleria],
+  ['DELETE', /^\/api\/mi-pagina\/galeria\/([\w-]+)$/,       quitarDeMiGaleria],
+  ['PUT',    /^\/api\/mi-pagina\/enlaces$/,                 guardarMisEnlaces],
+  ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
   ['GET',  /^\/api\/planes$/,            listarPlanes],
   ['GET',  /^\/api\/estadisticas$/,      estadisticas],
   ['POST', /^\/api\/anuncios$/,          publicar],
@@ -2014,6 +2640,7 @@ const RUTAS = [
   ['GET',  /^\/api\/admin\/legales$/,                   verAceptaciones],
   ['GET',  /^\/api\/admin\/facturas$/,                  listarFacturas],
   ['GET',  /^\/api\/admin\/facturas\.csv$/,             exportarFacturas],
+  ['POST', /^\/api\/admin\/secuencias$/,                cargarSecuencia],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/reenviar$/, reenviarFactura],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/anular$/,   anularFactura],
   ['GET',  /^\/api\/admin\/solicitudes$/,               listarSolicitudes],

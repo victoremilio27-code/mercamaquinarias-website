@@ -60,6 +60,9 @@ const BUZONES = {
   publicidad: process.env.MERCA_PUBLICIDAD || 'publicidad@mercamaquinarias.com',
   // Avisos legales y ejercicio de derechos sobre datos personales.
   legal: process.env.MERCA_LEGAL || 'legal@mercamaquinarias.com',
+  /* Los informes de negocio. Va a otro dominio a propósito: es el de
+     la sociedad que opera la plataforma, no el de la marca. */
+  gerencia: process.env.MERCA_GERENCIA || 'gerencia@inversionesxzt.com',
 };
 
 /* Nombres viejos, que siguen exportándose porque hay código que los
@@ -90,9 +93,23 @@ const EMPRESA = {
   marca: 'MercaMaquinarias',
   razonSocial: process.env.MERCA_RAZON_SOCIAL || 'Inversiones XZT, S.R.L.',
   rnc: process.env.MERCA_RNC || '1-31-27975-9',
-  // Solo para documentos fiscales. NO usar en correos ni en el sitio.
+  /* Solo para documentos fiscales. NO usar en correos ni en el sitio.
+   *
+   * Es el que consta en el Registro Mercantil 116099SD de la Cámara de
+   * Comercio y Producción de Santo Domingo, comprobado contra el
+   * certificado: «DOMICILIO DE LA EMPRESA · CALLE RAMON SANTANA, NO. 4
+   * GAZCUE». Aquí había otro distinto, y una factura con un domicilio
+   * del emisor que no es el registrado es una factura impugnable; peor
+   * todavía, corregirlo después obliga a emitir una nota de crédito por
+   * cada comprobante ya entregado. */
   domicilioFiscal: process.env.MERCA_DOMICILIO_FISCAL
     || 'C/ Ramón Santana No. 4, Gazcue, Distrito Nacional, República Dominicana',
+
+  /* El número de Registro Mercantil. No es obligatorio en el
+   * comprobante —lo que la DGII exige es el RNC— pero es habitual en
+   * las facturas dominicanas y ayuda a que el cliente identifique al
+   * emisor sin buscarlo. Vacío no imprime nada. */
+  registroMercantil: process.env.MERCA_REGISTRO_MERCANTIL || '116099SD',
 };
 
 // URL pública, para los enlaces que van dentro de los correos.
@@ -429,15 +446,37 @@ function enviar(mensaje) {
  *
  * No se espera al resultado: quien llama ya está mandando su correo y
  * esto es accesorio. Los fallos se anotan en el registro. */
-function avisarInternamente({ buzon, asunto, texto, html }) {
+function avisarInternamente({ buzon, asunto, texto, html, copia }) {
   const destino = BUZONES[buzon] || BUZONES.general;
-  const r = enviar({ para: destino, asunto, texto, html, responderA: destino });
-  if (r && typeof r.then === 'function') {
-    r.then((x) => {
-      if (!x || !x.entregado) console.error(`correo: la copia interna a ${destino} no salió`);
-    });
+
+  /* La copia va como un envío aparte y no como CC.
+   *
+   * El proveedor acepta varios destinatarios, pero entonces cada uno
+   * ve la dirección del otro y una respuesta accidental a todos sale
+   * de la casa. Para un informe interno da igual; para el día que un
+   * informe se reenvíe a alguien de fuera, no. Dos envíos cuestan dos
+   * llamadas y ahorran esa conversación.
+   *
+   * Si el primero falla, el segundo sale igual: son destinatarios
+   * independientes y que uno rebote no es razón para que el otro se
+   * quede sin su copia. */
+  const destinos = [destino];
+  if (copia) {
+    const segundo = BUZONES[copia] || copia;
+    if (segundo && segundo !== destino) destinos.push(segundo);
   }
-  return r;
+
+  const envios = destinos.map((para) => {
+    const r = enviar({ para, asunto, texto, html, responderA: destino });
+    if (r && typeof r.then === 'function') {
+      r.then((x) => {
+        if (!x || !x.entregado) console.error(`correo: la copia interna a ${para} no salió`);
+      });
+    }
+    return r;
+  });
+
+  return envios.length === 1 ? envios[0] : Promise.all(envios);
 }
 
 const enviarCodigo = ({ para, codigo, tipo, nombre, minutos }) =>

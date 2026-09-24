@@ -83,7 +83,20 @@ CREATE TABLE IF NOT EXISTS organizaciones (
   telefono       TEXT,
   web            TEXT,
   descripcion    TEXT,
-  logo           TEXT,
+  -- La página propia del dealer. `correo` y `telefono` de arriba son
+  -- los de la CUENTA: los de abajo son los que el dealer decide
+  -- enseñar. Separarlos es lo que evita publicar en el directorio la
+  -- dirección con la que alguien inicia sesión.
+  logo             TEXT,
+  banner           TEXT,
+  lema             TEXT,
+  correo_publico   TEXT,
+  telefono_publico TEXT,
+  -- El plan da DERECHO a tener página; esto dice si está terminada.
+  -- Sin la separación, pagar publicaría al instante una página vacía.
+  estado_pagina  TEXT NOT NULL DEFAULT 'borrador'
+                 CHECK (estado_pagina IN ('borrador', 'publicada')),
+  publicada_en   TEXT,
   verificada     INTEGER NOT NULL DEFAULT 0, -- sello, se otorga a mano
   perfil_publico INTEGER NOT NULL DEFAULT 0, -- el plan lo habilita
   -- Segunda condición para salir publicado, independiente del plan.
@@ -130,12 +143,65 @@ CREATE TABLE IF NOT EXISTS sucursales (
   municipio       TEXT,
   direccion       TEXT,
   telefono        TEXT,
+  -- Añadidas por migración y traídas aquí después: una base nueva y una
+  -- migrada tienen que quedar idénticas. Faltaban, y quien leyera este
+  -- archivo como la verdad se encontraba dos columnas de menos.
+  whatsapp        TEXT,
+  horario         TEXT,
   principal       INTEGER NOT NULL DEFAULT 0,
   activa          INTEGER NOT NULL DEFAULT 1,
   creada          TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_sucursales_org ON sucursales (organizacion_id);
+
+-- ── La página propia del dealer ────────────────────────────
+
+-- Redes y enlaces externos que el dealer quiere enseñar.
+CREATE TABLE IF NOT EXISTS organizacion_enlaces (
+  id              TEXT PRIMARY KEY,
+  organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+  tipo            TEXT NOT NULL CHECK (tipo IN (
+                    'instagram', 'facebook', 'youtube', 'tiktok',
+                    'linkedin', 'web', 'whatsapp')),
+  valor           TEXT NOT NULL,
+  orden           INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS ix_org_enlaces ON organizacion_enlaces (organizacion_id, orden);
+
+-- Fotos de la empresa: el taller, la nave, el equipo de trabajo. No
+-- son anuncios; son lo que da confianza a quien no conoce al dealer.
+CREATE TABLE IF NOT EXISTS organizacion_galeria (
+  id              TEXT PRIMARY KEY,
+  organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+  url             TEXT NOT NULL,
+  alt             TEXT,
+  orden           INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS ix_org_galeria ON organizacion_galeria (organizacion_id, orden);
+
+-- Los bloques de la página, en el orden en que el dealer los puso.
+--
+-- Una tabla y no veinte columnas más: lo que se pidió es que arme su
+-- página añadiendo, quitando y reordenando. Con columnas fijas, cada
+-- bloque nuevo sería una migración; así es una opción más en un
+-- desplegable. `cuerpo` va como JSON porque un bloque de texto y uno
+-- de equipos destacados no comparten campos.
+CREATE TABLE IF NOT EXISTS organizacion_secciones (
+  id              TEXT PRIMARY KEY,
+  organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+  tipo            TEXT NOT NULL CHECK (tipo IN (
+                    'texto', 'galeria', 'marcas', 'servicios',
+                    'destacados', 'sucursales', 'inventario')),
+  titulo          TEXT,
+  cuerpo          TEXT,
+  orden           INTEGER NOT NULL DEFAULT 0,
+  visible         INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS ix_org_secciones ON organizacion_secciones (organizacion_id, orden);
 
 -- ── Flota propia ───────────────────────────────────────────
 
@@ -249,7 +315,13 @@ CREATE TABLE IF NOT EXISTS ajustes (
 -- de apagarla un domingo.
 CREATE TABLE IF NOT EXISTS publicidad (
   id          TEXT PRIMARY KEY,
-  espacio     TEXT NOT NULL CHECK (espacio IN ('superior', 'lateral-izq', 'lateral-der', 'bloque')),
+  -- Los nueve formatos del tarifario. La lista de tools/api.js es la
+  -- autoridad; esto es la red de abajo. Cuando se añada uno, hace falta
+  -- una migración: SQLite no deja ampliar un CHECK con ALTER TABLE.
+  espacio     TEXT NOT NULL CHECK (espacio IN (
+                'superior', 'catalogo', 'bloque', 'ficha',
+                'lateral-izq', 'lateral-der',
+                'movil-superior', 'movil-cuadro', 'movil-lista')),
   nombre      TEXT NOT NULL,             -- para reconocerla en el panel
   anunciante  TEXT,                      -- quién la paga
   imagen      TEXT NOT NULL,             -- ruta en /fotos, subida como el resto

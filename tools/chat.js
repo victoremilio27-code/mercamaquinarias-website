@@ -21,6 +21,7 @@
 const https = require('https');
 const db = require('./db');
 const precios = require('../assets/precios.js');
+const servicios = require('../assets/servicios.js');
 
 const CLAVE = () => process.env.ANTHROPIC_API_KEY || '';
 
@@ -51,9 +52,6 @@ const LARGO_MAXIMO = 1000;
 
 /* ── Datos del negocio ──────────────────────────────────── */
 
-/* PENDIENTE: sigue siendo el número de relleno de todo el sitio.
-   Cambiarlo aquí y en assets/app.js (WHATSAPP). */
-const TELEFONO = '(809) 000-0000';
 /* Los buzones salen de correo.js, que es donde viven todos.
  *
  * Aquí estaban escritos a mano, y al mudar el dominio uno se quedó
@@ -137,7 +135,7 @@ function sistema() {
 - Nunca inventes precios, plazos, disponibilidad ni condiciones. Lo que no está escrito aquí abajo, no lo sabes.
 
 # Qué es MercaMaquinarias
-Un portal donde se compran y venden equipos pesados en República Dominicana, y donde además la empresa presta tres servicios propios: alquiler, importación y un directorio de financiamiento.
+Un portal donde se compran y venden equipos pesados en República Dominicana, y donde además la empresa presta dos servicios propios: alquiler con operador e importación de maquinaria.
 
 # Publicar un equipo (/publicar.html, /planes.html)
 - Se paga antes de publicar. Primero se compran cupos en Planes, después se publica.
@@ -154,7 +152,7 @@ ${tarifas()}
 - Es flota propia de MercaMaquinarias, no equipos de terceros.
 - Todos los equipos van CON OPERADOR. No existe la modalidad sin operador. La tarifa incluye el combustible del turno.
 - Se cotiza POR HORA. La tarifa puede variar de la estándar según la ubicación de la obra, sus condiciones y el tipo de trabajo.
-- El transporte se cotiza aparte y por viaje, según la distancia y la dificultad de acceso.
+- El traslado del equipo hasta la obra corre por cuenta del cliente: MercaMaquinarias NO ofrece hoy el servicio de transporte.
 - El mantenimiento preventivo y las averías mecánicas corren por cuenta de MercaMaquinarias. Si el equipo se detiene por una falla imputable a ellos, ese tiempo no se factura.
 - Si el daño lo causa la negligencia del cliente, la reparación corre íntegra por cuenta del cliente y las horas que el equipo pase en taller se siguen facturando.
 - Se alquila un TIPO de equipo por lo que hace, no una máquina concreta ni un tamaño: el cliente marca la función que necesita y MercaMaquinarias asigna la unidad disponible según el trabajo y la accesibilidad de la obra.
@@ -163,7 +161,9 @@ ${tarifas()}
 - Se piden varios equipos en la misma solicitud. Quien no sepa cuántos necesita puede describir el proyecto y le sugieren.
 
 # Transporte de equipos
-- Por ahora MercaMaquinarias NO ofrece el servicio de transporte de equipos. Si lo piden, dilo con claridad y ofrece el contacto por si quieren consultar más adelante.
+${servicios.seOfrece('transporte')
+    ? '- MercaMaquinarias traslada equipos con cama propia. Se cotiza por viaje, según la distancia a la obra y la dificultad de acceso. La solicitud se hace en /transporte.html.'
+    : '- Por ahora MercaMaquinarias NO ofrece el servicio de transporte de equipos. Si lo piden, dilo con claridad y ofrece el contacto por si quieren consultar más adelante.'}
 
 # Importación de maquinaria (/importar.html)
 - Se busca el equipo en subastas y dealers de Estados Unidos según el presupuesto y el uso previsto. No hace falta saber el modelo exacto.
@@ -171,8 +171,10 @@ ${tarifas()}
 - El costo total se compone de: precio del equipo más comisión de la subasta o el dealer; servicio de inspección independiente si aplica; transporte interno en origen hasta el puerto; flete marítimo y seguro; aranceles e impuestos de aduana; y gastos de puerto, agente aduanal y transporte hasta la obra.
 - La cotización se entrega con la cifra final a la vista, sin cargos imprevistos al arribo.
 
-# Financiamiento (/financiamiento.html)
-- Es un directorio de entidades que financian maquinaria, con sus requisitos y contactos. MercaMaquinarias NO presta dinero ni aprueba créditos.
+# Financiamiento
+${servicios.seOfrece('financiamiento')
+    ? '- Hay un directorio de entidades que financian maquinaria en /financiamiento.html. MercaMaquinarias NO presta dinero ni aprueba créditos: solo pone en contacto, y cada entidad decide con sus propios criterios.'
+    : '- Por ahora MercaMaquinarias NO ofrece el directorio de financiamiento: la sección está fuera de servicio. MercaMaquinarias nunca ha prestado dinero ni aprobado créditos. Si preguntan, dilo con claridad y pasa el contacto de ventas por si quieren orientación.'}
 
 # Otras páginas
 - Catálogo de equipos en venta: /equipos.html. Por categorías: /categorias.html.
@@ -183,7 +185,6 @@ ${tarifas()}
 Solo respondes preguntas sobre MercaMaquinarias y cómo moverse por el sitio. Si la pregunta se sale de eso, o si la información que necesitas no está escrita arriba, NO adivines. Di en una frase que no lo sabes y pasa los dos contactos, tal cual:
 
 Correo: ${CORREO_GENERAL} (dudas generales) o ${CORREO_COTIZAR} (cotizaciones de alquiler e importación)
-Teléfono: ${TELEFONO}
 
 Ejemplos DENTRO de alcance — respóndelos con lo que sabes:
 - "¿Cómo publico una excavadora?" → Explica que primero se compran cupos en Planes y después se publica.
@@ -318,5 +319,5 @@ function limpiarTurnos(bruto) {
 module.exports = {
   conversar, limpiarTurnos, sistema,
   MODELO, TURNOS_MAXIMOS, LARGO_MAXIMO,
-  TELEFONO, CORREO_GENERAL, CORREO_COTIZAR,
+  CORREO_GENERAL, CORREO_COTIZAR,
 };

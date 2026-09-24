@@ -25,6 +25,11 @@ function abrir() {
   if (db) return db;
   fs.mkdirSync(CARPETA, { recursive: true });
   db = new DatabaseSync(ARCHIVO);
+  /* El sitio y las tareas de mantenimiento escriben la misma base.
+     Sin esto, una escritura que coincida con el respaldo de las 5:00
+     devuelve SQLITE_BUSY al instante y el visitante ve un 500. Con
+     cinco segundos de espera, la inmensa mayoría se resuelve sola. */
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec(fs.readFileSync(path.join(CARPETA, 'schema.sql'), 'utf8'));
   migrar();
   return db;
@@ -601,6 +606,231 @@ const MIGRACIONES = [
        ('ncf-b14', 'B14', 'Regímenes especiales',    'B14', 1,   5,   1,   NULL, 1, 0, '2026-09-18'),
        ('ncf-b15', 'B15', 'Gubernamental',           'B15', 101, 150, 101, NULL, 1, 0, '2026-09-18')`,
   ]],
+
+  /* Lo que la plantilla del comprobante imprime y la tabla todavía no
+     guardaba.
+
+     Hasta ahora el PDF se dibujaba con lo que había en memoria en el
+     momento de emitir —la referencia del cobro, el período contratado—
+     y eso no se volvía a ver nunca. Un comprobante tiene que poder
+     reimprimirse igual dentro de cinco años sin depender de qué pago lo
+     originó, así que lo que sale impreso se guarda con él.
+
+     Todas las columnas son opcionales o tienen valor por defecto: las
+     facturas ya emitidas siguen valiendo tal como están. */
+  ['2026-09-comprobantes-plantilla', [
+    'ALTER TABLE facturas ADD COLUMN ncf_vencimiento TEXT',
+    /* El NCF del comprobante que modifica una nota de crédito. Va
+       aparte de `anula_a`, que es el enlace interno: en el papel la
+       DGII quiere el NCF, no un identificador nuestro. */
+    'ALTER TABLE facturas ADD COLUMN ncf_modificado TEXT',
+    'ALTER TABLE facturas ADD COLUMN telefono TEXT',
+    'ALTER TABLE facturas ADD COLUMN correo TEXT',
+    'ALTER TABLE facturas ADD COLUMN descuento INTEGER NOT NULL DEFAULT 0',
+    /* La tasa se guarda CON el comprobante, no se lee de la
+       configuración al imprimirlo: si el ITBIS cambia, las facturas
+       viejas tienen que seguir mostrando el 18 % con el que se
+       calcularon. */
+    'ALTER TABLE facturas ADD COLUMN itbis_tasa REAL NOT NULL DEFAULT 0.18',
+    'ALTER TABLE facturas ADD COLUMN condicion_pago TEXT',
+    'ALTER TABLE facturas ADD COLUMN metodo_pago TEXT',
+    'ALTER TABLE facturas ADD COLUMN referencia_pago TEXT',
+    'ALTER TABLE facturas ADD COLUMN periodo_servicio TEXT',
+    'ALTER TABLE facturas ADD COLUMN notas TEXT',
+    /* En qué lote mensual salió hacia el contador. NULL = todavía en
+       ninguno, que es como se sabe qué entra en el lote del mes. */
+    'ALTER TABLE facturas ADD COLUMN incluida_en_lote TEXT',
+    'CREATE INDEX IF NOT EXISTS ix_facturas_lote ON facturas (incluida_en_lote)',
+
+    /* El envío mensual al contador.
+     *
+     * `periodo` es UNIQUE: es lo que impide que ejecutar la tarea dos
+     * veces el mismo mes le mande dos correos. Reenviar es una acción
+     * explícita, no el efecto secundario de un reintento. */
+    `CREATE TABLE IF NOT EXISTS lotes_contador (
+       id           TEXT PRIMARY KEY,
+       periodo      TEXT NOT NULL UNIQUE,
+       generado_en  TEXT NOT NULL,
+       cantidad     INTEGER NOT NULL DEFAULT 0,
+       total        INTEGER NOT NULL DEFAULT 0,
+       ruta_zip     TEXT,
+       enviado_en   TEXT,
+       destinatario TEXT
+     )`,
+  ]],
+
+  /* Los nueve espacios publicitarios que la API ofrece y el tarifario
+     vende. La tabla solo admitía cuatro.
+
+     Cinco de los ocho formatos del tarifario —el banner del catálogo,
+     el de la ficha y los tres de móvil— se podían elegir en la pantalla
+     de administración, pasaban la validación de la API y reventaban en
+     el INSERT con un «Error del servidor» que no decía nada. Se vendían
+     y no se podían dar de alta.
+
+     `espacio` tiene un CHECK y SQLite no deja añadirle valores con
+     ALTER TABLE, así que la tabla se rehace, igual que en la migración
+     de agosto. La lista de la API sigue siendo la autoridad: este CHECK
+     es la red de abajo, no la definición. */
+  ['2026-09-espacios-publicidad', [
+    `CREATE TABLE publicidad_nueva (
+       id          TEXT PRIMARY KEY,
+       espacio     TEXT NOT NULL CHECK (espacio IN (
+                     'superior', 'catalogo', 'bloque', 'ficha',
+                     'lateral-izq', 'lateral-der',
+                     'movil-superior', 'movil-cuadro', 'movil-lista')),
+       nombre      TEXT NOT NULL,
+       anunciante  TEXT,
+       imagen      TEXT NOT NULL,
+       enlace      TEXT,
+       alt         TEXT NOT NULL,
+       desde       TEXT,
+       hasta       TEXT,
+       activo      INTEGER NOT NULL DEFAULT 1,
+       orden       INTEGER NOT NULL DEFAULT 0,
+       impresiones INTEGER NOT NULL DEFAULT 0,
+       clics       INTEGER NOT NULL DEFAULT 0,
+       creado      TEXT NOT NULL,
+       actualizado TEXT
+     )`,
+    `INSERT INTO publicidad_nueva
+       (id, espacio, nombre, anunciante, imagen, enlace, alt, desde, hasta,
+        activo, orden, impresiones, clics, creado, actualizado)
+     SELECT id, espacio, nombre, anunciante, imagen, enlace, alt, desde, hasta,
+        activo, orden, impresiones, clics, creado, actualizado FROM publicidad`,
+    'DROP TABLE publicidad',
+    'ALTER TABLE publicidad_nueva RENAME TO publicidad',
+    'CREATE INDEX IF NOT EXISTS ix_publicidad_espacio ON publicidad (espacio, activo, orden)',
+  ]],
+
+  /* La página propia del dealer.
+   *
+   * Hasta ahora «página de dealer» eran cuatro datos —nombre,
+   * descripción, web y un icono genérico— y NINGUNA ruta para que el
+   * dealer los cambiara: el panel le decía literalmente que escribiera
+   * a contacto. Se vendía con el plan una página que no se podía
+   * hacer.
+   *
+   * `logo` ya existía en el esquema y no la leía ni la escribía nadie.
+   * Aquí se resucita y se le añade lo que falta.
+   *
+   * POR QUÉ UNA TABLA DE SECCIONES Y NO VEINTE COLUMNAS MÁS
+   *
+   * Lo que se pidió es que el dealer arme su página: que añada, quite y
+   * reordene bloques según lo que tenga. Con columnas fijas, cada
+   * bloque nuevo es una migración; con filas, es una opción más en un
+   * desplegable. El contenido de cada bloque va en `cuerpo` como JSON
+   * porque un bloque de texto y uno de equipos destacados no tienen los
+   * mismos campos, y forzarlos a compartir tabla plana llenaría el
+   * esquema de columnas nulas.
+   *
+   * `estado_pagina` es independiente de `perfil_publico`. El plan da
+   * DERECHO a tener página; el estado dice si está terminada. Sin esa
+   * separación, pagar publicaría al instante una página vacía. */
+  ['2026-09-pagina-dealer', [
+    'ALTER TABLE organizaciones ADD COLUMN banner TEXT',
+    'ALTER TABLE organizaciones ADD COLUMN lema TEXT',
+    /* Separado del de la cuenta. El de acceso se estaba publicando en
+       el directorio: cualquiera recorría /api/dealers y se llevaba la
+       lista de correos con los que los dealers inician sesión. */
+    'ALTER TABLE organizaciones ADD COLUMN correo_publico TEXT',
+    'ALTER TABLE organizaciones ADD COLUMN telefono_publico TEXT',
+    "ALTER TABLE organizaciones ADD COLUMN estado_pagina TEXT NOT NULL DEFAULT 'borrador'",
+    'ALTER TABLE organizaciones ADD COLUMN publicada_en TEXT',
+
+    `CREATE TABLE IF NOT EXISTS organizacion_enlaces (
+       id              TEXT PRIMARY KEY,
+       organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+       tipo            TEXT NOT NULL CHECK (tipo IN (
+                         'instagram', 'facebook', 'youtube', 'tiktok',
+                         'linkedin', 'web', 'whatsapp')),
+       valor           TEXT NOT NULL,
+       orden           INTEGER NOT NULL DEFAULT 0
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_org_enlaces ON organizacion_enlaces (organizacion_id, orden)',
+
+    `CREATE TABLE IF NOT EXISTS organizacion_galeria (
+       id              TEXT PRIMARY KEY,
+       organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+       url             TEXT NOT NULL,
+       alt             TEXT,
+       orden           INTEGER NOT NULL DEFAULT 0
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_org_galeria ON organizacion_galeria (organizacion_id, orden)',
+
+    `CREATE TABLE IF NOT EXISTS organizacion_secciones (
+       id              TEXT PRIMARY KEY,
+       organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+       tipo            TEXT NOT NULL CHECK (tipo IN (
+                         'texto', 'galeria', 'marcas', 'servicios',
+                         'destacados', 'sucursales', 'inventario')),
+       titulo          TEXT,
+       cuerpo          TEXT,
+       orden           INTEGER NOT NULL DEFAULT 0,
+       visible         INTEGER NOT NULL DEFAULT 1
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_org_secciones ON organizacion_secciones (organizacion_id, orden)',
+  ]],
+
+  /* Quien YA tenía su página visible sigue teniéndola.
+   *
+   * La migración de arriba estrena `estado_pagina` con 'borrador', que
+   * es lo correcto para una página nueva. Pero aplicada tal cual a una
+   * base en producción apagaba de golpe a todos los dealers que ya
+   * estaban publicados: sus páginas dejaban de responder y sus enlaces
+   * compartidos se convertían en 404, sin que nadie hubiera tocado
+   * nada. Se enterarían por un cliente.
+   *
+   * La condición es exactamente la que hacía visible una página con
+   * las reglas viejas: plan con perfil y revisión aprobada. Va en su
+   * propia migración y no dentro de la anterior porque esa ya está
+   * aplicada en las bases de desarrollo, y reescribirla no la volvería
+   * a ejecutar. */
+  /* El tráfico del sitio, y la sal que lo deduplica.
+   *
+   * Hasta ahora lo único que se medía eran las fichas de anuncio:
+   * cuántas veces se vio cada equipo. Nadie sabía cuánta gente entra
+   * al sitio, por dónde, ni si el catálogo se usa. Para decidir dónde
+   * invertir, ese dato vale más que el de un anuncio suelto.
+   *
+   * Dos tablas, igual que los eventos de anuncio: una cruda para poder
+   * recalcular y otra agregada para consultar sin recorrer nada. La
+   * cruda guarda UNA fila por visitante, página y día —no una por
+   * pulsación— porque aquí no hay fraude de clics que detectar y sí un
+   * disco de droplet que llenar. */
+  ['2026-09-trafico', [
+    `CREATE TABLE IF NOT EXISTS sales_visitante (
+       dia TEXT PRIMARY KEY,
+       sal TEXT NOT NULL
+     )`,
+
+    `CREATE TABLE IF NOT EXISTS visitas (
+       id        INTEGER PRIMARY KEY AUTOINCREMENT,
+       dia       TEXT NOT NULL,
+       pagina    TEXT NOT NULL,
+       visitante TEXT,
+       creado    TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_visitas_dia ON visitas (dia, pagina, visitante)',
+
+    `CREATE TABLE IF NOT EXISTS visitas_diarias (
+       dia         TEXT NOT NULL,
+       pagina      TEXT NOT NULL,
+       vistas      INTEGER NOT NULL DEFAULT 0,
+       visitantes  INTEGER NOT NULL DEFAULT 0,
+       PRIMARY KEY (dia, pagina)
+     )`,
+  ]],
+
+  ['2026-09-pagina-dealer-respetar-publicadas', [
+    `UPDATE organizaciones
+        SET estado_pagina = 'publicada',
+            publicada_en = COALESCE(publicada_en, creada)
+      WHERE tipo = 'dealer'
+        AND perfil_publico = 1
+        AND estado_revision = 'aprobada'
+        AND estado_pagina = 'borrador'`,
+  ]],
 ];
 
 function migrar() {
@@ -610,16 +840,35 @@ function migrar() {
 
   for (const [nombre, sentencias] of MIGRACIONES) {
     if (yaEsta.get(nombre)) continue;
-    for (const sql of sentencias) {
-      try {
-        db.exec(sql);
-      } catch (e) {
-        // Una columna que ya existe no es un error: pasa cuando la
-        // base se creó con un schema.sql que ya la incluía.
-        if (!/duplicate column/i.test(e.message)) throw e;
+
+    /* Cada migración, entera, dentro de una transacción, y la fila que
+       la da por aplicada DENTRO de la misma.
+
+       Sin esto, una migración que falle a mitad deja las sentencias
+       anteriores aplicadas y la migración sin anotar, así que el
+       siguiente arranque la reintenta desde el principio. Hay al menos
+       una —la que rehace la tabla de publicidad— que en ese segundo
+       intento falla con «table already exists»: abrir() lanza, el
+       servidor sale con error, systemd reinicia, y el sitio no vuelve
+       a levantar sin ir a la base a mano. Con la transacción, o se
+       aplica completa o no se aplica nada. */
+    db.exec('BEGIN');
+    try {
+      for (const sql of sentencias) {
+        try {
+          db.exec(sql);
+        } catch (e) {
+          // Una columna que ya existe no es un error: pasa cuando la
+          // base se creó con un schema.sql que ya la incluía.
+          if (!/duplicate column/i.test(e.message)) throw e;
+        }
       }
+      anotar.run(nombre, new Date().toISOString());
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw new Error(`migración «${nombre}»: ${e.message}`);
     }
-    anotar.run(nombre, new Date().toISOString());
   }
 }
 
@@ -678,10 +927,38 @@ function slugLibre(base) {
 
 /* La huella del visitante sirve para no contar diez veces la misma
    visita. Es un hash con sal diaria: no permite reidentificar a nadie
-   ni reconstruir la IP, y caduca solo cada 24 horas. */
-const SAL_VISITANTE = crypto.randomBytes(32).toString('hex');
+   ni reconstruir la IP, y caduca sola cada 24 horas.
+ *
+ * LA SAL VIVE EN LA BASE, NO EN MEMORIA.
+ *
+ * Antes se generaba al arrancar el proceso, y el comentario de aquí
+ * decía «sal diaria» sin serlo: cada reinicio —y con Restart=always y
+ * cada despliegue son varios— estrenaba sal, así que todo el mundo
+ * volvía a contar desde cero el mismo día. Las visitas salían
+ * infladas y la deduplicación no deduplicaba nada.
+ *
+ * Guardarla por día cumple las dos cosas a la vez: cuenta bien, y
+ * sigue caducando sola, que es lo que impide seguir a nadie de un día
+ * para otro. La de ayer se borra en la purga. */
+function salDelDia() {
+  const dia = hoy();
+  if (salDelDia.dia === dia && salDelDia.valor) return salDelDia.valor;
+
+  const d = abrir();
+  /* Tabla propia y no `ajustes`: el esquema de aquella avisa de que
+     no es un baúl de configuración, y esto son filas que nacen y se
+     borran solas cada día. */
+  d.prepare('INSERT OR IGNORE INTO sales_visitante (dia, sal) VALUES (?, ?)')
+    .run(dia, crypto.randomBytes(32).toString('hex'));
+  const fila = d.prepare('SELECT sal FROM sales_visitante WHERE dia = ?').get(dia);
+
+  salDelDia.dia = dia;
+  salDelDia.valor = fila.sal;
+  return fila.sal;
+}
+
 const huella = (ip, agente) =>
-  crypto.createHash('sha256').update(`${SAL_VISITANTE}|${hoy()}|${ip}|${agente}`).digest('hex').slice(0, 32);
+  crypto.createHash('sha256').update(`${salDelDia()}|${hoy()}|${ip}|${agente}`).digest('hex').slice(0, 32);
 
 /* ── Usuarios, organizaciones y sesiones ────────────────── */
 
@@ -792,7 +1069,7 @@ function abrirSesion(idUsuario) {
 function sesion(testigo) {
   if (!testigo) return null;
   const fila = abrir().prepare(`
-    SELECT s.usuario_id, s.expira, u.correo, u.nombre
+    SELECT s.usuario_id, s.expira, u.correo, u.nombre, u.es_admin
     FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
     WHERE s.testigo = ?`).get(testigo);
   if (!fila) return null;
@@ -952,6 +1229,32 @@ function purgar() {
   d.prepare('DELETE FROM dispositivos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM intentos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM codigos WHERE expira < ?').run(new Date(Date.now() - 86400000).toISOString());
+
+  /* Los eventos crudos, a noventa días.
+   *
+   * El esquema prometía esta purga —«se purga pasados unos meses»— y no
+   * existía en ninguna parte: la tabla crecía sin techo. Guarda una
+   * fila por vista y por pulsación de cada visitante, así que con
+   * tráfico normal son miles al día. Cuando el disco se llena, SQLite
+   * empieza a fallar en cada escritura y dejan de entrar publicaciones
+   * y comprobantes.
+   *
+   * Noventa días son de sobra para lo que la tabla sirve: depurar y
+   * detectar fraude de clics. Los agregados del panel viven en
+   * `metricas_diarias` y no se tocan, así que el anunciante no pierde
+   * ni un dato de su histórico. */
+  const hace90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  d.prepare('DELETE FROM eventos WHERE dia < ?').run(hace90);
+
+  /* Las visitas crudas, a los mismos noventa días. El agregado de
+     `visitas_diarias` no se toca: es lo que alimenta los informes y
+     ocupa una fila por página y día, nada. */
+  d.prepare('DELETE FROM visitas WHERE dia < ?').run(hace90);
+
+  /* Y las sales de días pasados. Que caduquen es justo lo que impide
+     seguir a un visitante de un día para otro: sin borrarlas, la
+     huella de ayer se podría volver a calcular. */
+  d.prepare('DELETE FROM sales_visitante WHERE dia < ?').run(hoy());
 }
 
 /* ── Perfil de dealer ───────────────────────────────────── */
@@ -1368,7 +1671,7 @@ const solicitudes = (estado = 'pendiente') =>
   abrir().prepare(`
     SELECT s.id, s.organizacion_id, s.encargado, s.cargo, s.nombre_comercial,
            s.equipos_inventario, s.equipos_publicar, s.estado, s.creada, s.revisada, s.motivo,
-           o.nombre AS razon_social, o.slug,
+           o.nombre AS razon_social, o.slug, o.verificada,
            u.correo AS correo_solicitante
     FROM solicitudes_dealer s
     JOIN organizaciones o ON o.id = s.organizacion_id
@@ -1431,19 +1734,276 @@ function marcarAdmin(correo, esAdmin = true) {
 function dealersPublicos() {
   return abrir().prepare(`
     SELECT o.id, o.nombre, o.slug, o.verificada, o.descripcion, o.web,
+           o.logo, o.lema,
            (SELECT provincia FROM sucursales WHERE organizacion_id = o.id ORDER BY principal DESC LIMIT 1) AS provincia,
            COUNT(a.id) AS equipos
     FROM organizaciones o
     LEFT JOIN anuncios a ON a.organizacion_id = o.id AND a.estado = 'activo'
-    WHERE o.tipo = 'dealer' AND o.perfil_publico = 1 AND o.estado_revision = 'aprobada'
+    WHERE o.tipo = 'dealer' AND o.perfil_publico = 1
+      AND o.estado_revision = 'aprobada' AND o.estado_pagina = 'publicada'
     GROUP BY o.id
     ORDER BY equipos DESC, o.nombre`).all();
 }
 
+/* Las TRES condiciones, y las mismas que el directorio.
+ *
+ * Antes esta consulta solo exigía la aprobación, mientras el directorio
+ * exigía además el plan: un dealer aprobado sin pagar no salía en la
+ * lista pero su página respondía igual si alguien tenía la URL. Es
+ * decir, la página que se vende con el plan estaba medio regalada.
+ *
+ * Y `estado_pagina`, que es nuevo: hasta que el dealer no pulse
+ * publicar, su borrador no lo ve nadie más que él.
+ *
+ * Sigue sin seleccionar `rnc`, y ahora tampoco el correo ni el teléfono
+ * de la CUENTA: se entregan los públicos, que son los que el dealer
+ * decidió enseñar. El de la cuenta es con el que inicia sesión, y se
+ * estaba publicando en el directorio. */
 const dealerPorSlug = (slug) =>
-  abrir().prepare(`SELECT id, nombre, slug, verificada, descripcion, web, telefono, correo, creada
+  abrir().prepare(`SELECT id, nombre, slug, verificada, descripcion, web, creada,
+                          logo, banner, lema,
+                          correo_publico AS correo, telefono_publico AS telefono
                    FROM organizaciones
-                   WHERE slug = ? AND tipo = 'dealer' AND estado_revision = 'aprobada'`).get(slug);
+                   WHERE slug = ? AND tipo = 'dealer'
+                     AND estado_revision = 'aprobada'
+                     AND perfil_publico = 1
+                     AND estado_pagina = 'publicada'`).get(slug);
+
+/* ── La página propia del dealer ─────────────────────────── */
+
+/* Anuncios publicados de una organización.
+ *
+ * Cuenta SOLO los activos, no los pausados. Pausado ocupa cupo pero no
+ * se ve, así que contarlos dejaría publicar una página que presume de
+ * cinco equipos y enseña cuatro. Es el mismo criterio del directorio y
+ * del catálogo.
+ *
+ * Caduca antes de contar: `caducarAnuncios` solo corre al arrancar el
+ * servidor y al abrir el panel, así que sin esta llamada un anuncio ya
+ * vencido seguiría contando como activo durante horas. */
+function contarAnunciosPublicados(idOrg) {
+  caducarAnuncios();
+  return abrir().prepare(
+    "SELECT COUNT(*) AS n FROM anuncios WHERE organizacion_id = ? AND estado = 'activo'")
+    .get(idOrg).n;
+}
+
+const enlacesDe = (idOrg) =>
+  abrir().prepare('SELECT id, tipo, valor, orden FROM organizacion_enlaces WHERE organizacion_id = ? ORDER BY orden')
+    .all(idOrg);
+
+const galeriaDe = (idOrg) =>
+  abrir().prepare('SELECT id, url, alt, orden FROM organizacion_galeria WHERE organizacion_id = ? ORDER BY orden')
+    .all(idOrg);
+
+/* Las secciones, con el cuerpo ya convertido. Se guarda como JSON y se
+   devuelve como objeto: quien llama no tiene por qué saber cómo está
+   guardado, y un JSON corrupto no puede tumbar la página. */
+function seccionesDe(idOrg, { soloVisibles = false } = {}) {
+  const filas = abrir().prepare(`
+    SELECT id, tipo, titulo, cuerpo, orden, visible
+      FROM organizacion_secciones
+     WHERE organizacion_id = ?${soloVisibles ? ' AND visible = 1' : ''}
+     ORDER BY orden`).all(idOrg);
+
+  return filas.map((s) => {
+    let cuerpo = {};
+    try { cuerpo = s.cuerpo ? JSON.parse(s.cuerpo) : {}; } catch { cuerpo = {}; }
+    return { ...s, visible: !!s.visible, cuerpo };
+  });
+}
+
+/* Todo lo que hace falta para pintar la página, pública o en borrador. */
+function paginaDe(idOrg, { soloVisibles = false } = {}) {
+  const org = abrir().prepare(`
+    SELECT id, nombre, slug, descripcion, web, logo, banner, lema,
+           correo_publico, telefono_publico, verificada, perfil_publico,
+           estado_revision, estado_pagina, publicada_en
+      FROM organizaciones WHERE id = ?`).get(idOrg);
+  if (!org) return null;
+
+  return {
+    ...org,
+    verificada: !!org.verificada,
+    perfil_publico: !!org.perfil_publico,
+    enlaces: enlacesDe(idOrg),
+    galeria: galeriaDe(idOrg),
+    secciones: seccionesDe(idOrg, { soloVisibles }),
+  };
+}
+
+/* Guarda lo que venga y deja lo demás como estaba.
+ *
+ * Solo escribe las claves presentes: el editor guarda un campo suelto
+ * en cuanto el dealer sale de él, y un UPDATE con todas las columnas
+ * borraría lo que no viajó en esa petición. */
+function guardarPagina(idOrg, datos) {
+  const campos = {
+    nombre: 'nombre',
+    descripcion: 'descripcion',
+    lema: 'lema',
+    web: 'web',
+    logo: 'logo',
+    banner: 'banner',
+    correoPublico: 'correo_publico',
+    telefonoPublico: 'telefono_publico',
+  };
+
+  const sets = [];
+  const args = [];
+  for (const [clave, columna] of Object.entries(campos)) {
+    if (datos[clave] === undefined) continue;
+    sets.push(`${columna} = ?`);
+    /* Cadena vacía = quitar. Es como el editor borra un logotipo o un
+       lema, y guardar '' en vez de NULL dejaría un hueco que la página
+       pintaría igual. */
+    args.push(datos[clave] === '' ? null : datos[clave]);
+  }
+  if (!sets.length) return paginaDe(idOrg);
+
+  sets.push('actualizada = ?');
+  args.push(ahora(), idOrg);
+  abrir().prepare(`UPDATE organizaciones SET ${sets.join(', ')} WHERE id = ?`).run(...args);
+  return paginaDe(idOrg);
+}
+
+/* ── Secciones ───────────────────────────────────────────── */
+
+function crearSeccion(idOrg, { tipo, titulo, cuerpo }) {
+  const d = abrir();
+  const siguiente = d.prepare(
+    'SELECT COALESCE(MAX(orden), -1) + 1 AS n FROM organizacion_secciones WHERE organizacion_id = ?')
+    .get(idOrg).n;
+  const idSeccion = id();
+  d.prepare(`INSERT INTO organizacion_secciones (id, organizacion_id, tipo, titulo, cuerpo, orden, visible)
+             VALUES (?, ?, ?, ?, ?, ?, 1)`)
+    .run(idSeccion, idOrg, tipo, titulo || null, JSON.stringify(cuerpo || {}), siguiente);
+  return idSeccion;
+}
+
+function editarSeccion(idSeccion, idOrg, { titulo, cuerpo, visible }) {
+  const sets = [];
+  const args = [];
+  if (titulo !== undefined) { sets.push('titulo = ?'); args.push(titulo || null); }
+  if (cuerpo !== undefined) { sets.push('cuerpo = ?'); args.push(JSON.stringify(cuerpo || {})); }
+  if (visible !== undefined) { sets.push('visible = ?'); args.push(visible ? 1 : 0); }
+  if (!sets.length) return false;
+
+  args.push(idSeccion, idOrg);
+  const r = abrir().prepare(
+    `UPDATE organizacion_secciones SET ${sets.join(', ')} WHERE id = ? AND organizacion_id = ?`)
+    .run(...args);
+  return r.changes > 0;
+}
+
+const borrarSeccion = (idSeccion, idOrg) => abrir()
+  .prepare('DELETE FROM organizacion_secciones WHERE id = ? AND organizacion_id = ?')
+  .run(idSeccion, idOrg).changes > 0;
+
+/* Reordena en una transacción: a mitad de camino la página tendría dos
+   bloques con el mismo número y se pintaría en un orden arbitrario. */
+function ordenarSecciones(idOrg, ids) {
+  const d = abrir();
+  d.exec('BEGIN');
+  try {
+    const mover = d.prepare(
+      'UPDATE organizacion_secciones SET orden = ? WHERE id = ? AND organizacion_id = ?');
+    ids.forEach((idSeccion, i) => mover.run(i, idSeccion, idOrg));
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return seccionesDe(idOrg);
+}
+
+/* ── Galería y enlaces ───────────────────────────────────── */
+
+function anadirAGaleria(idOrg, { url, alt }) {
+  const d = abrir();
+  const siguiente = d.prepare(
+    'SELECT COALESCE(MAX(orden), -1) + 1 AS n FROM organizacion_galeria WHERE organizacion_id = ?')
+    .get(idOrg).n;
+  const idFoto = id();
+  d.prepare('INSERT INTO organizacion_galeria (id, organizacion_id, url, alt, orden) VALUES (?, ?, ?, ?, ?)')
+    .run(idFoto, idOrg, url, alt || null, siguiente);
+  return idFoto;
+}
+
+const quitarDeGaleria = (idFoto, idOrg) => abrir()
+  .prepare('DELETE FROM organizacion_galeria WHERE id = ? AND organizacion_id = ?')
+  .run(idFoto, idOrg).changes > 0;
+
+/* Los enlaces se reemplazan enteros: son cinco o seis y el editor los
+   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra. */
+function guardarEnlaces(idOrg, lista) {
+  const d = abrir();
+  d.exec('BEGIN');
+  try {
+    d.prepare('DELETE FROM organizacion_enlaces WHERE organizacion_id = ?').run(idOrg);
+    const meter = d.prepare(
+      'INSERT INTO organizacion_enlaces (id, organizacion_id, tipo, valor, orden) VALUES (?, ?, ?, ?, ?)');
+    lista.forEach((e, i) => meter.run(id(), idOrg, e.tipo, e.valor, i));
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return enlacesDe(idOrg);
+}
+
+/* ── Publicar y despublicar ──────────────────────────────── */
+
+const publicarPagina = (idOrg) => abrir()
+  .prepare("UPDATE organizaciones SET estado_pagina = 'publicada', publicada_en = ?, actualizada = ? WHERE id = ?")
+  .run(ahora(), ahora(), idOrg).changes > 0;
+
+const despublicarPagina = (idOrg) => abrir()
+  .prepare("UPDATE organizaciones SET estado_pagina = 'borrador', actualizada = ? WHERE id = ?")
+  .run(ahora(), idOrg).changes > 0;
+
+/* Apaga el perfil de quien ya no tiene un plan que lo incluya.
+ *
+ * No lo hacía nadie: el único sitio del código que ponía
+ * `perfil_publico = 0` era el alta de dealer. Una vez encendido, el
+ * perfil quedaba encendido para siempre, así que el plan se pagaba una
+ * vez y la página seguía publicada años después.
+ *
+ * La página NO se borra ni se despublica: se le retira la visibilidad
+ * pública y el borrador sigue entero, esperando a que renueve. */
+/* El sello de «anunciante verificado».
+ *
+ * Solo se podía otorgar con tools/admin.js, en el alta por línea de
+ * comandos, así que un dealer que se registraba por el sitio no podía
+ * obtenerlo NUNCA por mucho que pasara la revisión. La pastilla verde
+ * existía en cinco pantallas para una condición inalcanzable.
+ *
+ * Es distinto de `estado_revision`: aprobar significa que la empresa
+ * existe y puede publicar; verificar significa que alguien comprobó su
+ * documentación a fondo. Por eso son dos llaves y no una. */
+const marcarVerificada = (idOrg, valor) => abrir()
+  .prepare('UPDATE organizaciones SET verificada = ?, actualizada = ? WHERE id = ?')
+  .run(valor ? 1 : 0, ahora(), idOrg).changes > 0;
+
+function apagarPerfilesSinPlan() {
+  const d = abrir();
+  const sinPlan = d.prepare(`
+    SELECT o.id FROM organizaciones o
+     WHERE o.perfil_publico = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM suscripciones s
+           JOIN planes p ON p.id = s.plan_id
+          WHERE s.organizacion_id = o.id
+            AND s.estado = 'activa'
+            AND p.perfil_publico = 1)`).all();
+
+  if (!sinPlan.length) return { apagados: [] };
+
+  const apagar = d.prepare('UPDATE organizaciones SET perfil_publico = 0, actualizada = ? WHERE id = ?');
+  const t = ahora();
+  sinPlan.forEach((o) => apagar.run(t, o.id));
+  return { apagados: sinPlan.map((o) => o.id) };
+}
 
 const sucursalesDe = (idOrg) =>
   abrir().prepare('SELECT * FROM sucursales WHERE organizacion_id = ? AND activa = 1 ORDER BY principal DESC, nombre').all(idOrg);
@@ -2189,13 +2749,16 @@ const COLUMNA_EVENTO = {
    El evento crudo sí se guarda siempre: sirve para auditar y para
    recalcular el agregado si hiciera falta.
 
-   El UPSERT evita leer antes de escribir y aguanta escrituras
-   concurrentes sin condición de carrera. */
+/* Devuelve 'invalido', 'contado' o 'repetido'. Son tres cosas
+   distintas y quien llama necesita separarlas: solo la primera es
+   un error del cliente, y solo la segunda justifica avisar al
+   dueño. Con un booleano, arreglar el repetido convertía una visita
+   normal en un 400. */
 function anotarEvento(idAnuncio, tipo, visitante) {
   const columna = COLUMNA_EVENTO[tipo];
-  if (!columna) return false;
+  if (!columna) return 'invalido';
   const d = abrir();
-  if (!d.prepare('SELECT 1 FROM anuncios WHERE id = ?').get(idAnuncio)) return false;
+  if (!d.prepare('SELECT 1 FROM anuncios WHERE id = ?').get(idAnuncio)) return 'invalido';
 
   const dia = hoy();
 
@@ -2206,14 +2769,176 @@ function anotarEvento(idAnuncio, tipo, visitante) {
   d.prepare('INSERT INTO eventos (anuncio_id, tipo, dia, visitante, creado) VALUES (?, ?, ?, ?, ?)')
     .run(idAnuncio, tipo, dia, visitante || null, ahora());
 
-  if (repetido) return true;
+  /* El evento crudo queda guardado arriba pase lo que pase: es lo
+     que permite detectar el fraude de clics. Lo que no se repite es
+     ni el agregado ni el aviso al dueño. */
+  if (repetido) return 'repetido';
 
   d.prepare(`INSERT INTO metricas_diarias (anuncio_id, dia, ${columna})
              VALUES (?, ?, 1)
              ON CONFLICT (anuncio_id, dia) DO UPDATE SET ${columna} = ${columna} + 1`)
     .run(idAnuncio, dia);
 
-  return true;
+  return 'contado';
+}
+
+/* ── Tráfico del sitio ──────────────────────────────────── */
+
+/* Anota una visita a una página.
+ *
+ * Se llama desde el servidor al entregar un HTML, así que tiene que
+ * ser barata: como mucho dos escrituras la primera vez que un
+ * visitante ve esa página ese día, y una lectura las demás.
+ *
+ * NUNCA lanza. Una tabla de estadísticas no puede tumbar la entrega de
+ * la página que estaba contando; prefiero perder un dato de tráfico
+ * que devolverle un error a alguien que venía a mirar excavadoras. */
+function anotarVisita(pagina, visitante) {
+  try {
+    const d = abrir();
+    const dia = hoy();
+
+    const repetida = visitante && d.prepare(
+      'SELECT 1 FROM visitas WHERE dia = ? AND pagina = ? AND visitante = ?')
+      .get(dia, pagina, visitante);
+
+    /* Las vistas suben siempre; los visitantes únicos, solo la primera
+       vez. Son las dos cifras que hacen falta para saber si alguien
+       vuelve o si entran muchos una sola vez. */
+    d.prepare(`INSERT INTO visitas_diarias (dia, pagina, vistas, visitantes)
+               VALUES (?, ?, 1, ?)
+               ON CONFLICT (dia, pagina) DO UPDATE
+                 SET vistas = vistas + 1, visitantes = visitantes + ?`)
+      .run(dia, pagina, repetida ? 0 : 1, repetida ? 0 : 1);
+
+    if (!repetida) {
+      d.prepare('INSERT INTO visitas (dia, pagina, visitante, creado) VALUES (?, ?, ?, ?)')
+        .run(dia, pagina, visitante || null, ahora());
+    }
+  } catch (e) {
+    console.error(`visitas: no se pudo anotar ${pagina} · ${e.message}`);
+  }
+}
+
+/* El tráfico de un periodo, por página y en total. */
+function trafico({ desde, hasta }) {
+  const d = abrir();
+  const porPagina = d.prepare(`
+    SELECT pagina, SUM(vistas) AS vistas, SUM(visitantes) AS visitantes
+      FROM visitas_diarias
+     WHERE dia >= ? AND dia <= ?
+     GROUP BY pagina
+     ORDER BY vistas DESC`).all(desde, hasta);
+
+  /* Las vistas del día se suman del agregado, pero los VISITANTES se
+     cuentan distintos sobre la tabla cruda. Sumar la columna de
+     visitantes por página contaba dos veces a quien mirase dos
+     páginas: con tres personas y dos páginas cada una salían seis
+     visitantes. Es el error clásico de estos informes, y el más
+     difícil de ver porque la cifra sale plausible. */
+  const porDia = d.prepare(`
+    SELECT a.dia,
+           a.vistas,
+           (SELECT COUNT(DISTINCT v.visitante) FROM visitas v
+             WHERE v.dia = a.dia AND v.visitante IS NOT NULL) AS visitantes
+      FROM (SELECT dia, SUM(vistas) AS vistas
+              FROM visitas_diarias
+             WHERE dia >= ? AND dia <= ?
+             GROUP BY dia) a
+     ORDER BY a.dia`).all(desde, hasta);
+
+  /* Visitantes únicos del PERIODO, que no es la suma de los diarios:
+     quien entra tres días distintos son tres visitantes diarios y una
+     sola persona. Sumarlos es el error clásico de estos informes. */
+  const unicos = d.prepare(
+    'SELECT COUNT(DISTINCT visitante) AS n FROM visitas WHERE dia >= ? AND dia <= ? AND visitante IS NOT NULL')
+    .get(desde, hasta).n;
+
+  return {
+    porPagina,
+    porDia,
+    unicos,
+    vistas: porPagina.reduce((s, p) => s + p.vistas, 0),
+  };
+}
+
+/* Todo lo que lleva un informe de negocio, en una sola función.
+ *
+ * Va aquí y no repartido por las tareas para que el informe semanal y
+ * el mensual pidan exactamente lo mismo y no puedan divergir: dos
+ * consultas parecidas escritas en dos sitios acaban contando cosas
+ * distintas y nadie sabe cuál creer. */
+function informe({ desde, hasta }) {
+  const d = abrir();
+  const uno = (sql, ...args) => d.prepare(sql).get(...args);
+  const varias = (sql, ...args) => d.prepare(sql).all(...args);
+
+  return {
+    desde,
+    hasta,
+
+    cuentas: {
+      nuevas: uno('SELECT COUNT(*) AS n FROM usuarios WHERE creado >= ? AND creado <= ?', desde, `${hasta}T23:59:59Z`).n,
+      total: uno('SELECT COUNT(*) AS n FROM usuarios').n,
+      dealersNuevos: uno(
+        "SELECT COUNT(*) AS n FROM organizaciones WHERE tipo = 'dealer' AND creada >= ? AND creada <= ?",
+        desde, `${hasta}T23:59:59Z`).n,
+      dealersAprobados: uno(
+        "SELECT COUNT(*) AS n FROM organizaciones WHERE tipo = 'dealer' AND estado_revision = 'aprobada'").n,
+      dealersPendientes: uno(
+        "SELECT COUNT(*) AS n FROM solicitudes_dealer WHERE estado = 'pendiente'").n,
+    },
+
+    anuncios: {
+      publicados: uno('SELECT COUNT(*) AS n FROM anuncios WHERE publicado >= ? AND publicado <= ?',
+        desde, `${hasta}T23:59:59Z`).n,
+      activos: uno("SELECT COUNT(*) AS n FROM anuncios WHERE estado = 'activo'").n,
+      vencidos: uno("SELECT COUNT(*) AS n FROM anuncios WHERE estado = 'vencido'").n,
+      vendidos: uno("SELECT COUNT(*) AS n FROM anuncios WHERE estado = 'vendido'").n,
+      porCategoria: varias(`
+        SELECT categoria, COUNT(*) AS n FROM anuncios
+         WHERE estado = 'activo' GROUP BY categoria ORDER BY n DESC LIMIT 8`),
+    },
+
+    dinero: {
+      /* Solo los aprobados: un pago rechazado no es ingreso, y
+         mezclarlos daría una cifra que no cuadra con el banco. */
+      cobros: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
+                     FROM pagos WHERE estado = 'aprobado' AND creado >= ? AND creado <= ?`,
+        desde, `${hasta}T23:59:59Z`),
+      devueltos: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
+                        FROM pagos WHERE estado = 'devuelto' AND creado >= ? AND creado <= ?`,
+        desde, `${hasta}T23:59:59Z`),
+    },
+
+    comprobantes: {
+      porTipo: varias(`SELECT tipo, COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
+                         FROM facturas WHERE fecha >= ? AND fecha <= ?
+                        GROUP BY tipo ORDER BY n DESC`, desde, `${hasta}T23:59:59Z`),
+      sinEnviar: uno(`SELECT COUNT(*) AS n FROM facturas
+                       WHERE enviada_cliente IS NULL OR enviada_interna IS NULL`).n,
+      /* Los recibos no fiscales son los que habrá que regularizar el
+         día que llegue la B02. Es la cifra que más conviene vigilar. */
+      recibos: uno(`SELECT COUNT(*) AS n FROM facturas
+                     WHERE tipo = 'recibo' AND anulado_por IS NULL`).n,
+    },
+
+    ncf: varias(`SELECT tipo, nombre, hasta - siguiente + 1 AS quedan, vence
+                   FROM secuencias_ncf WHERE activa = 1 AND usa_sitio = 1 ORDER BY tipo`),
+
+    solicitudes: varias(`SELECT servicio, estado, COUNT(*) AS n
+                           FROM solicitudes_servicio
+                          WHERE creada >= ? AND creada <= ?
+                          GROUP BY servicio, estado ORDER BY servicio`,
+      desde, `${hasta}T23:59:59Z`),
+
+    contactos: uno(`SELECT COALESCE(SUM(clics_telefono), 0) AS telefono,
+                           COALESCE(SUM(clics_whatsapp), 0) AS whatsapp,
+                           COALESCE(SUM(vistas), 0) AS vistas
+                      FROM metricas_diarias WHERE dia >= ? AND dia <= ?`, desde, hasta),
+
+    trafico: trafico({ desde, hasta }),
+  };
 }
 
 /* Totales de la organización y serie de los últimos días, para el
@@ -2328,6 +3053,18 @@ function tomarNcf(tipo) {
     if (!s) return null;
     if (s.siguiente > s.hasta) return null;          // agotada
 
+    /* Y vencida tampoco vale. Un NCF emitido pasada la fecha de la
+       autorización sale con un recuadro que dice «Válido hasta …» ya
+       cumplido y un pie que promete que el documento vale dentro de su
+       plazo: el cliente no lo puede usar como crédito fiscal y el
+       emisor ha gastado un número fuera de término. Antes solo se
+       miraba si quedaban números, nunca la fecha.
+
+       Con `vence` en NULL no se bloquea nada: hoy las autorizaciones
+       están cargadas sin fecha porque el contador todavía no la ha
+       confirmado, y dar por vencido lo que no se sabe sería peor. */
+    if (s.vence && s.vence < hoy()) return null;     // vencida
+
     const r = d.prepare(`
       UPDATE secuencias_ncf SET siguiente = siguiente + 1
        WHERE id = ? AND siguiente = ?`).run(s.id, s.siguiente);
@@ -2335,6 +3072,10 @@ function tomarNcf(tipo) {
     if (r.changes === 1) {
       return {
         ncf: `${s.prefijo}${String(s.siguiente).padStart(8, '0')}`,
+        /* La fecha de vencimiento viaja con el número: el comprobante
+           la imprime, y buscarla después obligaría a suponer que la
+           secuencia sigue cargada igual que el día que se emitió. */
+        vence: s.vence || null,
         quedan: s.hasta - s.siguiente,
       };
     }
@@ -2347,6 +3088,52 @@ function tomarNcf(tipo) {
 const secuenciasNcf = () => abrir().prepare(`
   SELECT *, (hasta - siguiente + 1) AS quedan
     FROM secuencias_ncf ORDER BY usa_sitio DESC, tipo`).all();
+
+/* Cargar un rango autorizado por la DGII.
+ *
+ * Es el gesto que pone el sistema a emitir: en cuanto exista una
+ * secuencia B02 activa y marcada `usa_sitio`, los clientes sin RNC
+ * dejan de recibir el recibo no fiscal y empiezan a recibir su factura
+ * de consumo, sin tocar una línea de código.
+ *
+ * Un rango ya cargado NO se pisa: `siguiente` es cuántos comprobantes
+ * llevan emitidos, y reescribirlo repetiría números ya usados. Lo que
+ * sí se puede corregir es lo que no afecta a la numeración —el
+ * vencimiento, si está activa, si la usa el sitio—. */
+function cargarSecuencia({ tipo, nombre, desde, hasta, vence = null, activa = true, usaSitio = false }) {
+  const d = abrir();
+  const t = String(tipo || '').trim().toUpperCase();
+  const a = Math.trunc(Number(desde));
+  const b = Math.trunc(Number(hasta));
+
+  if (!/^B\d{2}$/.test(t)) throw Object.assign(new Error('El tipo es B seguido de dos dígitos'), { codigo: 400 });
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a < 1 || b < a) {
+    throw Object.assign(new Error('El rango va de un número menor a uno mayor'), { codigo: 400 });
+  }
+  if (vence && !/^\d{4}-\d{2}-\d{2}$/.test(vence)) {
+    throw Object.assign(new Error('El vencimiento va como AAAA-MM-DD'), { codigo: 400 });
+  }
+
+  const yaEsta = d.prepare('SELECT * FROM secuencias_ncf WHERE tipo = ? AND desde = ?').get(t, a);
+  if (yaEsta) {
+    d.prepare(`UPDATE secuencias_ncf SET vence = ?, activa = ?, usa_sitio = ?, nombre = ?
+                WHERE id = ?`)
+      .run(vence, activa ? 1 : 0, usaSitio ? 1 : 0, nombre || yaEsta.nombre, yaEsta.id);
+    return { ...d.prepare('SELECT * FROM secuencias_ncf WHERE id = ?').get(yaEsta.id), nueva: false };
+  }
+
+  /* Dos rangos activos del mismo tipo harían que `tomarNcf` eligiera
+     uno cualquiera. El anterior se desactiva al cargar el nuevo. */
+  if (activa) d.prepare('UPDATE secuencias_ncf SET activa = 0 WHERE tipo = ? AND activa = 1').run(t);
+
+  const idSec = id();
+  d.prepare(`INSERT INTO secuencias_ncf
+     (id, tipo, nombre, prefijo, desde, hasta, siguiente, vence, activa, usa_sitio, creada)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(idSec, t, nombre || t, t, a, b, a, vence, activa ? 1 : 0, usaSitio ? 1 : 0, ahora());
+
+  return { ...d.prepare('SELECT * FROM secuencias_ncf WHERE id = ?').get(idSec), nueva: true };
+}
 
 /* El siguiente número interno, correlativo y sin huecos.
  *
@@ -2374,9 +3161,12 @@ function crearFactura(datos) {
   const d = abrir();
   const hecho = d.prepare(`
     INSERT INTO facturas
-      (id, pago_id, organizacion_id, numero, tipo, ncf, razon_social, rnc, direccion,
-       concepto, subtotal, itbis, total, moneda, fecha, ruta_pdf, anula_a, creada)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (id, pago_id, organizacion_id, numero, tipo, ncf, ncf_vencimiento, ncf_modificado,
+       razon_social, rnc, direccion, telefono, correo,
+       concepto, subtotal, descuento, itbis_tasa, itbis, total, moneda,
+       condicion_pago, metodo_pago, referencia_pago, periodo_servicio, notas,
+       fecha, ruta_pdf, anula_a, creada)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const idFactura = id();
   const fecha = datos.fecha || ahora();
@@ -2389,11 +3179,17 @@ function crearFactura(datos) {
     try {
       hecho.run(
         idFactura, datos.pagoId || null, datos.organizacionId || null, numero,
-        datos.tipo, datos.ncf || null,
+        datos.tipo, datos.ncf || null, datos.ncfVencimiento || null, datos.ncfModificado || null,
         datos.razonSocial || null, datos.rnc || null, datos.direccion || null,
+        datos.telefono || null, datos.correo || null,
         datos.concepto || null,
-        Math.round(datos.subtotal), Math.round(datos.itbis), Math.round(datos.total),
-        datos.moneda || 'DOP', fecha, datos.rutaPdf || null, datos.anulaA || null, ahora(),
+        Math.round(datos.subtotal), Math.round(datos.descuento || 0),
+        datos.itbisTasa != null ? Number(datos.itbisTasa) : 0.18,
+        Math.round(datos.itbis), Math.round(datos.total),
+        datos.moneda || 'DOP',
+        datos.condicionPago || null, datos.metodoPago || null,
+        datos.referenciaPago || null, datos.periodoServicio || null, datos.notas || null,
+        fecha, datos.rutaPdf || null, datos.anulaA || null, ahora(),
       );
       return { id: idFactura, numero };
     } catch (e) {
@@ -2435,6 +3231,56 @@ const facturasDe = (idOrg) => abrir().prepare(
   'SELECT * FROM facturas WHERE organizacion_id = ? ORDER BY fecha DESC').all(idOrg);
 
 /* Para administración: por mes y, si se pide, por estado de envío. */
+/* Todas las rutas de imagen y video que alguien está usando.
+ *
+ * Sirve para saber qué archivos del disco ya no hace falta guardar.
+ * Va en una sola función y no repartida por ahí para que añadir un
+ * sitio nuevo donde se guarde una imagen —el logotipo de un dealer, su
+ * banner— sea acordarse de UNA línea, y no descubrir seis meses
+ * después que la recogida de basura borró los logotipos de todos.
+ *
+ * Ante la duda se devuelve de más: borrar un archivo en uso es un
+ * agujero en una ficha publicada; conservar uno de sobra son unos kB. */
+function rutasEnUso() {
+  const d = abrir();
+  const rutas = new Set();
+  const meter = (filas, ...campos) => filas.forEach((f) => campos.forEach((c) => {
+    if (f[c]) rutas.add(String(f[c]));
+  }));
+
+  meter(d.prepare('SELECT url, miniatura FROM anuncio_fotos').all(), 'url', 'miniatura');
+  meter(d.prepare('SELECT url, poster FROM anuncio_videos').all(), 'url', 'poster');
+  meter(d.prepare('SELECT url FROM flota_fotos').all(), 'url');
+  meter(d.prepare("SELECT valor FROM ajustes WHERE clave LIKE '%imagen%'").all(), 'valor');
+  meter(d.prepare('SELECT imagen FROM publicidad').all(), 'imagen');
+
+  return rutas;
+}
+
+/* Los datos fiscales con los que esta organización facturó la última
+ * vez, para reutilizarlos en el cobro siguiente.
+ *
+ * Quien compró con RNC espera que la ampliación de esa misma membresía
+ * salga a su mismo nombre, no como consumidor final. Se toma del último
+ * comprobante con RNC y no de la organización porque el domicilio
+ * fiscal solo existe ahí: `organizaciones` no lo guarda. */
+function ultimosDatosFiscales(idOrg) {
+  if (!idOrg) return null;
+  const f = abrir().prepare(`
+    SELECT razon_social, rnc, direccion, telefono, correo
+      FROM facturas
+     WHERE organizacion_id = ? AND rnc IS NOT NULL AND anulado_por IS NULL
+     ORDER BY fecha DESC LIMIT 1`).get(idOrg);
+  if (!f) return null;
+  return {
+    razonSocial: f.razon_social,
+    rnc: f.rnc,
+    direccion: f.direccion,
+    telefono: f.telefono,
+    correo: f.correo,
+  };
+}
+
 function facturas({ mes, pendientes = false, limite = 500 } = {}) {
   const donde = [];
   const args = [];
@@ -2467,8 +3313,8 @@ const marcarAnulada = (idFactura, idNota) => abrir().prepare(
   'UPDATE facturas SET anulado_por = ? WHERE id = ?').run(idNota, idFactura);
 
 module.exports = {
-  registrarAceptacion, aceptacionesDe, historialAceptaciones,
-  tomarNcf, secuenciasNcf, siguienteNumero, crearFactura, facturaPorId, facturaDePago,
+  registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
+  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
@@ -2479,6 +3325,16 @@ module.exports = {
   recordarDispositivo, dispositivoDeConfianza,
   permitir, limpiarIntentos,
   registrarDealer, dealersPublicos, dealerPorSlug,
+
+  /* La página propia del dealer. */
+  contarAnunciosPublicados, paginaDe, guardarPagina,
+  crearSeccion, editarSeccion, borrarSeccion, ordenarSecciones, seccionesDe,
+  anadirAGaleria, quitarDeGaleria, galeriaDe,
+  guardarEnlaces, enlacesDe,
+  publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
+
+  /* Tráfico e informes. */
+  anotarVisita, trafico, informe,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,

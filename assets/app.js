@@ -72,7 +72,6 @@ if (document.body) inyectarSprite();
    signos, que es como lo quiere wa.me. Está aquí y no repartido por
    las páginas para que cambiarlo sea tocar una línea.
    PENDIENTE: sigue siendo el número de relleno. */
-const WHATSAPP = '18090000000';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -236,9 +235,16 @@ function destacadoHTML(e) {
    siempre lleva a una página que existe. */
 function dealerHTML(d) {
   const total = d.equipos || 0;
+  /* El logotipo cuando lo hay, y el icono genérico cuando no. Un
+     directorio en el que todas las fichas llevan el mismo dibujo no
+     distingue a nadie, que es justo lo contrario de para lo que se
+     paga una página propia. */
   return `<li><a class="dealer" href="dealer.html?d=${encodeURIComponent(d.slug)}">
-    <span class="dealer__sello">${icono('i-edificio')}</span>
+    <span class="${d.logo ? 'perfil__logo dealer__logo' : 'dealer__sello'}">
+      ${d.logo ? `<img src="${esc(d.logo)}" alt="" loading="lazy">` : icono('i-edificio')}
+    </span>
     <span class="dealer__nombre">${esc(d.nombre)}</span>
+    ${d.lema ? `<span class="dealer__lema">${esc(d.lema)}</span>` : ''}
     <span class="dealer__meta">${esc(d.provincia || 'República Dominicana')} · <span class="num">${total}</span> ${total === 1 ? 'equipo publicado' : 'equipos publicados'}</span>
     ${d.verificada ? `<span class="pastilla pastilla--verde">${icono('i-check')} Verificado</span>` : ''}
   </a></li>`;
@@ -978,7 +984,7 @@ async function montarDetalle() {
 
         ${fichaTecnicaHTML(e)}
 
-        ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> Identidad y titularidad del equipo comprobadas por MercaMaquinarias.</p>` : ''}
+        ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> MercaMaquinarias cotejó la existencia registral del negocio y sus datos de contacto. No certifica la calidad del equipo ni garantiza la operación.</p>` : ''}
 
         <!-- Espacio D del tarifario. Va entre los datos del equipo y el
              contacto del vendedor: en el teléfono la columna se apila y
@@ -992,12 +998,8 @@ async function montarDetalle() {
           ? `Publicado por <a href="dealer.html?d=${encodeURIComponent(e.dealerSlug)}">${esc(e.dealer)}</a>`
           : 'Publicado por un anunciante particular.'}</p>
 
-        <p class="etiqueta etiqueta--bloque">Servicios de MercaMaquinarias</p>
-        ${e.precio != null ? `<a class="btn btn--linea btn--bloque" href="financiamiento.html?monto=${e.precio}">Calcular el financiamiento</a>` : ''}
-        <a class="btn btn--linea btn--bloque" href="transporte.html?equipo=${encodeURIComponent(e.id)}">Cotizar el traslado</a>
-
-        <p class="detalle__aviso">Verifique el equipo y su documentación antes de pagar.
-          MercaMaquinarias publica el anuncio pero no interviene en la transacción ni retiene fondos.
+        <p class="detalle__aviso">MercaMaquinarias publica este anuncio pero no interviene en la transacción
+          ni retiene fondos. Verifique el equipo y su documentación antes de pagar.
           <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a>.</p>
       </aside>
     </div>`;
@@ -2038,25 +2040,6 @@ function montarCotizaciones() {
       });
       return { valores, detalle };
     };
-
-    /* Enviar por WhatsApp: mismo formulario, mismas validaciones, y el
-       chat se abre con la solicitud ya redactada. */
-    const wa = form.querySelector('[data-whatsapp]');
-    if (wa) wa.addEventListener('click', () => {
-      if (!form.reportValidity()) return;
-      const { valores, detalle } = leer();
-
-      const lineas = [`*Solicitud de ${ROTULO_SERVICIO[servicio] || servicio}* · MercaMaquinarias`, ''];
-      Object.entries(detalle).forEach(([k, v]) => lineas.push(`${k}: ${v}`));
-      lineas.push('', 'Mis datos:');
-      ['Nombre', 'Teléfono', 'Correo', 'Empresa'].forEach((k) => {
-        if (valores[k]) lineas.push(`${k}: ${valores[k]}`);
-      });
-
-      window.open(`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(lineas.join('\n'))}`,
-        '_blank', 'noopener');
-    });
-
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const destino = $('#' + form.dataset.cotizacion);
@@ -2097,8 +2080,8 @@ function montarCotizaciones() {
             <div><dt>Referencia</dt><dd class="num">${esc(r.referencia)}</dd></div>
             ${Object.entries(detalle).map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}
           </dl>
-          <p class="resumen__nota">Guarde la referencia. Si prefiere adelantarlo, escríbanos por
-            <a href="https://wa.me/${WHATSAPP}" rel="noopener">WhatsApp</a> citándola.</p>`;
+          <p class="resumen__nota">Guarde la referencia. Si quiere añadir algo, escríbanos a
+            <a href="mailto:ventas@mercamaquinarias.com">ventas@mercamaquinarias.com</a> citándola.</p>`;
         destino.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (e) {
         fallar(e.message);
@@ -2189,7 +2172,6 @@ function montarNavMovil() {
     ['index.html', 'Inicio', '<path d="M3 11.5 12 4l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z"/><path d="M8.5 21v-6h7v6"/>'],
     ['equipos.html', 'Equipos', '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'],
     ['publicar.html', 'Publicar', '<path d="M12 3v18M3 12h18"/>'],
-    ['financiamiento.html', 'Financiar', '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/>'],
     ['cuenta.html', 'Cuenta', '<circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>'],
   ];
   const activo = ['categorias.html', 'equipo.html'].includes(pagina) ? 'equipos.html' : pagina;
@@ -2216,11 +2198,6 @@ async function montarSaludoUsuario() {
 
 /* ── Arranque ───────────────────────────────────────────── */
 
-/* Transporte está en pausa: quien llegue por un enlace viejo va a la
-   portada. Para reactivarlo, borrar esta línea y el bloque
-   «Transporte: servicio pausado» de styles.css. */
-if (/\/transporte\.html$/i.test(location.pathname)) location.replace('index.html');
-
 document.addEventListener('DOMContentLoaded', async () => {
   // Primero lo que no depende del catálogo, para que la página sea
   // utilizable desde el primer instante y el asistente de publicación
@@ -2231,10 +2208,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   montarSaludoUsuario();
   montarSelects();
   montarAlquiler();
-  montarFinanciadoras();
+  /* Los servicios apagados. El código se queda entero y sin correr: el
+     transporte y el directorio de financiamiento vienen después del
+     lanzamiento, y borrar mil líneas que ya funcionan para tener que
+     reescribirlas dentro de unos meses no sale a cuenta. El
+     interruptor está en assets/servicios.js y es una línea. */
+  if (seOfrece('financiamiento')) {
+    montarFinanciadoras();
+    montarCalculadora();
+  }
+  if (seOfrece('transporte')) montarSeguimiento();
+
   montarAhorroPortada();
-  montarCalculadora();
-  montarSeguimiento();
   montarCotizaciones();
   montarBuscador();
   montarPublicidad();
@@ -2262,7 +2247,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     montarDealers(),
     montarResultados(),
     montarDetalle(),
-    montarTransporte(),
+    seOfrece('transporte') ? montarTransporte() : null,
     montarContactoDesdeFicha(),
   ]);
 

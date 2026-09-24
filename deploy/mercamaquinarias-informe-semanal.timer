@@ -1,0 +1,24 @@
+# El informe semanal, los lunes a las 07:00.
+#
+# Lunes y no domingo por la noche: un informe que llega el domingo a
+# las once se lee el lunes de todas formas, y encima con peor cara.
+# A las siete está en la bandeja antes de que empiece el día.
+#
+# Cubre de lunes a domingo de la semana ANTERIOR, cerrada. No «los
+# últimos siete días», porque entonces los informes solaparían entre sí
+# y sus cifras no se podrían sumar para sacar el mes.
+#
+# `Persistent=true` recupera la ejecución si el servidor estuvo apagado
+# a esa hora, en vez de saltarse la semana entera.
+
+[Unit]
+Description=Informe semanal de MercaMaquinarias
+
+[Timer]
+OnCalendar=Mon *-*-* 07:00:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=mercamaquinarias-informes@informe-semanal.service
+
+[Install]
+WantedBy=timers.target

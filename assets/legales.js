@@ -26,23 +26,23 @@ const DOCUMENTOS = [
   {
     id: 'terminos',
     nombre: 'Términos y condiciones de uso',
-    version: '1.0',
-    vigenteDesde: '2026-09-18',
+    version: '2.1',
+    vigenteDesde: '2026-09-24',
     // Se exige aceptarlo para crear la cuenta.
     obligatorio: true,
   },
   {
     id: 'privacidad',
     nombre: 'Política de privacidad y protección de datos',
-    version: '1.0',
-    vigenteDesde: '2026-09-18',
+    version: '2.1',
+    vigenteDesde: '2026-09-24',
     obligatorio: true,
   },
   {
     id: 'anuncios',
     nombre: 'Política de publicación de anuncios',
-    version: '1.0',
-    vigenteDesde: '2026-09-18',
+    version: '2.0',
+    vigenteDesde: '2026-09-23',
     /* No se exige al registrarse: quien abre una cuenta para mirar el
        catálogo no tiene por qué aceptar las reglas de publicar. Se
        exige al publicar el primer equipo. */
@@ -51,23 +51,23 @@ const DOCUMENTOS = [
   {
     id: 'contratacion',
     nombre: 'Condiciones de contratación y pagos',
-    version: '1.0',
-    vigenteDesde: '2026-09-18',
+    version: '2.0',
+    vigenteDesde: '2026-09-23',
     // Se exige al pagar, no antes.
     obligatorio: false,
   },
   {
     id: 'cookies',
     nombre: 'Cookies y almacenamiento local',
-    version: '1.0',
-    vigenteDesde: '2026-09-18',
+    version: '2.0',
+    vigenteDesde: '2026-09-23',
     obligatorio: false,
   },
   {
     id: 'servicios',
     nombre: 'Servicios propios y de terceros',
-    version: '1.0',
-    vigenteDesde: '2026-09-18',
+    version: '2.0',
+    vigenteDesde: '2026-09-23',
     obligatorio: false,
   },
 ];

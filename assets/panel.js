@@ -176,9 +176,9 @@ function pintarPlan() {
 
     <dl class="plan-estado">
       <div><dt>Página pública</dt>
-        <dd>${org.perfilPublico && org.slug
-          ? `<a href="dealer.html?d=${encodeURIComponent(org.slug)}">Ver el perfil de la empresa</a>`
-          : org.tipo === 'dealer' ? 'Se activa con el nivel Premium' : 'Solo para cuentas de empresa'}</dd></div>
+        <dd>${org.tipo === 'dealer'
+          ? `<a href="mi-pagina.html">Armar mi página de empresa</a>`
+          : 'Solo para cuentas de empresa'}</dd></div>
       <div><dt>Sello de verificación</dt>
         <dd>${org.verificada ? 'Otorgado' : 'Pendiente de comprobar documentación'}</dd></div>
     </dl>
@@ -407,7 +407,8 @@ function pintarEmpresa() {
           : 'No, hasta que se apruebe'}</dd></div>
       </dl>
       <p class="panel__nota">${revision.nota}</p>
-      <p class="panel__nota">Mostramos solo los últimos dígitos del RNC. Es un dato reservado: lo usamos para comprobar que la empresa existe y nunca aparece en su página pública ni en el directorio. Para cambiar la razón social o la descripción, escríbanos desde <a href="contacto.html">contacto</a>.</p>`;
+      <p class="panel__nota">Mostramos solo los últimos dígitos del RNC. Es un dato reservado: lo usamos para comprobar que la empresa existe y nunca aparece en su página pública ni en el directorio.</p>
+      <p class="panel__nota">El nombre, la descripción, el logotipo y los contactos que se enseñan al público se cambian desde <a href="mi-pagina.html">su página de empresa</a>.</p>`;
     return;
   }
 
@@ -987,7 +988,9 @@ async function montarFacturas() {
         ${f.anulada ? '<span class="pastilla pastilla--ambar">anulada</span>' : ''}</td>
       <td>${esc(f.concepto || '')}</td>
       <td class="num">RD$${Number(f.total).toLocaleString('en-US')}</td>
-      <td>${f.hayPdf
+      <td>
+        <a class="btn btn--linea btn--chico" href="/api/facturas/${esc(f.id)}.html" target="_blank" rel="noopener">Ver</a>
+        ${f.hayPdf
     ? `<a class="btn btn--linea btn--chico" href="/api/facturas/${esc(f.id)}.pdf" target="_blank" rel="noopener">PDF</a>`
     : ''}</td>
     </tr>`;

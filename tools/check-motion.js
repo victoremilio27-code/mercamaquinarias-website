@@ -13,10 +13,10 @@ const puppeteer = require('puppeteer');
 
 /* Elementos que solo deben animar cuando NO hay preferencia de
    movimiento reducido, con la página donde viven. */
-const ANIMADOS = [
-  { pagina: 'transporte.html', sel: '.mapa__halo',   prop: 'animationName' },
-  { pagina: 'transporte.html', sel: '.mapa__camion', prop: 'transitionDuration' },
-];
+/* Vacío mientras el transporte esté suspendido: el mapa con GPS era
+   lo único animado del sitio y su página ya no lo monta. Al volver el
+   servicio, se vuelven a apuntar aquí sus selectores. */
+const ANIMADOS = [];
 
 function leerBase(argv) {
   const i = argv.indexOf('--base');
@@ -75,12 +75,21 @@ async function main() {
     if (!apagado) fallos.push(`${a.sel} sigue animando con movimiento reducido (${quieto})`);
   }
 
-  console.log('\nRefresco automático del mapa (17 s de observación):');
-  const conMov = await refrescaSolo(navegador, `${base}/transporte.html`, false);
-  const sinMov = await refrescaSolo(navegador, `${base}/transporte.html`, true);
-  console.log(`    normal:   ${conMov} repintado(s)`);
-  console.log(`    reducido: ${sinMov} repintado(s)  ${sinMov === 0 ? 'ok' : 'FALLA'}`);
-  if (sinMov !== 0) fallos.push('el mapa se sigue refrescando solo con movimiento reducido');
+  /* El mapa que se refrescaba solo vivía en transporte.html, que
+     mientras el servicio esté suspendido solo anuncia la suspensión.
+     Cuando vuelva, esta comprobación vuelve con él: `refrescaSolo`
+     se queda para no tener que reescribirla. */
+  if (ANIMADOS.length) {
+    console.log('\nRefresco automático del mapa (17 s de observación):');
+    const conMov = await refrescaSolo(navegador, `${base}/transporte.html`, false);
+    const sinMov = await refrescaSolo(navegador, `${base}/transporte.html`, true);
+    console.log(`    normal:   ${conMov} repintado(s)`);
+    console.log(`    reducido: ${sinMov} repintado(s)  ${sinMov === 0 ? 'ok' : 'FALLA'}`);
+    if (sinMov !== 0) fallos.push('el mapa se sigue refrescando solo con movimiento reducido');
+  } else {
+    console.log();
+    console.log('Sin elementos animados que comprobar.');
+  }
 
   await navegador.close();
 

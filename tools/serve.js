@@ -201,10 +201,48 @@ const RAIZ = path.resolve(RAIZ_PROYECTO, args.root);
    falla, el sitio sigue sirviéndose como estático en vez de no
    levantar: es un entorno de desarrollo, no conviene un todo o nada. */
 let api = null;
+
+/* Los metadatos de compartir leen de la base, así que cargan con la
+   API y no antes: sin base no hay ficha que describir, y un require
+   arriba tumbaría el servidor estático que este bloque está tratando
+   de salvar. */
+let metadatos = { para: () => null, aplicar: (html) => html };
+
+/* El contador de visitas. Mientras no haya base, no cuenta nada: es
+   una estadística, y no puede impedir que el sitio se sirva. */
+let paginas = { anotar: () => {}, huellaDe: () => null };
+
+/* Lo que no se cuenta como tráfico: las pantallas con sesión. Que
+   alguien abra su panel doce veces no dice nada de cuánta gente llega
+   al sitio, y mezclarlo infla la cifra justo en los días en que el
+   equipo está trabajando dentro. */
+const PRIVADAS = new Set([
+  '/panel.html', '/admin.html', '/cuenta.html', '/mi-pagina.html', '/publicar.html',
+]);
+
+/* Las páginas de los servicios que hoy no se ofrecen. Sale de
+   assets/servicios.js, que es el único sitio donde se decide. */
+const PAGINAS_APAGADAS = require('../assets/servicios.js').paginasApagadas();
+
 if (args.api) {
   try {
     api = require('./api');
+    metadatos = require('./meta');
     const db = require('./db');
+
+    paginas = {
+      anotar: (ruta, quien) => db.anotarVisita(ruta, quien),
+      /* La misma huella que usan las métricas de anuncio: hash con sal
+         del día, sin forma de reconstruir la IP ni de seguir a nadie
+         de un día para otro. */
+      huellaDe: (req) => {
+        const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+        const reenviado = String(req.headers['x-forwarded-for'] || '')
+          .split(',').map((x) => x.trim()).filter(Boolean);
+        const ip = cf || reenviado[reenviado.length - 1] || req.socket.remoteAddress || '';
+        return db.huella(ip, req.headers['user-agent'] || '');
+      },
+    };
     db.abrir();
     // Sesiones, códigos y contadores caducados se barren cada hora.
     // `unref` evita que este temporizador mantenga vivo el proceso.
@@ -223,6 +261,35 @@ if (args.api) {
   }
 }
 
+/* pipe() deja los errores del origen sin escuchar, y un ReadStream
+   que emite «error» sin manejador es una excepción no capturada que
+   mata el proceso. Aquí se corta la respuesta y se sigue viviendo. */
+function enviarArchivo(flujo, res, archivo) {
+  flujo.on('error', (e) => {
+    console.error(`estáticos: no se pudo leer ${archivo} · ${e.message}`);
+    res.destroy();
+  });
+  flujo.pipe(res);
+}
+
+/* Última red del proceso. Node mata el proceso ante una promesa
+   rechazada sin manejador, y hasta ahora eso no dejaba ni una traza
+   útil más allá de lo que recogiera systemd. Se registra y se sigue:
+   tumbar el sitio entero por un correo que no salió es peor que el
+   correo que no salió. */
+process.on('unhandledRejection', (razon) => {
+  console.error('promesa rechazada sin manejador:', (razon && razon.stack) || razon);
+});
+
+/* La excepción no capturada sí deja el proceso en estado dudoso, así
+   que aquí se registra y se sale con código de error para que systemd
+   reinicie limpio. La diferencia con no tener el manejador es que
+   queda escrito QUÉ pasó. */
+process.on('uncaughtException', (e) => {
+  console.error('excepción no capturada:', e && e.stack);
+  process.exit(1);
+});
+
 const servidor = http.createServer((req, res) => {
   /* Las cabeceras de seguridad se fijan antes de mirar siquiera qué se
      pide, de modo que las lleven también el 400, el 403 y el 404. Con
@@ -231,10 +298,43 @@ const servidor = http.createServer((req, res) => {
   Object.entries(cabecerasDe()).forEach(([k, v]) => res.setHeader(k, v));
 
   let ruta;
+  let consulta;
   try {
-    ruta = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    const u = new URL(req.url, 'http://localhost');
+    ruta = decodeURIComponent(u.pathname);
+    consulta = u.searchParams;
   } catch {
     res.writeHead(400).end('URL inválida');
+    return;
+  }
+
+  /* Las páginas de los servicios apagados no se sirven.
+   *
+   * El archivo sigue en el repositorio y su código intacto: lo que se
+   * apaga es la puerta, no la habitación. Encenderlo es cambiar una
+   * línea en assets/servicios.js.
+   *
+   * Redirección y no 404: quien llegue por un enlace viejo acaba en la
+   * portada viendo lo que sí se ofrece, en vez de en una página de
+   * error. Es 302 y no 301 porque esto es temporal y un 301 se queda
+   * cacheado en el navegador durante meses. */
+  if (PAGINAS_APAGADAS.includes(ruta)) {
+    res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
+    res.end();
+    console.log(`302  ${ruta} (servicio no disponible)`);
+    return;
+  }
+
+  /* El mapa del sitio se compone en el momento: cambia cada vez que
+     alguien publica o le vence un anuncio, y un archivo estático
+     acabaría mandando al buscador a fichas que ya no existen. */
+  if (api && ruta === '/sitemap.xml') {
+    res.writeHead(200, {
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+    });
+    res.end(metadatos.sitemap());
+    console.log(`200  ${ruta}`);
     return;
   }
 
@@ -318,7 +418,7 @@ const servidor = http.createServer((req, res) => {
       if (!pedido) {
         res.writeHead(200, { ...comunes, 'Content-Length': total });
         if (req.method === 'HEAD') { res.end(); return; }
-        fs.createReadStream(archivo).pipe(res);
+        enviarArchivo(fs.createReadStream(archivo), res, archivo);
         return;
       }
 
@@ -341,7 +441,7 @@ const servidor = http.createServer((req, res) => {
         'Content-Length': hasta - desde + 1,
       });
       if (req.method === 'HEAD') { res.end(); return; }
-      fs.createReadStream(archivo, { start: desde, end: hasta }).pipe(res);
+      enviarArchivo(fs.createReadStream(archivo, { start: desde, end: hasta }), res, archivo);
     });
     return;
   }
@@ -376,6 +476,46 @@ const servidor = http.createServer((req, res) => {
     }
 
     const ext = path.extname(archivo).toLowerCase();
+
+    /* La vista previa al compartir.
+     *
+     * Solo entra aquí `equipo.html?id=…` y `dealer.html?d=…`. La misma
+     * página sin parámetro se sirve por el camino de siempre, con su
+     * ETag y su caché: quien entra sin id no está compartiendo nada.
+     *
+     * Va sin caché a propósito: el título y la foto cambian con el
+     * anuncio, así que un ETag de archivo mentiría. Son unos kilobytes
+     * y solo en las fichas. */
+    /* El tráfico del sitio.
+     *
+     * Solo páginas HTML y solo GET: no cuentan los recursos ni las
+     * peticiones de la API, que multiplicarían la cifra por diez y no
+     * dicen nada de cuánta gente entra. Las páginas con sesión quedan
+     * fuera porque medir cuántas veces alguien abre su propio panel no
+     * es tráfico, es uso interno.
+     *
+     * Va después de comprobar que el archivo existe, para no contar
+     * como visita un 404. */
+    if (api && ext === '.html' && req.method === 'GET' && !PRIVADAS.has(ruta)) {
+      const quien = paginas.huellaDe(req);
+      paginas.anotar(ruta, quien);
+    }
+
+    const meta = api && ext === '.html' ? metadatos.para(ruta, consulta) : null;
+    if (meta) {
+      fs.readFile(archivo, 'utf8', (err, html) => {
+        if (err) { res.writeHead(404).end('No existe'); return; }
+        const compuesto = metadatos.aplicar(html, meta);
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        });
+        res.end(compuesto);
+        console.log(`200  ${ruta} (con vista previa)`);
+      });
+      return;
+    }
+
     const etag = etagDe(est);
     const cabeceras = {
       'Content-Type': TIPOS[ext] || 'application/octet-stream',

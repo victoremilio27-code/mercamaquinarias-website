@@ -145,6 +145,16 @@ function documento() {
       return api;
     },
 
+    /* Rectángulo sin relleno, para los recuadros del comprobante. Va
+       aparte de `rect` porque el formato distingue relleno (`f`) de
+       trazo (`S`) y mezclarlos en una sola orden pinta la caja negra. */
+    marco(x, y, ancho, alto, { grosor = 0.8, color: c = '#DDDDDD' } = {}) {
+      color(c);
+      ordenes.push(`${grosor} w`);
+      ordenes.push(`${x.toFixed(2)} ${(ALTO - y - alto).toFixed(2)} ${ancho.toFixed(2)} ${alto.toFixed(2)} re S`);
+      return api;
+    },
+
     linea(x1, y1, x2, y2, { grosor = 0.6, color: c = '#CCCCCC' } = {}) {
       color(c);
       ordenes.push(`${grosor} w`);

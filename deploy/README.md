@@ -263,7 +263,54 @@ El plan gratuito son 300 correos al día. Con el volumen inicial sobra;
 si se queda corto, se nota porque la API empieza a devolver 402 y el
 registro del servicio lo anota.
 
-## 10. Mantenimiento automático
+## 10. El asistente del sitio (Anthropic)
+
+El chat flotante llama a la API de Anthropic desde `tools/chat.js`. La
+clave **nunca llega al navegador**: vive en `/etc/mercamaquinarias.env`,
+la lee el servicio y solo ese archivo habla con Anthropic.
+
+Sin clave el sitio funciona igual: el chat responde con una disculpa y
+el correo de soporte. No es un fallo, es el comportamiento previsto.
+
+1. En **console.anthropic.com → API keys**, crea una clave. Es una
+   cuenta de API con su propio saldo: **no se paga con la suscripción
+   de claude.ai**, son cosas distintas y se facturan aparte.
+2. En **Settings → Limits**, pon un límite de gasto mensual. Con el
+   asistente actual —Sonnet 5, sin pensamiento extendido, respuestas de
+   800 tokens— una conversación cuesta centavos, pero un límite evita
+   sorpresas si alguien se pone a conversar por deporte.
+3. Añádela al archivo de secretos y reinicia el servicio:
+
+   ```bash
+   printf 'ANTHROPIC_API_KEY=%s\n' 'sk-ant-…' >> /etc/mercamaquinarias.env
+   chmod 600 /etc/mercamaquinarias.env
+   systemctl restart mercamaquinarias
+   ```
+
+4. Comprueba que responde. El cliente se prueba sin gastar una llamada
+   real —sustituye la petición por un doble—:
+
+   ```bash
+   cd /var/www/mercamaquinarias
+   node tools/prueba-chat.js
+   ```
+
+   Y en el sitio, abre el chat y pregunta algo que esté en el prompt,
+   por ejemplo «¿cómo publico una excavadora?».
+
+**Qué sabe el asistente** está escrito en el prompt de `tools/chat.js`:
+qué es MercaMaquinarias, cómo se publica, los planes y sus precios —que
+los lee de `assets/precios.js`, no los repite a mano—, el alquiler, la
+importación, y qué servicios NO se ofrecen ahora mismo. Cuando algo no
+está ahí, tiene orden de decir que no lo sabe y pasar el correo de
+soporte, en vez de inventar. Si cambia un precio o una regla, se cambia
+ahí y se despliega: no hay que reentrenar nada.
+
+**Modelo**: por defecto `claude-sonnet-5`. Se cambia con
+`MERCA_CHAT_MODELO` sin tocar código: `claude-haiku-4-5` sale más
+barato, `claude-opus-5` responde mejor y cuesta más.
+
+## 11. Mantenimiento automático
 
 Caducar anuncios, avisar de vencimientos, purgar y respaldar la base:
 
@@ -282,6 +329,37 @@ Corre a las 5:00. Para ver qué haría sin hacer nada:
 ```bash
 sudo -u mercamaquinarias node tools/tareas.js --seco
 ```
+
+### Los informes a gerencia
+
+Aparte del mantenimiento, porque tienen su propio horario: semanal los
+lunes a las 07:00 y mensual el día 1 a las 07:30. Van a
+`gerencia@inversionesxzt.com` con copia a `facturacion@`.
+
+```bash
+cp /var/www/mercamaquinarias/deploy/mercamaquinarias-informes.service /etc/systemd/system/
+cp /var/www/mercamaquinarias/deploy/mercamaquinarias-informe-*.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now mercamaquinarias-informe-semanal.timer
+systemctl enable --now mercamaquinarias-informe-mensual.timer
+systemctl list-timers 'mercamaquinarias-informe-*'
+```
+
+**No van en la tanda diaria** a propósito: un informe semanal que
+llegara todos los días se dejaría de leer en una semana, y entonces
+tampoco se leería el que importa.
+
+Para verlo sin mandarlo, o para mandarlo a mano:
+
+```bash
+sudo -u mercamaquinarias node tools/tareas.js --seco informe-semanal
+sudo -u mercamaquinarias node tools/tareas.js informe-mensual
+```
+
+El semanal cubre de lunes a domingo de la semana **cerrada**, y el
+mensual el mes anterior completo. No son «los últimos siete días»: si
+los periodos solaparan, las cifras de dos informes no se podrían sumar
+y no habría forma de cuadrar el mes.
 
 Cada tarea es idempotente: repetirla no manda dos veces el mismo aviso.
 
