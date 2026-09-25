@@ -144,10 +144,10 @@ huérfanos y sin duplicados.
 | CONF-01 | Phase 7 — Verificación y soporte al dealer | Pendiente | `research/mercado.md`; se cumple vía ADMIN-03 o se retira el texto |
 | CONF-02 | Phase 9 — Contactos verificados y estafas | Pendiente | `research/mercado.md`, huecos priorizados |
 | CONF-03 | Phase 9 — Contactos verificados y estafas | Pendiente | `PROJECT.md` Fase 1; créditos SMS pendientes |
-| MET-01 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`; columna y evento ya en `tools/db.js` |
+| MET-01 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-01` (evento y columna), `10-02` (guardar en la ficha) y `10-03` (compartidos y tarjeta del panel) |
 | MET-02 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`; metadatos ya en `tools/meta.js` |
-| MET-03 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`, huecos priorizados |
-| MET-04 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`, huecos priorizados |
+| MET-03 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-03`: `panel.html` lista cada contacto con su anuncio y su hora, filtrable por equipo y canal |
+| MET-04 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-03`: «Duplicar» en el panel precarga `publicar.html` sin el número de serie |
 | UI-01 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-05` y `02-06`: los literales congelados pasan a sus tokens y la única pieza fija deliberada que quedaba, la cuenta de fotos sobre la imagen, entra en las excepciones con su razón. `check-contraste` en 0 en las 17 rutas y los dos temas |
 | UI-02 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-04`: los dieciséis controles de D-01 más seis que el inventario no tenía usan `--app-borde-control`. El comprobador pasa de 271 hallazgos de tipo `control` a **cero**, en las 17 rutas y en los dos temas |
 | UI-03 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `tools/check-contraste.js` recorre 17 rutas en los dos temas, mide texto, controles y dinamismo, y sale 1 con hallazgos; colgado del final de `npm run auditar`. Desde el `02-06` sale 0 y `npm run auditar` pasa entero con él dentro |
