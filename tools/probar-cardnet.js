@@ -253,6 +253,175 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     ok(cardnet.limpiar(null) === null && cardnet.limpiar('abc') === 'abc', 'valores sueltos pasan tal cual');
   }
 
+  console.log('\n6. Apagado, ninguna llamada sale');
+  {
+    apagar();
+    doble(() => ({ estado: 200, cuerpo: {} }));
+    const rs = [
+      await cardnet.crearCliente({ correo: 'a@prueba.invalid', nombre: 'A' }),
+      await cardnet.verCliente('C1'),
+      await cardnet.cobrar({ token: 'CT__x', pago: { referencia: 'TE-2026-AAAAAA', total: 2000, itbis: 0 } }),
+      await cardnet.consultarCompra('P1'),
+      await cardnet.devolver('P1'),
+      await cardnet.activarPerfil({ clienteId: 'C1', token: 'CT__x', codigo: '123' }),
+      await cardnet.borrarPerfil({ clienteId: 'C1', perfilId: '7' }),
+    ];
+    ok(rs.every((r) => r && r.ok === false && r.motivo === 'apagado'), 'las siete llamadas responden { ok: false, motivo: apagado }');
+    ok(llamadas.length === 0, `el transporte no recibió nada (${llamadas.length})`);
+  }
+
+  const BASIC = `Basic ${Buffer.from(`${LLAVE_PRIV}:`).toString('base64')}`;
+
+  console.log('\n7. El cliente en CardNet y la URL de captura');
+  {
+    encender('lab');
+    doble([{ estado: 200, cuerpo: { CustomerId: 'C-900', Email: 'compras@prueba.invalid' } }]);
+    const c = await cardnet.crearCliente({ correo: 'compras@prueba.invalid', nombre: 'Equipos de Prueba SRL', rnc: '1-31-00000-1' });
+    ok(c.ok === true && c.clienteId === 'C-900', `crearCliente → ${JSON.stringify(c)}`);
+    const l = llamadas[0];
+    ok(l.metodo === 'POST' && l.url === `${URL_LAB}v1/api/customer`, `POST ${l.url}`);
+    ok(l.cuerpo.Email === 'compras@prueba.invalid' && l.cuerpo.FirstName === 'Equipos de Prueba SRL',
+      `cuerpo con Email y FirstName: ${JSON.stringify(l.cuerpo)}`);
+    ok(l.cuerpo.DocumentNumber === '131000001', 'DocumentNumber con el RNC en dígitos');
+    ok(l.cabeceras.Authorization === BASIC, 'Authorization es Basic de la llave privada con contraseña vacía');
+    ok(!('DocumentNumber' in cardnet.cuerpoCliente({ correo: 'x@prueba.invalid', nombre: 'X' })), 'sin RNC no hay DocumentNumber');
+
+    doble([{ estado: 500, cuerpo: null }]);
+    const mal = await cardnet.crearCliente({ correo: 'compras@prueba.invalid', nombre: 'X' });
+    ok(mal.ok === false && !mal.clienteId, 'un 500 al crear el cliente: ok false');
+
+    doble([{
+      estado: 200,
+      cuerpo: {
+        CustomerId: 'C-900', CaptureURL: 'https://labservicios.cardnet.com.do/captura/abc', UniqueID: 'U 1&2',
+        PaymentProfiles: [
+          { PaymentProfileId: 71, Token: 'CT__uno', Brand: 'VISA', Last4: '1111', Expiration: '12/29', Enabled: true, Extra: 'x' },
+          { PaymentProfileID: '72', Token: 'CT__dos', Brand: 'MASTERCARD', Last4: '4444', Expiration: '203001', Enabled: false },
+        ],
+      },
+    }]);
+    const v = await cardnet.verCliente('C-900');
+    ok(llamadas[0].metodo === 'GET' && llamadas[0].url === `${URL_LAB}v1/api/customer/C-900`, `GET ${llamadas[0].url}`);
+    ok(v.ok && v.clienteId === 'C-900' && v.sesion === 'U 1&2', 'verCliente devuelve cliente y sesión');
+    ok(v.urlCaptura === `https://labservicios.cardnet.com.do/captura/abc?key=${LLAVE_PUB}&session_id=U%201%262`,
+      `urlCaptura con llave pública y UniqueID codificados: ${v.urlCaptura}`);
+    ok(!v.urlCaptura.includes(LLAVE_PRIV), 'la llave privada no va en la URL');
+    ok(v.perfiles.length === 2, 'dos perfiles');
+    const [p1, p2] = v.perfiles;
+    ok(JSON.stringify(Object.keys(p1).sort()) === JSON.stringify(['activo', 'marca', 'perfilId', 'token', 'ultimos4', 'venceAnio', 'venceMes']),
+      `cada perfil solo trae campos conocidos: ${Object.keys(p1).join(', ')}`);
+    ok(p1.perfilId === '71' && p1.token === 'CT__uno' && p1.marca === 'VISA' && p1.ultimos4 === '1111'
+      && p1.venceMes === 12 && p1.venceAnio === 2029 && p1.activo === true, `perfil 1: ${JSON.stringify(p1)}`);
+    ok(p2.perfilId === '72' && p2.venceMes === 1 && p2.venceAnio === 2030 && p2.activo === false, `perfil 2: ${JSON.stringify(p2)}`);
+    ok(cardnet.perfilesDe(null).length === 0 && cardnet.perfilesDe({}).length === 0, 'sin perfiles: lista vacía');
+    ok(cardnet.perfilesDe({ PaymentProfiles: [{ Brand: 'VISA' }] }).length === 0, 'un perfil sin id ni token se descarta');
+
+    doble([{ estado: 200, cuerpo: { CustomerId: 'C-900', CaptureURL: 'http://inseguro.prueba/c', UniqueID: 'U' } }]);
+    const inseguro = await cardnet.verCliente('C-900');
+    ok(inseguro.ok === false, 'una CaptureURL sin https no se entrega al navegador');
+    doble([]);
+    const raro = await cardnet.verCliente('../purchase/1');
+    ok(raro.ok === false && llamadas.length === 0, 'un id de cliente con barras no sale a la red');
+  }
+
+  console.log('\n8. El cobro: centavos, referencia en Order, UniqueID e Invoice');
+  {
+    encender('lab');
+    const pago = { id: 'pago-1', referencia: 'TE-2026-CCCCCC', subtotal: 2000, itbis: 360, total: 2360 };
+    doble([{
+      estado: 200,
+      cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: 'P-1', AuthorizationCode: 'AU1', Order: pago.referencia, TrxToken: 'CT__uno' },
+    }]);
+    const r = await cardnet.cobrar({ token: 'CT__uno', pago });
+    const l = llamadas[0];
+    ok(l.metodo === 'POST' && l.url === `${URL_LAB}v1/api/purchase`, `POST ${l.url}`);
+    ok(l.cuerpo.Amount === 236000 && l.cuerpo.DataDo.Tax === 36000, `RD$2.360 con ITBIS 360 → Amount ${l.cuerpo.Amount}, Tax ${l.cuerpo.DataDo.Tax}`);
+    ok(l.cuerpo.Currency === 'DOP' && l.cuerpo.Capture === true, 'DOP y captura inmediata');
+    ok(l.cuerpo.Order === pago.referencia && l.cuerpo.UniqueID === pago.referencia && l.cuerpo.DataDo.Invoice === pago.referencia,
+      'Order, UniqueID y DataDo.Invoice llevan la referencia del pago, nunca el NCF');
+    ok(l.cuerpo.TrxToken === 'CT__uno', 'TrxToken es el token recibido');
+    ok(l.cabeceras.Authorization === BASIC, 'firmado con la llave privada');
+    ok(r.ok === true && r.resultado === 'aprobado' && r.procesadorId === 'P-1' && r.autorizacion === 'AU1',
+      `aprobado normalizado: ${r.resultado}`);
+    ok(r.crudo && !JSON.stringify(r.crudo).includes('CT__'), 'crudo va limpio, sin token');
+
+    doble([{ estado: 200, cuerpo: { ResponseCode: '00' } }]);
+    await cardnet.cobrar({ token: 'CT__uno', pago: { referencia: 'TE-2026-DDDDDD', total: 2000, itbis: 0 } });
+    ok(llamadas[0].cuerpo.Amount === 200000, `RD$2.000 viaja como ${llamadas[0].cuerpo.Amount}`);
+
+    const c = cardnet.cuerpoCompra({ token: 'CT__uno', pago });
+    ok(c.Amount === 236000 && c.UniqueID === pago.referencia, 'cuerpoCompra arma lo mismo sin llamar');
+    ok(!!lanza(() => cardnet.cuerpoCompra({ token: 'CT__uno', pago: { ...pago, total: 23.6 } })), 'un total con decimales no se manda');
+    ok(!!lanza(() => cardnet.cuerpoCompra({ token: '', pago })), 'sin token no se arma el cobro');
+    ok(!!lanza(() => cardnet.cuerpoCompra({ token: 'CT__uno', pago: { ...pago, referencia: '' } })), 'sin referencia no se arma el cobro');
+
+    doble([{ estado: 200, cuerpo: { ResponseCode: '51', Order: pago.referencia } }]);
+    const rech = await cardnet.cobrar({ token: 'CT__uno', pago });
+    ok(rech.resultado === 'rechazado' && rech.codigo === '51' && rech.motivo === cardnet.mensajeDeRechazo('51'), 'rechazo 51 normalizado');
+  }
+
+  console.log('\n9. Red caída o CardNet caído: pendiente, nunca rechazo');
+  {
+    encender('lab');
+    const pago = { referencia: 'TE-2026-EEEEEE', total: 2000, itbis: 0 };
+    doble([{ estado: 0, cuerpo: null, fallo: 'ECONNRESET' }]);
+    const caida = await cardnet.cobrar({ token: 'CT__uno', pago });
+    ok(caida.resultado === 'pendiente' && caida.ok === false && !!caida.fallo, `estado 0: pendiente (${caida.fallo})`);
+    doble([{ estado: 503, cuerpo: { ResponseCode: '51' } }]);
+    const r503 = await cardnet.cobrar({ token: 'CT__uno', pago });
+    ok(r503.resultado === 'pendiente' && !!r503.fallo, '503 con un código de rechazo dentro: pendiente igualmente');
+    doble([{ estado: 502, cuerpo: { Status: 'Approved', ResponseCode: '00' } }]);
+    ok((await cardnet.cobrar({ token: 'CT__uno', pago })).resultado === 'pendiente', '502 que dice aprobado: pendiente');
+    cardnet._transporte = async () => { throw new Error('se rompió el doble'); };
+    const lanzo = await cardnet.cobrar({ token: 'CT__uno', pago });
+    ok(lanzo.resultado === 'pendiente' && lanzo.ok === false, 'un transporte que lanza también es pendiente');
+    doble([{ estado: 400, cuerpo: { Errors: [{ Code: 'CS012', Message: 'PROFILE_MUST_BE_ACTIVATED_FIRST' }] } }]);
+    const cs = await cardnet.cobrar({ token: 'CT__uno', pago });
+    ok(cs.resultado === 'pendiente' && cs.codigo === 'CS012', `CS012 llega como código, sin aprobar ni rechazar: ${cs.codigo}`);
+  }
+
+  console.log('\n10. Consultar, devolver, activar y borrar');
+  {
+    encender('lab');
+    doble([{ estado: 200, cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: 'P-9', Order: 'TE-2026-FFFFFF' } }]);
+    const q = await cardnet.consultarCompra('P-9');
+    ok(llamadas[0].metodo === 'GET' && llamadas[0].url === `${URL_LAB}v1/api/purchase/P-9`, `GET ${llamadas[0].url}`);
+    ok(q.ok && q.resultado === 'aprobado' && q.referencia === 'TE-2026-FFFFFF', 'consultarCompra normaliza');
+    doble([{ estado: 0, cuerpo: null, fallo: 'tiempo agotado' }]);
+    ok((await cardnet.consultarCompra('P-9')).resultado === 'pendiente', 'consulta sin red: pendiente');
+
+    doble([{ estado: 200, cuerpo: { Status: 'Refunded' } }]);
+    const d = await cardnet.devolver('P-9');
+    ok(llamadas[0].metodo === 'POST' && llamadas[0].url === `${URL_LAB}v1/api/purchase/P-9/refund`, `POST ${llamadas[0].url}`);
+    ok(d.ok === true, 'devolver responde ok con un 200');
+
+    doble([{ estado: 200, cuerpo: {} }]);
+    const a = await cardnet.activarPerfil({ clienteId: 'C-900', token: 'CT__dos', codigo: '4321' });
+    ok(llamadas[0].metodo === 'POST' && llamadas[0].url === `${URL_LAB}v1/api/customer/C-900/activate`, `POST ${llamadas[0].url}`);
+    ok(llamadas[0].cuerpo.Token === 'CT__dos' && llamadas[0].cuerpo.ActivationCode === '4321', 'activate lleva Token y ActivationCode');
+    ok(a.ok === true, 'activarPerfil ok');
+    doble([{ estado: 400, cuerpo: { Errors: [{ Code: 'CS099' }] } }]);
+    ok((await cardnet.activarPerfil({ clienteId: 'C-900', token: 'CT__dos', codigo: '0' })).ok === false, 'un 400 al activar: ok false');
+
+    doble([{ estado: 200, cuerpo: {} }]);
+    const b = await cardnet.borrarPerfil({ clienteId: 'C-900', perfilId: '71' });
+    ok(llamadas[0].metodo === 'POST' && llamadas[0].url === `${URL_LAB}v1/api/customer/C-900/PaymentProfileDelete`, `POST ${llamadas[0].url}`);
+    ok(llamadas[0].cuerpo.PaymentProfileId === '71' && b.ok === true, 'PaymentProfileDelete lleva el id del perfil');
+  }
+
+  console.log('\n11. De qué compra habla una notificación');
+  {
+    const n = (o) => cardnet.compraDeNotificacion(o);
+    ok(n({ ResourceType: 'Purchase', ResourceUrl: '/v1/api/purchase/P-1', ResourceObject: { PurchaseId: 'P-7' } }) === 'P-7',
+      'del ResourceObject');
+    ok(n({ ResourceType: 'Purchase', ResourceUrl: 'https://labservicios.cardnet.com.do/servicios/tokens/v1/api/purchase/P-8' }) === 'P-8',
+      'del final de ResourceUrl');
+    ok(n({ Notification: { ResourceType: 'Purchase', ResourceObject: { PurchaseID: 'P-6' } } }) === 'P-6', 'envuelto en Notification');
+    ok(n({ ResourceType: 'Customer', ResourceObject: { CustomerId: 'C-1', PurchaseId: 'P-1' } }) === null, 'un recurso que no es compra: null');
+    ok(n({ ResourceType: 'Purchase', ResourceObject: { PurchaseId: '../customer/1' } }) === null, 'un id con barras: null');
+    ok(n(null) === null && n({}) === null && n('texto') === null, 'cuerpos vacíos o raros: null');
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
