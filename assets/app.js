@@ -49,6 +49,7 @@ const SPRITE = `
 <symbol id="i-pausa" viewBox="0 0 24 24"><path d="M9 5v14"/><path d="M15 5v14"/></symbol>
 <symbol id="i-edificio" viewBox="0 0 24 24"><path d="M4 21V5.5L13 3v18"/><path d="M13 9h7v12"/><path d="M7.5 8h2M7.5 12h2M7.5 16h2M16 13h1.5M16 17h1.5"/></symbol>
 <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M3.5 20.5l1.3-4.4A8.2 8.2 0 1 1 8 19.3z"/><path d="M9 8.4c.3-.1.6 0 .8.4l.7 1.3c.1.3.1.5-.1.8l-.4.5a5.6 5.6 0 0 0 2.6 2.6l.5-.4c.3-.2.5-.2.8-.1l1.3.7c.4.2.5.5.4.8-.2.8-1 1.4-1.9 1.4-2.8 0-5.9-3.1-5.9-5.9 0-.9.5-1.7 1.2-2.1z"/></symbol>
+<symbol id="i-compartir" viewBox="0 0 24 24"><circle cx="17.5" cy="5.5" r="2.5"/><circle cx="6.5" cy="12" r="2.5"/><circle cx="17.5" cy="18.5" r="2.5"/><path d="m8.7 10.7 6.6-3.9"/><path d="m8.7 13.3 6.6 3.9"/></symbol>
 `;
 
 function inyectarSprite() {
@@ -931,6 +932,199 @@ function condicionesHTML(e) {
   </ul>`;
 }
 
+/* ── Guardados del comprador (MET-01) ───────────────────── */
+
+/* Los equipos guardados viven en ESTE navegador, sin cuenta.
+
+   Quien guarda es un comprador, y un comprador casi nunca tiene cuenta:
+   pedírsela para marcar una excavadora es perderlo en ese mismo clic.
+   El precio es que no viajan entre el teléfono y la computadora; eso
+   llega el día que exista cuenta de comprador.
+
+   Todo acceso al almacenamiento va en try/catch: en una ventana privada
+   o con los datos del sitio bloqueados, `localStorage` lanza. Entonces
+   la lista vive en memoria y el botón sigue funcionando mientras la
+   página esté abierta, que es mejor que un botón muerto. */
+const GUARDADOS = (() => {
+  const CLAVE = 'mercamaquinarias:guardados';
+  const TOPE = 100;
+  const ID_VALIDO = /^[\w-]{1,64}$/;
+  let enMemoria = [];
+
+  function leer() {
+    let crudo = null;
+    try { crudo = localStorage.getItem(CLAVE); } catch (_) { return enMemoria.slice(); }
+    if (!crudo) return [];
+    try {
+      const lista = JSON.parse(crudo);
+      // Lo que venga de fuera se valida: la clave la puede editar
+      // cualquiera desde la consola, y estos ids acaban en una URL.
+      return Array.isArray(lista)
+        ? lista.filter((g) => g && typeof g.id === 'string' && ID_VALIDO.test(g.id))
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function escribir(lista) {
+    enMemoria = lista.slice(0, TOPE);
+    try { localStorage.setItem(CLAVE, JSON.stringify(enMemoria)); } catch (_) { /* queda en memoria */ }
+  }
+
+  const esta = (id) => leer().some((g) => g.id === id);
+
+  // Devuelve true si el equipo quedó guardado y false si se quitó.
+  function alternar(id) {
+    if (!ID_VALIDO.test(String(id))) return false;
+    const lista = leer();
+    if (lista.some((g) => g.id === id)) {
+      escribir(lista.filter((g) => g.id !== id));
+      return false;
+    }
+    escribir([{ id, guardado: new Date().toISOString() }, ...lista]);
+    return true;
+  }
+
+  const quitar = (ids) => escribir(leer().filter((g) => !ids.includes(g.id)));
+  const cuantos = () => leer().length;
+
+  return { leer, esta, alternar, quitar, cuantos };
+})();
+
+/* «Guardados (N)» en la navegación principal, y solo si hay alguno.
+   Se inyecta desde aquí para no tocar la cabecera escrita a mano en
+   las veinte páginas; un enlace a una lista vacía en todas ellas
+   ocuparía sitio sin servir de nada. */
+function montarEnlaceGuardados() {
+  const menu = $('#navMenu');
+  if (!menu) return;
+  const n = GUARDADOS.cuantos();
+  let enlace = $('[data-guardados]', menu);
+
+  if (!n) {
+    if (enlace) enlace.remove();
+    return;
+  }
+  if (!enlace) {
+    enlace = document.createElement('a');
+    enlace.href = 'guardados.html';
+    enlace.dataset.guardados = '';
+    menu.insertBefore(enlace, $('.cab__nav-cta', menu));
+  }
+  enlace.textContent = `Guardados (${n})`;
+  if ((location.pathname.split('/').pop() || '') === 'guardados.html') enlace.setAttribute('aria-current', 'page');
+}
+
+/* Guardar y compartir, bajo el precio. Son las dos cosas que un
+   comprador dominicano espera poder hacer con una ficha: marcarla para
+   volver luego y mandársela a alguien por WhatsApp. */
+function accionesFichaHTML(e) {
+  const guardado = GUARDADOS.esta(e.id);
+  const n = GUARDADOS.cuantos();
+  const url = `${location.origin}/equipo.html?id=${encodeURIComponent(e.id)}`;
+  const texto = encodeURIComponent(`${nombreEquipo(e)} · ${precioTexto(e)} en MercaMaquinarias: ${url}`);
+
+  return `<div class="detalle__acciones">
+    <button type="button" class="btn btn--linea btn--accion${guardado ? ' is-activo' : ''}" id="btnGuardar" aria-pressed="${guardado}">
+      ${icono('i-estrella')} <span>${guardado ? 'Guardado' : 'Guardar'}</span></button>
+    <button type="button" class="btn btn--linea btn--accion" id="btnCompartir" aria-expanded="false" aria-controls="menuCompartir">
+      ${icono('i-compartir')} <span>Compartir</span></button>
+    <a class="detalle__enlace-guardados" id="enlaceGuardados" href="guardados.html"${n ? '' : ' hidden'}>Ver guardados (${n})</a>
+  </div>
+  <div class="detalle__compartir" id="menuCompartir" hidden>
+    <a class="contactos__it contactos__it--whatsapp" id="compartirWhatsapp" target="_blank" rel="noopener"
+      href="https://wa.me/?text=${texto}">${icono('i-whatsapp')} WhatsApp</a>
+    <button type="button" class="contactos__it" id="btnCopiarEnlace">Copiar enlace</button>
+  </div>
+  <p class="detalle__estado" id="estadoAcciones" role="status"></p>`;
+}
+
+/* Copia al portapapeles. `navigator.clipboard` solo existe en contexto
+   seguro; en otro caso se usa el método viejo sobre un campo temporal. */
+async function copiarTexto(texto) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(texto);
+      return true;
+    }
+  } catch (_) { /* se intenta a la antigua */ }
+  const campo = document.createElement('textarea');
+  campo.value = texto;
+  campo.setAttribute('readonly', '');
+  campo.style.position = 'fixed';
+  campo.style.opacity = '0';
+  document.body.appendChild(campo);
+  campo.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  campo.remove();
+  return ok;
+}
+
+function montarAccionesFicha(e, cont) {
+  const btnGuardar = $('#btnGuardar', cont);
+  const btnCompartir = $('#btnCompartir', cont);
+  const menu = $('#menuCompartir', cont);
+  const estado = $('#estadoAcciones', cont);
+  if (!btnGuardar || !btnCompartir) return;
+
+  let reloj = null;
+  const avisar = (texto) => {
+    estado.textContent = texto;
+    clearTimeout(reloj);
+    reloj = setTimeout(() => { estado.textContent = ''; }, 2500);
+  };
+
+  // Solo guardar cuenta como favorito; quitarlo no resta. Una cifra
+  // del panel que baja sola no hay anunciante que sepa explicarla.
+  btnGuardar.addEventListener('click', () => {
+    const guardado = GUARDADOS.alternar(e.id);
+    if (guardado) anotar(e.id, 'favorito');
+    btnGuardar.setAttribute('aria-pressed', String(guardado));
+    btnGuardar.classList.toggle('is-activo', guardado);
+    $('span', btnGuardar).textContent = guardado ? 'Guardado' : 'Guardar';
+    const n = GUARDADOS.cuantos();
+    const enlace = $('#enlaceGuardados', cont);
+    enlace.textContent = `Ver guardados (${n})`;
+    enlace.hidden = !n;
+    avisar(guardado ? 'Guardado en este navegador.' : 'Quitado de sus guardados.');
+    montarEnlaceGuardados();
+  });
+
+  const url = `${location.origin}/equipo.html?id=${encodeURIComponent(e.id)}`;
+
+  /* La hoja nativa del teléfono cuando existe: ahí ya están WhatsApp y
+     todo lo demás que la persona use. Se anota cuando se completa;
+     cerrar la hoja sin elegir nada rechaza la promesa y no cuenta. */
+  btnCompartir.addEventListener('click', async () => {
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: nombreEquipo(e), text: `${nombreEquipo(e)} · ${precioTexto(e)}`, url });
+        anotar(e.id, 'compartir');
+      } catch (_) { /* cancelado: no se compartió nada */ }
+      return;
+    }
+    const abrir = menu.hidden;
+    menu.hidden = !abrir;
+    btnCompartir.setAttribute('aria-expanded', String(abrir));
+  });
+
+  $('#compartirWhatsapp', cont).addEventListener('click', () => anotar(e.id, 'compartir'));
+
+  $('#btnCopiarEnlace', cont).addEventListener('click', async (ev) => {
+    const boton = ev.currentTarget;
+    if (await copiarTexto(url)) {
+      anotar(e.id, 'compartir');
+      boton.textContent = 'Enlace copiado';
+      avisar('Enlace copiado. Péguelo donde quiera compartirlo.');
+      setTimeout(() => { boton.textContent = 'Copiar enlace'; }, 2000);
+    } else {
+      avisar('No se pudo copiar. Copie la dirección de la barra del navegador.');
+    }
+  });
+}
+
 async function montarDetalle() {
   const cont = $('#detalle');
   if (!cont) return;
@@ -981,6 +1175,7 @@ async function montarDetalle() {
         <p class="etiqueta">Precio</p>
         <p class="detalle__precio num">${precioTexto(e)}</p>
         ${condicionesHTML(e)}
+        ${accionesFichaHTML(e)}
 
         ${fichaTecnicaHTML(e)}
 
@@ -1013,7 +1208,8 @@ async function montarDetalle() {
   // es lo que el anunciante ve después en su panel. El canal se lee de
   // data-canal para que "llamar" y "WhatsApp" no se cuenten iguales.
   anotar(e.id, 'vista');
-  $$('.contactos__it', cont).forEach((a) => {
+  montarAccionesFicha(e, cont);
+  $$('.contactos [data-canal]', cont).forEach((a) => {
     a.addEventListener('click', () => anotar(e.id, a.dataset.canal || 'telefono'));
   });
 
@@ -2209,6 +2405,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // encuentre los <select> ya poblados al arrancar.
   inyectarSprite();
   montarNav();
+  montarEnlaceGuardados();
   montarNavMovil();
   montarSaludoUsuario();
   montarSelects();
