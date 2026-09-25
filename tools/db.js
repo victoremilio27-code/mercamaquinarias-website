@@ -3719,6 +3719,9 @@ function rutasEnUso() {
   meter(d.prepare('SELECT url, miniatura FROM anuncio_fotos').all(), 'url', 'miniatura');
   meter(d.prepare('SELECT url, poster FROM anuncio_videos').all(), 'url', 'poster');
   meter(d.prepare('SELECT url FROM flota_fotos').all(), 'url');
+  // La foto suelta de la flota, anterior a flota_fotos: sigue siendo el
+  // respaldo cuando un equipo no tiene galería (ver fotosDeFlota).
+  meter(d.prepare('SELECT foto FROM flota').all(), 'foto');
   meter(d.prepare("SELECT valor FROM ajustes WHERE clave LIKE '%imagen%'").all(), 'valor');
   meter(d.prepare('SELECT imagen FROM publicidad').all(), 'imagen');
 

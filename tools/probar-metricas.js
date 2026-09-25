@@ -398,6 +398,10 @@ const contactosDe = (idAnuncio) => db.abrir()
     'el logotipo y la portada estan en uso: la tarea de huerfanos no los borra');
   comprobar(enUso.has('/fotos/2026-09/galeria.jpg'), 'la galeria tambien');
 
+  db.crearFlota({ servicio: 'alquiler', nombre: 'Retro de la flota', foto: '/fotos/2026-09/flota-suelta.jpg' });
+  comprobar(db.rutasEnUso().has('/fotos/2026-09/flota-suelta.jpg'),
+    'y la foto suelta de un equipo de la flota, que es su respaldo sin galeria');
+
   console.log(`\n${bien} bien · ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
 })().catch((e) => {
