@@ -52,7 +52,10 @@ vendedor, que la empresa recaude, y que el comprador navegue sin fricción.
 - [ ] Tema claro y oscuro coherentes en todo el sitio, con comprobación automática
 - [ ] Barrera de CI: ninguna fusión a `main` se despliega sin que pasen las pruebas
 - [ ] Contactos verificados por correo y SMS
-- [ ] Pantalla de administración para las solicitudes de servicio
+- [ ] **Consola de administración**: solicitudes de servicio (la API existe, la pantalla no), sello de verificada, revisión del número de serie, y **editar la página de un dealer en su nombre** para dar soporte. Toda escritura en nombre de otro queda registrada con quién la hizo.
+- [ ] Moneda en el filtro y el orden de precio: hoy compara pesos con dólares en crudo
+- [ ] Cumplir o retirar la promesa de verificación del número de serie (`publicar.html:149`)
+- [ ] Favoritos y compartir: la base ya tiene las columnas y nadie las emite, y el panel enseña «Guardados: 0» para siempre
 - [ ] `CLAUDE.md` propio del repositorio
 
 **Fase 2 — Transporte y financiamiento**
@@ -85,7 +88,8 @@ vendedor, que la empresa recaude, y que el comprador navegue sin fricción.
 
 ## Constraints
 
-- **Timeline**: lanzamiento el **2026-09-30**, prorrogable como máximo hasta ~**2026-10-16**. Las fases se ordenan por lo que bloquea el lanzamiento.
+- **Timeline**: lanzamiento el **2026-10-14**, fecha definitiva fijada por Victor el 2026-09-25. Movió la fecha desde el 30 de septiembre por una razón explícita: *no sacrificar calidad ni funcionalidad por un plazo arbitrario*. Las fases se ordenan por lo que bloquea el lanzamiento, pero **la calidad manda sobre la fecha** hasta el 14 de octubre; a partir de ahí, la fecha es firme.
+  - Riesgo único sobre esa fecha: la afiliación a CardNet tarda 7-15 días hábiles más una certificación técnica obligatoria. Desde el 2026-09-25 eso cae entre el 6 y el 16 de octubre. **El expediente tiene que entrar esta semana**; si no, se lanza con la contingencia de transferencia bancaria.
 - **Dependencies**: CardNet sin contratar; fechas de vencimiento de los NCF pendientes del contador; créditos SMS de Brevo y clave de Anthropic en espera. Todo lo que dependa de ellos se entrega construido y apagado tras un interruptor.
 - **Tech stack**: cero dependencias en tiempo de ejecución, `node:sqlite`, sin paso de compilación, sin TypeScript. Es deliberado y load-bearing.
 - **Security / fiscal**: un comprobante emitido nunca se borra ni se reescribe; las migraciones solo se añaden al final.
