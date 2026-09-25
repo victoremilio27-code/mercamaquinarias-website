@@ -831,6 +831,33 @@ const MIGRACIONES = [
         AND estado_revision = 'aprobada'
         AND estado_pagina = 'borrador'`,
   ]],
+
+  /* Un pago deja de darse por cobrado antes de tiempo.
+   *
+   * `anotarPago` escribía 'aprobado' a mano en el SQL y la compra
+   * otorgaba los cupos en la misma transacción. Con un procesador de
+   * verdad, una tarjeta rechazada habría dejado cupos regalados y un
+   * NCF consumido por dinero que no entró, y un comprobante emitido no
+   * se borra: solo se corrige con una B04. Ahora un cobro con importe
+   * nace 'pendiente' y la transición a 'aprobado' es la que otorga.
+   *
+   *   · intencion   — JSON con lo que se compró (plan, cupo, días o los
+   *                   cupos añadidos) y los datos fiscales validados al
+   *                   comprar, para poder ejecutarlo cuando el dinero se
+   *                   confirme, aunque sea en otra petición o a mano.
+   *   · confirmado  — cuándo entró el dinero. Es la fecha que lleva el
+   *                   comprobante y la que cuenta en el informe.
+   *   · actualizado — cuándo cambió de estado por última vez.
+   *
+   * Los pagos que ya hay en producción están todos 'aprobado' y se
+   * cobraron de verdad: se quedan como están, con estas columnas en
+   * NULL, y quien las lee cae en `creado`. Por eso aquí no hay UPDATE. */
+  ['2026-09-pagos-pendientes', [
+    'ALTER TABLE pagos ADD COLUMN intencion TEXT',
+    'ALTER TABLE pagos ADD COLUMN confirmado TEXT',
+    'ALTER TABLE pagos ADD COLUMN actualizado TEXT',
+    'CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos (estado, creado)',
+  ]],
 ];
 
 function migrar() {
@@ -2174,21 +2201,13 @@ function comprarCupos({ idOrg, idPlan, cupo, dias, cobro }) {
   const plan = planPorId(idPlan);
   if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
 
-  const idSusc = id();
   const t = ahora();
-  const duracion = Number(dias) === 60 ? 60 : 30;
+  let idSusc;
 
   d.prepare('BEGIN').run();
   try {
-    d.prepare(`INSERT INTO suscripciones
-      (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
-       anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
-      VALUES (?, ?, ?, 'vigencia', NULL, 'activa', ?, ?, ?, ?, ?, NULL, ?)`)
-      .run(idSusc, idOrg, idPlan, cobro.subtotal, Math.max(1, Math.trunc(cupo)),
-        duracion, t, sumarDias(duracion), t);
-
+    idSusc = otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado: cobro.subtotal, t });
     anotarPago(d, { idOrg, idSusc, cobro, t });
-    encenderPerfilSiProcede(d, idOrg, plan, t);
     d.prepare('COMMIT').run();
   } catch (e) {
     d.prepare('ROLLBACK').run();
@@ -2196,6 +2215,132 @@ function comprarCupos({ idOrg, idPlan, cupo, dias, cobro }) {
   }
 
   return suscripcion(idSusc, idOrg);
+}
+
+/* Escribe la membresía comprada. Es el ÚNICO sitio que lo hace: lo
+   usan la compra de importe cero, que se otorga al instante, y la
+   aprobación de un cobro pendiente. Con dos copias, el día que una
+   cambiara la duración o el redondeo del cupo, la misma compra daría
+   membresías distintas según cómo se hubiera pagado. Va dentro de la
+   transacción de quien llama. */
+function otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado, t }) {
+  const idSusc = id();
+  const duracion = Number(dias) === 60 ? 60 : 30;
+
+  d.prepare(`INSERT INTO suscripciones
+    (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
+     anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+    VALUES (?, ?, ?, 'vigencia', NULL, 'activa', ?, ?, ?, ?, ?, NULL, ?)`)
+    .run(idSusc, idOrg, plan.id, precioPactado, Math.max(1, Math.trunc(cupo)),
+      duracion, t, sumarDias(duracion), t);
+
+  encenderPerfilSiProcede(d, idOrg, plan, t);
+  return idSusc;
+}
+
+/* ── Cobros con importe: pendiente → aprobado | rechazado ────
+   Un cobro con importe no se da por cobrado al anotarlo. Nace
+   'pendiente' con lo que se compró guardado en `intencion`, y solo la
+   transición a 'aprobado' otorga los cupos. Antes se aprobaba a mano
+   en el SQL y un rechazo de tarjeta habría dejado cupos regalados y un
+   NCF de dinero que no entró.
+
+   El importe cero no pasa por aquí: sigue aprobado al instante por
+   `comprarCupos`/`ampliarCupos`, porque no hay nada que esperar. */
+function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
+  if (!(cobro && cobro.total > 0)) {
+    throw Object.assign(
+      new Error('registrarCobro es para cobros con importe; el importe cero se aprueba al instante por su propio camino'),
+      { codigo: 500 });
+  }
+  const d = abrir();
+  const idPago = id();
+  const t = ahora();
+  d.prepare(`INSERT INTO pagos
+    (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador,
+     creado, intencion, confirmado, actualizado)
+    VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?)`)
+    .run(idPago, idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
+      cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t);
+  return pagoPorId(idPago);
+}
+
+/* La transición pendiente → aprobado en la base: otorga lo comprado y
+   marca el pago en UNA transacción. Si algo falla a mitad, el ROLLBACK
+   deshace los cupos y el pago sigue pendiente; nunca quedan cupos sin
+   pago aprobado ni un pago aprobado sin sus cupos.
+
+   Repetirla no hace nada: si el pago ya no está pendiente se devuelve
+   tal cual con `yaEstaba: true`. Eso cubre la confirmación que llega
+   dos veces y el intento de aprobar un pago ya rechazado.
+
+   No emite comprobante: eso lo hace `tools/pagos.js`, que es quien
+   conoce `facturas` y quien la llama. Las rutas no la llaman directo. */
+function aprobarPago(idPago) {
+  const d = abrir();
+  const t = ahora();
+  let membresia = null;
+
+  d.prepare('BEGIN').run();
+  try {
+    const pago = pagoPorId(idPago);
+    if (!pago) throw Object.assign(new Error('Ese pago no existe'), { codigo: 404 });
+
+    if (pago.estado !== 'pendiente') {
+      d.prepare('COMMIT').run();
+      return {
+        pago,
+        membresia: pago.suscripcion_id ? suscripcion(pago.suscripcion_id, pago.organizacion_id) : null,
+        yaEstaba: true,
+      };
+    }
+
+    let intencion = null;
+    try { intencion = JSON.parse(pago.intencion); } catch (_) { /* se trata abajo */ }
+    if (!intencion) throw Object.assign(new Error(`El pago ${idPago} no guarda qué se compró`), { codigo: 500 });
+
+    let idSusc;
+    if (intencion.tipo === 'compra') {
+      const plan = planPorId(intencion.idPlan);
+      if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
+      idSusc = otorgarCompra(d, {
+        idOrg: pago.organizacion_id, plan, cupo: intencion.cupo, dias: intencion.dias,
+        precioPactado: pago.subtotal, t,
+      });
+      d.prepare('UPDATE pagos SET suscripcion_id = ? WHERE id = ?').run(idSusc, idPago);
+    } else if (intencion.tipo === 'ampliacion') {
+      /* Se SUMA lo pagado en vez de fijar el cupo nuevo: si entre la
+         compra y la confirmación el cupo cambió, fijar el absoluto
+         regalaría o quitaría cupos. `anadidos` es justo lo cobrado. */
+      idSusc = intencion.idSusc;
+      const r = d.prepare(`UPDATE suscripciones SET anuncios_incluidos = anuncios_incluidos + ?
+                            WHERE id = ? AND organizacion_id = ?`)
+        .run(Math.trunc(intencion.anadidos), idSusc, pago.organizacion_id);
+      if (r.changes === 0) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
+    } else {
+      throw Object.assign(new Error(`Tipo de compra desconocido: ${intencion.tipo}`), { codigo: 500 });
+    }
+
+    const r = d.prepare(`UPDATE pagos SET estado = 'aprobado', confirmado = ?, actualizado = ?
+                          WHERE id = ? AND estado = 'pendiente'`).run(t, t, idPago);
+    if (r.changes !== 1) throw Object.assign(new Error(`El pago ${idPago} cambió mientras se aprobaba`), { codigo: 409 });
+
+    membresia = suscripcion(idSusc, pago.organizacion_id);
+    d.prepare('COMMIT').run();
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+
+  return { pago: pagoPorId(idPago), membresia, yaEstaba: false };
+}
+
+/* Solo un pendiente se rechaza. Un aprobado no: si el dinero entró, lo
+   que procede es una devolución con su nota de crédito, que ya existe. */
+function rechazarPago(idPago) {
+  const r = abrir().prepare(`UPDATE pagos SET estado = 'rechazado', actualizado = ?
+                              WHERE id = ? AND estado = 'pendiente'`).run(ahora(), idPago);
+  return { pago: pagoPorId(idPago), cambiado: r.changes === 1 };
 }
 
 /* ── Membresía de las cuentas internas ──────────────────────
@@ -2902,9 +3047,12 @@ function informe({ desde, hasta }) {
 
     dinero: {
       /* Solo los aprobados: un pago rechazado no es ingreso, y
-         mezclarlos daría una cifra que no cuadra con el banco. */
+         mezclarlos daría una cifra que no cuadra con el banco.
+         Cuenta el día que entró el dinero; los pagos viejos no lo
+         tienen anotado y caen en `creado`. */
       cobros: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
-                     FROM pagos WHERE estado = 'aprobado' AND creado >= ? AND creado <= ?`,
+                     FROM pagos WHERE estado = 'aprobado'
+                      AND COALESCE(confirmado, creado) >= ? AND COALESCE(confirmado, creado) <= ?`,
         desde, `${hasta}T23:59:59Z`),
       devueltos: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
                         FROM pagos WHERE estado = 'devuelto' AND creado >= ? AND creado <= ?`,
@@ -3345,6 +3493,7 @@ module.exports = {
   sucursalesDe, sucursal, crearSucursal, actualizarSucursal, desactivarSucursal, marcarPrincipal,
   planes, planPorId, suscripcionActiva, suscripcionesDe, suscripcion,
   suscripcionConHueco, comprarCupos, ampliarCupos, membresiaInterna,
+  registrarCobro, aprobarPago, rechazarPago,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,

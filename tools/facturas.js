@@ -547,7 +547,11 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
     metodoPago: pago.procesador || null,
     referenciaPago: pago.referencia || null,
     periodoServicio: detalle.periodo || null,
-    fecha: pago.creado,
+    /* La fecha del comprobante es cuando entró el dinero, no cuando se
+       pidió el cobro: una transferencia confirmada días después caería
+       en el mes equivocado. Los pagos anteriores a `confirmado` no la
+       tienen y usan `creado`, como siempre. */
+    fecha: pago.confirmado || pago.creado,
   });
 
   /* El PDF va APARTE y a prueba de fallos.

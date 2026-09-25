@@ -549,11 +549,17 @@ CREATE TABLE IF NOT EXISTS pagos (
   estado          TEXT NOT NULL CHECK (estado IN ('aprobado', 'rechazado', 'pendiente', 'devuelto')),
   referencia      TEXT,
   procesador      TEXT,
-  creado          TEXT NOT NULL
+  creado          TEXT NOT NULL,
+  -- Un cobro con importe nace 'pendiente': lo comprado espera en
+  -- `intencion` (JSON) hasta que el dinero se confirma en `confirmado`.
+  intencion       TEXT,
+  confirmado      TEXT,
+  actualizado     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_pagos_org ON pagos (organizacion_id, creado);
 CREATE INDEX IF NOT EXISTS ix_pagos_suscripcion ON pagos (suscripcion_id);
+CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos (estado, creado);
 
 -- ── Inventario ─────────────────────────────────────────────
 
