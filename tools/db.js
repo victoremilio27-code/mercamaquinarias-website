@@ -908,6 +908,27 @@ const MIGRACIONES = [
      END`,
     'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
   ]],
+
+  /* La revisión del número de serie (ADMIN-03, CONF-01).
+     `publicar.html` prometía que la serie era «solo visible para el
+     equipo de verificación», y nadie la leía: se guardaba y ya. Ahora el
+     personal la coteja y el resultado se guarda aquí.
+
+       · serie_revision     — 'conforme' u 'observada'; NULL = pendiente.
+       · serie_revisada     — cuándo.
+       · serie_revisada_por — nombre del empleado, COPIADO: si mañana se
+                              borra su cuenta, el anuncio sigue diciendo
+                              quién lo revisó (como la bitácora).
+       · serie_nota         — qué no cuadra; es lo que lee el vendedor.
+
+     Sin UPDATE: todo lo que ya hay en producción queda pendiente, que es
+     la verdad. */
+  ['2026-09-serie-revision', [
+    'ALTER TABLE anuncios ADD COLUMN serie_revision TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_revisada TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_revisada_por TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_nota TEXT',
+  ]],
 ];
 
 function migrar() {
@@ -1825,6 +1846,7 @@ function marcarAdmin(correo, esAdmin = true) {
 const ACCIONES_BITACORA = Object.freeze({
   'organizacion.verificar': 'Sello de verificada',
   'dealer.resolver': 'Alta de dealer aprobada o rechazada',
+  'anuncio.serie': 'Número de serie revisado',
 });
 
 const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { codigo });
@@ -2221,12 +2243,84 @@ function organizacionesAdmin({ estado, q } = {}) {
            o.perfil_publico, o.creada,
            (SELECT COUNT(*) FROM anuncios a
              WHERE a.organizacion_id = o.id AND a.estado = 'activo') AS activos,
-           0 AS series_pendientes
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND TRIM(COALESCE(a.serie, '')) <> ''
+               AND a.estado <> 'borrador' AND a.serie_revision IS NULL) AS series_pendientes
       FROM organizaciones o
      WHERE ${donde.join(' AND ')}
      ORDER BY o.nombre COLLATE NOCASE
      LIMIT 500`).all(...args)
     .map((o) => ({ ...o, verificada: !!o.verificada, perfil_publico: !!o.perfil_publico }));
+}
+
+/* ── Revisión del número de serie (ADMIN-03) ───────────────
+ *
+ * La diligencia que se hace, y la única que se promete en publicar.html:
+ * que el número coincide con la placa que se vea en las fotos, que no se
+ * repite en otro anuncio del sitio y que tiene una forma plausible. No
+ * hay un registro dominicano de maquinaria robada contra el que cotejar,
+ * así que no se dice que se coteja contra ninguno. */
+
+/* «CAT 0320-X», «cat0320x» y «CAT.0320/X» son la misma placa escrita por
+   tres personas distintas. Comparar en crudo no vería el duplicado. */
+const normalizarSerie = (s) => String(s || '').toUpperCase().replace(/[\s\-./\\_]/g, '');
+
+const RESULTADOS_SERIE = ['conforme', 'observada'];
+
+function seriesParaRevisar({ estado } = {}) {
+  const d = abrir();
+  /* Los borradores no: nadie los ve y su dueño todavía puede cambiarlos.
+     Los vendidos y retirados sí, porque una serie que reaparece en otro
+     anuncio después de venderse es justo lo que hay que mirar. */
+  const todas = d.prepare(`
+    SELECT a.id, a.marca, a.modelo, a.anio, a.categoria, a.subcategoria, a.estado, a.publicado,
+           a.serie, a.serie_revision, a.serie_revisada, a.serie_revisada_por, a.serie_nota,
+           a.organizacion_id, o.nombre AS empresa
+      FROM anuncios a JOIN organizaciones o ON o.id = a.organizacion_id
+     WHERE TRIM(COALESCE(a.serie, '')) <> '' AND a.estado <> 'borrador'`).all();
+
+  const veces = new Map();
+  todas.forEach((a) => {
+    const k = normalizarSerie(a.serie);
+    veces.set(k, (veces.get(k) || 0) + 1);
+  });
+
+  const quiere = estado === 'pendiente' ? (a) => !a.serie_revision
+    : RESULTADOS_SERIE.includes(estado) ? (a) => a.serie_revision === estado
+      : () => true;
+
+  const fotos = d.prepare(`SELECT url, COALESCE(miniatura, url) AS miniatura
+                             FROM anuncio_fotos WHERE anuncio_id = ? ORDER BY orden LIMIT 4`);
+
+  return todas.filter(quiere)
+    .sort((x, y) => (!!x.serie_revision - !!y.serie_revision)
+      || String(y.publicado || '').localeCompare(String(x.publicado || '')))
+    .slice(0, 300)
+    .map((a) => conNombres({
+      ...a,
+      // Cuántos OTROS anuncios llevan la misma placa.
+      repetidos: veces.get(normalizarSerie(a.serie)) - 1,
+      fotos: fotos.all(a.id),
+    }));
+}
+
+const anuncioSerie = (idAnuncio) => abrir().prepare(`
+  SELECT id, organizacion_id, serie, serie_revision, serie_nota
+    FROM anuncios WHERE id = ?`).get(idAnuncio);
+
+/* `pendiente` deshace: vuelve a NULL las cuatro columnas, para que el
+   anuncio no siga diciendo quién lo revisó cuando ya no está revisado. */
+function anotarRevisionSerie(idAnuncio, { resultado, nota, nombreAdmin }) {
+  const revisado = RESULTADOS_SERIE.includes(resultado);
+  return abrir().prepare(`
+    UPDATE anuncios
+       SET serie_revision = ?, serie_revisada = ?, serie_revisada_por = ?, serie_nota = ?
+     WHERE id = ?`)
+    .run(revisado ? resultado : null,
+      revisado ? ahora() : null,
+      revisado ? (nombreAdmin || null) : null,
+      revisado ? (nota || null) : null,
+      idAnuncio).changes > 0;
 }
 
 function apagarPerfilesSinPlan() {
@@ -2964,6 +3058,9 @@ function anunciosDeOrganizacion(idOrg) {
            -- El panel avisa cuando un camión no los tiene declarados y
            -- deja rellenarlos ahí mismo.
            a.motor_marca, a.motor_modelo, a.transmision_marca, a.transmision_modelo,
+           -- El resultado de la revisión de la serie (ADMIN-03). La serie
+           -- misma no hace falta en la lista: basta saber que se declaró.
+           (TRIM(COALESCE(a.serie, '')) <> '') AS tiene_serie, a.serie_revision, a.serie_nota,
            (SELECT COALESCE(f.miniatura, f.url) FROM anuncio_fotos f WHERE f.anuncio_id = a.id ORDER BY f.orden LIMIT 1) AS foto,
            -- Cuántas fotos tiene, para poder avisar antes de mover el
            -- anuncio a un nivel que admite menos.
@@ -3715,6 +3812,8 @@ module.exports = {
   guardarEnlaces, enlacesDe,
   publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
   organizacionesAdmin,
+  /* Revisión del número de serie. */
+  seriesParaRevisar, anuncioSerie, anotarRevisionSerie, normalizarSerie,
 
   /* Tráfico e informes. */
   anotarVisita, trafico, informe,
