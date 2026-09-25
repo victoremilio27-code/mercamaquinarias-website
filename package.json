@@ -27,6 +27,7 @@
     "seguridad:probar": "node tools/probar-seguridad.js",
     "chat:probar": "node tools/prueba-chat.js",
     "facturas:probar": "node tools/probar-facturas.js",
+    "pagos:probar": "node tools/probar-pagos.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
