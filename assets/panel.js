@@ -49,6 +49,23 @@ let MEMBRESIAS = [];
 let EXENTA = false;
 let TREN_ABIERTO = null;      // id del anuncio con el editor desplegado
 
+/* Pagos pedidos y todavía sin confirmar, de /api/membresias. Van aparte
+   de MEMBRESIAS a propósito: un pago en espera no es un cupo, y sumarlo
+   haría que el panel ofreciera publicar con algo que aún no se cobró.
+   TRANSFERENCIA son los datos de la cuenta (solo si hay alguno por
+   transferencia y sigue encendida); AVISO_TRANSFERENCIA, a quién
+   escribir si se apagó después de pedirlo. */
+let PAGOS_PENDIENTES = [];
+let TRANSFERENCIA = null;
+let AVISO_TRANSFERENCIA = '';
+
+function guardarPagos(r) {
+  if (!r) return;
+  PAGOS_PENDIENTES = r.pagosPendientes || [];
+  TRANSFERENCIA = r.transferencia || null;
+  AVISO_TRANSFERENCIA = r.avisoTransferencia || '';
+}
+
 const membresiaDe = (a) => MEMBRESIAS.find((m) => m.id === a.suscripcion_id) || null;
 
 const cupoTexto = (m) => (m.anuncios_incluidos == null
@@ -96,6 +113,75 @@ function tarjetaMembresia(m) {
         Añadir cupos
       </button>`}
   </li>`;
+}
+
+/* ── Pagos en espera ────────────────────────────────────────
+   Lo mismo que planes.js enseña al pedir los datos, con la misma clase
+   `.transferencia`. Está repetido y no compartido porque cada página
+   carga solo su script, y app.js no tiene por qué saber de cobros.
+   Todo lo que viene del servidor pasa por esc(); la cuenta solo se
+   pinta si el servidor la manda, sin ningún valor escrito aquí. */
+
+const TIPOS_CUENTA = { corriente: 'Corriente', ahorros: 'De ahorros' };
+
+// encodeURIComponent para que nada del servidor se cuele en el enlace;
+// la arroba vuelve a su sitio porque hay clientes que no leen «%40».
+const enlaceComprobante = (correo, referencia) => `mailto:${encodeURIComponent(correo).replace('%40', '@')}`
+  + `?subject=${encodeURIComponent(`Comprobante de transferencia ${referencia}`)}`;
+
+const botonCopiar = (texto) => (navigator.clipboard
+  ? `<button type="button" class="btn btn--linea btn--chico" data-copiar="${esc(texto)}">Copiar</button>`
+  : '');
+
+function tarjetaPagoEnEspera(p) {
+  const porTransferencia = p.procesador === 'transferencia';
+  const t = porTransferencia ? TRANSFERENCIA : null;
+  const pedido = fechaLarga(String(p.creado || '').slice(0, 10));
+
+  /* Por transferencia y sin cuenta que enseñar (se apagó después de
+     pedirlo): a quién escribir, nunca una cuenta inventada. */
+  const como = !porTransferencia
+    ? '<p class="transferencia__nota">El pago está en proceso con la pasarela.</p>'
+    : t
+      ? `<ul class="transferencia__pasos">
+          <li>Ponga la referencia en el concepto de la transferencia.</li>
+          <li>Envíe el comprobante de la transferencia a <a href="${esc(enlaceComprobante(t.correo, p.referencia))}">${esc(t.correo)}</a>.</li>
+          <li>Los días de su membresía empiezan a contar cuando confirmemos el ingreso.</li>
+        </ul>`
+      : `<p class="transferencia__aviso">${esc(AVISO_TRANSFERENCIA
+        || 'Escríbanos al correo de facturación con la referencia para completar este pago.')}</p>`;
+
+  return `<div class="transferencia" data-pago="${esc(p.id)}">
+    <h4 class="transferencia__titulo">${esc(p.concepto || 'Membresía')}</h4>
+    <p class="transferencia__ref">
+      <span class="transferencia__rotulo">Referencia</span>
+      <b class="transferencia__codigo">${esc(p.referencia)}</b>
+      ${botonCopiar(p.referencia)}
+    </p>
+    <dl class="transferencia__cuenta">
+      <div><dt>Importe</dt><dd class="num">${pesos(Number(p.total) || 0)}</dd></div>
+      ${pedido ? `<div><dt>Pedido el</dt><dd>${esc(pedido)}</dd></div>` : ''}
+      ${t ? `
+      <div><dt>Banco</dt><dd>${esc(t.banco)}</dd></div>
+      <div><dt>Titular</dt><dd>${esc(t.titular)}</dd></div>
+      <div><dt>RNC</dt><dd class="num">${esc(t.rnc)}</dd></div>
+      <div><dt>Tipo de cuenta</dt><dd>${esc(TIPOS_CUENTA[t.tipoCuenta] || t.tipoCuenta)}</dd></div>
+      <div><dt>Número de cuenta</dt><dd class="num">${esc(t.cuenta)}</dd></div>` : ''}
+    </dl>
+    ${como}
+  </div>`;
+}
+
+/* Encima de las membresías y también cuando todavía no hay ninguna: el
+   primer pedido de una cuenta nueva es justo el caso de «pagué y no veo
+   nada». Sin pendientes no se pinta nada y el panel queda como antes. */
+function pagosEnEsperaHTML() {
+  if (!PAGOS_PENDIENTES.length) return '';
+  return `<section class="pagos-espera" aria-labelledby="t-pagos-espera">
+    <h3 class="transferencia__titulo" id="t-pagos-espera">Pagos en espera de confirmación</h3>
+    <p class="panel__texto">Sus cupos aparecerán aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.</p>
+    ${PAGOS_PENDIENTES.map(tarjetaPagoEnEspera).join('')}
+  </section>`;
 }
 
 /* ── Métricas de cabecera ───────────────────────────────── */
@@ -150,6 +236,7 @@ function pintarPlan() {
     caja.innerHTML = `
       <h2 class="panel__titulo" id="t-plan"><em>Sin</em> cupos contratados</h2>
       <p class="panel__texto">Un cupo es el sitio que ocupa un equipo publicado. Elija el nivel y cuántos equipos quiere publicar; después reparte los cupos entre sus máquinas y los reutiliza cuando venda alguna.</p>
+      ${pagosEnEsperaHTML()}
       <a class="btn btn--ambar" href="planes.html">Ver los planes</a>`;
     return;
   }
@@ -169,6 +256,8 @@ function pintarPlan() {
             : 'Sin cupos libres'}
       </p>
     </div>
+
+    ${pagosEnEsperaHTML()}
 
     <ul class="membresias">${MEMBRESIAS.map(tarjetaMembresia).join('')}</ul>
 
@@ -661,7 +750,12 @@ async function montarPanel() {
     return;
   }
 
-  const datos = await api('/mis-anuncios', { silencioso: true });
+  /* Los pagos en espera solo vienen en /membresias; /mis-anuncios no los
+     trae. Se piden a la vez para no alargar la carga del panel. */
+  const [datos, cuenta] = await Promise.all([
+    api('/mis-anuncios', { silencioso: true }),
+    api('/membresias', { silencioso: true }),
+  ]);
   if (!datos) {
     $('#panelSinSesion').hidden = false;
     return;
@@ -670,6 +764,7 @@ async function montarPanel() {
   ANUNCIOS = datos.anuncios || [];
   MEMBRESIAS = datos.membresias || [];
   EXENTA = !!datos.exenta;
+  guardarPagos(cuenta);
   $('#panelContenido').hidden = false;
 
   /* Sin esperarlo: los comprobantes son una sección más del panel y no
@@ -702,6 +797,7 @@ async function montarPanel() {
   async function refrescarCupos() {
     const r = await api('/membresias', { silencioso: true });
     if (r) MEMBRESIAS = r.membresias || MEMBRESIAS;
+    guardarPagos(r);
     pintarPlan();
     pintarTabla();
   }
@@ -753,6 +849,17 @@ async function montarPanel() {
      lo que cuesta ANTES de cobrarlo: prorrateado por los días que
      queden, que casi siempre es bastante menos de lo que la gente
      espera. */
+  /* «Copiar» la referencia de un pago en espera. Si el navegador niega
+     el portapapeles no se dice nada: la referencia sigue a la vista. */
+  $('#panelPlan').addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-copiar]');
+    if (!btn) return;
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copiar);
+      btn.textContent = 'Copiada';
+    } catch (_) { /* sin portapapeles: caída silenciosa */ }
+  });
+
   $('#panelPlan').addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-ampliar]');
     if (!btn) return;
@@ -797,6 +904,15 @@ async function montarPanel() {
       });
       if (!r) throw new Error('No hay conexión con el servidor.');
       await refrescarCupos();
+
+      /* 202: la ampliación quedó pedida, no hecha. La membresía sigue
+         con los cupos que tenía y el pago aparece arriba, en «Pagos en
+         espera», con la referencia y los datos. Decir aquí que «pasó a
+         N cupos» era lo que hacía la fase 3 con un pago sin cobrar. */
+      if (r.pago && r.pago.estado === 'pendiente') {
+        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+        return;
+      }
       avisoPlan(`Su membresía ${m.plan_nombre} pasó a ${cupo} cupos.`, false);
     } catch (e) {
       avisoPlan(e.message);
