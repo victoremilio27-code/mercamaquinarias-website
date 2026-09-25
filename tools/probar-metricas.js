@@ -233,6 +233,84 @@ const contactosDe = (idAnuncio) => db.abrir()
   db.borrarAnuncio(idBeto, beto.org.id);
   comprobar(contactosDe(idBeto).length === 0, 'borrar el anuncio borra sus contactos');
 
+  /* ── 2 · guardados y compartir ───────────────────────────── */
+  console.log('\nGuardados por ids (MET-01)');
+
+  const idActivo = anuncio(ana, { modelo: '389' });
+  const idPausado = anuncio(ana, { modelo: '379' });
+  db.cambiarEstadoAnuncio(idPausado, ana.org.id, 'pausado');
+
+  const porIds = await pedir({ url: `/api/anuncios?ids=${idActivo},${idPausado},no-existe,${idActivo}` });
+  const vinieron = ((porIds.datos || {}).anuncios || []).map((a) => a.id);
+  comprobar(porIds.codigo === 200 && vinieron.length === 1 && vinieron[0] === idActivo,
+    `solo vuelve el activo; el pausado y el inventado no (${vinieron.length})`);
+
+  const inyeccion = await pedir({ url: `/api/anuncios?ids=${encodeURIComponent("';DROP TABLE anuncios;--")}` });
+  comprobar(inyeccion.codigo === 200 && ((inyeccion.datos || {}).anuncios || []).length === 0,
+    'un id con comillas se descarta y la respuesta es vacia, no el catalogo entero');
+  comprobar(!!db.anuncio(idActivo), 'y la tabla sigue ahi');
+
+  const vacia = await pedir({ url: '/api/anuncios?ids=' });
+  comprobar(((vacia.datos || {}).anuncios || []).length === 0 && (vacia.datos || {}).total === 0,
+    'ids vacio no devuelve el catalogo entero');
+
+  const muchos = Array.from({ length: 61 }, (_, i) => `x${i}`);
+  muchos[60] = idActivo;
+  const tope = await pedir({ url: `/api/anuncios?ids=${muchos.join(',')}` });
+  comprobar(((tope.datos || {}).anuncios || []).length === 0,
+    'mas de 60 ids se recortan: el 61 no se consulta');
+
+  const catalogo = await pedir({ url: '/api/anuncios' });
+  comprobar(((catalogo.datos || {}).anuncios || []).length >= 2,
+    'sin ids el catalogo sigue como siempre');
+
+  console.log('\nFavoritos y compartidos en el panel (MET-01, MET-02)');
+  const carla = cuenta('carla@ejemplo.test', 'Carla Vendedora');
+  const idCarla = anuncio(carla);
+  const antes = db.resumenOrganizacion(carla.org.id).totales;
+  comprobar(antes.favoritos === 0 && antes.compartidos === 0, 'sin eventos, cero y cero');
+
+  const favorito = await pedir({ metodo: 'POST', url: '/api/eventos', cuerpo: { anuncio: idCarla, tipo: 'favorito' } });
+  const compartir = await pedir({ metodo: 'POST', url: '/api/eventos', cuerpo: { anuncio: idCarla, tipo: 'compartir' } });
+  comprobar(favorito.codigo === 202 && compartir.codigo === 202, 'la ruta publica acepta favorito y compartir');
+
+  const despues = db.resumenOrganizacion(carla.org.id).totales;
+  comprobar(despues.favoritos === 1, `la tarjeta Guardados deja de decir 0 (${despues.favoritos})`);
+  comprobar(despues.compartidos === 1, `y el resumen cuenta lo compartido (${despues.compartidos})`);
+  const fila = db.anunciosDeOrganizacion(carla.org.id)[0];
+  comprobar(fila.favoritos === 1 && fila.compartidos === 1, 'tambien por anuncio');
+
+  console.log('\nLa tarjeta al compartir por WhatsApp (MET-02)');
+  const metadatos = require('./meta.js');
+  const idConFotos = anuncio(carla, {
+    fotos: [
+      { url: '/fotos/2026-09/grande.jpg', miniatura: '/fotos/2026-09/chica.jpg' },
+      { url: '/fotos/2026-09/otra.jpg', miniatura: '/fotos/2026-09/otra-chica.jpg' },
+      { url: '/fotos/2026-09/mas.jpg', miniatura: null },
+    ],
+  });
+  const tarjeta = metadatos.para('/equipo.html', new URLSearchParams({ id: idConFotos }));
+  comprobar(!!tarjeta && tarjeta.imagen.endsWith('/fotos/2026-09/chica.jpg'),
+    `la imagen es la miniatura de la primera foto (${tarjeta ? tarjeta.imagen : 'ninguna'})`);
+  comprobar(!!tarjeta && /Peterbilt|peterbilt/.test(tarjeta.titulo) && /RD\$/.test(tarjeta.titulo),
+    `el titulo lleva el equipo y el precio: ${tarjeta ? tarjeta.titulo : ''}`);
+  comprobar(!!tarjeta && /grande\.jpg$/.test(tarjeta.jsonld.image),
+    'los datos estructurados siguen con la foto completa');
+
+  const html = metadatos.aplicar(
+    fs.readFileSync(path.join(__dirname, '..', 'equipo.html'), 'utf8'), tarjeta);
+  comprobar(/<meta property="og:image" content="[^"]*chica\.jpg">/.test(html),
+    'el HTML servido lleva la miniatura en og:image');
+  comprobar(!/og:image:width/.test(html) && !/og:image:height/.test(html),
+    'y ya no declara 1200x630 para una foto que no mide eso');
+
+  const sinFotos = anuncio(carla, { fotos: [] });
+  const deMarca = metadatos.para('/equipo.html', new URLSearchParams({ id: sinFotos }));
+  const htmlMarca = metadatos.aplicar(
+    fs.readFileSync(path.join(__dirname, '..', 'equipo.html'), 'utf8'), deMarca);
+  comprobar(deMarca.imagen === metadatos.IMAGEN_MARCA && /og:image:width/.test(htmlMarca),
+    'sin fotos, la imagen de marca conserva sus medidas');
+
   console.log(`\n${bien} bien · ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
 })().catch((e) => {

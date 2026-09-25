@@ -74,6 +74,15 @@ function delAnuncio(id) {
     : pesos(a.precio, a.moneda);
 
   const donde = [a.municipio, a.provincia_nombre || a.provincia].filter(Boolean).join(', ');
+
+  /* La tarjeta lleva la miniatura, no la foto completa: ver
+     `fotoParaCompartir` en db.js. Solo si es una ruta del propio sitio,
+     por lo mismo que explica `imagenDe`. Los datos estructurados siguen
+     con la completa, que es la que quiere un buscador. */
+  const miniatura = db.fotoParaCompartir(id);
+  const imagenTarjeta = miniatura && miniatura.startsWith('/fotos/')
+    ? `${SITIO}${miniatura}`
+    : imagenDe(a.fotos);
   const uso = a.uso_valor ? `${Number(a.uso_valor).toLocaleString('en-US')} ${a.uso_unidad || 'h'}` : null;
 
   return {
@@ -83,7 +92,7 @@ function delAnuncio(id) {
         .filter(Boolean).join(' · '),
       a.descripcion,
     ].filter(Boolean).join('. '), 200),
-    imagen: imagenDe(a.fotos),
+    imagen: imagenTarjeta,
     url: `${SITIO}/equipo.html?id=${encodeURIComponent(id)}`,
     tipo: 'product',
     /* Datos estructurados, para que el buscador entienda que esto es un
@@ -164,6 +173,17 @@ function aplicar(html, meta) {
     [/<meta property="og:type" content="[^"]*">/i,
       `<meta property="og:type" content="${esc(meta.tipo)}">`],
   ];
+
+  /* Las páginas declaran 1200×630, que es la medida de la imagen de
+     marca. Con la foto de un equipo o el logotipo de un dealer esas
+     medidas mienten, y un rastreador que se las crea recorta o deforma
+     la tarjeta. Sin ellas, la descarga y la mide. */
+  if (meta.imagen !== IMAGEN_MARCA) {
+    reemplazos.push(
+      [/<meta property="og:image:width" content="[^"]*">\s*/i, ''],
+      [/<meta property="og:image:height" content="[^"]*">\s*/i, ''],
+    );
+  }
 
   let salida = html;
   for (const [patron, con] of reemplazos) salida = salida.replace(patron, con);

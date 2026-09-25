@@ -2778,6 +2778,19 @@ function anuncio(idAnuncio) {
   return conNombres(a);
 }
 
+/* La imagen de la tarjeta al compartir: la MINIATURA de la primera foto.
+
+   La completa mide hasta 1.600 px, y WhatsApp deja la vista previa sin
+   imagen cuando pesa demasiado —el límite práctico que se cita ronda los
+   300 KB—. La miniatura, a 900 px, cabe de sobra y sigue viéndose bien en
+   la tarjeta. */
+function fotoParaCompartir(idAnuncio) {
+  const f = abrir().prepare(
+    'SELECT COALESCE(miniatura, url) AS ruta FROM anuncio_fotos WHERE anuncio_id = ? ORDER BY orden LIMIT 1')
+    .get(idAnuncio);
+  return f ? f.ruta : null;
+}
+
 /* ── Catálogo público ───────────────────────────────────── */
 
 /* Órdenes admitidos. La cláusula va escrita aquí y se elige por clave:
@@ -2846,6 +2859,14 @@ function filtrosCatalogo(f = {}) {
   }
 
   if (f.soloDestacados) donde.push('a.destacado_hasta IS NOT NULL AND a.destacado_hasta > :ahora');
+
+  /* Los guardados del comprador (MET-01): una lista de ids que vive en
+     su navegador. Cada id va como parámetro con nombre propio; la API ya
+     los validó y los recortó, pero aquí tampoco se interpola ninguno. */
+  if (Array.isArray(f.ids) && f.ids.length) {
+    donde.push(`a.id IN (${f.ids.map((_, i) => `:id${i}`).join(', ')})`);
+    f.ids.forEach((valor, i) => { p[`id${i}`] = String(valor); });
+  }
 
   // Búsqueda por texto sobre los campos que el comprador escribe de
   // memoria: marca, modelo, tipo y dónde está. Cada palabra debe
@@ -2968,7 +2989,8 @@ function anunciosDeOrganizacion(idOrg) {
            COALESCE(SUM(m.vistas), 0)         AS vistas,
            COALESCE(SUM(m.clics_telefono), 0) AS telefono,
            COALESCE(SUM(m.clics_whatsapp), 0) AS whatsapp,
-           COALESCE(SUM(m.favoritos), 0)      AS favoritos
+           COALESCE(SUM(m.favoritos), 0)      AS favoritos,
+           COALESCE(SUM(m.compartidos), 0)    AS compartidos
     FROM anuncios a
     LEFT JOIN metricas_diarias m ON m.anuncio_id = a.id
     WHERE a.organizacion_id = ?
@@ -3376,7 +3398,8 @@ function resumenOrganizacion(idOrg, dias = 30) {
     SELECT COALESCE(SUM(m.vistas), 0) AS vistas,
            COALESCE(SUM(m.clics_telefono), 0) AS telefono,
            COALESCE(SUM(m.clics_whatsapp), 0) AS whatsapp,
-           COALESCE(SUM(m.favoritos), 0) AS favoritos
+           COALESCE(SUM(m.favoritos), 0) AS favoritos,
+           COALESCE(SUM(m.compartidos), 0) AS compartidos
     FROM metricas_diarias m
     JOIN anuncios a ON a.id = m.anuncio_id
     WHERE a.organizacion_id = ? AND m.dia >= ?`).get(idOrg, desdeDia);
@@ -3777,5 +3800,5 @@ module.exports = {
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   anotarEvento, resumenOrganizacion,
   /* Alcance y métricas del vendedor (fase 10). */
-  registrarContacto, contactosDeOrganizacion,
+  registrarContacto, contactosDeOrganizacion, fotoParaCompartir,
 };

@@ -2570,6 +2570,22 @@ function catalogo(req, res, ctx, consulta) {
   const q = consulta || new URLSearchParams();
   const v = (clave) => q.get(clave) || undefined;
 
+  /* `?ids=a,b,c`: los guardados del comprador, que viven en su
+     navegador. Se validan uno a uno, sin repetidos y con tope: la lista
+     llega de fuera y un id raro no debe llegar nunca a la consulta. Si se
+     pidió por ids y no queda ninguno válido, la respuesta es vacía; caer
+     al catálogo entero enseñaría como «guardados» equipos que nadie
+     guardó. */
+  let ids;
+  if (q.has('ids')) {
+    ids = [...new Set(String(q.get('ids')).split(','))]
+      .filter((x) => PATRON_ID_GUARDADO.test(x))
+      .slice(0, MAXIMO_IDS);
+    if (!ids.length) {
+      return responder(res, 200, { anuncios: [], total: 0, pagina: 1, paginas: 1, porPagina: MAXIMO_IDS });
+    }
+  }
+
   const resultado = db.buscarAnuncios({
     q: texto(v('q'), 80),
     categoria: v('categoria'),
@@ -2584,12 +2600,19 @@ function catalogo(req, res, ctx, consulta) {
     horasMax: v('horasMax'),
     soloDestacados: v('destacados') === '1',
     orden: v('orden'),
-    pagina: v('pagina'),
-    porPagina: v('porPagina'),
+    pagina: ids ? 1 : v('pagina'),
+    porPagina: ids ? MAXIMO_IDS : v('porPagina'),
+    ids,
   });
 
   return responder(res, 200, resultado);
 }
+
+/* Cuántos guardados se piden de una vez. Coincide con el máximo de
+   página del catálogo (POR_PAGINA_MAX en db.js): más ids que eso se
+   cortarían en silencio en la segunda página. */
+const MAXIMO_IDS = 60;
+const PATRON_ID_GUARDADO = /^[\w-]{1,64}$/;
 
 /* Cifras públicas de la portada. Salen de la base en cada petición:
    ninguna cuenta del sitio está escrita a mano. */
