@@ -86,6 +86,8 @@ jobs:
         run: npm run facturas:probar
       - name: Pagos
         run: npm run pagos:probar
+      - name: Transferencia
+        run: npm run transferencia:probar
       - name: Asistente
         run: npm run chat:probar
 
