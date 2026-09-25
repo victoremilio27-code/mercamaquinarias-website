@@ -84,10 +84,14 @@ jobs:
         run: npm run bitacora:probar
       - name: Contactos verificados
         run: npm run contactos:probar
+      - name: Catalogo
+        run: npm run catalogo:probar
       - name: Facturas y NCF
         run: npm run facturas:probar
       - name: Pagos
         run: npm run pagos:probar
+      - name: Transferencia
+        run: npm run transferencia:probar
       - name: Asistente
         run: npm run chat:probar
 

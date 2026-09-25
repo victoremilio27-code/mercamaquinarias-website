@@ -117,6 +117,7 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     moneda: 'DOP',
     modalidadPrecio: 'ofertas',
     vence: db.sumarDias(30),
+    serie: 'PB567-19-XK4410',
     fotos: ['/fotos/2026-09/a.jpg', '/fotos/2026-09/b.jpg', '/fotos/2026-09/c.jpg'],
     telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos', nota: null }],
   });
@@ -144,6 +145,42 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
      enteraria hasta que un dealer preguntara por su suelo de venta. */
   comprobar(db.anuncio(idAnuncio).precio_minimo === 3900000,
     'pero en la base sigue guardado, para el dueno');
+
+  /* ── 1b · el numero de serie tampoco ────────────────────── */
+  /* publicar.html promete que la serie solo la ve el personal, y esta
+     ruta la entregaba a cualquiera: la consulta es un SELECT a.*. Con
+     la serie se van la nota de su revision y quien la reviso. */
+  console.log('\nEl numero de serie del vendedor');
+  comprobar(llego && a.serie === undefined, 'el numero de serie NO sale sin sesion');
+  comprobar(llego && a.serie_nota === undefined && a.serie_revisada_por === undefined
+    && a.serie_revision === undefined, 'ni la nota, ni quien la reviso, ni el resultado en crudo');
+  comprobar(llego && a.serie_cotejada === false, 'solo un booleano: serie_cotejada, hoy en falso');
+
+  const { idUsuario: idCurioso } = db.crearCuenta({
+    correo: 'curioso@ejemplo.test',
+    clave: 'UnaClaveLargaYSegura9',
+    nombre: 'Otra cuenta',
+    telefono: '8095554321',
+    tipo: 'particular',
+  });
+  const ajena = await pedir({ url: `/api/anuncios/${idAnuncio}`,
+    cabeceras: { cookie: `te_sesion=${db.abrirSesion(idCurioso)}` } });
+  comprobar(ajena.codigo === 200 && ajena.datos.anuncio.serie === undefined,
+    'otra cuenta con sesion tampoco la ve');
+  const suya = await pedir({ url: `/api/anuncios/${idAnuncio}`,
+    cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}` } });
+  comprobar(suya.codigo === 200 && suya.datos.anuncio.serie === 'PB567-19-XK4410',
+    'el dueno si ve su serie');
+
+  db.anotarRevisionSerie(idAnuncio, { resultado: 'conforme', nombreAdmin: 'Personal de prueba' });
+  const cotejada = ((await pedir({ url: `/api/anuncios/${idAnuncio}` })).datos || {}).anuncio || {};
+  comprobar(cotejada.serie_cotejada === true && cotejada.serie === undefined
+    && cotejada.serie_revisada_por === undefined,
+    'cotejada: la ficha dice serie_cotejada y sigue sin la serie ni el nombre del empleado');
+  const suyaCotejada = ((await pedir({ url: `/api/anuncios/${idAnuncio}`,
+    cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}` } })).datos || {}).anuncio || {};
+  comprobar(suyaCotejada.serie_cotejada === true && suyaCotejada.serie_revisada_por === undefined,
+    'ni siquiera al dueno le llega el nombre del empleado que la reviso');
 
   /* ── 2 · un aviso de contacto por persona y dia ──────────── */
   console.log('\nEl aviso de contacto al vendedor');

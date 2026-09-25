@@ -131,13 +131,13 @@ huérfanos y sin duplicados.
 | PAGO-06 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`, unidades del importe |
 | PAGO-07 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`; `facturas.emitirPorPago` ya es idempotente |
 | PAGO-08 | Phase 6 — CardNet construido y apagado | Pendiente | Patrón ya validado con Brevo y Anthropic |
-| PAGO-09 | Phase 5 — Cobro por transferencia bancaria | Pendiente | Contingencia propuesta en `cardnet.md` para no depender de la afiliación |
+| PAGO-09 | Phase 5 — Cobro por transferencia bancaria | Completo (2026-09-25) | Contingencia propuesta en `cardnet.md` para no depender de la afiliación |
 | ADMIN-01 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | `codebase/CONCERNS.md` — rutas sin pantalla |
 | ADMIN-02 | Phase 7 — Verificación y soporte al dealer | Pendiente | `codebase/CONCERNS.md` — solo por línea de comandos hoy |
 | ADMIN-03 | Phase 7 — Verificación y soporte al dealer | Pendiente | `research/mercado.md`, huecos priorizados; cumple CONF-01 |
 | ADMIN-04 | Phase 7 — Verificación y soporte al dealer | Pendiente | Petición de Victor del 2026-09-25 |
 | ADMIN-05 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | Decisión de Victor del 2026-09-25 sobre el registro |
-| ADMIN-06 | Phase 5 — Cobro por transferencia bancaria | Pendiente | Contingencia propuesta en `cardnet.md`; soporta PAGO-09 |
+| ADMIN-06 | Phase 5 — Cobro por transferencia bancaria | Completo (2026-09-25) | Contingencia propuesta en `cardnet.md`; soporta PAGO-09 |
 | CAT-01 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, verificado en `tools/db.js` |
 | CAT-02 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, huecos priorizados |
 | CAT-03 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, huecos priorizados |

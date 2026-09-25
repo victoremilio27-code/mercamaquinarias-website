@@ -28,11 +28,13 @@
     "chat:probar": "node tools/prueba-chat.js",
     "facturas:probar": "node tools/probar-facturas.js",
     "pagos:probar": "node tools/probar-pagos.js",
+    "transferencia:probar": "node tools/probar-transferencia.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
     "bitacora:probar": "node tools/probar-bitacora.js",
     "contactos:probar": "node tools/probar-contactos.js",
+    "catalogo:probar": "node tools/probar-catalogo.js",
     "db:flota": "node tools/seed.js --solo-flota",
     "taxonomia": "node tools/verificar-taxonomia.js"
   },

@@ -389,6 +389,109 @@ function publicarEquipos(idOrg, idUsuario, cuantos) {
   });
   comprobar(intento.codigo === 404, 'y no puede borrar un bloque ajeno');
 
+  /* ── El personal, en nombre del dealer (fase 7, ADMIN-04) ─ */
+  /* Soporte arregla la página por el dealer: con las mismas reglas que
+     él, cada escritura en la bitácora, y sin tocar si está publicada o
+     en borrador, que es decisión de la empresa. */
+  console.log('\nEdicion en nombre del dealer');
+  const sesionAdmin = { cookie: `te_sesion=${db.abrirSesion(admin.idUsuario)}`, 'cf-connecting-ip': '201.9.9.9' };
+  const base = `/api/admin/organizaciones/${org.id}/pagina`;
+  const filasPagina = () => db.abrir()
+    .prepare("SELECT COUNT(*) AS n FROM bitacora_admin WHERE accion = 'pagina.editar'").get().n;
+  const ultimaFila = () => db.bitacora({ organizacion: org.id, limite: 1 })[0];
+
+  let r = await pedir({ url: base, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 200 && r.datos.organizacion.id === org.id && r.datos.pagina.id === org.id
+    && (r.datos.reglas || []).length === 6, 'el personal abre la pagina del dealer, con sus seis reglas');
+  comprobar(!JSON.stringify(r.datos).includes('131111111'), 'sin el RNC de la empresa');
+
+  let n = filasPagina();
+  const descSoporte = 'Distribuidor de maquinaria pesada con taller propio en Santo Domingo. '
+    + 'Repuestos originales, garantia escrita y entrega en todo el pais.';
+  r = await pedir({ metodo: 'PATCH', url: base, cabeceras: sesionAdmin,
+    cuerpo: { descripcion: descSoporte, motivo: 'Correo del dealer: corregir la descripcion' } });
+  comprobar(r.codigo === 200 && filasPagina() === n + 1, 'editar la descripcion responde 200 y deja una fila');
+  const fila = ultimaFila();
+  comprobar(fila.accion === 'pagina.editar' && fila.admin_id === admin.idUsuario && fila.ip === '201.9.9.9'
+    && fila.motivo === 'Correo del dealer: corregir la descripcion', 'con quien, desde donde y el motivo');
+  comprobar(/^Distribuidor de maquinaria pesada con taller propio y/.test(fila.antes.descripcion || '')
+    && fila.despues.descripcion === descSoporte, 'y la descripcion antes y despues');
+
+  const vista = (await pedir({ url: '/api/mi-pagina', cabeceras: sesionDealer })).datos;
+  comprobar(vista.pagina.descripcion === descSoporte, 'el dealer ve el cambio en su propio editor');
+  comprobar(vista.pagina.estado_pagina === 'publicada', 'su pagina sigue publicada');
+  comprobar(!!vista.editadaPorSoporte, 'y el editor sabe que la toco el personal');
+  comprobar(!JSON.stringify(vista).includes('admin@ejemplo.test'), 'sin decirle quien de dentro');
+  const enVivo = await pedir({ url: `/api/dealers/${org.slug}` });
+  comprobar(enVivo.datos.dealer.descripcion === descSoporte, 'publicada: el arreglo se ve al momento');
+
+  n = filasPagina();
+  r = await pedir({ metodo: 'PATCH', url: base, cuerpo: { web: 'sin-protocolo.com' }, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 400 && filasPagina() === n, 'la misma validacion que el dealer: web mala, 400 y sin fila');
+  r = await pedir({ metodo: 'PATCH', url: base, cuerpo: { logo: 'https://otro-sitio.example/logo.png' }, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 400 && filasPagina() === n, 'y un logotipo de fuera, 400 y sin fila');
+  r = await pedir({ metodo: 'PATCH', url: `${base}/secciones/no-existe`, cuerpo: { titulo: 'x' }, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 404 && filasPagina() === n, 'un bloque que no existe: 404 y sin fila');
+
+  r = await pedir({ metodo: 'POST', url: `${base}/secciones`, cabeceras: sesionAdmin,
+    cuerpo: { tipo: 'texto', titulo: 'Horario', cuerpo: { texto: 'Lunes a viernes' } } });
+  const idS = r.datos && r.datos.id;
+  comprobar(r.codigo === 201 && !!idS && filasPagina() === n + 1, 'crea un bloque: 201 y una fila');
+  const orden = r.datos.secciones.map((s) => s.id).reverse();
+  r = await pedir({ metodo: 'PATCH', url: `${base}/secciones/orden`, cuerpo: { ids: orden }, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 200 && r.datos.secciones[0].id === orden[0] && filasPagina() === n + 2,
+    'reordena dentro de la bitacora (SAVEPOINT, no BEGIN): 200 y una fila');
+  r = await pedir({ metodo: 'PATCH', url: `${base}/secciones/${idS}`, cuerpo: { titulo: 'Horario de atencion' }, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 200 && filasPagina() === n + 3 && ultimaFila().despues.titulo === 'Horario de atencion',
+    'edita el bloque y anota el titulo nuevo');
+  r = await pedir({ metodo: 'DELETE', url: `${base}/secciones/${idS}`, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 200 && r.datos.secciones.length === 2 && filasPagina() === n + 4, 'y lo quita');
+
+  r = await pedir({ metodo: 'POST', url: `${base}/galeria`, cuerpo: { url: '/fotos/2026-09/taller.jpg' }, cabeceras: sesionAdmin });
+  const idFoto = r.datos && r.datos.galeria && r.datos.galeria[0] && r.datos.galeria[0].id;
+  comprobar(r.codigo === 201 && !!idFoto && filasPagina() === n + 5, 'añade una foto a la galeria');
+  r = await pedir({ metodo: 'DELETE', url: `${base}/galeria/${idFoto}`, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 200 && r.datos.galeria.length === 0 && filasPagina() === n + 6, 'y la quita');
+  r = await pedir({ metodo: 'PUT', url: `${base}/enlaces`, cabeceras: sesionAdmin,
+    cuerpo: { enlaces: [{ tipo: 'facebook', valor: 'https://facebook.com/maquinariasdeprueba' }] } });
+  comprobar(r.codigo === 200 && r.datos.enlaces.length === 1 && filasPagina() === n + 7
+    && ultimaFila().antes.enlaces.length === 2, 'guarda las redes, con las dos de antes en la fila');
+
+  console.log('\nEl personal no publica ni despublica por el dealer');
+  for (const accion of ['publicar', 'despublicar']) {
+    r = await pedir({ metodo: 'POST', url: `${base}/${accion}`, cabeceras: sesionAdmin });
+    comprobar(!(r.codigo >= 200 && r.codigo < 300), `POST .../pagina/${accion} no existe (fue ${r.codigo})`);
+  }
+  comprobar(db.paginaDe(org.id).estado_pagina === 'publicada', 'y la pagina sigue como estaba');
+
+  await pedir({ metodo: 'POST', url: '/api/mi-pagina/despublicar', cabeceras: sesionDealer });
+  r = await pedir({ metodo: 'PATCH', url: base, cuerpo: { lema: 'Taller propio desde 2015' }, cabeceras: sesionAdmin });
+  const enBorrador = (await pedir({ url: '/api/mi-pagina', cabeceras: sesionDealer })).datos;
+  comprobar(r.codigo === 200 && enBorrador.pagina.lema === 'Taller propio desde 2015'
+    && enBorrador.pagina.estado_pagina === 'borrador', 'en borrador: el dealer ve el arreglo y sigue en borrador');
+  comprobar((await pedir({ url: `/api/dealers/${org.slug}` })).codigo === 404, 'y fuera no se ve');
+  r = await pedir({ metodo: 'POST', url: '/api/mi-pagina/publicar', cabeceras: sesionDealer });
+  comprobar(r.codigo === 200, 'la vuelve a publicar el dealer, no el personal');
+
+  console.log('\nQuien no es del personal');
+  n = filasPagina();
+  r = await pedir({ url: base, cabeceras: sesionParticular });
+  comprobar(r.codigo === 404, 'un usuario normal no la abre (404)');
+  r = await pedir({ metodo: 'PATCH', url: base, cuerpo: { lema: 'hackeado' }, cabeceras: sesionAjena });
+  comprobar(r.codigo === 404 && filasPagina() === n, 'otro dealer no la edita (404) y no queda fila');
+  r = await pedir({ metodo: 'PATCH', url: base, cuerpo: { lema: 'hackeado' } });
+  comprobar((r.codigo === 401 || r.codigo === 404) && filasPagina() === n, 'sin sesion tampoco');
+  const orgParticular = db.organizacionDe(particular.idUsuario);
+  r = await pedir({ url: `/api/admin/organizaciones/${orgParticular.id}/pagina`, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 404, 'una cuenta particular no tiene pagina que editar (404)');
+  r = await pedir({ metodo: 'PATCH', url: `/api/admin/organizaciones/${orgParticular.id}/pagina`,
+    cuerpo: { lema: 'x' }, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 404 && filasPagina() === n, 'ni se escribe en ella, y sin fila');
+  r = await pedir({ metodo: 'PATCH', url: '/api/admin/organizaciones/no-existe/pagina',
+    cuerpo: { lema: 'x' }, cabeceras: sesionAdmin });
+  comprobar(r.codigo === 404 && filasPagina() === n, 'una empresa inexistente: 404 y sin fila');
+  comprobar(db.paginaDe(org.id).lema === 'Taller propio desde 2015', 'el lema no lo cambio nadie de fuera');
+
   /* ── Cuando vence el plan ────────────────────────────────── */
   console.log('\nCuando vence el plan');
   db.abrir().prepare("UPDATE suscripciones SET estado = 'vencida' WHERE organizacion_id = ?").run(org.id);

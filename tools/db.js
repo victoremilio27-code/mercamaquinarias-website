@@ -13,6 +13,7 @@ const { DatabaseSync } = require('node:sqlite');
 const crypto = require('node:crypto');
 const fs = require('fs');
 const taxonomia = require('../assets/taxonomia.js');
+const precios = require('../assets/precios.js');
 const path = require('path');
 
 const RAIZ = path.resolve(__dirname, '..');
@@ -909,6 +910,42 @@ const MIGRACIONES = [
     'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
   ]],
 
+  /* La revisión del número de serie (ADMIN-03, CONF-01).
+     `publicar.html` prometía que la serie era «solo visible para el
+     equipo de verificación», y nadie la leía: se guardaba y ya. Ahora el
+     personal la coteja y el resultado se guarda aquí.
+
+       · serie_revision     — 'conforme' u 'observada'; NULL = pendiente.
+       · serie_revisada     — cuándo.
+       · serie_revisada_por — nombre del empleado, COPIADO: si mañana se
+                              borra su cuenta, el anuncio sigue diciendo
+                              quién lo revisó (como la bitácora).
+       · serie_nota         — qué no cuadra; es lo que lee el vendedor.
+
+     Sin UPDATE: todo lo que ya hay en producción queda pendiente, que es
+     la verdad. */
+  ['2026-09-serie-revision', [
+    'ALTER TABLE anuncios ADD COLUMN serie_revision TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_revisada TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_revisada_por TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_nota TEXT',
+  ]],
+
+  /* Si la máquina ya está en el país o es bajo pedido (CAT-02). Es lo
+     primero que pregunta el comprador dominicano y no estaba en ninguna
+     ficha: una excavadora que hay que importar cambia plazo y costo.
+
+     Los anuncios que ya existen quedan «en el país» y no es suponer:
+     todos se publicaron con «Provincia donde se encuentra» obligatoria,
+     así que el sitio ya afirmaba que estaban aquí. El CHECK va en la
+     columna porque es de dos valores fijos y la API los filtra igual;
+     SQLite lo comprueba contra las filas existentes, que toman el valor
+     por defecto. */
+  ['2026-09-anuncios-disponibilidad', [
+    `ALTER TABLE anuncios ADD COLUMN disponibilidad TEXT NOT NULL DEFAULT 'en-pais'
+       CHECK (disponibilidad IN ('en-pais', 'bajo-pedido'))`,
+  ]],
+
   /* Contactos verificados (fase 9, CONF-03). Un teléfono que no se ha
      verificado no se enseña en ningún anuncio. Hasta ahora la ficha
      pintaba cualquier número que alguien escribiera al publicar, y un
@@ -1765,7 +1802,12 @@ const borrarFlota = (idFlota) =>
    una petición manipulada no puede sembrar filas arbitrarias en la
    tabla, y quien lea el código sabe de un vistazo qué es configurable
    y qué no. */
-const AJUSTES = ['heroe_imagen', 'heroe_alt'];
+const AJUSTES = [
+  'heroe_imagen', 'heroe_alt',
+  // RD$ por US$ con que el catálogo compara precios de monedas
+  // distintas. Solo compara: ningún precio publicado cambia con ella.
+  'tasa_usd',
+];
 
 const ajustes = () => {
   const filas = abrir().prepare('SELECT clave, valor FROM ajustes').all();
@@ -1789,6 +1831,20 @@ function guardarAjuste(clave, valor) {
      ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor, actualizado = excluded.actualizado`)
     .run(clave, String(valor), ahora());
   return String(valor);
+}
+
+/* Tasa de referencia del dólar para comparar precios del catálogo, y
+   de dónde sale. Manda la que fije el equipo en /admin.html; si no hay,
+   la del entorno (MERCA_TASA_USD); si tampoco, la de partida de
+   assets/precios.js. Un valor guardado fuera de rango se ignora en vez
+   de reordenar el catálogo con un cero de más. */
+function tasaUsd() {
+  const fila = abrir().prepare("SELECT valor, actualizado FROM ajustes WHERE clave = 'tasa_usd'").get();
+  const fijada = fila && precios.tasaValida(fila.valor);
+  if (fijada) return { tasa: fijada, fuente: 'ajuste', actualizado: fila.actualizado };
+  const entorno = precios.tasaValida(process.env.MERCA_TASA_USD);
+  if (entorno) return { tasa: entorno, fuente: 'entorno', actualizado: null };
+  return { tasa: precios.TASA_USD_POR_DEFECTO, fuente: 'defecto', actualizado: null };
 }
 
 /* ── Fotografías del catálogo para la portada ───────────────
@@ -2025,6 +2081,10 @@ function marcarAdmin(correo, esAdmin = true) {
 const ACCIONES_BITACORA = Object.freeze({
   'organizacion.verificar': 'Sello de verificada',
   'dealer.resolver': 'Alta de dealer aprobada o rechazada',
+  'anuncio.serie': 'Número de serie revisado',
+  'pagina.editar': 'Página del dealer editada en su nombre',
+  'pago.transferencia_recibida': 'Transferencia marcada como recibida',
+  'pago.transferencia_anulada': 'Transferencia anulada sin cobro',
 });
 
 const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { codigo });
@@ -2119,6 +2179,16 @@ function bitacora({ organizacion, limite = 200 } = {}) {
 
 /* Alimenta el filtro de la consola: cada organización una vez, con el
    nombre de su anotación más reciente (si se renombró, sale el último). */
+/* Cuándo fue la última anotación de una acción sobre una organización.
+   Solo la fecha: el editor del dealer dice «el equipo de
+   MercaMaquinarias editó su página el …» sin nombrar al empleado. */
+const ultimaAnotacion = (idOrg, accion) => {
+  const f = abrir().prepare(`SELECT creada FROM bitacora_admin
+                              WHERE organizacion_id = ? AND accion = ?
+                              ORDER BY id DESC LIMIT 1`).get(idOrg, accion);
+  return f ? f.creada : null;
+};
+
 const organizacionesEnBitacora = () =>
   abrir().prepare(`
     SELECT b.organizacion_id AS id,
@@ -2307,17 +2377,23 @@ const borrarSeccion = (idSeccion, idOrg) => abrir()
   .run(idSeccion, idOrg).changes > 0;
 
 /* Reordena en una transacción: a mitad de camino la página tendría dos
-   bloques con el mismo número y se pintaría en un orden arbitrario. */
+   bloques con el mismo número y se pintaría en un orden arbitrario.
+
+   SAVEPOINT y no BEGIN: cuando el personal reordena en nombre del dealer
+   esto corre DENTRO del SAVEPOINT de enNombreDe, y un BEGIN anidado lanza
+   «cannot start a transaction within a transaction». Suelto, un
+   SAVEPOINT abre su propia transacción y RELEASE la confirma. */
 function ordenarSecciones(idOrg, ids) {
   const d = abrir();
-  d.exec('BEGIN');
+  d.exec('SAVEPOINT ordenar_secciones');
   try {
     const mover = d.prepare(
       'UPDATE organizacion_secciones SET orden = ? WHERE id = ? AND organizacion_id = ?');
     ids.forEach((idSeccion, i) => mover.run(i, idSeccion, idOrg));
-    d.exec('COMMIT');
+    d.exec('RELEASE ordenar_secciones');
   } catch (e) {
-    d.exec('ROLLBACK');
+    d.exec('ROLLBACK TO ordenar_secciones');
+    d.exec('RELEASE ordenar_secciones');
     throw e;
   }
   return seccionesDe(idOrg);
@@ -2341,18 +2417,21 @@ const quitarDeGaleria = (idFoto, idOrg) => abrir()
   .run(idFoto, idOrg).changes > 0;
 
 /* Los enlaces se reemplazan enteros: son cinco o seis y el editor los
-   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra. */
+   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra.
+   SAVEPOINT por lo mismo que ordenarSecciones: tiene que poder ir dentro
+   de enNombreDe. */
 function guardarEnlaces(idOrg, lista) {
   const d = abrir();
-  d.exec('BEGIN');
+  d.exec('SAVEPOINT guardar_enlaces');
   try {
     d.prepare('DELETE FROM organizacion_enlaces WHERE organizacion_id = ?').run(idOrg);
     const meter = d.prepare(
       'INSERT INTO organizacion_enlaces (id, organizacion_id, tipo, valor, orden) VALUES (?, ?, ?, ?, ?)');
     lista.forEach((e, i) => meter.run(id(), idOrg, e.tipo, e.valor, i));
-    d.exec('COMMIT');
+    d.exec('RELEASE guardar_enlaces');
   } catch (e) {
-    d.exec('ROLLBACK');
+    d.exec('ROLLBACK TO guardar_enlaces');
+    d.exec('RELEASE guardar_enlaces');
     throw e;
   }
   return enlacesDe(idOrg);
@@ -2390,6 +2469,128 @@ const despublicarPagina = (idOrg) => abrir()
 const marcarVerificada = (idOrg, valor) => abrir()
   .prepare('UPDATE organizaciones SET verificada = ?, actualizada = ? WHERE id = ?')
   .run(valor ? 1 : 0, ahora(), idOrg).changes > 0;
+
+/* La fila entera, para las rutas de administración que actúan sobre una
+   organización concreta. Lleva el RNC: NO se devuelve tal cual a nadie. */
+const organizacionPorId = (idOrg) =>
+  abrir().prepare('SELECT * FROM organizaciones WHERE id = ?').get(idOrg);
+
+/* El directorio de empresas de la consola (ADMIN-02).
+ *
+ * Antes el sello solo se podía tocar desde la pestaña «Aprobadas» de la
+ * cola de solicitudes: una empresa sin solicitud (dada de alta por línea
+ * de comandos) o perdida entre muchas era, en la práctica, inalcanzable.
+ *
+ * Como `dealersPublicos`, no selecciona `rnc` ni el correo de la cuenta:
+ * el directorio no los necesita, y lo que no viaja no se escapa. */
+const ESTADOS_REVISION_ADMIN = ['aprobada', 'pendiente', 'rechazada'];
+
+function organizacionesAdmin({ estado, q } = {}) {
+  const donde = ["o.tipo = 'dealer'"];
+  const args = [];
+  if (ESTADOS_REVISION_ADMIN.includes(estado)) {
+    donde.push('o.estado_revision = ?');
+    args.push(estado);
+  }
+  const buscado = String(q || '').trim().slice(0, 80);
+  if (buscado) {
+    // Un «%» o un «_» escritos en el buscador son letras, no comodines.
+    // LIKE ya ignora mayúsculas en ASCII; las tildes cuentan.
+    donde.push("o.nombre LIKE ? ESCAPE '\\'");
+    args.push(`%${buscado.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  }
+
+  return abrir().prepare(`
+    SELECT o.id, o.nombre, o.slug, o.verificada, o.estado_revision, o.estado_pagina,
+           o.perfil_publico, o.creada,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND a.estado = 'activo') AS activos,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND TRIM(COALESCE(a.serie, '')) <> ''
+               AND a.estado <> 'borrador' AND a.serie_revision IS NULL) AS series_pendientes
+      FROM organizaciones o
+     WHERE ${donde.join(' AND ')}
+     ORDER BY o.nombre COLLATE NOCASE
+     LIMIT 500`).all(...args)
+    .map((o) => ({ ...o, verificada: !!o.verificada, perfil_publico: !!o.perfil_publico }));
+}
+
+/* ── Revisión del número de serie (ADMIN-03) ───────────────
+ *
+ * La diligencia que se hace, y la única que se promete en publicar.html:
+ * que el número coincide con la placa que se vea en las fotos, que no se
+ * repite en otro anuncio del sitio y que tiene una forma plausible. No
+ * hay un registro dominicano de maquinaria robada contra el que cotejar,
+ * así que no se dice que se coteja contra ninguno. */
+
+/* «CAT 0320-X», «cat0320x» y «CAT.0320/X» son la misma placa escrita por
+   tres personas distintas. Comparar en crudo no vería el duplicado. */
+const normalizarSerie = (s) => String(s || '').toUpperCase().replace(/[\s\-./\\_]/g, '');
+
+const RESULTADOS_SERIE = ['conforme', 'observada'];
+
+function seriesParaRevisar({ estado } = {}) {
+  const d = abrir();
+  /* Los borradores no: nadie los ve y su dueño todavía puede cambiarlos.
+     Los vendidos y retirados sí, porque una serie que reaparece en otro
+     anuncio después de venderse es justo lo que hay que mirar. */
+  const todas = d.prepare(`
+    SELECT a.id, a.marca, a.modelo, a.anio, a.categoria, a.subcategoria, a.estado, a.publicado,
+           a.serie, a.serie_revision, a.serie_revisada, a.serie_revisada_por, a.serie_nota,
+           a.organizacion_id, o.nombre AS empresa
+      FROM anuncios a JOIN organizaciones o ON o.id = a.organizacion_id
+     WHERE TRIM(COALESCE(a.serie, '')) <> '' AND a.estado <> 'borrador'`).all();
+
+  const veces = new Map();
+  /* Una «serie» hecha solo de separadores («--», «/») normaliza a vacío:
+     no es una placa, y contarla dejaría «repetidas» a todas las demás
+     que alguien rellenó igual de mal. */
+  const repetidosDe = (serie) => {
+    const k = normalizarSerie(serie);
+    return k ? veces.get(k) - 1 : 0;
+  };
+  todas.forEach((a) => {
+    const k = normalizarSerie(a.serie);
+    if (k) veces.set(k, (veces.get(k) || 0) + 1);
+  });
+
+  const quiere = estado === 'pendiente' ? (a) => !a.serie_revision
+    : RESULTADOS_SERIE.includes(estado) ? (a) => a.serie_revision === estado
+      : () => true;
+
+  const fotos = d.prepare(`SELECT url, COALESCE(miniatura, url) AS miniatura
+                             FROM anuncio_fotos WHERE anuncio_id = ? ORDER BY orden LIMIT 4`);
+
+  return todas.filter(quiere)
+    .sort((x, y) => (!!x.serie_revision - !!y.serie_revision)
+      || String(y.publicado || '').localeCompare(String(x.publicado || '')))
+    .slice(0, 300)
+    .map((a) => conNombres({
+      ...a,
+      // Cuántos OTROS anuncios llevan la misma placa.
+      repetidos: repetidosDe(a.serie),
+      fotos: fotos.all(a.id),
+    }));
+}
+
+const anuncioSerie = (idAnuncio) => abrir().prepare(`
+  SELECT id, organizacion_id, serie, serie_revision, serie_nota
+    FROM anuncios WHERE id = ?`).get(idAnuncio);
+
+/* `pendiente` deshace: vuelve a NULL las cuatro columnas, para que el
+   anuncio no siga diciendo quién lo revisó cuando ya no está revisado. */
+function anotarRevisionSerie(idAnuncio, { resultado, nota, nombreAdmin }) {
+  const revisado = RESULTADOS_SERIE.includes(resultado);
+  return abrir().prepare(`
+    UPDATE anuncios
+       SET serie_revision = ?, serie_revisada = ?, serie_revisada_por = ?, serie_nota = ?
+     WHERE id = ?`)
+    .run(revisado ? resultado : null,
+      revisado ? ahora() : null,
+      revisado ? (nombreAdmin || null) : null,
+      revisado ? (nota || null) : null,
+      idAnuncio).changes > 0;
+}
 
 function apagarPerfilesSinPlan() {
   const d = abrir();
@@ -2670,19 +2871,26 @@ function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
    dos veces y el intento de aprobar un pago ya rechazado.
 
    No emite comprobante: eso lo hace `tools/pagos.js`, que es quien
-   conoce `facturas` y quien la llama. Las rutas no la llaman directo. */
+   conoce `facturas` y quien la llama. Las rutas no la llaman directo.
+
+   Va con SAVEPOINT y no con BEGIN porque tiene que poder ir dentro de
+   `enNombreDe` (que ya abrió el suyo): marcar una transferencia como
+   recibida desde la consola deja cupos y anotación en la misma
+   transacción, y con BEGIN fallaba siempre, porque un BEGIN anidado
+   lanza en SQLite. Suelta, fuera de transacción, un SAVEPOINT se
+   comporta como un BEGIN. Mismo criterio que `resolverSolicitud`. */
 function aprobarPago(idPago) {
   const d = abrir();
   const t = ahora();
   let membresia = null;
 
-  d.prepare('BEGIN').run();
+  d.prepare('SAVEPOINT aprobar_pago').run();
   try {
     const pago = pagoPorId(idPago);
     if (!pago) throw Object.assign(new Error('Ese pago no existe'), { codigo: 404 });
 
     if (pago.estado !== 'pendiente') {
-      d.prepare('COMMIT').run();
+      d.prepare('RELEASE aprobar_pago').run();
       return {
         pago,
         membresia: pago.suscripcion_id ? suscripcion(pago.suscripcion_id, pago.organizacion_id) : null,
@@ -2721,13 +2929,77 @@ function aprobarPago(idPago) {
     if (r.changes !== 1) throw Object.assign(new Error(`El pago ${idPago} cambió mientras se aprobaba`), { codigo: 409 });
 
     membresia = suscripcion(idSusc, pago.organizacion_id);
-    d.prepare('COMMIT').run();
+    d.prepare('RELEASE aprobar_pago').run();
   } catch (e) {
-    d.prepare('ROLLBACK').run();
+    d.prepare('ROLLBACK TO aprobar_pago').run();
+    d.prepare('RELEASE aprobar_pago').run();
     throw e;
   }
 
   return { pago: pagoPorId(idPago), membresia, yaEstaba: false };
+}
+
+/* ── Pagos pendientes: lo que ve el comprador y lo que ve la consola ── */
+
+/* Lo que se compró, sacado de la intención guardada. Una intención rota
+   o de antes de la fase 3 no rompe el listado: sale como «Membresía»,
+   igual que INTENCION_VACIA en pagos.js. */
+function intencionDe(pago) {
+  let i = null;
+  try { i = JSON.parse(pago.intencion); } catch (_) { /* se trata abajo */ }
+  return i && typeof i === 'object' ? i : { concepto: 'Membresía' };
+}
+
+/* Los pagos que una organización tiene por confirmar, lo más reciente
+   primero. Va al navegador del propio cliente, así que sin la intención
+   entera: sus datos fiscales no le hacen falta para ver qué debe. */
+function pagosPendientesDe(idOrg) {
+  return abrir().prepare(`SELECT id, referencia, total, subtotal, itbis, creado, procesador, intencion
+                           FROM pagos WHERE organizacion_id = ? AND estado = 'pendiente'
+                           ORDER BY creado DESC, rowid DESC`).all(idOrg)
+    .map(({ intencion, ...p }) => {
+      const i = intencionDe({ intencion });
+      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null };
+    });
+}
+
+const ESTADOS_CONSOLA = ['pendiente', 'aprobado', 'rechazado'];
+
+/* Las transferencias para la consola. Solo `procesador = 'transferencia'`:
+   un cobro de pasarela lo resuelve la pasarela o su reconciliación,
+   nunca una persona.
+
+   `membresiaViva`: una ampliación cuya membresía ya venció no se puede
+   confirmar (no hay a qué sumarle los cupos), y la consola tiene que
+   decirlo ANTES de que alguien pulse, para que la anule y devuelva el
+   dinero en el banco. Una compra crea su membresía al confirmarse, así
+   que para ella siempre es true. */
+function pagosParaConsola({ estado = 'pendiente', limite = 200 } = {}) {
+  const e = ESTADOS_CONSOLA.includes(estado) ? estado : 'pendiente';
+  const tope = Math.min(Math.max(parseInt(limite, 10) || 200, 1), 500);
+  return abrir().prepare(`SELECT p.id, p.organizacion_id, o.nombre AS organizacion, p.referencia,
+                                 p.subtotal, p.itbis, p.total, p.estado, p.procesador, p.creado,
+                                 p.confirmado, p.actualizado, p.intencion
+                            FROM pagos p JOIN organizaciones o ON o.id = p.organizacion_id
+                           WHERE p.procesador = 'transferencia' AND p.estado = ?
+                           ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(e, tope)
+    .map(({ intencion, ...p }) => {
+      const i = intencionDe({ intencion });
+      const idSusc = i.tipo === 'ampliacion' ? (i.idSusc || null) : null;
+      const fila = {
+        ...p,
+        concepto: i.concepto || 'Membresía',
+        tipo: i.tipo || null,
+        idSusc,
+        correoCliente: i.correoCliente || null,
+        membresiaViva: i.tipo === 'ampliacion' ? !!(idSusc && suscripcion(idSusc, p.organizacion_id)) : true,
+      };
+      if (p.estado === 'aprobado') {
+        const f = facturaDePago(p.id);
+        fila.factura = f ? { numero: f.numero, ncf: f.ncf } : null;
+      }
+      return fila;
+    });
 }
 
 /* Solo un pendiente se rechaza. Un aprobado no: si el dinero entró, lo
@@ -2830,6 +3102,13 @@ const refrescarAnunciosDe = (idSusc) => {
 
 /* ── Anuncios ───────────────────────────────────────────── */
 
+/* Dónde está la máquina: ya en el país o bajo pedido (se importa tras
+   la venta). Lo que no sea exactamente «bajo-pedido» se guarda como en
+   el país, que es lo normal y lo que el anuncio afirmaba antes de
+   existir el campo. */
+const DISPONIBILIDADES = ['en-pais', 'bajo-pedido'];
+const disponibilidadValida = (v) => (v === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais');
+
 function crearAnuncio(datos) {
   const d = abrir();
   const idAnuncio = id();
@@ -2842,11 +3121,11 @@ function crearAnuncio(datos) {
       categoria, subcategoria, marca, modelo, anio, condicion, uso_valor, uso_unidad,
       serie, potencia, peso, implementos, descripcion, provincia, municipio,
       precio, moneda, modalidad_precio, precio_minimo, itbis_incluido, permuta,
-      financiamiento, video,
+      financiamiento, video, disponibilidad,
       motor_marca, motor_modelo, transmision_marca, transmision_modelo,
       destacado_hasta, publicado, vence, creado)
       VALUES (?, ?, ?, ?, ?, 'activo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(idAnuncio, datos.idOrg, datos.idSucursal || null, datos.idUsuario || null,
         datos.idSuscripcion || null,
         datos.categoria, datos.subcategoria || null, datos.marca, datos.modelo,
@@ -2857,6 +3136,7 @@ function crearAnuncio(datos) {
         datos.precio ?? null, datos.moneda || 'DOP', datos.modalidadPrecio || 'fijo',
         datos.precioMinimo || null, datos.itbisIncluido ? 1 : 0, datos.permuta ? 1 : 0,
         datos.financiamiento ? 1 : 0, datos.video || null,
+        disponibilidadValida(datos.disponibilidad),
         datos.motorMarca || null, datos.motorModelo || null,
         datos.transmisionMarca || null, datos.transmisionModelo || null,
         datos.destacadoHasta || null, t, datos.vence || null, t);
@@ -2954,6 +3234,25 @@ function anuncio(idAnuncio) {
 
 /* ── Catálogo público ───────────────────────────────────── */
 
+/* El precio de un anuncio en pesos, para comparar. Antes el filtro y el
+   orden usaban `a.precio` a secas aunque el anuncio pudiera estar en
+   dólares: una excavadora de US$120,000 no salía en «desde
+   RD$1,000,000» y se ordenaba por debajo de una camioneta de
+   RD$500,000. Es el mismo defecto que el orden por uso ya evitaba con
+   horas y kilómetros, esta vez sin la defensa.
+
+   La tasa va como parámetro (`:tasa`, ver tasaUsd) y no guardada en una
+   columna a propósito: una columna habría que recalcularla al cambiar
+   la tasa y en cada camino que inserte o edite un anuncio, y el que se
+   olvide vuelve a mentir, esta vez en silencio. El precio es no usar el
+   índice de precio: medido sobre 20.000 anuncios activos, ordenar o
+   filtrar por esta expresión cuesta de 7 a 9 ms, lo mismo que el orden
+   por defecto «destacados» que ya se aceptó. Si el catálogo pasa de
+   unas decenas de miles, entonces sí compensa la columna.
+
+   Debe dar lo mismo que precios.precioEnPesos. */
+const PRECIO_EN_PESOS = "(CASE WHEN a.moneda = 'USD' THEN a.precio * :tasa ELSE a.precio END)";
+
 /* Órdenes admitidos. La cláusula va escrita aquí y se elige por clave:
    nunca se interpola texto que venga de la petición, que es como se
    cuela una inyección por el ORDER BY. `destacado` se compara contra
@@ -2961,8 +3260,8 @@ function anuncio(idAnuncio) {
 const ORDENES_SQL = {
   destacados:    "(a.destacado_hasta IS NOT NULL AND a.destacado_hasta > :ahora) DESC, a.publicado DESC",
   recientes:     'a.publicado DESC',
-  'precio-asc':  'a.precio ASC, a.publicado DESC',
-  'precio-desc': 'a.precio DESC, a.publicado DESC',
+  'precio-asc':  `${PRECIO_EN_PESOS} ASC, a.publicado DESC`,
+  'precio-desc': `${PRECIO_EN_PESOS} DESC, a.publicado DESC`,
   'anio-desc':   'a.anio DESC, a.publicado DESC',
   'anio-asc':    'a.anio ASC, a.publicado DESC',
   // Los camiones miden kilómetros y las máquinas horas: mezclarlos en
@@ -2999,18 +3298,25 @@ function filtrosCatalogo(f = {}) {
   igual('marca', 'marca', f.marca);
   igual('provincia', 'provincia', f.provincia);
   igual('condicion', 'condicion', f.condicion);
+  // Solo uno de los dos valores conocidos: otro cualquiera se ignora en
+  // vez de devolver un catálogo vacío que parezca un fallo.
+  if (DISPONIBILIDADES.includes(f.disponibilidad)) igual('disponibilidad', 'disponibilidad', f.disponibilidad);
 
-  const rango = (columna, clave, valor, signo) => {
+  // `expresion` es SQL escrito aquí, nunca de la petición: una columna
+  // o PRECIO_EN_PESOS. El valor va siempre como parámetro.
+  const rango = (expresion, clave, valor, signo) => {
     const n = Number(valor);
     if (!Number.isFinite(n) || !valor) return;
-    donde.push(`a.${columna} ${signo} :${clave}`);
+    donde.push(`${expresion} ${signo} :${clave}`);
     p[clave] = n;
   };
 
-  rango('precio', 'precioMin', f.precioMin, '>=');
-  rango('precio', 'precioMax', f.precioMax, '<=');
-  rango('anio', 'anioMin', f.anioMin, '>=');
-  rango('anio', 'anioMax', f.anioMax, '<=');
+  // El rango de precio del formulario está en pesos; los anuncios en
+  // dólares se comparan convertidos (ver PRECIO_EN_PESOS).
+  rango(PRECIO_EN_PESOS, 'precioMin', f.precioMin, '>=');
+  rango(PRECIO_EN_PESOS, 'precioMax', f.precioMax, '<=');
+  rango('a.anio', 'anioMin', f.anioMin, '>=');
+  rango('a.anio', 'anioMax', f.anioMax, '<=');
 
   // El tope de horas solo aplica a lo que se mide en horas: si no,
   // filtrar por "menos de 3.000" escondería todos los camiones.
@@ -3020,6 +3326,13 @@ function filtrosCatalogo(f = {}) {
   }
 
   if (f.soloDestacados) donde.push('a.destacado_hasta IS NOT NULL AND a.destacado_hasta > :ahora');
+
+  // Permuta e ITBIS incluido eran solo etiquetas de la ficha. Son dos
+  // condiciones muy dominicanas que ningún portal extranjero ofrece, y
+  // el comprador que las necesita filtra por ellas (CAT-03). Sin
+  // índice: son 0/1 y el filtro por estado y fecha ya acota.
+  if (f.permuta) donde.push('a.permuta = 1');
+  if (f.itbis) donde.push('a.itbis_incluido = 1');
 
   // Búsqueda por texto sobre los campos que el comprador escribe de
   // memoria: marca, modelo, tipo y dónde está. Cada palabra debe
@@ -3043,33 +3356,53 @@ function filtrosCatalogo(f = {}) {
    Se pagina en el servidor a propósito: con miles de anuncios, mandar
    el catálogo entero al navegador para que filtre allí deja de
    funcionar mucho antes de que el negocio deje de crecer. */
+/* node:sqlite rechaza un parámetro con nombre que la sentencia no
+   menciona («Unknown named parameter»). El conteo y la página comparten
+   parámetros, pero `:tasa` puede estar solo en el ORDER BY de la página:
+   cada sentencia recibe únicamente los que usa. */
+const soloUsados = (sql, p) =>
+  Object.fromEntries(Object.entries(p).filter(([clave]) => new RegExp(`:${clave}\\b`).test(sql)));
+
 function buscarAnuncios(f = {}) {
   const d = abrir();
   const { donde, parametros } = filtrosCatalogo(f);
   parametros.ahora = ahora();
+  const tasa = tasaUsd();
+  parametros.tasa = tasa.tasa;
 
-  const total = d.prepare(`SELECT COUNT(*) AS n FROM anuncios a WHERE ${donde}`)
-    .get(parametros).n;
+  const sqlConteo = `SELECT COUNT(*) AS n FROM anuncios a WHERE ${donde}`;
+  const total = d.prepare(sqlConteo).get(soloUsados(sqlConteo, parametros)).n;
 
   const porPagina = Math.min(Number(f.porPagina) || POR_PAGINA, POR_PAGINA_MAX);
   const paginas = Math.max(1, Math.ceil(total / porPagina));
   const pagina = Math.min(Math.max(1, Number(f.pagina) || 1), paginas);
-  const orden = ORDENES_SQL[f.orden] || ORDENES_SQL[ORDEN_POR_DEFECTO];
+  // Solo claves propias: `ORDENES_SQL['constructor']` es una función
+  // heredada de Object, se interpolaba en el ORDER BY y `?orden=toString`
+  // tumbaba el catálogo público con un 500.
+  const orden = Object.hasOwn(ORDENES_SQL, f.orden || '')
+    ? ORDENES_SQL[f.orden] : ORDENES_SQL[ORDEN_POR_DEFECTO];
 
-  const anuncios = d.prepare(`
+  const sqlPagina = `
     SELECT a.id, a.categoria, a.subcategoria, a.marca, a.modelo, a.anio, a.condicion,
            a.uso_valor, a.uso_unidad, a.precio, a.moneda, a.modalidad_precio,
            a.provincia, a.municipio, a.publicado, a.vence, a.destacado_hasta,
+           a.disponibilidad, a.permuta, a.itbis_incluido,
            o.nombre AS dealer, o.slug AS dealer_slug, o.tipo AS org_tipo, o.verificada,
            (SELECT COALESCE(f.miniatura, f.url) FROM anuncio_fotos f WHERE f.anuncio_id = a.id ORDER BY f.orden LIMIT 1) AS foto,
            (SELECT COUNT(*) FROM anuncio_fotos f WHERE f.anuncio_id = a.id) AS fotos_total
     FROM anuncios a JOIN organizaciones o ON o.id = a.organizacion_id
     WHERE ${donde}
     ORDER BY ${orden}
-    LIMIT :limite OFFSET :salto`)
-    .all({ ...parametros, limite: porPagina, salto: (pagina - 1) * porPagina });
+    LIMIT :limite OFFSET :salto`;
+  const anuncios = d.prepare(sqlPagina)
+    .all(soloUsados(sqlPagina, { ...parametros, limite: porPagina, salto: (pagina - 1) * porPagina }));
 
-  return { anuncios: anuncios.map(conNombres), total, pagina, paginas, porPagina };
+  // La tasa viaja con el resultado para que la pantalla diga con qué
+  // cambio se compararon los dólares, en vez de esconderlo.
+  return {
+    anuncios: anuncios.map(conNombres), total, pagina, paginas, porPagina,
+    tasaUsd: { tasa: tasa.tasa, fuente: tasa.fuente },
+  };
 }
 
 /* Atajo para quien solo quiere una lista corta (portada, perfil de
@@ -3132,9 +3465,13 @@ function anunciosDeOrganizacion(idOrg) {
     SELECT a.id, a.marca, a.modelo, a.anio, a.categoria, a.subcategoria,
            a.estado, a.precio, a.moneda,
            a.modalidad_precio, a.provincia, a.publicado, a.vence, a.suscripcion_id,
+           a.disponibilidad,
            -- El panel avisa cuando un camión no los tiene declarados y
            -- deja rellenarlos ahí mismo.
            a.motor_marca, a.motor_modelo, a.transmision_marca, a.transmision_modelo,
+           -- El resultado de la revisión de la serie (ADMIN-03). La serie
+           -- misma no hace falta en la lista: basta saber que se declaró.
+           (TRIM(COALESCE(a.serie, '')) <> '') AS tiene_serie, a.serie_revision, a.serie_nota,
            (SELECT COALESCE(f.miniatura, f.url) FROM anuncio_fotos f WHERE f.anuncio_id = a.id ORDER BY f.orden LIMIT 1) AS foto,
            -- Cuántas fotos tiene, para poder avisar antes de mover el
            -- anuncio a un nivel que admite menos.
@@ -3207,6 +3544,15 @@ const guardarTrenMotriz = (idAnuncio, idOrg, t) =>
      WHERE id = ? AND organizacion_id = ?`)
     .run(t.motorMarca, t.motorModelo, t.transmisionMarca, t.transmisionModelo,
       ahora(), idAnuncio, idOrg);
+
+/* En el país o bajo pedido, cambiado por su dueño desde el panel. La
+   máquina que se vendió bajo pedido llega un día al país, y obligar a
+   republicarla le costaría sus visitas y su antigüedad. Devuelve si
+   cambió algo: con la organización equivocada, no toca nada. */
+const guardarDisponibilidad = (idAnuncio, idOrg, valor) =>
+  abrir().prepare(`UPDATE anuncios SET disponibilidad = ?, actualizado = ?
+     WHERE id = ? AND organizacion_id = ?`)
+    .run(disponibilidadValida(valor), ahora(), idAnuncio, idOrg).changes > 0;
 
 const cambiarEstadoAnuncio = (idAnuncio, idOrg, estado) =>
   abrir().prepare('UPDATE anuncios SET estado = ?, actualizado = ? WHERE id = ? AND organizacion_id = ?')
@@ -3888,12 +4234,15 @@ module.exports = {
   anadirAGaleria, quitarDeGaleria, galeriaDe,
   guardarEnlaces, enlacesDe,
   publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
+  organizacionesAdmin, organizacionPorId,
+  /* Revisión del número de serie. */
+  seriesParaRevisar, anuncioSerie, anotarRevisionSerie, normalizarSerie,
 
   /* Tráfico e informes. */
   anotarVisita, trafico, informe,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
   /* Bitácora: toda escritura de admin sobre otra organización, por una sola puerta. */
-  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora,
+  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora, ultimaAnotacion,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,
   crearSolicitudServicio, solicitudServicio, solicitudesServicio, marcarSolicitudServicio,
@@ -3903,10 +4252,12 @@ module.exports = {
   sucursalesDe, sucursal, crearSucursal, actualizarSucursal, desactivarSucursal, marcarPrincipal,
   planes, planPorId, suscripcionActiva, suscripcionesDe, suscripcion,
   suscripcionConHueco, comprarCupos, ampliarCupos, membresiaInterna,
-  registrarCobro, aprobarPago, rechazarPago,
+  registrarCobro, aprobarPago, rechazarPago, pagosPendientesDe, pagosParaConsola,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   anotarEvento, resumenOrganizacion,
+  /* Fase 8: moneda y disponibilidad en el catálogo. */
+  tasaUsd, DISPONIBILIDADES, guardarDisponibilidad,
 };

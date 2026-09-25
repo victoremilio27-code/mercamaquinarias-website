@@ -1078,6 +1078,115 @@ const enviarComprobante = ({ para, nombre, plan, subtotal, itbis, total, referen
   });
 };
 
+/* ── Cobro por transferencia ────────────────────────────── */
+
+/* Los datos para transferir, al comprador.
+ *
+ * NO es un comprobante fiscal y lo dice dos veces: quien paga por
+ * transferencia suele reenviar a su contable lo primero que le llega,
+ * y un correo con importe e ITBIS que parezca una factura acaba
+ * declarado como si lo fuera. El comprobante con NCF sale solo cuando
+ * el personal confirma el ingreso en el banco.
+ *
+ * Sin teléfono: el comprobante de la transferencia se manda
+ * respondiendo a este correo o a facturación. Soporte solo por correo y
+ * por el asistente. */
+function enviarDatosTransferencia({ para, nombre, referencia, total, concepto, datos }) {
+  const dinero = (n) => `RD$${Number(n).toLocaleString('en-US')}`;
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const TIPOS_CUENTA = { corriente: 'Corriente', ahorros: 'Ahorros' };
+  const cuenta = [
+    ['Banco', datos.banco],
+    ['Titular', datos.titular],
+    ['RNC del titular', datos.rnc],
+    ['Tipo de cuenta', TIPOS_CUENTA[datos.tipoCuenta] || datos.tipoCuenta],
+    ['Número de cuenta', datos.cuenta],
+    ['Moneda', 'Pesos dominicanos (DOP)'],
+  ];
+  const AVISO_FISCAL = 'Este correo no es un comprobante fiscal. El comprobante con NCF se lo enviamos '
+    + 'cuando confirmemos el ingreso en nuestra cuenta.';
+
+  return enviar({
+    para,
+    responderA: BUZONES.facturacion,
+    asunto: `Datos para transferir · ${referencia} · ${dinero(total)} · MercaMaquinarias`,
+    texto: [
+      saludo, '',
+      `Recibimos su pedido: ${concepto}.`,
+      'Para completarlo, transfiera el importe a esta cuenta:', '',
+      ...cuenta.map(([k, v]) => `${`${k}:`.padEnd(18)}${v}`),
+      '',
+      `Importe:          ${dinero(total)} (ITBIS incluido)`,
+      `Referencia:       ${referencia}`,
+      '',
+      'Escriba la referencia en el concepto o la descripción de la transferencia:',
+      'así identificamos su pago sin demora.', '',
+      'Cuando la haga, envíenos el comprobante de la transferencia respondiendo a este',
+      `correo o escribiendo a ${BUZONES.facturacion}.`, '',
+      'Su membresía empieza a contar desde que confirmemos el ingreso, no desde hoy.', '',
+      AVISO_FISCAL, '',
+      'MercaMaquinarias',
+    ].join('\n'),
+    html: envoltura({
+      titulo: 'Datos para transferir',
+      saludo,
+      responderA: BUZONES.facturacion,
+      parrafos: [
+        `Recibimos su pedido: <b style="color:${AZUL}">${esc(concepto)}</b>.`,
+        'Para completarlo, transfiera el importe a esta cuenta:',
+      ],
+      extra: `${tarjeta(filas(cuenta))}${tarjeta(`
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="font-family:${TIPO};font-size:15px;font-weight:700;color:${AZUL}">Importe (ITBIS incluido)</td>
+            <td align="right" style="font-family:${TIPO};font-size:21px;font-weight:800;color:${AZUL}">${esc(dinero(total))}</td>
+          </tr>
+        </table>
+        <div style="margin-top:14px;font-family:${TIPO};font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:${GRIS_CLARO}">Referencia · escríbala en el concepto de la transferencia</div>
+        <div style="margin-top:6px;font-family:${TIPO};font-size:24px;font-weight:800;letter-spacing:.04em;color:${AZUL}">${esc(referencia)}</div>`)}
+        <p style="margin:0 0 12px;font-family:${TIPO};font-size:14.5px;line-height:1.65;color:${GRIS}">Cuando la haga, envíenos el comprobante de la transferencia respondiendo a este correo o escribiendo a <a href="mailto:${esc(BUZONES.facturacion)}" style="color:${AZUL}">${esc(BUZONES.facturacion)}</a>.</p>
+        <p style="margin:0 0 12px;font-family:${TIPO};font-size:14.5px;line-height:1.65;color:${GRIS}">Su membresía empieza a contar desde que confirmemos el ingreso, no desde hoy.</p>`,
+      nota: esc(AVISO_FISCAL),
+    }),
+  });
+}
+
+/* La transferencia anulada, al comprador, con el motivo. No hubo
+   cupos ni comprobante; si llegó a transferir, la devolución se hace en
+   el banco y se coordina por correo con facturación. */
+function enviarTransferenciaAnulada({ para, nombre, referencia, motivo }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  return enviar({
+    para,
+    responderA: BUZONES.facturacion,
+    asunto: `Pago por transferencia anulado · ${referencia} · MercaMaquinarias`,
+    texto: [
+      saludo, '',
+      `Anulamos el pago por transferencia con la referencia ${referencia}.`, '',
+      `Motivo: ${motivo}`, '',
+      'No se añadió ningún cupo ni se emitió comprobante fiscal por este pago.',
+      'Si ya había transferido el importe, escríbanos respondiendo a este correo o a',
+      `${BUZONES.facturacion} y coordinamos la devolución.`, '',
+      'MercaMaquinarias',
+    ].join('\n'),
+    html: envoltura({
+      titulo: 'Pago por transferencia anulado',
+      saludo,
+      responderA: BUZONES.facturacion,
+      parrafos: [
+        `Anulamos el pago por transferencia con la referencia <b style="color:${AZUL}">${esc(referencia)}</b>.`,
+        'No se añadió ningún cupo ni se emitió comprobante fiscal por este pago.',
+      ],
+      extra: tarjeta(`
+        <div style="font-family:${TIPO};font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:${GRIS_CLARO}">Motivo</div>
+        <div style="margin-top:6px;font-family:${TIPO};font-size:14.5px;line-height:1.6;color:${AZUL}">${esc(motivo)}</div>`),
+      nota: 'Si ya había transferido el importe, escríbanos respondiendo a este correo o a '
+        + `<a href="mailto:${esc(BUZONES.facturacion)}" style="color:${AMBAR}">${esc(BUZONES.facturacion)}</a>`
+        + ' y coordinamos la devolución.',
+    }),
+  });
+}
+
 /* Aviso al vendedor de que alguien pidió su contacto. Es la señal de
    que el anuncio está funcionando, y la razón principal por la que
    alguien renueva. */
@@ -1152,6 +1261,7 @@ module.exports = {
   enviarSolicitudDealer, enviarResolucionDealer, enviarSolicitudServicio,
   enviarAnuncioPublicado, enviarAnuncioPorVencer, enviarAnuncioVencido,
   enviarComprobante, enviarContactoRecibido, enviarBienvenida,
+  enviarDatosTransferencia, enviarTransferenciaAnulada,
   avisarInternamente,
   // Verificación de teléfonos: el SMS va apagado tras MERCA_SMS.
   enviarCodigoContacto, textoSmsContacto, enviarSms, smsActivo, BANDEJA_SMS,
