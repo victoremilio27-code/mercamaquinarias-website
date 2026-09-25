@@ -32,6 +32,9 @@
     "db:flota": "node tools/seed.js --solo-flota",
     "taxonomia": "node tools/verificar-taxonomia.js"
   },
+  "engines": {
+    "node": ">=22.5"
+  },
   "devDependencies": {
     "puppeteer": "^25.4.0"
   }
