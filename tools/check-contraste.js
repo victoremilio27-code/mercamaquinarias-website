@@ -60,6 +60,7 @@ const PAGINAS = [
   ['/dealers.html', 'Directorio'],
   ['/contacto.html', 'Contacto'],
   ['/legal.html', 'Legal'],
+  ['/estafas.html', 'Señales de estafa'],
   ['/cuenta.html', 'Acceso'],
   ['/publicar.html', 'Publicar'],
   ['/panel.html', 'Panel (sin sesión)'],

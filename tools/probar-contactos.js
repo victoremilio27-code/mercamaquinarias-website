@@ -351,6 +351,45 @@ async function bloqueApi() {
   comprobar(!fuente.includes('marcarContactoVerificado'), 'tools/api.js no llama a marcarContactoVerificado');
 }
 
+/* Un número dominicano escrito de cualquier forma habitual: con o sin
+   paréntesis, con guion, punto o espacio entre los grupos. Sirve para
+   comprobar que `estafas.html` y el aviso de la ficha no cuelan uno
+   por accidente, que es justo lo que esta página existe para evitar. */
+const PATRON_TELEFONO = /\(?8[024]\d\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
+
+/* ── Bloque «Criterio 4: aviso → página de estafas» ─────────── */
+function bloqueEstafas() {
+  const raiz = path.join(__dirname, '..');
+
+  console.log('\nCriterio 4 · el aviso lleva a la página de estafas, sin ningún teléfono');
+  const rutaEstafas = path.join(raiz, 'estafas.html');
+  comprobar(fs.existsSync(rutaEstafas), 'estafas.html existe');
+  const htmlEstafas = fs.existsSync(rutaEstafas) ? fs.readFileSync(rutaEstafas, 'utf8') : '';
+  comprobar(!PATRON_TELEFONO.test(htmlEstafas), 'estafas.html no lleva ningún patrón de teléfono');
+  comprobar(/dominican/i.test(htmlEstafas) || /Rep(ú|u)blica Dominicana/.test(htmlEstafas),
+    'estafas.html habla del mercado dominicano');
+  comprobar(/DICAT/.test(htmlEstafas) && /PEDATEC/.test(htmlEstafas),
+    'nombra a DICAT y PEDATEC para reportar, sin ningún teléfono de por medio');
+
+  const appJs = fs.readFileSync(path.join(raiz, 'assets', 'app.js'), 'utf8');
+  comprobar(!PATRON_TELEFONO.test(appJs.split('detalle__aviso')[1] || ''),
+    'el bloque del aviso en app.js no lleva ningún patrón de teléfono');
+  const bloqueAviso = appJs.slice(appJs.indexOf('detalle__aviso'), appJs.indexOf('detalle__aviso') + 400);
+  comprobar(bloqueAviso.includes('estafas.html') && bloqueAviso.includes('Señales de estafa'),
+    'el aviso de la ficha enlaza a estafas.html');
+  comprobar(/t\.verificado/.test(appJs), 'contactosHTML filtra por t.verificado');
+
+  console.log('\nAltas en sitemap, enlaces, auditoría pública y contraste');
+  const metaJs = fs.readFileSync(path.join(raiz, 'tools', 'meta.js'), 'utf8');
+  comprobar(metaJs.includes("'/estafas.html'"), 'tools/meta.js suma estafas.html al sitemap');
+  const checkLinksJs = fs.readFileSync(path.join(raiz, 'tools', 'check-links.js'), 'utf8');
+  comprobar(checkLinksJs.includes("'estafas.html'"), 'tools/check-links.js visita estafas.html');
+  const auditarPublicoJs = fs.readFileSync(path.join(raiz, 'tools', 'auditar-publico.js'), 'utf8');
+  comprobar(auditarPublicoJs.includes("'/estafas.html'"), 'tools/auditar-publico.js visita estafas.html');
+  const checkContrasteJs = fs.readFileSync(path.join(raiz, 'tools', 'check-contraste.js'), 'utf8');
+  comprobar(checkContrasteJs.includes("'/estafas.html'"), 'tools/check-contraste.js audita estafas.html');
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · contactos verificados\n');
   sembrar();
@@ -363,6 +402,9 @@ async function bloqueApi() {
 
   console.log('\nLa API');
   await bloqueApi();
+
+  console.log('\nLa página de estafas');
+  bloqueEstafas();
 
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
