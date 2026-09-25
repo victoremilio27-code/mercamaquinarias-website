@@ -383,6 +383,59 @@ async function bloqueApi() {
     `las ${escrituras.length} escrituras de /api/admin/ están clasificadas una sola vez`);
 }
 
+/* ── Bloque «Empresas y sello» (fase 7, ADMIN-02) ───────── */
+async function bloqueEmpresas() {
+  const { admin, normal } = sembrado;
+  const comoAdmin = { cookie: `te_sesion=${db.abrirSesion(admin.idUsuario)}`, 'cf-connecting-ip': '201.7.7.7' };
+  const comoNormal = { cookie: `te_sesion=${db.abrirSesion(normal.idUsuario)}` };
+  const verificar = (idOrg, cuerpo, cabeceras = comoAdmin) => pedir({
+    metodo: 'POST', url: `/api/admin/organizaciones/${idOrg}/verificar`, cuerpo, cabeceras,
+  });
+
+  console.log('\nEl directorio de empresas');
+  let r = await pedir({ url: '/api/admin/organizaciones', cabeceras: comoAdmin });
+  const empresas = (r.datos && r.datos.empresas) || [];
+  comprobar(r.codigo === 200 && empresas.length >= 4, 'como administrador trae las empresas dealer');
+  const a = empresas.find((e) => e.id === sembrado.dealerA.org.id);
+  comprobar(!!a && typeof a.verificada === 'boolean' && 'estado_revision' in a && 'estado_pagina' in a
+    && 'activos' in a && 'series_pendientes' in a, 'con sello, revisión, página, activos y series pendientes');
+  comprobar(!JSON.stringify(r.datos).includes('"rnc"') && !JSON.stringify(r.datos).includes('"correo"'),
+    'sin el RNC ni el correo de la cuenta');
+  comprobar(!empresas.some((e) => e.id === normal.org.id), 'y sin cuentas particulares');
+  r = await pedir({ url: '/api/admin/organizaciones?estado=aprobada', cabeceras: comoAdmin });
+  comprobar(r.datos.empresas.length > 0 && r.datos.empresas.every((e) => e.estado_revision === 'aprobada'),
+    '?estado=aprobada solo trae aprobadas');
+  r = await pedir({ url: `/api/admin/organizaciones?q=${encodeURIComponent('tractores')}`, cabeceras: comoAdmin });
+  comprobar(r.datos.empresas.length === 1 && /Tractores D/.test(r.datos.empresas[0].nombre),
+    '?q= busca por nombre sin distinguir mayúsculas');
+  r = await pedir({ url: `/api/admin/organizaciones?q=${encodeURIComponent('%')}`, cabeceras: comoAdmin });
+  comprobar(r.codigo === 200 && r.datos.empresas.length === 0, 'un «%» se busca como letra, no como comodín');
+  r = await pedir({ url: '/api/admin/organizaciones', cabeceras: comoNormal });
+  comprobar(r.codigo === 404, 'como usuario normal da 404');
+
+  console.log('\nEl sello solo a una empresa aprobada, y con motivo al retirarlo');
+  const dealerP = cuenta('dealer-p@ejemplo.test', 'Encargado P', 'Palas P, S.R.L.');
+  const idP = dealerP.org.id;
+  let n = filas();
+  r = await verificar(idP, { verificada: true });
+  comprobar(r.codigo === 409 && filas() === n && !verificada(idP), 'a un dealer pendiente: 409, sin fila ni sello');
+  r = await verificar(normal.org.id, { verificada: true });
+  comprobar(r.codigo === 409 && filas() === n, 'a una cuenta particular: 409 sin fila');
+
+  db.resolverSolicitud(solicitudDe(idP).id, { aprobar: true, idRevisor: admin.idUsuario });
+  r = await verificar(idP, { verificada: true });
+  comprobar(r.codigo === 200 && verificada(idP) && filas() === n + 1, 'aprobado: 200, sello y una fila');
+  r = await verificar(idP, { verificada: false });
+  comprobar(r.codigo === 400 && verificada(idP) && filas() === n + 1, 'retirarlo sin motivo: 400, sin fila, sigue el sello');
+  r = await verificar(idP, { verificada: false, motivo: 'Documentación mercantil vencida' });
+  const [fila] = db.bitacora({ organizacion: idP, limite: 1 });
+  comprobar(r.codigo === 200 && !verificada(idP) && filas() === n + 2, 'con motivo: 200 y el sello retirado');
+  comprobar(fila.motivo === 'Documentación mercantil vencida' && fila.antes.verificada === true
+    && fila.despues.verificada === false, 'la fila lleva el motivo y el cambio');
+  r = await verificar(idP, { verificada: true }, comoNormal);
+  comprobar(r.codigo === 404 && filas() === n + 2, 'como usuario normal: 404 sin fila');
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · bitácora de administración\n');
   sembrar();
@@ -392,6 +445,9 @@ async function bloqueApi() {
 
   console.log('\nLa API');
   await bloqueApi();
+
+  console.log('\nEmpresas y sello');
+  await bloqueEmpresas();
 
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
