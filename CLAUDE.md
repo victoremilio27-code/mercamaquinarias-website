@@ -54,8 +54,11 @@ Una misma fase no se trabaja a la vez en la nube y en local: cada sesión en su 
   No se publica un número de teléfono en ninguna página.
 - **Los informes van a `gerencia@inversionesxzt.com`** con copia a
   `facturacion@mercamaquinarias.com`. La copia se manda como correo aparte, no como CC.
-- **No se toca el modelo de negocio de los planes ni sus precios.** Se trabaja por otro
-  lado. Usa `planes.perfil_publico` tal como está; no propongas planes ni precios nuevos.
+- **El modelo comercial cambia según `.planning/research/modelo-comercial.md`**, autorizado
+  por Victor el 2026-09-25: el particular paga por publicar un equipo y el dealer por una
+  capacidad de publicaciones activas; precio final = base × 1,03 × 1,18, con el 3 % dentro
+  del subtotal gravado y nunca a la vista como cargo. **Fuera de ese documento no se toca
+  nada de precios:** no propongas planes ni precios nuevos.
 - **Transporte y financiamiento están apagados a propósito** con el interruptor de
   `assets/servicios.js`. Es una bandera, no código muerto: no lo borres. Encenderlos es
   cambiar `activo` a `true`.
