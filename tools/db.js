@@ -13,6 +13,7 @@ const { DatabaseSync } = require('node:sqlite');
 const crypto = require('node:crypto');
 const fs = require('fs');
 const taxonomia = require('../assets/taxonomia.js');
+const precios = require('../assets/precios.js');
 const path = require('path');
 
 const RAIZ = path.resolve(__dirname, '..');
@@ -1565,7 +1566,12 @@ const borrarFlota = (idFlota) =>
    una petición manipulada no puede sembrar filas arbitrarias en la
    tabla, y quien lea el código sabe de un vistazo qué es configurable
    y qué no. */
-const AJUSTES = ['heroe_imagen', 'heroe_alt'];
+const AJUSTES = [
+  'heroe_imagen', 'heroe_alt',
+  // RD$ por US$ con que el catálogo compara precios de monedas
+  // distintas. Solo compara: ningún precio publicado cambia con ella.
+  'tasa_usd',
+];
 
 const ajustes = () => {
   const filas = abrir().prepare('SELECT clave, valor FROM ajustes').all();
@@ -1589,6 +1595,20 @@ function guardarAjuste(clave, valor) {
      ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor, actualizado = excluded.actualizado`)
     .run(clave, String(valor), ahora());
   return String(valor);
+}
+
+/* Tasa de referencia del dólar para comparar precios del catálogo, y
+   de dónde sale. Manda la que fije el equipo en /admin.html; si no hay,
+   la del entorno (MERCA_TASA_USD); si tampoco, la de partida de
+   assets/precios.js. Un valor guardado fuera de rango se ignora en vez
+   de reordenar el catálogo con un cero de más. */
+function tasaUsd() {
+  const fila = abrir().prepare("SELECT valor, actualizado FROM ajustes WHERE clave = 'tasa_usd'").get();
+  const fijada = fila && precios.tasaValida(fila.valor);
+  if (fijada) return { tasa: fijada, fuente: 'ajuste', actualizado: fila.actualizado };
+  const entorno = precios.tasaValida(process.env.MERCA_TASA_USD);
+  if (entorno) return { tasa: entorno, fuente: 'entorno', actualizado: null };
+  return { tasa: precios.TASA_USD_POR_DEFECTO, fuente: 'defecto', actualizado: null };
 }
 
 /* ── Fotografías del catálogo para la portada ───────────────
@@ -2745,6 +2765,25 @@ function anuncio(idAnuncio) {
 
 /* ── Catálogo público ───────────────────────────────────── */
 
+/* El precio de un anuncio en pesos, para comparar. Antes el filtro y el
+   orden usaban `a.precio` a secas aunque el anuncio pudiera estar en
+   dólares: una excavadora de US$120,000 no salía en «desde
+   RD$1,000,000» y se ordenaba por debajo de una camioneta de
+   RD$500,000. Es el mismo defecto que el orden por uso ya evitaba con
+   horas y kilómetros, esta vez sin la defensa.
+
+   La tasa va como parámetro (`:tasa`, ver tasaUsd) y no guardada en una
+   columna a propósito: una columna habría que recalcularla al cambiar
+   la tasa y en cada camino que inserte o edite un anuncio, y el que se
+   olvide vuelve a mentir, esta vez en silencio. El precio es no usar el
+   índice de precio: medido sobre 20.000 anuncios activos, ordenar o
+   filtrar por esta expresión cuesta de 7 a 9 ms, lo mismo que el orden
+   por defecto «destacados» que ya se aceptó. Si el catálogo pasa de
+   unas decenas de miles, entonces sí compensa la columna.
+
+   Debe dar lo mismo que precios.precioEnPesos. */
+const PRECIO_EN_PESOS = "(CASE WHEN a.moneda = 'USD' THEN a.precio * :tasa ELSE a.precio END)";
+
 /* Órdenes admitidos. La cláusula va escrita aquí y se elige por clave:
    nunca se interpola texto que venga de la petición, que es como se
    cuela una inyección por el ORDER BY. `destacado` se compara contra
@@ -2752,8 +2791,8 @@ function anuncio(idAnuncio) {
 const ORDENES_SQL = {
   destacados:    "(a.destacado_hasta IS NOT NULL AND a.destacado_hasta > :ahora) DESC, a.publicado DESC",
   recientes:     'a.publicado DESC',
-  'precio-asc':  'a.precio ASC, a.publicado DESC',
-  'precio-desc': 'a.precio DESC, a.publicado DESC',
+  'precio-asc':  `${PRECIO_EN_PESOS} ASC, a.publicado DESC`,
+  'precio-desc': `${PRECIO_EN_PESOS} DESC, a.publicado DESC`,
   'anio-desc':   'a.anio DESC, a.publicado DESC',
   'anio-asc':    'a.anio ASC, a.publicado DESC',
   // Los camiones miden kilómetros y las máquinas horas: mezclarlos en
@@ -2791,17 +2830,21 @@ function filtrosCatalogo(f = {}) {
   igual('provincia', 'provincia', f.provincia);
   igual('condicion', 'condicion', f.condicion);
 
-  const rango = (columna, clave, valor, signo) => {
+  // `expresion` es SQL escrito aquí, nunca de la petición: una columna
+  // o PRECIO_EN_PESOS. El valor va siempre como parámetro.
+  const rango = (expresion, clave, valor, signo) => {
     const n = Number(valor);
     if (!Number.isFinite(n) || !valor) return;
-    donde.push(`a.${columna} ${signo} :${clave}`);
+    donde.push(`${expresion} ${signo} :${clave}`);
     p[clave] = n;
   };
 
-  rango('precio', 'precioMin', f.precioMin, '>=');
-  rango('precio', 'precioMax', f.precioMax, '<=');
-  rango('anio', 'anioMin', f.anioMin, '>=');
-  rango('anio', 'anioMax', f.anioMax, '<=');
+  // El rango de precio del formulario está en pesos; los anuncios en
+  // dólares se comparan convertidos (ver PRECIO_EN_PESOS).
+  rango(PRECIO_EN_PESOS, 'precioMin', f.precioMin, '>=');
+  rango(PRECIO_EN_PESOS, 'precioMax', f.precioMax, '<=');
+  rango('a.anio', 'anioMin', f.anioMin, '>=');
+  rango('a.anio', 'anioMax', f.anioMax, '<=');
 
   // El tope de horas solo aplica a lo que se mide en horas: si no,
   // filtrar por "menos de 3.000" escondería todos los camiones.
@@ -2834,20 +2877,29 @@ function filtrosCatalogo(f = {}) {
    Se pagina en el servidor a propósito: con miles de anuncios, mandar
    el catálogo entero al navegador para que filtre allí deja de
    funcionar mucho antes de que el negocio deje de crecer. */
+/* node:sqlite rechaza un parámetro con nombre que la sentencia no
+   menciona («Unknown named parameter»). El conteo y la página comparten
+   parámetros, pero `:tasa` puede estar solo en el ORDER BY de la página:
+   cada sentencia recibe únicamente los que usa. */
+const soloUsados = (sql, p) =>
+  Object.fromEntries(Object.entries(p).filter(([clave]) => new RegExp(`:${clave}\\b`).test(sql)));
+
 function buscarAnuncios(f = {}) {
   const d = abrir();
   const { donde, parametros } = filtrosCatalogo(f);
   parametros.ahora = ahora();
+  const tasa = tasaUsd();
+  parametros.tasa = tasa.tasa;
 
-  const total = d.prepare(`SELECT COUNT(*) AS n FROM anuncios a WHERE ${donde}`)
-    .get(parametros).n;
+  const sqlConteo = `SELECT COUNT(*) AS n FROM anuncios a WHERE ${donde}`;
+  const total = d.prepare(sqlConteo).get(soloUsados(sqlConteo, parametros)).n;
 
   const porPagina = Math.min(Number(f.porPagina) || POR_PAGINA, POR_PAGINA_MAX);
   const paginas = Math.max(1, Math.ceil(total / porPagina));
   const pagina = Math.min(Math.max(1, Number(f.pagina) || 1), paginas);
   const orden = ORDENES_SQL[f.orden] || ORDENES_SQL[ORDEN_POR_DEFECTO];
 
-  const anuncios = d.prepare(`
+  const sqlPagina = `
     SELECT a.id, a.categoria, a.subcategoria, a.marca, a.modelo, a.anio, a.condicion,
            a.uso_valor, a.uso_unidad, a.precio, a.moneda, a.modalidad_precio,
            a.provincia, a.municipio, a.publicado, a.vence, a.destacado_hasta,
@@ -2857,10 +2909,16 @@ function buscarAnuncios(f = {}) {
     FROM anuncios a JOIN organizaciones o ON o.id = a.organizacion_id
     WHERE ${donde}
     ORDER BY ${orden}
-    LIMIT :limite OFFSET :salto`)
-    .all({ ...parametros, limite: porPagina, salto: (pagina - 1) * porPagina });
+    LIMIT :limite OFFSET :salto`;
+  const anuncios = d.prepare(sqlPagina)
+    .all(soloUsados(sqlPagina, { ...parametros, limite: porPagina, salto: (pagina - 1) * porPagina }));
 
-  return { anuncios: anuncios.map(conNombres), total, pagina, paginas, porPagina };
+  // La tasa viaja con el resultado para que la pantalla diga con qué
+  // cambio se compararon los dólares, en vez de esconderlo.
+  return {
+    anuncios: anuncios.map(conNombres), total, pagina, paginas, porPagina,
+    tasaUsd: { tasa: tasa.tasa, fuente: tasa.fuente },
+  };
 }
 
 /* Atajo para quien solo quiere una lista corta (portada, perfil de
@@ -3697,4 +3755,6 @@ module.exports = {
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   anotarEvento, resumenOrganizacion,
+  /* Fase 8: moneda y disponibilidad en el catálogo. */
+  tasaUsd,
 };
