@@ -253,13 +253,28 @@ function sembrar() {
       dias: 60,
     });
 
-    db.comprarCupos({
+    const cobro = { ...importe, referencia: `TE-DEMO-${a.clave.toUpperCase()}`, procesador: 'demo' };
+
+    /* El Estándar en promoción sale a cero y sigue el camino del cero,
+       como en el sitio. */
+    if (!(cobro.total > 0)) {
+      db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias: 60, cobro });
+      continue;
+    }
+
+    /* Con importe, por la misma transición de la base que el sitio:
+       nace pendiente y se aprueba. Se llama a db.aprobarPago y NO a
+       pagos.confirmarPago a propósito: la semilla corre en bases
+       desechables y no debe consumir secuencias de NCF ni mandar
+       correos por cobros de demostración. */
+    const pago = db.registrarCobro({
       idOrg: org.id,
-      idPlan: plan.id,
-      cupo,
-      dias: 60,
-      cobro: { ...importe, referencia: `TE-DEMO-${a.clave.toUpperCase()}`, procesador: 'demo' },
+      cobro,
+      intencion: {
+        tipo: 'compra', idPlan: plan.id, cupo, dias: 60, concepto: 'Membresía de demostración', cliente: {},
+      },
     });
+    db.aprobarPago(pago.id);
   }
 
   let creados = 0;

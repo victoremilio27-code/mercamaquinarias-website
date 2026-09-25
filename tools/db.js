@@ -2168,10 +2168,25 @@ function suscripcionActiva(idOrg) {
   return suscripcionesDe(idOrg)[0] || null;
 }
 
-/* Anota un pago. Uno de importe cero se anota igual y como aprobado:
-   no hay nada que cobrar, y dejarlo 'pendiente' llenaría el historial
-   del anunciante de facturas que nadie va a pagar. */
+/* Anota un pago de importe CERO. Se anota igual y como aprobado: no hay
+   nada que cobrar, y dejarlo 'pendiente' llenaría el historial del
+   anunciante de facturas que nadie va a pagar.
+
+   Antes anotaba también los cobros con importe, con el mismo
+   'aprobado' escrito a mano, y los cupos salían en la misma
+   transacción: una tarjeta rechazada habría dejado cupos y un NCF de
+   dinero que no entró. Ahora un cobro con importe nace pendiente en
+   `registrarCobro` y solo `pagos.confirmarPago` lo aprueba; esta
+   guarda impide que alguien vuelva a colarlo por aquí. */
+const soloCero = (cobro) => {
+  if (cobro && cobro.total > 0) {
+    throw Object.assign(new Error('Un cobro con importe nace pendiente: pasa por registrarCobro '
+      + 'y pagos.confirmarPago, no por este camino'), { codigo: 500 });
+  }
+};
+
 function anotarPago(d, { idOrg, idSusc, cobro, t }) {
+  soloCero(cobro);
   d.prepare(`INSERT INTO pagos
     (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
     VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?)`)
@@ -2197,6 +2212,7 @@ function encenderPerfilSiProcede(d, idOrg, plan, t) {
    El precio pactado queda congelado en la suscripción, así que subir
    la tarifa mañana no afecta a lo ya vendido. */
 function comprarCupos({ idOrg, idPlan, cupo, dias, cobro }) {
+  soloCero(cobro);
   const d = abrir();
   const plan = planPorId(idPlan);
   if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
@@ -2379,6 +2395,7 @@ function membresiaInterna(idOrg) {
    guarda y se anota el cobro contra la misma suscripción, para que la
    factura del anunciante cuente la historia completa. */
 function ampliarCupos({ idSusc, idOrg, cupoNuevo, cobro }) {
+  soloCero(cobro);
   const d = abrir();
   const s = suscripcion(idSusc, idOrg);
   if (!s) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });

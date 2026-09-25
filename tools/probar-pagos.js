@@ -39,6 +39,8 @@ process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 const db = require('./db');
 const facturas = require('./facturas');
 const pagos = require('./pagos');
+const api = require('./api');
+const { EventEmitter } = require('events');
 
 const ID_ORG = 'org-pagos';
 const ID_ORG_AMPLIA = 'org-pagos-amplia';
@@ -309,6 +311,39 @@ function correosAlCliente(numero, ref) {
     .filter((a) => a.includes(numero) && a.includes(ref)).length;
 }
 
+/* Una petición de verdad contra el enrutador, con req y res fingidos.
+   Copiada de probar-seguridad.js, sin los trozos partidos que aquí no
+   hacen falta. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-pagos', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      setHeader() {},
+      writeHead(c) { res.codigo = c; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
 const pendienteDeCompra = (etiqueta, cupo = 1) => db.registrarCobro({
   idOrg: ID_ORG, cobro: cobroDe(3500 * cupo, etiqueta), intencion: intencionCompra(cupo, 30),
 });
@@ -456,6 +491,128 @@ const pendienteDeCompra = (etiqueta, cupo = 1) => db.registrarCobro({
     } finally {
       pagos.PROCESADORES.demo = demo;
     }
+  }
+
+  /* ── 03-03: las rutas de compra pasan por la transición ───
+     Por el enrutador de verdad, con req y res fingidos como en
+     probar-seguridad.js: lo que importa es lo que ve el anunciante. */
+
+  const { idUsuario } = db.crearCuenta({
+    correo: 'comprador@prueba.invalid',
+    clave: 'UnaClaveLargaYSegura9',
+    nombre: 'Comprador de prueba',
+    telefono: '8095550000',
+    tipo: 'particular',
+  });
+  const orgApi = db.organizacionDe(idUsuario);
+  const legales = require('../assets/legales.js');
+  Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+    db.registrarAceptacion({
+      usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba',
+    });
+  });
+  const conSesion = { cookie: `te_sesion=${db.abrirSesion(idUsuario)}`, 'cf-connecting-ip': '201.8.8.8' };
+  const comprar = (cuerpo) => pedir({ metodo: 'POST', url: '/api/membresias', cuerpo, cabeceras: conSesion });
+  const ampliar = (idSusc, cupo) =>
+    pedir({ metodo: 'POST', url: `/api/membresias/${idSusc}/ampliar`, cuerpo: { cupo }, cabeceras: conSesion });
+  const cupoDe = (idSusc) => consulta('SELECT anuncios_incluidos AS n FROM suscripciones WHERE id = ?', idSusc).n;
+
+  console.log('\n17. Comprar con el procesador demo: 201 con comprobante, y el pago pasó por pendiente');
+  const compraApi = await comprar({ plan: 'destacado', cupo: 1, dias: 30 });
+  let idSuscApi = null;
+  {
+    const d = compraApi.datos || {};
+    ok(compraApi.codigo === 201 && !!d.comprobante, `código ${compraApi.codigo}, comprobante ${d.comprobante && d.comprobante.numero}`);
+    ok(!!d.pago && d.pago.estado === 'aprobado', `pago.estado=${d.pago && d.pago.estado}`);
+    const ref = d.cobro && d.cobro.referencia;
+    const n = consulta('SELECT COUNT(*) AS n FROM pagos WHERE referencia = ?', ref).n;
+    const fila = consulta('SELECT * FROM pagos WHERE referencia = ?', ref);
+    let intencion = null;
+    try { intencion = JSON.parse(fila.intencion); } catch (_) { /* se informa abajo */ }
+    ok(n === 1 && fila.estado === 'aprobado' && !!fila.confirmado && !!intencion && intencion.tipo === 'compra',
+      `pagos con la referencia: ${n}, estado ${fila && fila.estado}, confirmado ${fila && fila.confirmado}, intención ${intencion && intencion.tipo}`);
+    idSuscApi = d.membresia && d.membresia.id;
+  }
+
+  console.log('\n18. Si el procesador rechaza: 402, pago rechazado, sin membresía ni comprobante');
+  {
+    const demo = pagos.PROCESADORES.demo;
+    const suscAntes = suscripcionesDe(orgApi.id);
+    const factAntes = facturasTotales();
+    let r = null;
+    try {
+      pagos.PROCESADORES.demo = async () => ({ resultado: 'rechazado' });
+      r = await comprar({ plan: 'destacado', cupo: 2, dias: 30 });
+    } finally {
+      pagos.PROCESADORES.demo = demo;
+    }
+    const d = r.datos || {};
+    ok(r.codigo === 402 && typeof d.error === 'string' && d.error.length > 10, `código ${r.codigo}: ${d.error}`);
+    const fila = d.pago ? db.pagoPorId(d.pago.id) : null;
+    ok(!!fila && fila.estado === 'rechazado', `pago en la base: ${fila && fila.estado}`);
+    ok(suscripcionesDe(orgApi.id) === suscAntes, `membresías: ${suscripcionesDe(orgApi.id)} (se esperaban ${suscAntes})`);
+    ok(facturasTotales() === factAntes, `facturas: ${facturasTotales()} (se esperaban ${factAntes})`);
+  }
+
+  console.log('\n19. El Estándar en promoción sigue aprobado al instante y sin comprobante');
+  {
+    const r = await comprar({ plan: 'estandar', cupo: 1, dias: 30 });
+    const d = r.datos || {};
+    const fila = d.pago ? db.pagoPorId(d.pago.id) : null;
+    ok(r.codigo === 201 && d.cobro && d.cobro.total === 0 && !d.comprobante,
+      `código ${r.codigo}, total ${d.cobro && d.cobro.total}, comprobante ${d.comprobante}`);
+    ok(!!fila && fila.estado === 'aprobado' && fila.procesador === 'sin-costo',
+      `pago ${fila && fila.estado} por ${fila && fila.procesador}`);
+  }
+
+  console.log('\n20. Ampliar con demo suma y factura; si el procesador rechaza, nada cambia');
+  {
+    const factAntes = facturasTotales();
+    const r = idSuscApi ? await ampliar(idSuscApi, 3) : { codigo: 0, datos: {} };
+    ok(r.codigo === 200 && !!r.datos.comprobante && cupoDe(idSuscApi) === 3 && facturasTotales() === factAntes + 1,
+      `código ${r.codigo}, cupo ${idSuscApi && cupoDe(idSuscApi)}, facturas ${factAntes} → ${facturasTotales()}`);
+
+    const demo = pagos.PROCESADORES.demo;
+    const factMedio = facturasTotales();
+    let r2 = null;
+    try {
+      pagos.PROCESADORES.demo = async () => ({ resultado: 'rechazado' });
+      r2 = idSuscApi ? await ampliar(idSuscApi, 5) : { codigo: 0, datos: {} };
+    } finally {
+      pagos.PROCESADORES.demo = demo;
+    }
+    ok(r2.codigo === 402 && cupoDe(idSuscApi) === 3 && facturasTotales() === factMedio,
+      `código ${r2.codigo}, cupo ${idSuscApi && cupoDe(idSuscApi)}, facturas ${factMedio} → ${facturasTotales()}`);
+  }
+
+  console.log('\n21. Si el procesador deja el cobro en proceso: 202 sin nada, y confirmarlo después lo completa');
+  {
+    const demo = pagos.PROCESADORES.demo;
+    let r = null;
+    try {
+      pagos.PROCESADORES.demo = async () => ({ resultado: 'pendiente' });
+      r = await comprar({ plan: 'destacado', cupo: 1, dias: 60 });
+    } finally {
+      pagos.PROCESADORES.demo = demo;
+    }
+    const d = r.datos || {};
+    ok(r.codigo === 202 && d.membresia === null && !!d.pago && d.pago.estado === 'pendiente'
+      && facturasDelPago(d.pago.id) === 0,
+    `código ${r.codigo}, membresía ${d.membresia}, pago ${d.pago && d.pago.estado}`);
+    let c = null;
+    const e = d.pago ? lanza(() => { c = pagos.confirmarPago(d.pago.id); }) : new Error('no hay pago');
+    ok(!e && !!c && !!c.membresia && !!c.comprobante && c.membresia.dias_ciclo === 60,
+      e ? `lanzó: ${e.message}` : `membresía ${c.membresia && c.membresia.id} y comprobante ${c.comprobante && c.comprobante.numero}`);
+  }
+
+  console.log('\n22. Nadie más otorga cupos por un cobro con importe');
+  {
+    const cobro = cobroDe(3500, 'PUERTA');
+    ok(!!lanza(() => db.comprarCupos({ idOrg: ID_ORG, idPlan: 'destacado', cupo: 1, dias: 30, cobro })),
+      'comprarCupos con importe lanza');
+    ok(!!lanza(() => db.ampliarCupos({ idSusc: idSuscApi, idOrg: orgApi.id, cupoNuevo: 9, cobro })),
+      'ampliarCupos con importe lanza');
+    ok(cupoDe(idSuscApi) === 3, `el cupo sigue en ${cupoDe(idSuscApi)}`);
   }
 
   console.log();

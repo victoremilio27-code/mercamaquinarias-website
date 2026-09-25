@@ -30,6 +30,7 @@ const servicios = require('../assets/servicios.js');
    guardaría constancia de otra. */
 const legales = require('../assets/legales.js');
 const facturas = require('./facturas');
+const pagos = require('./pagos');
 
 const { ITBIS } = precios;
 const COOKIE = 'te_sesion';
@@ -1886,47 +1887,11 @@ const misPlanes = conSesion((req, res, ctx) => {
   });
 });
 
-/* Todo cobro emite su comprobante. Una sola función, y las dos rutas
- * que cobran la llaman.
- *
- * Estaba escrito dos veces y solo existía en una: comprar cupos emitía
- * comprobante y AMPLIARLOS no. El cliente pagaba la ampliación, el pago
- * quedaba aprobado, y no había documento. Ninguna tarea lo recuperaba
- * después —la diaria solo reintenta el envío de facturas ya creadas—,
- * así que era ingreso cobrado y no declarado, invisible hasta una
- * inspección. Con una sola función no pueden volver a separarse.
- *
- * Nunca lanza: que no se pueda emitir NO revierte un cobro que ya
- * entró. El comprobante se puede emitir después desde administración,
- * y el pago sin factura sale en la lista de pendientes. */
-function emitirComprobanteDeCobro({ cobro, concepto, detalle, cliente, correoCliente }) {
-  /* Una cuenta exenta no paga nada, así que no hay nada que comprobar. */
-  if (!cobro || cobro.total <= 0) return null;
-
-  const pago = db.pagoPorReferencia(cobro.referencia);
-  if (!pago) {
-    console.error(`facturas: no se encontró el pago ${cobro.referencia} para emitir su comprobante`);
-    return null;
-  }
-
-  try {
-    const comprobante = facturas.emitirPorPago(pago, { concepto, detalle, cliente });
-
-    /* El envío va aparte y sin esperarlo: emitir y notificar fallan por
-       motivos distintos, y una caída del proveedor de correo no puede
-       dejar sin comprobante un pago que ya entró. Lo que no salga lo
-       reintenta la tarea diaria. Con catch, porque una promesa suelta
-       que se rechace sin manejador tumba el proceso. */
-    facturas.enviar(comprobante, { correoCliente })
-      .catch((e) => console.error(
-        `facturas: no se pudo enviar el comprobante ${comprobante.numero} · ${e.message}`));
-
-    return comprobante;
-  } catch (e) {
-    console.error(`facturas: no se pudo emitir el comprobante del pago ${pago.id} · ${e.message}`);
-    return null;
-  }
-}
+/* El comprobante de un cobro se emite en UN solo sitio:
+ * `pagos.confirmarPago`, la transición de pendiente a aprobado. Estuvo
+ * escrito dos veces y comprar emitía mientras ampliar no, que era
+ * ingreso cobrado y no declarado. Aquí no se emite nada: las rutas
+ * anotan el cobro y se lo pasan a `pagos.cobrar`. */
 
 /* A nombre de quién sale el comprobante de un cobro que no pregunta.
  *
@@ -1943,22 +1908,18 @@ function datosFiscalesDe(ctx) {
   return { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo };
 }
 
-/* Lo que se imprime como línea de detalle.
+/* Lo que responde una ruta de cobro cuando el procesador no aprobó.
  *
- * La multiplicación tiene que cuadrar: cantidad × precio unitario =
- * importe. Con cupos gratis por cantidad el subtotal deja de ser
- * divisible, así que en ese caso va una sola línea por el total y el
- * reparto se explica en el texto. Una factura donde la multiplicación
- * no da es una factura que el cliente reclama. */
-function lineaDeCupos({ cupo, subtotal, inicio, fin }) {
-  const divisible = cupo > 0 && subtotal % cupo === 0;
-  return {
-    cantidad: divisible ? cupo : 1,
-    precio_unitario: divisible ? subtotal / cupo : subtotal,
-    periodo: [inicio, fin]
-      .map((f) => String(f).slice(0, 10).split('-').reverse().join('/')).join(' al '),
-  };
-}
+ * Rechazado: 402 con un texto que diga lo que NO pasó, que es lo que
+ * el anunciante necesita saber. Pendiente: 202, sin cupos ni
+ * comprobante todavía; aparecerán cuando el pago se confirme. El
+ * navegador de hoy nunca ve un 202 porque `demo` aprueba siempre. */
+const NO_APROBADO = 'El pago no fue aprobado. No se le cobró nada, no se añadió ningún cupo '
+  + 'y no se emitió comprobante.';
+const EN_PROCESO = 'Su pago está en proceso. Los cupos y el comprobante aparecerán cuando se confirme.';
+
+const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
+const comprobantePublico = (c) => c && { numero: c.numero, tipo: c.tipo, ncf: c.ncf };
 
 const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
@@ -2005,27 +1966,49 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     };
   }
 
-  const membresia = db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias, cobro });
+  /* Sin importe no hay nada que esperar ni que declarar: se otorga al
+     instante, como siempre, y no se emite comprobante. */
+  if (!(cobro.total > 0)) {
+    const membresia = db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias, cobro });
+    return responder(res, 201, {
+      membresia,
+      cobro,
+      comprobante: null,
+      sesion: sesionPublica(ctx.usuario.id),
+      pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
+    });
+  }
 
-  /* El comprobante se emite SIEMPRE que haya cobro, lo pida el cliente
-     o no. */
-  const comprobante = emitirComprobanteDeCobro({
+  /* Con importe, el cobro nace pendiente y lo comprado espera en el
+     pago. Los cupos y el comprobante los da `pagos.cobrar` solo si el
+     procesador aprueba: el comprobante se emite SIEMPRE que haya cobro
+     aprobado, lo pida el cliente o no, y nunca si no lo hubo. */
+  const pago = db.registrarCobro({
+    idOrg: org.id,
     cobro,
-    concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
-    detalle: lineaDeCupos({
-      cupo, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
-    }),
-    cliente,
-    correoCliente: ctx.usuario.correo,
-  });
-
-  return responder(res, 201, {
-    membresia,
-    cobro,
-    comprobante: comprobante && {
-      numero: comprobante.numero, tipo: comprobante.tipo, ncf: comprobante.ncf,
+    intencion: {
+      tipo: 'compra', idPlan: plan.id, cupo, dias,
+      concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
+      cliente,
+      correoCliente: ctx.usuario.correo,
     },
+  });
+  const r = await pagos.cobrar(pago);
+
+  if (r.estado === 'rechazado') {
+    return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
+  }
+  if (r.estado !== 'aprobado') {
+    return responder(res, 202, {
+      membresia: null, cobro, comprobante: null, pago: pagoPublico(r.pago), aviso: EN_PROCESO,
+    });
+  }
+  return responder(res, 201, {
+    membresia: r.membresia,
+    cobro,
+    comprobante: comprobantePublico(r.comprobante),
     sesion: sesionPublica(ctx.usuario.id),
+    pago: pagoPublico(r.pago),
   });
 });
 
@@ -2059,32 +2042,50 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
       procesador: 'demo',
     };
 
-  const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
+  if (!(cobro.total > 0)) {
+    const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
+    return responder(res, 200, {
+      membresia, cobro, comprobante: null, pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
+    });
+  }
 
   /* Ampliar cupos es un cobro como cualquier otro y lleva su
      comprobante. Faltaba: se cobraba la diferencia, el pago quedaba
-     aprobado y no se emitía nada. */
+     aprobado y no se emitía nada. Ahora pasa por la misma transición
+     que la compra, y lo que se guarda son los cupos AÑADIDOS, que es
+     lo que se cobró y lo que se suma al confirmarse. */
   const cuantos = cupoNuevo - s.anuncios_incluidos;
-  const comprobante = emitirComprobanteDeCobro({
+  const pago = db.registrarCobro({
+    idOrg: org.id,
+    idSusc,
     cobro,
-    concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
-      + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
-    detalle: lineaDeCupos({
-      cupo: cuantos, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
-    }),
-    /* Los mismos datos fiscales de la compra original: quien facturó
-       con RNC espera que la ampliación de esa misma membresía salga
-       igual, no a nombre de otro. */
-    cliente: datosFiscalesDe(ctx),
-    correoCliente: ctx.usuario.correo,
-  });
-
-  return responder(res, 200, {
-    membresia,
-    cobro,
-    comprobante: comprobante && {
-      numero: comprobante.numero, tipo: comprobante.tipo, ncf: comprobante.ncf,
+    intencion: {
+      tipo: 'ampliacion', idSusc, cupoAnterior: s.anuncios_incluidos, cupoNuevo, anadidos: cuantos,
+      concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
+        + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
+      /* Los mismos datos fiscales de la compra original: quien facturó
+         con RNC espera que la ampliación de esa misma membresía salga
+         igual, no a nombre de otro. */
+      cliente: datosFiscalesDe(ctx),
+      correoCliente: ctx.usuario.correo,
     },
+  });
+  const r = await pagos.cobrar(pago);
+
+  if (r.estado === 'rechazado') {
+    return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
+  }
+  if (r.estado !== 'aprobado') {
+    return responder(res, 202, {
+      membresia: db.suscripcion(idSusc, org.id), cobro, comprobante: null,
+      pago: pagoPublico(r.pago), aviso: EN_PROCESO,
+    });
+  }
+  return responder(res, 200, {
+    membresia: r.membresia,
+    cobro,
+    comprobante: comprobantePublico(r.comprobante),
+    pago: pagoPublico(r.pago),
   });
 });
 
