@@ -2449,6 +2449,9 @@ const publicar = conSesion(async (req, res, ctx) => {
     itbisIncluido: !!c.itbisIncluido,
     permuta: !!c.permuta,
     financiamiento: !!c.financiamiento,
+    // En el país o bajo pedido. db.crearAnuncio normaliza: lo que no
+    // sea exactamente «bajo-pedido» queda en el país.
+    disponibilidad: c.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
     video: texto(c.video, 300),
     ...tren,
     /* Las dos fechas salen de la membresía, no de lo que pida el
@@ -2575,6 +2578,22 @@ const editarTrenMotriz = conSesion(async (req, res, ctx, idAnuncio) => {
   return responder(res, 200, { anuncio: db.anuncio(idAnuncio) });
 });
 
+/* En el país o bajo pedido, cambiado desde el panel por el dueño del
+   anuncio. A cualquier otro se le responde 404, igual que en el tren
+   motriz: no se confirma que el anuncio exista. */
+const editarDisponibilidad = conSesion(async (req, res, ctx, idAnuncio) => {
+  const c = await leerCuerpo(req);
+  const a = db.anuncio(idAnuncio);
+  if (!a || !ctx.organizacion || a.organizacion_id !== ctx.organizacion.id) {
+    return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
+  }
+  if (!db.DISPONIBILIDADES.includes(c.disponibilidad)) {
+    return fallo(res, 400, 'Indique si el equipo está en el país o es bajo pedido');
+  }
+  db.guardarDisponibilidad(idAnuncio, ctx.organizacion.id, c.disponibilidad);
+  return responder(res, 200, { anuncio: { id: idAnuncio, disponibilidad: c.disponibilidad } });
+});
+
 /* Catálogo. Busca, filtra, ordena y pagina en el servidor: el
    navegador ya no recibe el inventario entero para cribarlo, que era
    lo que iba a romperse al llegar a los miles de anuncios. */
@@ -2590,6 +2609,7 @@ function catalogo(req, res, ctx, consulta) {
     marca: v('marca'),
     provincia: v('provincia'),
     condicion: v('condicion'),
+    disponibilidad: v('disponibilidad'),
     precioMin: v('precioMin'),
     precioMax: v('precioMax'),
     anioMin: v('anioMin'),
@@ -2746,6 +2766,7 @@ const RUTAS = [
   ['GET',  /^\/api\/anuncios\/([\w-]+)$/, verAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/plan$/, cambiarPlanDeAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
+  ['PATCH', /^\/api\/anuncios\/([\w-]+)\/disponibilidad$/, editarDisponibilidad],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)$/, cambiarEstado],
   ['DELETE', /^\/api\/anuncios\/([\w-]+)$/, eliminarAnuncio],
 

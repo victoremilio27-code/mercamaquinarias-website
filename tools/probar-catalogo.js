@@ -236,10 +236,61 @@ async function bloqueMoneda() {
   'la escritura de la tasa está declarada como propia de la plataforma (no va a la bitácora)');
 }
 
+/* ── CAT-02 · en el país o bajo pedido ───────────────────── */
+async function bloqueDisponibilidad() {
+  const d = db.abrir();
+  console.log('\nLa columna y su migración');
+  comprobar(!!d.prepare("SELECT 1 FROM migraciones WHERE id = '2026-09-anuncios-disponibilidad'").get(),
+    'la migración 2026-09-anuncios-disponibilidad queda anotada');
+  comprobar(d.prepare('SELECT COUNT(*) AS n FROM anuncios WHERE disponibilidad = ?').get('en-pais').n === 4,
+    'los anuncios creados sin decir nada quedan «en el país»');
+  let e = null;
+  try { d.prepare("UPDATE anuncios SET disponibilidad = 'en-camino' WHERE id = ?").run(S.dop500); } catch (x) { e = x; }
+  comprobar(!!e, 'la base rechaza un valor que no es de los dos admitidos');
+
+  S.pedido = anuncio(S.vendedor.org, { modelo: 'PEDIDO', precio: 90000, moneda: 'USD', disponibilidad: 'bajo-pedido' });
+  S.raro = anuncio(S.vendedor.org, { modelo: 'RARO', precio: 800000, disponibilidad: '<script>' });
+  comprobar(db.anuncio(S.raro).disponibilidad === 'en-pais', 'crearAnuncio normaliza un valor desconocido a «en el país»');
+
+  console.log('\nCriterio 3 · la ficha lo dice');
+  let x = await pedir({ url: `/api/anuncios/${S.pedido}` });
+  comprobar(x.codigo === 200 && x.datos.anuncio.disponibilidad === 'bajo-pedido', 'la ficha pública trae «bajo-pedido»');
+  x = await pedir({ url: `/api/anuncios/${S.dop500}` });
+  comprobar(x.datos.anuncio.disponibilidad === 'en-pais', 'y «en-pais» en uno que está aquí');
+  let r = await catalogo('');
+  const tarjeta = r.anuncios.find((a) => a.id === S.pedido);
+  comprobar(tarjeta && tarjeta.disponibilidad === 'bajo-pedido', 'la tarjeta del catálogo también la trae');
+
+  console.log('\nCriterio 3 · el catálogo filtra por ello');
+  r = await catalogo('disponibilidad=bajo-pedido');
+  comprobar(r.total === 1 && ids(r)[0] === S.pedido, `«bajo pedido» devuelve solo ese (total ${r.total})`);
+  r = await catalogo('disponibilidad=en-pais');
+  comprobar(r.total === 5 && !ids(r).includes(S.pedido), `«en el país» devuelve los otros cinco (total ${r.total})`);
+  r = await catalogo('disponibilidad=cualquier-cosa');
+  comprobar(r.total === 6, 'un valor desconocido no filtra (no deja el catálogo vacío)');
+
+  console.log('\nEl dueño la cambia desde su panel');
+  const ruta = `/api/anuncios/${S.pedido}/disponibilidad`;
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { disponibilidad: 'en-pais' } });
+  comprobar(x.codigo === 401 || x.codigo === 404, `sin sesión no (respondió ${x.codigo})`);
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { disponibilidad: 'en-pais' }, cabeceras: S.comoAjeno });
+  comprobar(x.codigo === 404 && db.anuncio(S.pedido).disponibilidad === 'bajo-pedido',
+    `otra organización recibe 404 y no cambia nada (respondió ${x.codigo})`);
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { disponibilidad: 'llegando' }, cabeceras: S.comoVendedor });
+  comprobar(x.codigo === 400, 'un valor inventado recibe 400');
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { disponibilidad: 'en-pais' }, cabeceras: S.comoVendedor });
+  comprobar(x.codigo === 200 && db.anuncio(S.pedido).disponibilidad === 'en-pais', 'el dueño la pasa a «en el país»');
+  x = await pedir({ url: '/api/mis-anuncios', cabeceras: S.comoVendedor });
+  const enPanel = x.datos && (x.datos.anuncios || []).find((a) => a.id === S.pedido);
+  comprobar(enPanel && enPanel.disponibilidad === 'en-pais', 'y el panel la ve cambiada');
+  db.guardarDisponibilidad(S.pedido, S.vendedor.org.id, 'bajo-pedido');
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · comprobaciones del catálogo\n');
   sembrar();
   await bloqueMoneda();
+  await bloqueDisponibilidad();
 
   console.log(`\n${bien} bien, ${mal} mal`);
   process.exit(mal ? 1 : 0);

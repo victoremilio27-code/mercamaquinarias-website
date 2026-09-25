@@ -909,6 +909,21 @@ const MIGRACIONES = [
      END`,
     'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
   ]],
+
+  /* Si la máquina ya está en el país o es bajo pedido (CAT-02). Es lo
+     primero que pregunta el comprador dominicano y no estaba en ninguna
+     ficha: una excavadora que hay que importar cambia plazo y costo.
+
+     Los anuncios que ya existen quedan «en el país» y no es suponer:
+     todos se publicaron con «Provincia donde se encuentra» obligatoria,
+     así que el sitio ya afirmaba que estaban aquí. El CHECK va en la
+     columna porque es de dos valores fijos y la API los filtra igual;
+     SQLite lo comprueba contra las filas existentes, que toman el valor
+     por defecto. */
+  ['2026-09-anuncios-disponibilidad', [
+    `ALTER TABLE anuncios ADD COLUMN disponibilidad TEXT NOT NULL DEFAULT 'en-pais'
+       CHECK (disponibilidad IN ('en-pais', 'bajo-pedido'))`,
+  ]],
 ];
 
 function migrar() {
@@ -2650,6 +2665,13 @@ const refrescarAnunciosDe = (idSusc) => {
 
 /* ── Anuncios ───────────────────────────────────────────── */
 
+/* Dónde está la máquina: ya en el país o bajo pedido (se importa tras
+   la venta). Lo que no sea exactamente «bajo-pedido» se guarda como en
+   el país, que es lo normal y lo que el anuncio afirmaba antes de
+   existir el campo. */
+const DISPONIBILIDADES = ['en-pais', 'bajo-pedido'];
+const disponibilidadValida = (v) => (v === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais');
+
 function crearAnuncio(datos) {
   const d = abrir();
   const idAnuncio = id();
@@ -2662,11 +2684,11 @@ function crearAnuncio(datos) {
       categoria, subcategoria, marca, modelo, anio, condicion, uso_valor, uso_unidad,
       serie, potencia, peso, implementos, descripcion, provincia, municipio,
       precio, moneda, modalidad_precio, precio_minimo, itbis_incluido, permuta,
-      financiamiento, video,
+      financiamiento, video, disponibilidad,
       motor_marca, motor_modelo, transmision_marca, transmision_modelo,
       destacado_hasta, publicado, vence, creado)
       VALUES (?, ?, ?, ?, ?, 'activo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(idAnuncio, datos.idOrg, datos.idSucursal || null, datos.idUsuario || null,
         datos.idSuscripcion || null,
         datos.categoria, datos.subcategoria || null, datos.marca, datos.modelo,
@@ -2677,6 +2699,7 @@ function crearAnuncio(datos) {
         datos.precio ?? null, datos.moneda || 'DOP', datos.modalidadPrecio || 'fijo',
         datos.precioMinimo || null, datos.itbisIncluido ? 1 : 0, datos.permuta ? 1 : 0,
         datos.financiamiento ? 1 : 0, datos.video || null,
+        disponibilidadValida(datos.disponibilidad),
         datos.motorMarca || null, datos.motorModelo || null,
         datos.transmisionMarca || null, datos.transmisionModelo || null,
         datos.destacadoHasta || null, t, datos.vence || null, t);
@@ -2829,6 +2852,9 @@ function filtrosCatalogo(f = {}) {
   igual('marca', 'marca', f.marca);
   igual('provincia', 'provincia', f.provincia);
   igual('condicion', 'condicion', f.condicion);
+  // Solo uno de los dos valores conocidos: otro cualquiera se ignora en
+  // vez de devolver un catálogo vacío que parezca un fallo.
+  if (DISPONIBILIDADES.includes(f.disponibilidad)) igual('disponibilidad', 'disponibilidad', f.disponibilidad);
 
   // `expresion` es SQL escrito aquí, nunca de la petición: una columna
   // o PRECIO_EN_PESOS. El valor va siempre como parámetro.
@@ -2903,6 +2929,7 @@ function buscarAnuncios(f = {}) {
     SELECT a.id, a.categoria, a.subcategoria, a.marca, a.modelo, a.anio, a.condicion,
            a.uso_valor, a.uso_unidad, a.precio, a.moneda, a.modalidad_precio,
            a.provincia, a.municipio, a.publicado, a.vence, a.destacado_hasta,
+           a.disponibilidad, a.permuta, a.itbis_incluido,
            o.nombre AS dealer, o.slug AS dealer_slug, o.tipo AS org_tipo, o.verificada,
            (SELECT COALESCE(f.miniatura, f.url) FROM anuncio_fotos f WHERE f.anuncio_id = a.id ORDER BY f.orden LIMIT 1) AS foto,
            (SELECT COUNT(*) FROM anuncio_fotos f WHERE f.anuncio_id = a.id) AS fotos_total
@@ -2981,6 +3008,7 @@ function anunciosDeOrganizacion(idOrg) {
     SELECT a.id, a.marca, a.modelo, a.anio, a.categoria, a.subcategoria,
            a.estado, a.precio, a.moneda,
            a.modalidad_precio, a.provincia, a.publicado, a.vence, a.suscripcion_id,
+           a.disponibilidad,
            -- El panel avisa cuando un camión no los tiene declarados y
            -- deja rellenarlos ahí mismo.
            a.motor_marca, a.motor_modelo, a.transmision_marca, a.transmision_modelo,
@@ -3056,6 +3084,15 @@ const guardarTrenMotriz = (idAnuncio, idOrg, t) =>
      WHERE id = ? AND organizacion_id = ?`)
     .run(t.motorMarca, t.motorModelo, t.transmisionMarca, t.transmisionModelo,
       ahora(), idAnuncio, idOrg);
+
+/* En el país o bajo pedido, cambiado por su dueño desde el panel. La
+   máquina que se vendió bajo pedido llega un día al país, y obligar a
+   republicarla le costaría sus visitas y su antigüedad. Devuelve si
+   cambió algo: con la organización equivocada, no toca nada. */
+const guardarDisponibilidad = (idAnuncio, idOrg, valor) =>
+  abrir().prepare(`UPDATE anuncios SET disponibilidad = ?, actualizado = ?
+     WHERE id = ? AND organizacion_id = ?`)
+    .run(disponibilidadValida(valor), ahora(), idAnuncio, idOrg).changes > 0;
 
 const cambiarEstadoAnuncio = (idAnuncio, idOrg, estado) =>
   abrir().prepare('UPDATE anuncios SET estado = ?, actualizado = ? WHERE id = ? AND organizacion_id = ?')
@@ -3756,5 +3793,5 @@ module.exports = {
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   anotarEvento, resumenOrganizacion,
   /* Fase 8: moneda y disponibilidad en el catálogo. */
-  tasaUsd,
+  tasaUsd, DISPONIBILIDADES, guardarDisponibilidad,
 };
