@@ -182,6 +182,24 @@ async function entrar(correo, clave) {
     const rr = await pedir(ruta, { metodo, cuerpo: cuerpo || undefined, cookie: cibao });
     comprobar(`${que} a cuenta sin permiso`, rr.estado === 404, `devolvió ${rr.estado}`);
   }
+  /* Las transferencias de la consola: marcar una como recibida otorga
+     cupos y consume un NCF en nombre de otra empresa, y el listado
+     lleva el correo de cada cliente. 404, como el resto de la consola. */
+  const rPag = await pedir('/admin/pagos', { cookie: cibao });
+  comprobar('listado de transferencias oculto a cuenta sin permiso',
+    rPag.estado === 404, `devolvió ${rPag.estado}`);
+
+  const rRec = await pedir('/admin/pagos/cualquiera/recibido', {
+    metodo: 'POST', cuerpo: { motivo: 'Ref. banco inventada' }, cookie: cibao,
+  });
+  comprobar('marcar una transferencia como recibida bloqueado sin permiso',
+    rRec.estado === 404, `devolvió ${rRec.estado}`);
+
+  const rAnu = await pedir('/admin/pagos/cualquiera/anular', {
+    metodo: 'POST', cuerpo: { motivo: 'Anulación sin permiso' }, cookie: cibao,
+  });
+  comprobar('anular una transferencia bloqueado sin permiso',
+    rAnu.estado === 404, `devolvió ${rAnu.estado}`);
 
   // 5. Sin sesión ninguna
   for (const [ruta, metodo] of [['/mis-anuncios', 'GET'], ['/sucursales', 'GET'], ['/admin/solicitudes', 'GET'], ['/admin/bitacora', 'GET']]) {
