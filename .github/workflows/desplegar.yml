@@ -115,6 +115,18 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      # Sin esto, Chrome no arranca en el runner: desde Ubuntu 23.10
+      # AppArmor prohibe los espacios de nombres de usuario sin
+      # privilegios y el sandbox muere con "No usable sandbox!", que es
+      # justo con lo que cayo la primera pasada de este flujo.
+      #
+      # Se baja la restriccion en el runner en vez de meter --no-sandbox
+      # en las herramientas: el runner es una maquina desechable que se
+      # tira en cuanto acaba el job, y las herramientas se usan tambien
+      # en la maquina de casa, donde el sandbox de Chrome si tiene que
+      # seguir puesto.
+      - name: Permitir el sandbox de Chrome en el runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # auditar-publico.js abre /dealer.html?d=maquinarias-del-caribe y
       # el catalogo: sin sembrar, audita un sitio vacio.
       - name: Sembrar inventario de demostracion
