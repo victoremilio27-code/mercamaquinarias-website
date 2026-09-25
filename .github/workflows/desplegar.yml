@@ -96,7 +96,14 @@ jobs:
       # Base desechable del runner. Va en el env del JOB, no delante de
       # un comando: auditar-flujos.js lanza `node tools/admin.js crear`
       # con execFileSync y el hijo tiene que ver la misma base.
-      MERCA_DB: ${{ runner.temp }}/ci.db
+      #
+      # La ruta va a pelo y NO con una expresion sobre el contexto
+      # `runner`: ese contexto no existe en el `env` de un job, solo en el
+      # de un paso. GitHub no lo avisa en el paso que lo usa: rechaza el
+      # archivo entero con "Unrecognized named-value: runner" y la pasada
+      # muere antes de empezar. Ya paso una vez.
+      # En ubuntu-latest /tmp es del runner y se tira con el.
+      MERCA_DB: /tmp/ci-mercamaquinarias.db
       MERCA_CORREO: archivo
       MERCA_SECRETO: secreto-de-ci-no-usar-en-produccion
       MERCA_HTTPS: '0'
