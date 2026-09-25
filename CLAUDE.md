@@ -1,11 +1,49 @@
 # MercaMaquinarias — reglas de este repositorio
 
-Lo general de cómo trabajar con Victor está en el `CLAUDE.md` global.
-Aquí va solo lo propio de este proyecto. Todo lo de abajo son reglas que ya costaron
-caro una vez.
+Victor tiene además un `CLAUDE.md` global en su PC. **Las sesiones en la nube no lo
+ven**, así que lo imprescindible de él está copiado en «Cómo se trabaja con Victor».
+Todo lo demás de abajo son reglas que ya costaron caro una vez.
 
 El mapa completo del código está en `.planning/codebase/` y el contexto del proyecto en
-`.planning/PROJECT.md`. Léelos antes de explorar a ciegas.
+`.planning/PROJECT.md`. **Dónde va el trabajo ahora mismo está en `.planning/STATE.md`**:
+léelo al empezar una sesión nueva, antes de explorar a ciegas.
+
+## Cómo se trabaja con Victor
+
+- **El proyecto se llama MercaMaquinarias.** "TuEquipoRD" es el nombre viejo: sobrevive
+  solo en la carpeta local, en la migración que renombra los datos antiguos, en la clave
+  del borrador viejo de `assets/publicar.js` y en la redirección del dominio viejo. No
+  lo uses para nada nuevo.
+- Todo en español. Decide tú lo técnico y reversible; agrupa en una sola tanda las
+  preguntas que solo él puede contestar (datos reales, pagos, algo irreversible).
+- **Se trabaja por fases GSD en orden fijo** (`.planning/ROADMAP.md`): lanzamiento →
+  transporte y financiamiento → lote del contador → deuda técnica. Lanzamiento el
+  **2026-10-14**, fecha firme. Solo la afiliación de CardNet puede retrasarlo, nunca
+  nuestro trabajo.
+- **Una petición nueva a mitad de fase no interrumpe:** se anota en la fase que le toca y
+  se recoge al cerrar la actual.
+- **El plazo se dice una vez y no se repite** en cada mensaje.
+- **Luz verde:** con *"sigue hasta que se acabe el uso"* no se espera entre tareas ni
+  fases, y se pueden correr 2 o 3 agentes en paralelo si no tocan los mismos archivos.
+  Si pidió esperar en un punto de control, se espera.
+- **Publicar:** autorizó fusionar a `main` en cuanto un PR tenga el CI en verde, sin
+  volver a preguntar, y comprobar después el sitio en vivo. Eso no cubre saltarse la
+  barrera ni silenciar una prueba para poder publicar.
+- **Revisiones de código solo cuando él las pida.** Al cerrar un bloque grande basta con
+  decir "Listo para revisión si quieres".
+- Commits pequeños, en español, con `git add` de rutas explícitas; nunca `git add .`,
+  `stash` sin etiqueta, `--force` ni push a `main`.
+- **El video en anuncios (PR #9) está en pausa a propósito:** terminado pero sin
+  fusionar, porque falta una prueba manual que el navegador sin pantalla no puede hacer.
+
+## En la nube (claude.ai/code)
+
+Victor trabaja también en sesiones en la nube, que gastan un crédito propio. Allí no hay
+nada de su PC: ni su `CLAUDE.md` global, ni la memoria de sesiones anteriores, ni GSD.
+`tools/preparar-nube.sh` los deja listos: Node ≥ 22.5, `npm ci` y GSD. Va configurado
+como script de preparación del entorno.
+
+Una misma fase no se trabaja a la vez en la nube y en local: cada sesión en su rama.
 
 ## Reglas de negocio que no se negocian
 
@@ -54,8 +92,10 @@ El mapa completo del código está en `.planning/codebase/` y el contexto del pr
 
 ## Despliegue — cuidado
 
-- **Fusionar a `main` despliega a producción automáticamente.** No hay barrera de
-  pruebas en CI todavía. Rama y Pull Request siempre; nunca push directo a `main`.
+- **Fusionar a `main` despliega a producción automáticamente.** El despliegue espera a
+  que pasen `pruebas` y `navegador` en CI, pero GitHub todavía deja **fusionar** un PR en
+  rojo: la protección de rama es un paso manual de Victor (plan 01-02). Mira el CI antes
+  de fusionar. Rama y Pull Request siempre; nunca push directo a `main`.
 - Hay **otra persona trabajando en este repositorio**. Nunca reescribas historial ni uses
   `--force`.
 - Antes de tocar la base de producción, respaldo verificado (`VACUUM INTO` +

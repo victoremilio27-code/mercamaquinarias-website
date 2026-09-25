@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Plan 02-06 terminado: check-contraste en 0 y npm run auditar en verde. Falta la verificación humana de la fase 2 y abrir su PR."
-last_updated: "2026-09-25T19:26:07.903Z"
-last_activity: "2026-09-25 — Plan 01-01 ejecutado. El flujo `Verificar y desplegar` corre en cada Pull Request y el despliegue lleva `needs: [pruebas, navegador]`. Comprobado en la pasada real del PR #23: `pruebas` verde en 15 s, `navegador` verde en 1 m 49 s, `desplegar` omitido."
+stopped_at: "Fases 2, 3 y 4 publicadas en producción (PR #23 y #25). Fase 5 planificada, sin ejecutar."
+last_updated: "2026-09-25T23:00:00.000Z"
+last_activity: "2026-09-25 — Fusionados y desplegados el PR #23 (fase 2 + planes) y el #25 (fases 3 y 4). CI verde y sitio comprobado en vivo."
 progress:
   total_phases: 16
-  completed_phases: 1
+  completed_phases: 3
   total_plans: 21
-  completed_plans: 7
-  percent: 6
+  completed_plans: 14
+  percent: 19
 ---
 
 # Project State
@@ -21,16 +21,27 @@ progress:
 Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 
 **Core value:** Ser el punto de referencia de República Dominicana para quien tenga, necesite o trabaje con maquinaria pesada — el vacío que hoy no ocupa nadie.
-**Current focus:** Phase 1 — Barrera de pruebas en la fusión
+**Current focus:** Phase 5 — Cobro por transferencia bancaria (planificada, 5 planes)
 
 ## Current Position
 
-Phase: 1 de 16 (Barrera de pruebas en la fusión) — las 10 primeras son v1
-Plan: 1 de 3 en la fase actual
-Status: In progress — 01-01 terminado; 01-02 es paso manual de Victor
-Last activity: 2026-09-25 — Plan 01-01 ejecutado. El flujo `Verificar y desplegar` corre en cada Pull Request y el despliegue lleva `needs: [pruebas, navegador]`. Comprobado en la pasada real del PR #23: `pruebas` verde en 15 s, `navegador` verde en 1 m 49 s, `desplegar` omitido.
+Phase: 5 de 16 (Cobro por transferencia bancaria) — planificada, sin ejecutar
+Plan: 0 de 5
+Status: Esperando luz verde de Victor para ejecutar la fase 5
 
-Progress: [███░░░░░░░] 29%
+Hecho y en producción:
+- Fase 1: plan 01-01 (CI con `pruebas` y `navegador` antes de `desplegar`). Quedan 01-02, paso manual
+  de Victor (protección de rama en GitHub exigiendo esas dos comprobaciones), y 01-03.
+- Fase 2 completa (PR #23): comprobador de contraste en 0 dentro de `npm run auditar`.
+- Fases 3 y 4 completas (PR #25): pagos `pendiente → aprobado` por `pagos.confirmarPago`;
+  bandeja de solicitudes y bitácora de administración de solo añadir.
+
+Pendiente de Victor, sin bloquear la fase 5:
+- Verificación visual de las fases 2 y 4 en claro y oscuro (listas en los SUMMARY 02-06 y 04-04).
+- Si anular un comprobante debe ir a la bitácora (hoy es escritura propia; pregunta D-01 de la fase 4).
+- Los cinco datos bancarios de la fase 5: los dará al final, a propósito.
+
+Progress: [██░░░░░░░░] 19%
 
 ## Performance Metrics
 
@@ -82,7 +93,8 @@ Decisiones que afectan al trabajo actual:
 
 ### Pending Todos
 
-- **Darles código de salida a `tools/auditar-publico.js` y `tools/auditar-flujos.js`.** Hoy salen 0 aunque encuentren hallazgos, así que media `npm run auditar` no puede suspender nada. Antes hay que allanar el único hallazgo que queda: `/api/dealers/maquinarias-del-caribe` responde 404 y el perfil público del dealer no carga (reproducido en CI y en local con base recién sembrada). Va en una fase decimal; no bloquea ninguna fusión.
+- Borrar `proximamente.html` y `vercel.json` (restos de Vercel; necesita el visto bueno de Victor).
+- Retirar los worktrees locales ya fusionados (`TuEquipoRD-fase03`, `mercamaquinarias-fase04`).
 
 ### Blockers/Concerns
 
@@ -92,7 +104,6 @@ Decisiones que afectan al trabajo actual:
 - **Fechas de vencimiento de los NCF pendientes del contador.** Emitir desde una secuencia agotada o vencida es un error que el cliente no puede usar como crédito fiscal.
 - **Droplet de 512 MB al 60 % de disco.** Techo real para fotos y video; ninguna fase debe empeorarlo.
 - **Dos personas en el repositorio y `main` despliega solo.** Con el plan 01-01 ya no se despliega con las pruebas en rojo —el job `desplegar` lleva `needs: [pruebas, navegador]`—, pero **todavía se puede FUSIONAR un Pull Request en rojo**: la protección de rama es el plan `01-02` y solo Victor puede activarla en Settings → Branches, exigiendo las comprobaciones `pruebas` y `navegador`. Hasta entonces la red está a medio poner.
-- **`CLAUDE.md` sigue diciendo «No hay barrera de pruebas en CI todavía».** Es cierto a medias desde 01-01 y lo arregla el plan `01-03`.
 
 ## Deferred Items
 
@@ -104,6 +115,6 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 
 ## Session Continuity
 
-Last session: 2026-09-25T19:26:02.456Z
-Stopped at: Plan 02-04 terminado: cero hallazgos de tipo control (eran 271) y el ambar separado en sus dos papeles. El comprobador baja de 621 a 317; lo que queda es de 02-05.
+Last session: 2026-09-25
+Stopped at: Fases 2, 3 y 4 publicadas. Fase 5 planificada; se ejecuta cuando Victor lo diga.
 Resume file: None
