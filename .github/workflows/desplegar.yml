@@ -1,4 +1,4 @@
-# Despliegue automatico a produccion.
+# Verificacion en cada Pull Request y despliegue automatico a produccion.
 #
 # Cada vez que algo entra en `main` —que, con main protegida, significa
 # cada vez que se fusiona un Pull Request— GitHub entra al droplet y
@@ -10,26 +10,152 @@
 # forzada en authorized_keys, asi que aunque se filtrara este secreto no
 # serviria para leer nada de la maquina. El script, ademas, comprueba que
 # el sitio responda y vuelve solo a la version anterior si no lo hace.
+#
+# Lo que este archivo anade: el despliegue ya no puede arrancar a ciegas.
+# Lleva `needs: [pruebas, navegador]`, asi que con cualquiera de los dos
+# jobs de pruebas en rojo es fisicamente incapaz de empezar. Se usa `needs`
+# y no `workflow_run` porque un job solo puede depender de jobs del mismo
+# archivo: con `workflow_run` el despliegue seria un flujo aparte que se
+# dispara DESPUES y habria que mirarle la `conclusion` a mano.
 
-name: Desplegar
+name: Verificar y desplegar
 
 on:
+  # `pull_request` a secas y NUNCA `pull_request_target`: con
+  # `pull_request`, un PR venido de un fork corre sin los secretos del
+  # repositorio. `pull_request_target` los entrega y ademas ejecuta el
+  # codigo de quien abre el PR, que es la forma conocida de robar una
+  # llave de despliegue.
+  pull_request:
   push:
     branches: [main]
   # Para poder relanzar un despliegue a mano desde la pestana Actions
   # sin tener que inventarse un commit.
   workflow_dispatch:
 
-# Dos despliegues a la vez sobre la misma maquina se pisarian. No se
-# cancela el que ya esta corriendo: a mitad de un `git merge` y un
-# reinicio del servicio es el peor momento para cortar.
-concurrency: produccion
+# Una pasada por rama. En un Pull Request se cancela la anterior cuando
+# llega un empujon nuevo: nadie mira el resultado de un commit ya
+# superado. Sobre main NO se cancela: ahi la pasada termina y despliega.
+concurrency:
+  group: verificar-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Todo lo que se puede comprobar sin levantar el sitio ni abrir un
+  # navegador. Es el job rapido: si algo se rompe, suele romperse aqui.
+  pruebas:
+    name: pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Ni una clave de produccion en este job: no referencia ningun
+      # secreto, asi que GitHub no le entrega ninguno.
+      #
+      # MERCA_CORREO en `archivo` porque probar-facturas.js llama a
+      # facturas.enviar en su seccion 10 y no fija el transporte el mismo:
+      # asi escribe en .tmp/correos en vez de mandar correo de verdad el
+      # dia que cambie el transporte por defecto.
+      MERCA_CORREO: archivo
+      # tools/db.js cae a un valor aleatorio y avisa por consola si esto
+      # falta; un valor fijo de prueba deja la pasada reproducible y el
+      # registro limpio. Esta en claro a proposito: no es un secreto.
+      MERCA_SECRETO: secreto-de-ci-no-usar-en-produccion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # Cada script va en su propio paso para que el nombre del que falle
+      # se lea de un vistazo en la pagina del Pull Request, sin abrir un
+      # registro de mil lineas ni entrar al VPS.
+      - name: Codificacion
+        run: npm run check:encoding
+      - name: Taxonomia
+        run: npm run taxonomia
+      - name: Numeros a letras
+        run: npm run facturas:letras
+      - name: Seguridad
+        run: npm run seguridad:probar
+      - name: Pagina del dealer
+        run: npm run dealer:probar
+      - name: Facturas y NCF
+        run: npm run facturas:probar
+      - name: Asistente
+        run: npm run chat:probar
+
+  # Lo que necesita el sitio levantado: las auditorias y las dos pasadas
+  # de puppeteer. Va aparte del job hermetico para que un fallo de
+  # navegador no tape uno de logica, y al reves.
+  navegador:
+    name: navegador
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Base desechable del runner. Va en el env del JOB, no delante de
+      # un comando: auditar-flujos.js lanza `node tools/admin.js crear`
+      # con execFileSync y el hijo tiene que ver la misma base.
+      MERCA_DB: ${{ runner.temp }}/ci.db
+      MERCA_CORREO: archivo
+      MERCA_SECRETO: secreto-de-ci-no-usar-en-produccion
+      MERCA_HTTPS: '0'
+      PORT: '8080'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # auditar-publico.js abre /dealer.html?d=maquinarias-del-caribe y
+      # el catalogo: sin sembrar, audita un sitio vacio.
+      - name: Sembrar inventario de demostracion
+        run: npm run db:demo
+      - name: Arrancar el sitio
+        run: |
+          nohup npm start > servidor.log 2>&1 &
+          echo "SERVIDOR_PID=$!" >> "$GITHUB_ENV"
+      # Espera activa, no un sleep fijo: un sleep corto deja las
+      # auditorias fallando contra un puerto cerrado y uno largo regala
+      # minutos en cada pasada.
+      - name: Esperar a que responda
+        run: node tools/esperar-servidor.js --url http://127.0.0.1:8080/
+      - name: Auditorias
+        run: npm run auditar
+      - name: Enlaces
+        run: npm run check
+      - name: Movimiento
+        run: npm run check:motion
+      # `always()` para que un fallo de auditoria no deje el job
+      # esperando a un proceso vivo hasta agotar el tope de tiempo.
+      - name: Parar el sitio
+        if: always()
+        run: kill "$SERVIDOR_PID" 2>/dev/null || true
+      # Para poder leer que dijo el servidor sin entrar a ninguna maquina.
+      - name: Guardar el registro del servidor
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registro-del-servidor
+          path: servidor.log
+          if-no-files-found: ignore
+
   desplegar:
+    name: desplegar
+    needs: [pruebas, navegador]
+    # En un Pull Request este job queda omitido, asi que la llave de
+    # despliegue no se expone en ninguna pasada de un PR.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # Si algo se queda colgado, que falle en vez de consumir minutos.
     timeout-minutes: 5
+    # Dos despliegues a la vez sobre la misma maquina se pisarian. Esto
+    # vivia a nivel de flujo; ahi ponia en cola tambien las pasadas de
+    # los PR y dos personas se estorbaban. No se cancela el que ya esta
+    # corriendo: a mitad de un `git merge` y un reinicio del servicio es
+    # el peor momento para cortar.
+    concurrency: produccion
     steps:
       - name: Actualizar el droplet y reiniciar el sitio
         uses: appleboy/ssh-action@v1
