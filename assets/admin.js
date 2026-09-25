@@ -1351,7 +1351,7 @@ function pintarFacturasAdmin(datos) {
         <td class="num">${cuando.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
         <td class="num">${esc(f.numero)}</td>
         <td>${esc(f.razon_social || 'Consumidor final')}</td>
-        <td class="num">RD${Number(f.total).toLocaleString('en-US')}</td>
+        <td class="num">RD$${Number(f.total).toLocaleString('en-US')}</td>
       </tr>`;
     }).join('');
   }
