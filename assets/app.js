@@ -985,6 +985,7 @@ async function montarDetalle() {
         ${fichaTecnicaHTML(e)}
 
         ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> MercaMaquinarias cotejó la existencia registral del negocio y sus datos de contacto. No certifica la calidad del equipo ni garantiza la operación.</p>` : ''}
+        ${e.serieCotejada ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Serie cotejada</span> El personal de MercaMaquinarias comprobó que el número de serie declarado coincide con la placa de las fotos y no se repite en otro anuncio. No es un certificado de propiedad ni de ausencia de robo.</p>` : ''}
 
         <!-- Espacio D del tarifario. Va entre los datos del equipo y el
              contacto del vendedor: en el teléfono la columna se apila y
@@ -2130,6 +2131,10 @@ function anuncioDeApi(a) {
     implementos: a.implementos,
     destacado: !!a.destacado_hasta && a.destacado_hasta > new Date().toISOString(),
     verificado: !!a.verificada,
+    // Solo `GET /api/anuncios/:id` (la ficha) lo manda; en el listado
+    // llega undefined y aquí se vuelve `false`, que es lo correcto: la
+    // tarjeta del catálogo no pinta esta nota, solo la ficha (07-06).
+    serieCotejada: !!a.serie_cotejada,
     ofertas: a.modalidad_precio === 'ofertas',
     permuta: !!a.permuta,
     financiamiento: !!a.financiamiento,

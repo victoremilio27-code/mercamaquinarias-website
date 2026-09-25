@@ -91,6 +91,59 @@
       <p class="revision__vacio" id="colaVacia" hidden></p>
     </section>
 
+    <!-- Empresas dealer (fase 7, ADMIN-02). El sello solo se podía tocar
+         desde la pestaña «Aprobadas» de la cola: una empresa sin solicitud,
+         o perdida entre muchas, no lo obtenía nunca. Desde aquí también se
+         entra a editar la página de una empresa en su nombre (ADMIN-04).
+         Los atributos son `data-empresas-*`: `data-estado` lo engancha la cola. -->
+    <section class="panel" aria-labelledby="t-empresas">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-empresas"><em>Empresas</em> dealer</h2>
+        <p class="panel__meta" id="metaEmpresas"></p>
+      </div>
+
+      <div class="revision__filtros" id="filtrosEmpresas" role="tablist" aria-label="Estado del alta de la empresa">
+        <button type="button" class="btn btn--ambar btn--chico" data-empresas-estado="aprobada" role="tab" aria-selected="true">Aprobadas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-empresas-estado="pendiente" role="tab" aria-selected="false">Pendientes</button>
+        <button type="button" class="btn btn--linea btn--chico" data-empresas-estado="rechazada" role="tab" aria-selected="false">Rechazadas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-empresas-estado="" role="tab" aria-selected="false">Todas</button>
+      </div>
+      <div class="revision__filtros">
+        <label class="campo-v campo-v--chico"><span>Buscar por nombre</span>
+          <input type="search" id="buscarEmpresas" maxlength="80" autocomplete="off">
+        </label>
+      </div>
+
+      <p class="acceso__aviso" id="avisoEmpresas" role="alert" hidden></p>
+
+      <ul class="solicitudes" id="listaEmpresas"></ul>
+      <p class="revision__vacio" id="empresasVacio" hidden></p>
+    </section>
+
+    <!-- Números de serie (fase 7, ADMIN-03). publicar.html prometía que la
+         serie la veía «el equipo de verificación» y nadie la leía. Esta es
+         la diligencia real, y lo que dice publicar.html ahora: cotejar con
+         la placa de las fotos y contra los demás anuncios. No hay registro
+         dominicano de robos contra el que cotejar, y no se finge. -->
+    <section class="panel" aria-labelledby="t-series">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-series"><em>Números</em> de serie</h2>
+        <p class="panel__meta" id="metaSeries">Se coteja con la placa de las fotos y contra los demás anuncios. No se consulta ningún registro de robo.</p>
+      </div>
+
+      <div class="revision__filtros" id="filtrosSeries" role="tablist" aria-label="Estado de la revisión de la serie">
+        <button type="button" class="btn btn--ambar btn--chico" data-serie-estado="pendiente" role="tab" aria-selected="true">Pendientes</button>
+        <button type="button" class="btn btn--linea btn--chico" data-serie-estado="conforme" role="tab" aria-selected="false">Cotejadas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-serie-estado="observada" role="tab" aria-selected="false">Con observaciones</button>
+        <button type="button" class="btn btn--linea btn--chico" data-serie-estado="" role="tab" aria-selected="false">Todas</button>
+      </div>
+
+      <p class="acceso__aviso" id="avisoSeries" role="alert" hidden></p>
+
+      <ul class="solicitudes" id="listaSeries"></ul>
+      <p class="revision__vacio" id="seriesVacio" hidden></p>
+    </section>
+
     <!-- Solicitudes de servicio: alquiler, importación y contacto.
          Entraban en la base y la API las servía, pero ninguna pantalla
          las enseñaba: solo se enteraba quien leyera el correo. Los

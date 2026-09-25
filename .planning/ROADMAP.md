@@ -39,7 +39,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
 - [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
 - [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
-- [ ] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer
+- [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
 - [ ] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana
 - [ ] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio
@@ -173,7 +173,13 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. Lo que un vendedor lee en `publicar.html` sobre la verificación del número de serie se corresponde con la diligencia que el personal hace de verdad — o el texto ya no lo promete.
   4. El personal abre la página de un dealer, la edita en su nombre, y el dealer ve el cambio en su propia pantalla con su estado borrador/publicada respetado.
   5. Cada una de esas escrituras aparece en la bitácora con quién la hizo, cuándo y sobre qué organización.
-**Plans**: TBD
+**Plans**: 6 plans
+- [x] 07-01-PLAN.md — Directorio de empresas y sello con motivo al retirarlo (ADMIN-02)
+- [x] 07-02-PLAN.md — Revisión del número de serie por la bitácora y la serie deja de ser pública (ADMIN-03, CONF-01)
+- [x] 07-03-PLAN.md — API para editar la página de un dealer en su nombre, sin publicar ni despublicar (ADMIN-04)
+- [x] 07-04-PLAN.md — Consola: secciones «Empresas» y «Números de serie»
+- [x] 07-05-PLAN.md — Editor de página en modo soporte y aviso al dealer
+- [x] 07-06-PLAN.md — Texto de publicar, estado de la serie en el panel y en la ficha (CONF-01)
 **UI hint**: yes
 **Notas**: CONF-01 se cierra aquí porque ADMIN-03 es lo que la cumple; si la revisión no va a hacerse, el criterio 3 se satisface retirando el texto de `publicar.html:149`. La edición en nombre de otro (ADMIN-04) respeta las seis reglas visibles de la página del dealer ya existentes. Cuidado con los reductores de imagen: pintan fondo blanco y exportan JPEG, así que un logotipo PNG con transparencia pierde el alfa.
 
@@ -309,7 +315,7 @@ entrega valor sin esperar a la siguiente.
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
 | 5. Cobro por transferencia bancaria | 5/5 | Complete   | 2026-09-25 |
 | 6. CardNet construido y apagado | 0/TBD | Not started | - |
-| 7. Verificación y soporte al dealer | 0/TBD | Not started | - |
+| 7. Verificación y soporte al dealer | 6/6 | Complete   | 2026-09-25 |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |
 | 9. Contactos verificados y estafas | 0/TBD | Not started | - |
 | 10. Alcance y métricas del vendedor | 0/TBD | Not started | - |

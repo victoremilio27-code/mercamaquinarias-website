@@ -908,6 +908,27 @@ const MIGRACIONES = [
      END`,
     'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
   ]],
+
+  /* La revisión del número de serie (ADMIN-03, CONF-01).
+     `publicar.html` prometía que la serie era «solo visible para el
+     equipo de verificación», y nadie la leía: se guardaba y ya. Ahora el
+     personal la coteja y el resultado se guarda aquí.
+
+       · serie_revision     — 'conforme' u 'observada'; NULL = pendiente.
+       · serie_revisada     — cuándo.
+       · serie_revisada_por — nombre del empleado, COPIADO: si mañana se
+                              borra su cuenta, el anuncio sigue diciendo
+                              quién lo revisó (como la bitácora).
+       · serie_nota         — qué no cuadra; es lo que lee el vendedor.
+
+     Sin UPDATE: todo lo que ya hay en producción queda pendiente, que es
+     la verdad. */
+  ['2026-09-serie-revision', [
+    'ALTER TABLE anuncios ADD COLUMN serie_revision TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_revisada TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_revisada_por TEXT',
+    'ALTER TABLE anuncios ADD COLUMN serie_nota TEXT',
+  ]],
 ];
 
 function migrar() {
@@ -1825,6 +1846,8 @@ function marcarAdmin(correo, esAdmin = true) {
 const ACCIONES_BITACORA = Object.freeze({
   'organizacion.verificar': 'Sello de verificada',
   'dealer.resolver': 'Alta de dealer aprobada o rechazada',
+  'anuncio.serie': 'Número de serie revisado',
+  'pagina.editar': 'Página del dealer editada en su nombre',
   'pago.transferencia_recibida': 'Transferencia marcada como recibida',
   'pago.transferencia_anulada': 'Transferencia anulada sin cobro',
 });
@@ -1921,6 +1944,16 @@ function bitacora({ organizacion, limite = 200 } = {}) {
 
 /* Alimenta el filtro de la consola: cada organización una vez, con el
    nombre de su anotación más reciente (si se renombró, sale el último). */
+/* Cuándo fue la última anotación de una acción sobre una organización.
+   Solo la fecha: el editor del dealer dice «el equipo de
+   MercaMaquinarias editó su página el …» sin nombrar al empleado. */
+const ultimaAnotacion = (idOrg, accion) => {
+  const f = abrir().prepare(`SELECT creada FROM bitacora_admin
+                              WHERE organizacion_id = ? AND accion = ?
+                              ORDER BY id DESC LIMIT 1`).get(idOrg, accion);
+  return f ? f.creada : null;
+};
+
 const organizacionesEnBitacora = () =>
   abrir().prepare(`
     SELECT b.organizacion_id AS id,
@@ -2109,17 +2142,23 @@ const borrarSeccion = (idSeccion, idOrg) => abrir()
   .run(idSeccion, idOrg).changes > 0;
 
 /* Reordena en una transacción: a mitad de camino la página tendría dos
-   bloques con el mismo número y se pintaría en un orden arbitrario. */
+   bloques con el mismo número y se pintaría en un orden arbitrario.
+
+   SAVEPOINT y no BEGIN: cuando el personal reordena en nombre del dealer
+   esto corre DENTRO del SAVEPOINT de enNombreDe, y un BEGIN anidado lanza
+   «cannot start a transaction within a transaction». Suelto, un
+   SAVEPOINT abre su propia transacción y RELEASE la confirma. */
 function ordenarSecciones(idOrg, ids) {
   const d = abrir();
-  d.exec('BEGIN');
+  d.exec('SAVEPOINT ordenar_secciones');
   try {
     const mover = d.prepare(
       'UPDATE organizacion_secciones SET orden = ? WHERE id = ? AND organizacion_id = ?');
     ids.forEach((idSeccion, i) => mover.run(i, idSeccion, idOrg));
-    d.exec('COMMIT');
+    d.exec('RELEASE ordenar_secciones');
   } catch (e) {
-    d.exec('ROLLBACK');
+    d.exec('ROLLBACK TO ordenar_secciones');
+    d.exec('RELEASE ordenar_secciones');
     throw e;
   }
   return seccionesDe(idOrg);
@@ -2143,18 +2182,21 @@ const quitarDeGaleria = (idFoto, idOrg) => abrir()
   .run(idFoto, idOrg).changes > 0;
 
 /* Los enlaces se reemplazan enteros: son cinco o seis y el editor los
-   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra. */
+   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra.
+   SAVEPOINT por lo mismo que ordenarSecciones: tiene que poder ir dentro
+   de enNombreDe. */
 function guardarEnlaces(idOrg, lista) {
   const d = abrir();
-  d.exec('BEGIN');
+  d.exec('SAVEPOINT guardar_enlaces');
   try {
     d.prepare('DELETE FROM organizacion_enlaces WHERE organizacion_id = ?').run(idOrg);
     const meter = d.prepare(
       'INSERT INTO organizacion_enlaces (id, organizacion_id, tipo, valor, orden) VALUES (?, ?, ?, ?, ?)');
     lista.forEach((e, i) => meter.run(id(), idOrg, e.tipo, e.valor, i));
-    d.exec('COMMIT');
+    d.exec('RELEASE guardar_enlaces');
   } catch (e) {
-    d.exec('ROLLBACK');
+    d.exec('ROLLBACK TO guardar_enlaces');
+    d.exec('RELEASE guardar_enlaces');
     throw e;
   }
   return enlacesDe(idOrg);
@@ -2192,6 +2234,128 @@ const despublicarPagina = (idOrg) => abrir()
 const marcarVerificada = (idOrg, valor) => abrir()
   .prepare('UPDATE organizaciones SET verificada = ?, actualizada = ? WHERE id = ?')
   .run(valor ? 1 : 0, ahora(), idOrg).changes > 0;
+
+/* La fila entera, para las rutas de administración que actúan sobre una
+   organización concreta. Lleva el RNC: NO se devuelve tal cual a nadie. */
+const organizacionPorId = (idOrg) =>
+  abrir().prepare('SELECT * FROM organizaciones WHERE id = ?').get(idOrg);
+
+/* El directorio de empresas de la consola (ADMIN-02).
+ *
+ * Antes el sello solo se podía tocar desde la pestaña «Aprobadas» de la
+ * cola de solicitudes: una empresa sin solicitud (dada de alta por línea
+ * de comandos) o perdida entre muchas era, en la práctica, inalcanzable.
+ *
+ * Como `dealersPublicos`, no selecciona `rnc` ni el correo de la cuenta:
+ * el directorio no los necesita, y lo que no viaja no se escapa. */
+const ESTADOS_REVISION_ADMIN = ['aprobada', 'pendiente', 'rechazada'];
+
+function organizacionesAdmin({ estado, q } = {}) {
+  const donde = ["o.tipo = 'dealer'"];
+  const args = [];
+  if (ESTADOS_REVISION_ADMIN.includes(estado)) {
+    donde.push('o.estado_revision = ?');
+    args.push(estado);
+  }
+  const buscado = String(q || '').trim().slice(0, 80);
+  if (buscado) {
+    // Un «%» o un «_» escritos en el buscador son letras, no comodines.
+    // LIKE ya ignora mayúsculas en ASCII; las tildes cuentan.
+    donde.push("o.nombre LIKE ? ESCAPE '\\'");
+    args.push(`%${buscado.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  }
+
+  return abrir().prepare(`
+    SELECT o.id, o.nombre, o.slug, o.verificada, o.estado_revision, o.estado_pagina,
+           o.perfil_publico, o.creada,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND a.estado = 'activo') AS activos,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND TRIM(COALESCE(a.serie, '')) <> ''
+               AND a.estado <> 'borrador' AND a.serie_revision IS NULL) AS series_pendientes
+      FROM organizaciones o
+     WHERE ${donde.join(' AND ')}
+     ORDER BY o.nombre COLLATE NOCASE
+     LIMIT 500`).all(...args)
+    .map((o) => ({ ...o, verificada: !!o.verificada, perfil_publico: !!o.perfil_publico }));
+}
+
+/* ── Revisión del número de serie (ADMIN-03) ───────────────
+ *
+ * La diligencia que se hace, y la única que se promete en publicar.html:
+ * que el número coincide con la placa que se vea en las fotos, que no se
+ * repite en otro anuncio del sitio y que tiene una forma plausible. No
+ * hay un registro dominicano de maquinaria robada contra el que cotejar,
+ * así que no se dice que se coteja contra ninguno. */
+
+/* «CAT 0320-X», «cat0320x» y «CAT.0320/X» son la misma placa escrita por
+   tres personas distintas. Comparar en crudo no vería el duplicado. */
+const normalizarSerie = (s) => String(s || '').toUpperCase().replace(/[\s\-./\\_]/g, '');
+
+const RESULTADOS_SERIE = ['conforme', 'observada'];
+
+function seriesParaRevisar({ estado } = {}) {
+  const d = abrir();
+  /* Los borradores no: nadie los ve y su dueño todavía puede cambiarlos.
+     Los vendidos y retirados sí, porque una serie que reaparece en otro
+     anuncio después de venderse es justo lo que hay que mirar. */
+  const todas = d.prepare(`
+    SELECT a.id, a.marca, a.modelo, a.anio, a.categoria, a.subcategoria, a.estado, a.publicado,
+           a.serie, a.serie_revision, a.serie_revisada, a.serie_revisada_por, a.serie_nota,
+           a.organizacion_id, o.nombre AS empresa
+      FROM anuncios a JOIN organizaciones o ON o.id = a.organizacion_id
+     WHERE TRIM(COALESCE(a.serie, '')) <> '' AND a.estado <> 'borrador'`).all();
+
+  const veces = new Map();
+  /* Una «serie» hecha solo de separadores («--», «/») normaliza a vacío:
+     no es una placa, y contarla dejaría «repetidas» a todas las demás
+     que alguien rellenó igual de mal. */
+  const repetidosDe = (serie) => {
+    const k = normalizarSerie(serie);
+    return k ? veces.get(k) - 1 : 0;
+  };
+  todas.forEach((a) => {
+    const k = normalizarSerie(a.serie);
+    if (k) veces.set(k, (veces.get(k) || 0) + 1);
+  });
+
+  const quiere = estado === 'pendiente' ? (a) => !a.serie_revision
+    : RESULTADOS_SERIE.includes(estado) ? (a) => a.serie_revision === estado
+      : () => true;
+
+  const fotos = d.prepare(`SELECT url, COALESCE(miniatura, url) AS miniatura
+                             FROM anuncio_fotos WHERE anuncio_id = ? ORDER BY orden LIMIT 4`);
+
+  return todas.filter(quiere)
+    .sort((x, y) => (!!x.serie_revision - !!y.serie_revision)
+      || String(y.publicado || '').localeCompare(String(x.publicado || '')))
+    .slice(0, 300)
+    .map((a) => conNombres({
+      ...a,
+      // Cuántos OTROS anuncios llevan la misma placa.
+      repetidos: repetidosDe(a.serie),
+      fotos: fotos.all(a.id),
+    }));
+}
+
+const anuncioSerie = (idAnuncio) => abrir().prepare(`
+  SELECT id, organizacion_id, serie, serie_revision, serie_nota
+    FROM anuncios WHERE id = ?`).get(idAnuncio);
+
+/* `pendiente` deshace: vuelve a NULL las cuatro columnas, para que el
+   anuncio no siga diciendo quién lo revisó cuando ya no está revisado. */
+function anotarRevisionSerie(idAnuncio, { resultado, nota, nombreAdmin }) {
+  const revisado = RESULTADOS_SERIE.includes(resultado);
+  return abrir().prepare(`
+    UPDATE anuncios
+       SET serie_revision = ?, serie_revisada = ?, serie_revisada_por = ?, serie_nota = ?
+     WHERE id = ?`)
+    .run(revisado ? resultado : null,
+      revisado ? ahora() : null,
+      revisado ? (nombreAdmin || null) : null,
+      revisado ? (nota || null) : null,
+      idAnuncio).changes > 0;
+}
 
 function apagarPerfilesSinPlan() {
   const d = abrir();
@@ -2999,6 +3163,9 @@ function anunciosDeOrganizacion(idOrg) {
            -- El panel avisa cuando un camión no los tiene declarados y
            -- deja rellenarlos ahí mismo.
            a.motor_marca, a.motor_modelo, a.transmision_marca, a.transmision_modelo,
+           -- El resultado de la revisión de la serie (ADMIN-03). La serie
+           -- misma no hace falta en la lista: basta saber que se declaró.
+           (TRIM(COALESCE(a.serie, '')) <> '') AS tiene_serie, a.serie_revision, a.serie_nota,
            (SELECT COALESCE(f.miniatura, f.url) FROM anuncio_fotos f WHERE f.anuncio_id = a.id ORDER BY f.orden LIMIT 1) AS foto,
            -- Cuántas fotos tiene, para poder avisar antes de mover el
            -- anuncio a un nivel que admite menos.
@@ -3749,12 +3916,15 @@ module.exports = {
   anadirAGaleria, quitarDeGaleria, galeriaDe,
   guardarEnlaces, enlacesDe,
   publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
+  organizacionesAdmin, organizacionPorId,
+  /* Revisión del número de serie. */
+  seriesParaRevisar, anuncioSerie, anotarRevisionSerie, normalizarSerie,
 
   /* Tráfico e informes. */
   anotarVisita, trafico, informe,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
   /* Bitácora: toda escritura de admin sobre otra organización, por una sola puerta. */
-  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora,
+  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora, ultimaAnotacion,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,
   crearSolicitudServicio, solicitudServicio, solicitudesServicio, marcarSolicitudServicio,

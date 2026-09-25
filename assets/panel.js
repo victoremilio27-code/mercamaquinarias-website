@@ -372,6 +372,17 @@ function selectorPlan(a) {
   </label>`;
 }
 
+/* Fase 7 (CONF-01): lo que publicar.html le promete al vendedor sobre
+   su número de serie, aquí a la vista. Antes esa diligencia no existía
+   y el campo era decorativo; ahora sí se revisa, y el vendedor tiene
+   que enterarse del resultado sin ir a buscarlo. */
+function estadoSerieHTML(a) {
+  if (!a.tiene_serie) return '';
+  if (a.serie_revision === 'conforme') return '<span class="celda-equipo__meta">Serie cotejada por MercaMaquinarias</span>';
+  if (a.serie_revision === 'observada') return `<span class="celda-equipo__meta">Serie con observaciones: ${esc(a.serie_nota || '')}</span>`;
+  return '<span class="celda-equipo__meta">Serie: pendiente de revisión</span>';
+}
+
 function filaAnuncio(a) {
   const estado = ESTADOS[a.estado] || ESTADOS.borrador;
   const contactos = (a.telefono || 0) + (a.whatsapp || 0);
@@ -387,6 +398,7 @@ function filaAnuncio(a) {
       <span>
         <a class="celda-equipo__nombre" href="equipo.html?id=${encodeURIComponent(a.id)}">${esc(`${a.anio} ${a.marca} ${a.modelo}`)}</a>
         <span class="celda-equipo__meta num">${esc(precio)}${a.provincia ? ` · ${esc(a.provincia)}` : ''}</span>
+        ${estadoSerieHTML(a)}
       </span>
     </th>
     <td><span class="estado ${estado.clase}">${estado.nombre}</span></td>
