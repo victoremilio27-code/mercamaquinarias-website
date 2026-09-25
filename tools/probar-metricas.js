@@ -311,6 +311,93 @@ const contactosDe = (idAnuncio) => db.abrir()
   comprobar(deMarca.imagen === metadatos.IMAGEN_MARCA && /og:image:width/.test(htmlMarca),
     'sin fotos, la imagen de marca conserva sus medidas');
 
+  /* ── 3 · duplicar ────────────────────────────────────────── */
+  console.log('\nDuplicar un anuncio (MET-04)');
+
+  const idOriginal = anuncio(ana, {
+    modelo: '567 Heavy',
+    potencia: '450 hp',
+    peso: '15 t',
+    implementos: 'Caja de volteo de 18 m3',
+    motorMarca: 'cummins',
+    motorModelo: 'X15',
+    itbisIncluido: true,
+    permuta: true,
+    fotos: [
+      { url: '/fotos/2026-09/o1.jpg', miniatura: '/fotos/2026-09/o1-m.jpg' },
+      { url: '/fotos/2026-09/o2.jpg', miniatura: '/fotos/2026-09/o2-m.jpg' },
+      { url: '/fotos/2026-09/o3.jpg', miniatura: null },
+    ],
+    videos: [{ url: '/videos/2026-09/v1.mp4', poster: '/fotos/2026-09/p1.jpg', duracion: 24 }],
+    telefonos: [{ numero: '(809) 555-1234', tipo: 'whatsapp', nota: null }],
+  });
+
+  const copia = await pedir({ url: `/api/mis-anuncios/${idOriginal}/copia`, cabeceras: ana.cabeceras });
+  const c = (copia.datos || {}).copia || {};
+  const eq = c.equipo || {};
+  comprobar(copia.codigo === 200, `el dueno recibe la copia (${copia.codigo})`);
+  comprobar(eq.marca === 'peterbilt' && eq.modelo === '567 Heavy' && eq.anio === '2019',
+    'con marca, modelo y ano');
+  comprobar(eq.serie === '', 'y SIN numero de serie: identifica una sola maquina');
+  comprobar(eq.uso === '120000' && eq.unidad === 'km' && eq.ciudad === 'Los Alcarrizos'
+    && eq.potencia === '450 hp' && eq.motorMarca === 'cummins',
+    'uso, ubicacion, potencia y motor vienen con los nombres del formulario');
+  comprobar(eq.transmisionMarca === '' && eq.subcategoria === 'cam-volteo',
+    'lo que falta llega como texto vacio, no como null');
+  comprobar(c.precio && c.precio.monto === '4500000' && c.precio.minimo === '3900000'
+    && c.precio.modalidad === 'ofertas' && c.precio.itbisIncluido === true && c.precio.financiamiento === false,
+    'el precio, el minimo privado (es su dueno) y las condiciones');
+  comprobar(Array.isArray(c.fotos) && c.fotos.length === 3 && c.fotos[0].miniatura === '/fotos/2026-09/o1-m.jpg'
+    && c.fotos[2].miniatura === '/fotos/2026-09/o3.jpg' && !!c.fotos[0].id,
+    'las fotos con su miniatura (o la completa si no tenia) y un id para el asistente');
+  comprobar(Array.isArray(c.videos) && c.videos.length === 1 && c.videos[0].poster === '/fotos/2026-09/p1.jpg',
+    'los videos con su poster');
+  comprobar(c.contacto && c.contacto.telefonos.length === 1 && c.contacto.telefonos[0].tipo === 'whatsapp'
+    && c.contacto.telefonos[0].nota === '', 'los telefonos con su canal');
+  comprobar(c.origen && c.origen.id === idOriginal && /Peterbilt 567 Heavy/.test(c.origen.nombre),
+    `y de donde viene: ${c.origen ? c.origen.nombre : ''}`);
+
+  const ajena = await pedir({ url: `/api/mis-anuncios/${idOriginal}/copia`, cabeceras: beto.cabeceras });
+  comprobar(ajena.codigo === 404 && !(ajena.datos || {}).copia, 'otra organizacion recibe 404, sin datos');
+  const inexistente = await pedir({ url: '/api/mis-anuncios/no-existe/copia', cabeceras: beto.cabeceras });
+  comprobar(inexistente.codigo === 404 && (inexistente.datos || {}).error === (ajena.datos || {}).error,
+    'el mismo 404 que un id que no existe: no se sabe si es ajeno');
+  const sinSesion = await pedir({ url: `/api/mis-anuncios/${idOriginal}/copia` });
+  comprobar(sinSesion.codigo === 401, 'sin sesion, 401');
+
+  /* ── 4 · archivos compartidos ────────────────────────────── */
+  console.log('\nBorrar el original no deja la copia sin fotos');
+
+  const fotos = require('./fotos.js');
+  const disco = (ruta) => fs.existsSync(fotos.archivoDe(ruta));
+  const rutas = ['/fotos/2026-09/c1.jpg', '/fotos/2026-09/c1-m.jpg', '/fotos/2026-09/c2.jpg',
+    '/fotos/2026-09/c3.jpg', '/fotos/2026-09/propia.jpg'];
+  fs.mkdirSync(path.join(process.env.MERCA_FOTOS, '2026-09'), { recursive: true });
+  rutas.forEach((r) => fs.writeFileSync(fotos.archivoDe(r), 'jpg de prueba'));
+
+  const compartidas = [
+    { url: rutas[0], miniatura: rutas[1] }, { url: rutas[2], miniatura: null }, { url: rutas[3], miniatura: null },
+  ];
+  const idPrimero = anuncio(ana, { fotos: [...compartidas, { url: rutas[4], miniatura: null }] });
+  const idSegundo = anuncio(ana, { fotos: compartidas });
+
+  const borrado = await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idPrimero}`, cabeceras: ana.cabeceras });
+  comprobar(borrado.codigo === 200, 'el original se borra');
+  comprobar(rutas.slice(0, 4).every(disco), 'las fotos que usa la copia siguen en disco');
+  comprobar(!disco(rutas[4]), 'la que solo era suya si se borra');
+
+  await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idSegundo}`, cabeceras: ana.cabeceras });
+  comprobar(rutas.slice(0, 4).every((r) => !disco(r)), 'al borrar la copia, ya nadie las usa y se van');
+
+  console.log('\nLa pagina del dealer cuenta como uso');
+  db.abrir().prepare('UPDATE organizaciones SET logo = ?, banner = ? WHERE id = ?')
+    .run('/fotos/2026-09/logo.png', '/fotos/2026-09/banner.jpg', ana.org.id);
+  db.anadirAGaleria(ana.org.id, { url: '/fotos/2026-09/galeria.jpg', alt: 'Nave' });
+  const enUso = db.rutasEnUso();
+  comprobar(enUso.has('/fotos/2026-09/logo.png') && enUso.has('/fotos/2026-09/banner.jpg'),
+    'el logotipo y la portada estan en uso: la tarea de huerfanos no los borra');
+  comprobar(enUso.has('/fotos/2026-09/galeria.jpg'), 'la galeria tambien');
+
   console.log(`\n${bien} bien · ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
 })().catch((e) => {

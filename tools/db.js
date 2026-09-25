@@ -3043,7 +3043,29 @@ function borrarAnuncio(idAnuncio, idOrg) {
 
   const rutasVideos = videos.map((v) => v.url).filter(Boolean);
 
-  return { fotos: [...rutasFotos], videos: rutasVideos };
+  /* Solo las que ya no usa nadie. Duplicar un anuncio reutiliza sus
+     fotos y videos por ruta, así que borrar el original borraba del
+     disco las fotos de la copia, que seguía publicada con imágenes
+     rotas. Se consulta DESPUÉS del COMMIT: la fila de este anuncio ya no
+     cuenta como uso. */
+  const enUso = rutasEnUso();
+  return {
+    fotos: [...rutasFotos].filter((r) => !enUso.has(r)),
+    videos: rutasVideos.filter((r) => !enUso.has(r)),
+  };
+}
+
+/* Todo lo que hace falta para publicar otro anuncio igual (MET-04). Solo
+   al dueño: el precio mínimo es privado, y un id ajeno recibe lo mismo
+   que uno que no existe. */
+function copiaDeAnuncio(idAnuncio, idOrg) {
+  const d = abrir();
+  const a = d.prepare('SELECT * FROM anuncios WHERE id = ? AND organizacion_id = ?').get(idAnuncio, idOrg);
+  if (!a) return null;
+  a.fotos = d.prepare('SELECT url, miniatura FROM anuncio_fotos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
+  a.videos = d.prepare('SELECT url, poster, duracion FROM anuncio_videos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
+  a.telefonos = d.prepare('SELECT numero, tipo, nota FROM anuncio_contactos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
+  return conNombres(a);
 }
 
 /* Motor y transmisión de un anuncio ya publicado. La API valida las
@@ -3700,6 +3722,13 @@ function rutasEnUso() {
   meter(d.prepare("SELECT valor FROM ajustes WHERE clave LIKE '%imagen%'").all(), 'valor');
   meter(d.prepare('SELECT imagen FROM publicidad').all(), 'imagen');
 
+  /* La página propia del dealer. Faltaban aquí, y la tarea diaria de
+     huérfanos (`recogerHuerfanos` en tareas.js) borra todo lo que no
+     esté en este conjunto tras 48 horas: el logotipo, la portada y la
+     galería que un dealer subía desaparecían solos dos días después. */
+  meter(d.prepare('SELECT logo, banner FROM organizaciones').all(), 'logo', 'banner');
+  meter(d.prepare('SELECT url FROM organizacion_galeria').all(), 'url');
+
   return rutas;
 }
 
@@ -3800,5 +3829,5 @@ module.exports = {
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   anotarEvento, resumenOrganizacion,
   /* Alcance y métricas del vendedor (fase 10). */
-  registrarContacto, contactosDeOrganizacion, fotoParaCompartir,
+  registrarContacto, contactosDeOrganizacion, fotoParaCompartir, copiaDeAnuncio,
 };

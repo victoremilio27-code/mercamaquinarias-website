@@ -2467,6 +2467,59 @@ const misAnuncios = conSesion((req, res, ctx) => {
   });
 });
 
+/* Un anuncio propio con la forma del borrador de publicar.js (MET-04).
+
+   Duplicar NO crea nada en el servidor: devuelve los datos para que el
+   asistente de publicar los precargue y el anuncio nuevo pase por el
+   mismo camino que cualquier otro —cupo, condiciones, validación—.
+   Crearlo aquí directamente saltaría la comprobación de cupo.
+
+   Va con la forma de `estadoInicial()` de assets/publicar.js y con ''
+   en lugar de null, porque el formulario vuelca estos valores tal cual
+   en sus campos. El número de serie se deja en blanco a propósito:
+   identifica UNA máquina, y copiarlo publicaría dos anuncios con la
+   misma serie. Fotos y videos se reutilizan por ruta; borrar el
+   original ya no los arrastra (ver `borrarAnuncio`). */
+const copiarAnuncio = conSesion((req, res, ctx, idAnuncio) => {
+  const a = ctx.organizacion ? db.copiaDeAnuncio(idAnuncio, ctx.organizacion.id) : null;
+  if (!a) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
+
+  const t = (v) => (v == null ? '' : String(v));
+  const telefonos = a.telefonos.map((x) => ({ numero: t(x.numero), tipo: x.tipo || 'ambos', nota: t(x.nota) }));
+
+  return responder(res, 200, {
+    copia: {
+      equipo: {
+        categoria: t(a.categoria), subcategoria: t(a.subcategoria),
+        marca: t(a.marca), modelo: t(a.modelo), anio: t(a.anio),
+        condicion: t(a.condicion), uso: t(a.uso_valor), unidad: a.uso_unidad || 'h',
+        serie: '',
+        potencia: t(a.potencia), peso: t(a.peso),
+        provincia: t(a.provincia), ciudad: t(a.municipio),
+        implementos: t(a.implementos), descripcion: t(a.descripcion),
+        motorMarca: t(a.motor_marca), motorModelo: t(a.motor_modelo),
+        transmisionMarca: t(a.transmision_marca), transmisionModelo: t(a.transmision_modelo),
+      },
+      precio: {
+        modalidad: a.modalidad_precio || 'fijo',
+        monto: t(a.precio), moneda: a.moneda || 'DOP', minimo: t(a.precio_minimo),
+        itbisIncluido: !!a.itbis_incluido, permuta: !!a.permuta, financiamiento: !!a.financiamiento,
+      },
+      contacto: {
+        sucursal: t(a.sucursal_id),
+        telefonos: telefonos.length ? telefonos : [{ numero: '', tipo: 'ambos', nota: '' }],
+      },
+      fotos: a.fotos.map((f, i) => ({
+        id: `f-copia-${i + 1}`, nombre: `Foto ${i + 1}`, url: f.url, miniatura: f.miniatura || f.url,
+      })),
+      videos: a.videos.map((v, i) => ({
+        id: `v-copia-${i + 1}`, nombre: `Video ${i + 1}`, url: v.url, poster: v.poster, duracion: v.duracion,
+      })),
+      origen: { id: a.id, nombre: `${a.anio} ${a.marca_nombre || a.marca} ${a.modelo}` },
+    },
+  });
+});
+
 /* Los contactos atribuibles de la organización: qué anuncio y cuándo
    (MET-03). Solo los suyos, siempre: la organización sale de la sesión
    y nunca de la petición. Lo que llega por la consulta se valida antes
@@ -2753,6 +2806,7 @@ const RUTAS = [
   ['GET',  /^\/api\/anuncios$/,          catalogo],
   ['GET',  /^\/api\/mis-anuncios$/,      misAnuncios],
   ['GET',  /^\/api\/mis-contactos$/,     misContactos],
+  ['GET',  /^\/api\/mis-anuncios\/([\w-]+)\/copia$/, copiarAnuncio],
   ['GET',  /^\/api\/anuncios\/([\w-]+)$/, verAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/plan$/, cambiarPlanDeAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
