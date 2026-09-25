@@ -55,6 +55,9 @@ for (const k of Object.keys(process.env)) {
 const db = require('./db');
 const pagos = require('./pagos');
 const transferencia = require('./transferencia');
+const api = require('./api');
+const { EventEmitter } = require('events');
+const { spawnSync } = require('child_process');
 
 let fallos = 0;
 let comprobaciones = 0;
@@ -145,6 +148,64 @@ const intencionCompra = (cupo = 1, dias = 30) => ({
 
 const pendiente = (etiqueta, { idOrg = ID_ORG, procesador = 'transferencia', cupo = 1 } = {}) =>
   db.registrarCobro({ idOrg, cobro: cobroDe(3500 * cupo, etiqueta, procesador), intencion: intencionCompra(cupo, 30) });
+
+/* Una petición de verdad contra el enrutador, con req y res fingidos.
+   Copiada de probar-pagos.js: lo que importa es lo que ve quien llama,
+   no lo que devuelven las funciones de dentro. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-transferencia', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      setHeader() {},
+      writeHead(c) { res.codigo = c; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
+/* La bandeja del transporte de archivo es compartida entre pruebas y
+   pasadas: se buscan los correos por la referencia del cobro, que es
+   única de esta ejecución. */
+const BANDEJA = path.join(__dirname, '..', '.tmp', 'correos');
+function correosCon(cadena) {
+  if (!fs.existsSync(BANDEJA)) return [];
+  return fs.readdirSync(BANDEJA).filter((f) => f.endsWith('.txt'))
+    .map((f) => {
+      const texto = fs.readFileSync(path.join(BANDEJA, f), 'utf8');
+      const html = path.join(BANDEJA, f.replace(/\.txt$/, '.html'));
+      return { texto, html: fs.existsSync(html) ? fs.readFileSync(html, 'utf8') : '' };
+    })
+    .filter((c) => c.texto.includes(cadena));
+}
+const paraDe = (c) => ((/^Para: (.*)$/m.exec(c.texto) || [])[1] || '').trim();
+/* Soporte solo por correo y por el asistente: ningún correo de cobro
+   puede llevar un número de teléfono ni mandar a WhatsApp. Diez
+   dígitos seguidos o en grupos 3-3-4 es un teléfono dominicano. */
+const TELEFONO = /(?<!\d)\d{3}[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)/;
+const sinTelefono = (c) => !TELEFONO.test(c.texto) && !TELEFONO.test(c.html)
+  && !/whatsapp/i.test(c.texto) && !/whatsapp/i.test(c.html);
+const dinero = (n) => `RD$${Number(n).toLocaleString('en-US')}`;
+const pagosTotales = () => consulta('SELECT COUNT(*) AS n FROM pagos').n;
+const facturasTotales = () => consulta('SELECT COUNT(*) AS n FROM facturas').n;
 
 /* Abrir la base aplica el esquema y las migraciones. */
 db.secuenciasNcf();
@@ -408,6 +469,242 @@ db.cargarSecuencia({
     ejecuta("UPDATE suscripciones SET estado = 'vencida' WHERE id = ?", base.id);
     const muerta = db.pagosParaConsola({ estado: 'pendiente' }).find((x) => x.id === pAmplia.id);
     ok(!!muerta && muerta.membresiaViva === false, `vencida: membresiaViva=${muerta && muerta.membresiaViva}`);
+  }
+
+  /* ── 05-02, tarea 1: el comprador pide pagar por transferencia ───
+     Por el enrutador de verdad. Dos cuentas: la compradora, con los
+     documentos legales aceptados, y otra ajena que no debe ver nada de
+     la primera. */
+
+  const cuentaConLegales = (correoCuenta, nombre) => {
+    const { idUsuario } = db.crearCuenta({
+      correo: correoCuenta, clave: 'UnaClaveLargaYSegura9', nombre, telefono: '8095550000', tipo: 'particular',
+    });
+    const legales = require('../assets/legales.js');
+    Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+      db.registrarAceptacion({
+        usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba',
+      });
+    });
+    return {
+      idUsuario,
+      org: db.organizacionDe(idUsuario),
+      cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}`, 'cf-connecting-ip': '201.8.8.8' },
+    };
+  };
+  const compradora = cuentaConLegales('compradora-transferencia@prueba.invalid', 'Compradora de Prueba');
+  const ajena = cuentaConLegales('ajena-transferencia@prueba.invalid', 'Cuenta Ajena');
+
+  const comprar = (cuerpo, quien = compradora) =>
+    pedir({ metodo: 'POST', url: '/api/membresias', cuerpo, cabeceras: quien.cabeceras });
+  const ampliar = (idSusc, cuerpo, quien = compradora) =>
+    pedir({ metodo: 'POST', url: `/api/membresias/${idSusc}/ampliar`, cuerpo, cabeceras: quien.cabeceras });
+  const misMembresias = (quien) => pedir({ url: '/api/membresias', cabeceras: quien.cabeceras });
+  const cupoDe = (idSusc) => consulta('SELECT anuncios_incluidos AS n FROM suscripciones WHERE id = ?', idSusc).n;
+
+  /* `demo` aprueba siempre. Con la transferencia encendida, llamarlo
+     sería regalar cupos: se sustituye por un espía que cuenta. */
+  let llamadasDemo = 0;
+  const demoOriginal = pagos.PROCESADORES.demo;
+  const espiarDemo = () => {
+    llamadasDemo = 0;
+    pagos.PROCESADORES.demo = async () => { llamadasDemo++; return { resultado: 'aprobado' }; };
+  };
+  const soltarDemo = () => { pagos.PROCESADORES.demo = demoOriginal; };
+
+  console.log('\n15. Apagada: la compra sigue como en la fase 3, y pedir transferencia es un 400');
+  apagar();
+  let idSuscCompradora = null;
+  {
+    const r = await comprar({ plan: 'destacado', cupo: 1, dias: 30 });
+    const d = r.datos || {};
+    ok(r.codigo === 201 && !!d.comprobante && !!d.pago && d.pago.estado === 'aprobado' && !d.transferencia,
+      `código ${r.codigo}, pago ${d.pago && d.pago.estado}, transferencia ${JSON.stringify(d.transferencia)}`);
+    const fila = d.cobro ? consulta('SELECT procesador FROM pagos WHERE referencia = ?', d.cobro.referencia) : null;
+    ok(!!fila && fila.procesador === 'demo', `procesador en la base: ${fila && fila.procesador}`);
+    idSuscCompradora = d.membresia && d.membresia.id;
+
+    const antes = pagosTotales();
+    const r2 = await comprar({ plan: 'destacado', cupo: 1, dias: 30, metodo: 'transferencia' });
+    ok(r2.codigo === 400 && (r2.datos || {}).error === 'Ese método de pago no está disponible.',
+      `código ${r2.codigo}: ${(r2.datos || {}).error}`);
+    ok(pagosTotales() === antes, `pagos: ${pagosTotales()} (se esperaban ${antes})`);
+  }
+
+  console.log('\n16. Encendida: la compra responde 202 con los datos de la cuenta, sin membresía, factura ni NCF');
+  encender();
+  let compraTransferencia = null;
+  {
+    espiarDemo();
+    const antesB02 = siguienteB02();
+    const antesMemb = membresiasDe(compradora.org.id);
+    const antesFact = facturasTotales();
+    let r = null;
+    try {
+      r = await comprar({ plan: 'destacado', cupo: 1, dias: 30 });
+    } finally {
+      soltarDemo();
+    }
+    const d = r.datos || {};
+    compraTransferencia = d;
+    ok(r.codigo === 202, `código ${r.codigo}`);
+    ok(!!d.pago && d.pago.estado === 'pendiente' && d.membresia === null && d.comprobante === null,
+      `pago ${d.pago && d.pago.estado}, membresía ${d.membresia}, comprobante ${d.comprobante}`);
+    const t = d.transferencia || {};
+    ok(t.banco === 'BANCO DE PRUEBA' && t.titular === 'TITULAR DE PRUEBA, S.R.L.' && t.rnc === '000000000'
+      && t.tipoCuenta === 'corriente' && t.cuenta === '000-000000-0' && t.moneda === 'DOP',
+    `transferencia=${JSON.stringify(d.transferencia)}`);
+    ok(t.correo === 'facturacion@mercamaquinarias.com', `correo para el comprobante de la transferencia: ${t.correo}`);
+    ok(typeof d.aviso === 'string' && /referencia/i.test(d.aviso) && /comprobante fiscal/i.test(d.aviso),
+      `aviso: ${d.aviso}`);
+    const fila = d.pago ? db.pagoPorId(d.pago.id) : null;
+    ok(!!fila && !!d.cobro && fila.referencia === d.cobro.referencia && fila.total === d.cobro.total && d.cobro.total > 0,
+      `referencia ${d.cobro && d.cobro.referencia} / ${fila && fila.referencia}, total ${d.cobro && d.cobro.total}`);
+    ok(!!fila && fila.procesador === 'transferencia' && fila.estado === 'pendiente',
+      `en la base: ${fila && fila.procesador} ${fila && fila.estado}`);
+    ok(membresiasDe(compradora.org.id) === antesMemb, `membresías: ${membresiasDe(compradora.org.id)} (se esperaban ${antesMemb})`);
+    ok(facturasTotales() === antesFact, `facturas: ${facturasTotales()} (se esperaban ${antesFact})`);
+    ok(siguienteB02() === antesB02, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 0)`);
+    ok(llamadasDemo === 0, `el procesador demo se llamó ${llamadasDemo} vez/veces`);
+  }
+
+  console.log('\n17. Encendida: pedir demo es un 400 y no deja pago');
+  {
+    espiarDemo();
+    const antes = pagosTotales();
+    let r = null;
+    try {
+      r = await comprar({ plan: 'destacado', cupo: 1, dias: 30, metodo: 'demo' });
+    } finally {
+      soltarDemo();
+    }
+    ok(r.codigo === 400 && (r.datos || {}).error === 'Ese método de pago no está disponible.',
+      `código ${r.codigo}: ${(r.datos || {}).error}`);
+    ok(pagosTotales() === antes, `pagos: ${pagosTotales()} (se esperaban ${antes})`);
+    ok(llamadasDemo === 0, `demo se llamó ${llamadasDemo} vez/veces`);
+  }
+
+  console.log('\n18. Encendida: ampliar responde 202 con los datos y la membresía no cambia de cupo');
+  let ampliacionTransferencia = null;
+  {
+    espiarDemo();
+    const cupoAntes = idSuscCompradora ? cupoDe(idSuscCompradora) : null;
+    const antesFact = facturasTotales();
+    let r = { codigo: 0, datos: {} };
+    try {
+      if (idSuscCompradora) r = await ampliar(idSuscCompradora, { cupo: cupoAntes + 1 });
+    } finally {
+      soltarDemo();
+    }
+    const d = r.datos || {};
+    ampliacionTransferencia = d;
+    ok(r.codigo === 202 && !!d.pago && d.pago.estado === 'pendiente' && d.comprobante === null,
+      `código ${r.codigo}, pago ${d.pago && d.pago.estado}`);
+    ok(!!d.transferencia && d.transferencia.cuenta === '000-000000-0' && !!d.cobro && !!d.cobro.referencia,
+      `transferencia ${JSON.stringify(d.transferencia)}`);
+    ok(!!d.membresia && d.membresia.id === idSuscCompradora && d.membresia.anuncios_incluidos === cupoAntes,
+      `membresía en la respuesta con ${d.membresia && d.membresia.anuncios_incluidos} cupo(s)`);
+    ok(idSuscCompradora && cupoDe(idSuscCompradora) === cupoAntes, `cupo en la base: ${idSuscCompradora && cupoDe(idSuscCompradora)} (era ${cupoAntes})`);
+    ok(facturasTotales() === antesFact, 'sin factura');
+    ok(llamadasDemo === 0, `demo se llamó ${llamadasDemo} vez/veces`);
+    const fila = d.pago ? db.pagoPorId(d.pago.id) : null;
+    ok(!!fila && fila.procesador === 'transferencia', `procesador ${fila && fila.procesador}`);
+  }
+
+  console.log('\n19. Importe cero: al instante, sin transferencia, como siempre');
+  {
+    const r = await comprar({ plan: 'estandar', cupo: 1, dias: 30 });
+    const d = r.datos || {};
+    ok(r.codigo === 201 && !!d.cobro && d.cobro.total === 0 && !d.transferencia && !!d.membresia,
+      `código ${r.codigo}, total ${d.cobro && d.cobro.total}, transferencia ${JSON.stringify(d.transferencia)}`);
+  }
+
+  console.log('\n20. Los correos: datos al comprador (no es comprobante fiscal) y aviso a facturación, sin teléfono');
+  {
+    const ref = compraTransferencia && compraTransferencia.cobro && compraTransferencia.cobro.referencia;
+    const correos = ref ? correosCon(ref) : [];
+    const alComprador = correos.find((c) => paraDe(c) === 'compradora-transferencia@prueba.invalid');
+    const interno = correos.find((c) => paraDe(c) === 'facturacion@mercamaquinarias.com');
+    ok(!!alComprador, `correo al comprador con la referencia ${ref}`);
+    ok(!!alComprador && alComprador.texto.includes(dinero(compraTransferencia.cobro.total))
+      && alComprador.texto.includes('000-000000-0') && alComprador.texto.includes('BANCO DE PRUEBA'),
+    'lleva el importe en RD$ y los datos de la cuenta');
+    ok(!!alComprador && /no es un comprobante fiscal/i.test(alComprador.texto)
+      && /no es un comprobante fiscal/i.test(alComprador.html), 'dice que no es un comprobante fiscal (texto y HTML)');
+    ok(!!alComprador && /Responder a: facturacion@mercamaquinarias\.com/.test(alComprador.texto),
+      'se responde a facturación, que es a donde va el comprobante de la transferencia');
+    ok(!!interno && interno.texto.includes(dinero(compraTransferencia.cobro.total)),
+      'aviso interno a facturación con el importe');
+    ok(correos.length > 0 && correos.every(sinTelefono), 'ninguno lleva un teléfono ni WhatsApp');
+    const refAmp = ampliacionTransferencia && ampliacionTransferencia.cobro && ampliacionTransferencia.cobro.referencia;
+    ok(!!refAmp && correosCon(refAmp).some((c) => paraDe(c) === 'compradora-transferencia@prueba.invalid'),
+      'la ampliación también manda los datos al comprador');
+  }
+
+  console.log('\n21. GET /api/membresias: cada organización ve SUS pendientes, con los datos de la cuenta');
+  {
+    const propia = await misMembresias(compradora);
+    const d = propia.datos || {};
+    const ids = (d.pagosPendientes || []).map((p) => p.id);
+    ok(propia.codigo === 200 && Array.isArray(d.pagosPendientes)
+      && !!compraTransferencia.pago && ids.includes(compraTransferencia.pago.id),
+    `la propia ve su pendiente (${ids.length})`);
+    ok(!!d.transferencia && d.transferencia.cuenta === '000-000000-0' && d.transferencia.correo === 'facturacion@mercamaquinarias.com',
+      `con los datos: ${JSON.stringify(d.transferencia)}`);
+    const otra = await misMembresias(ajena);
+    const o = otra.datos || {};
+    ok(otra.codigo === 200 && Array.isArray(o.pagosPendientes) && o.pagosPendientes.length === 0,
+      `la ajena no ve nada: ${JSON.stringify(o.pagosPendientes)}`);
+    ok(!o.transferencia, 'y sin pendientes por transferencia no recibe la cuenta');
+
+    // Apagada después: el pendiente se sigue listando, sin inventar cuenta.
+    apagar();
+    const tras = (await misMembresias(compradora)).datos || {};
+    ok(Array.isArray(tras.pagosPendientes) && tras.pagosPendientes.some((p) => p.id === compraTransferencia.pago.id),
+      'apagada: el pendiente sigue en la lista');
+    ok(!tras.transferencia && typeof tras.avisoTransferencia === 'string'
+      && tras.avisoTransferencia.includes('facturacion@mercamaquinarias.com'),
+    `apagada: sin datos y con el aviso de escribir a facturación (${tras.avisoTransferencia})`);
+    encender();
+  }
+
+  console.log('\n22. GET /api/planes dice qué métodos hay, sin la cuenta');
+  {
+    const r = await pedir({ url: '/api/planes' });
+    const s = JSON.stringify(r.datos || {});
+    ok(r.codigo === 200 && JSON.stringify((r.datos || {}).metodosPago) === '["transferencia"]',
+      `encendida: metodosPago=${JSON.stringify((r.datos || {}).metodosPago)}`);
+    ok(!s.includes('000-000000-0') && !s.includes('BANCO DE PRUEBA') && !s.includes('TITULAR DE PRUEBA'),
+      'sin datos bancarios en una ruta pública');
+    apagar();
+    const r2 = await pedir({ url: '/api/planes' });
+    ok(JSON.stringify((r2.datos || {}).metodosPago) === '["demo"]', `apagada: ${JSON.stringify((r2.datos || {}).metodosPago)}`);
+    encender();
+  }
+
+  console.log('\n23. Al arrancar, una configuración a medias avisa con los NOMBRES que faltan, nunca los valores');
+  {
+    const arrancar = (entorno) => spawnSync(process.execPath, ['-e', "require('./tools/api')"], {
+      cwd: path.join(__dirname, '..'),
+      env: {
+        PATH: process.env.PATH,
+        MERCA_DB: path.join(BANCO, 'arranque.db'),
+        MERCA_CORREO: 'archivo',
+        MERCA_SECRETO: 'secreto-de-prueba-no-usar-en-produccion',
+        ...entorno,
+      },
+      encoding: 'utf8',
+    });
+    const aMedias = arrancar({ MERCA_TRANSFERENCIA_BANCO: 'BANCO DE PRUEBA', MERCA_TRANSFERENCIA_CUENTA: '000-000000-0' });
+    const salida = `${aMedias.stdout}${aMedias.stderr}`;
+    ok(aMedias.status === 0, `el módulo carga (estado ${aMedias.status})`);
+    ok(salida.includes('MERCA_TRANSFERENCIA_TITULAR') && salida.includes('MERCA_TRANSFERENCIA_RNC')
+      && salida.includes('MERCA_TRANSFERENCIA_TIPO'), `nombra las que faltan: ${salida.trim()}`);
+    ok(!salida.includes('BANCO DE PRUEBA') && !salida.includes('000-000000-0'), 'no escribe ningún valor');
+    const sinNada = arrancar({});
+    ok(!/MERCA_TRANSFERENCIA/.test(`${sinNada.stdout}${sinNada.stderr}`), 'sin ninguna variable no avisa: es lo normal');
+    const completa = arrancar(PRUEBA);
+    ok(!/MERCA_TRANSFERENCIA/.test(`${completa.stdout}${completa.stderr}`), 'completa tampoco avisa');
   }
 
   apagar();
