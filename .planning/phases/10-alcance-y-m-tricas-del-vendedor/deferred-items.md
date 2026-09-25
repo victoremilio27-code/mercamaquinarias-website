@@ -3,7 +3,11 @@
 Cosas encontradas mientras se ejecutaban los planes de esta fase que no se tocan aquí
 porque no las pidió ningún criterio de éxito de la fase.
 
-## Duplicar no restaura motor ni transmisión (10-03, Tarea 2)
+## Duplicar no restaura motor ni transmisión (10-03, Tarea 2) — RESUELTO en la revisión
+
+**Resuelto en 1b538c8** (ver `10-REVIEW.md`, WR-01): sí afectaba al criterio 4 para
+vehículos de carretera, así que se corrigió dentro de la fase. Se conserva abajo el
+texto original.
 
 `copiarAnuncio` en `tools/api.js` manda `equipo.motorMarca`, `motorModelo`,
 `transmisionMarca` y `transmisionModelo` en la copia, pero `estadoInicial()` en
