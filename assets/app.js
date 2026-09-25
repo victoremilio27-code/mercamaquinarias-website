@@ -1125,6 +1125,85 @@ function montarAccionesFicha(e, cont) {
   });
 }
 
+/* La página de guardados (guardados.html).
+
+   Pide al catálogo solo esos ids, que vuelven únicamente si siguen
+   activos. Los que no vuelven NO se borran solos: uno pausado puede
+   reactivarse mañana, y quien lo guardó lo perdería sin enterarse. Se
+   dice cuántos son y se ofrece quitarlos. */
+async function montarGuardados() {
+  const lista = $('#listaGuardados');
+  if (!lista) return;
+  const vacio = $('#guardadosVacio');
+  const retirados = $('#guardadosRetirados');
+
+  async function pintar() {
+    const guardados = GUARDADOS.leer();
+    retirados.hidden = true;
+    if (!guardados.length) {
+      lista.innerHTML = '';
+      vacio.hidden = false;
+      return;
+    }
+    vacio.hidden = true;
+    lista.setAttribute('aria-busy', 'true');
+
+    let datos = null;
+    try {
+      const ids = guardados.map((g) => g.id).join(',');
+      datos = await api(`/anuncios?ids=${encodeURIComponent(ids)}`);
+    } catch (_) {
+      datos = null;
+    }
+    lista.removeAttribute('aria-busy');
+    if (!datos) {
+      lista.innerHTML = vacioHTML('No se pudo cargar la lista. Vuelva a intentarlo en un momento.');
+      return;
+    }
+
+    // En el orden en que se guardaron, el último primero: el catálogo
+    // los devuelve en su propio orden, que aquí no significa nada.
+    const porId = new Map((datos.anuncios || []).map((a) => [a.id, anuncioDeApi(a)]));
+    const vigentes = guardados.filter((g) => porId.has(g.id)).map((g) => porId.get(g.id));
+    const idsRetirados = guardados.filter((g) => !porId.has(g.id)).map((g) => g.id);
+
+    /* La tarjeta del catálogo es un enlace entero; el botón de quitar va
+       FUERA de él, porque un botón dentro de un enlace es un control
+       anidado que ni el teclado ni un lector de pantalla manejan bien. */
+    lista.innerHTML = vigentes.map((e) => `<li class="guardado">
+      ${avisoHTML(e).replace(/^<li class="aviso">/, '<div class="aviso">').replace(/<\/li>$/, '</div>')}
+      <button type="button" class="btn-tabla guardado__quitar" data-quitar="${esc(e.id)}"
+        aria-label="Quitar ${esc(nombreEquipo(e))} de guardados">Quitar</button>
+    </li>`).join('');
+
+    if (idsRetirados.length) {
+      const n = idsRetirados.length;
+      $('#guardadosRetiradosTexto').textContent = n === 1
+        ? '1 equipo guardado ya no está publicado.'
+        : `${n} equipos guardados ya no están publicados.`;
+      retirados.hidden = false;
+      retirados.dataset.ids = idsRetirados.join(',');
+    }
+    vacio.hidden = vigentes.length > 0 || idsRetirados.length > 0;
+  }
+
+  lista.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-quitar]');
+    if (!btn) return;
+    GUARDADOS.quitar([btn.dataset.quitar]);
+    montarEnlaceGuardados();
+    pintar();
+  });
+
+  $('#btnQuitarRetirados').addEventListener('click', () => {
+    GUARDADOS.quitar((retirados.dataset.ids || '').split(',').filter(Boolean));
+    montarEnlaceGuardados();
+    pintar();
+  });
+
+  await pintar();
+}
+
 async function montarDetalle() {
   const cont = $('#detalle');
   if (!cont) return;
@@ -2449,6 +2528,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     montarDealers(),
     montarResultados(),
     montarDetalle(),
+    montarGuardados(),
     seOfrece('transporte') ? montarTransporte() : null,
     montarContactoDesdeFicha(),
   ]);

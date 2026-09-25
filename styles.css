@@ -697,6 +697,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* Dentro del panel de resultados, con el filtro al lado, caben cuatro. */
 .rejilla--panel { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+/* Guardados (fase 10): la tarjeta de siempre y, debajo y fuera del
+   enlace, el botón de quitar. */
+.guardados { margin-top: 14px; }
+.guardado { display: grid; gap: 8px; align-content: start; }
+.guardado__quitar { justify-self: start; margin-left: 0; }
+.guardados__retirados { margin-top: 14px; }
+
 .aviso a { display: grid; gap: 2px; }
 
 .aviso__foto {

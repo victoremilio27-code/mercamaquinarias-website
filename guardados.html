@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es-DO">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equipos guardados · MercaMaquinarias</title>
+<meta name="description" content="Los equipos que guardó en este navegador para volver a verlos. No hace falta cuenta.">
+<!-- Es una lista personal que vive en el navegador de cada visitante:
+     no tiene nada que indexar. -->
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#F4F4F1">
+<!-- Vista previa al compartir en WhatsApp, Facebook y X. La imagen
+     es la del paquete de marca y va con URL absoluta: las redes no
+     resuelven rutas relativas. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MercaMaquinarias">
+<meta property="og:locale" content="es_DO">
+<meta property="og:title" content="Equipos guardados">
+<meta property="og:description" content="Los equipos que guardó en este navegador para volver a verlos. No hace falta cuenta.">
+<meta property="og:url" content="https://mercamaquinarias.com/guardados.html">
+<meta property="og:image" content="https://mercamaquinarias.com/brand_assets/img/og-1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="brand_assets/svg/favicon-512.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="assets/tema.js"></script>
+</head>
+<body>
+
+<a class="skip" href="#contenido">Saltar al contenido</a>
+
+<header class="cab">
+  <div class="cab__barra">
+    <div class="envoltura cab__inner">
+      <a class="cab__logo" href="index.html" aria-label="MercaMaquinarias, inicio">
+        <img src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias">
+      </a>
+      <button class="cab__toggle" id="navToggle" aria-expanded="false" aria-controls="navMenu" aria-label="Abrir menú">
+        <span></span><span></span><span></span>
+      </button>
+      <nav class="cab__nav" id="navMenu" aria-label="Principal">
+        <a href="equipos.html">Equipos</a>
+        <a href="categorias.html">Categorías</a>
+        <a href="alquiler.html">Alquiler</a>
+        <a href="importar.html">Importación</a>
+        <a href="planes.html">Planes</a>
+        <a class="cab__nav-cta" href="publicar.html">Publicar equipo</a>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="contenido">
+<div class="envoltura">
+
+  <section class="panel" aria-labelledby="t-guardados">
+    <div class="panel__cabeza">
+      <h1 class="panel__titulo panel__titulo--limpio" id="t-guardados">Equipos <em>guardados</em></h1>
+      <p class="panel__meta"><a class="enlace-mas" href="equipos.html">Ver todos los equipos &rarr;</a></p>
+    </div>
+    <p class="panel__texto">Se guardan en este navegador. No hace falta cuenta.</p>
+
+    <p class="aviso-borrador guardados__retirados" id="guardadosRetirados" hidden>
+      <span id="guardadosRetiradosTexto"></span>
+      <button type="button" class="btn btn--linea" id="btnQuitarRetirados">Quitarlos de la lista</button>
+    </p>
+
+    <ul class="rejilla guardados" id="listaGuardados" aria-live="polite"></ul>
+
+    <div class="vacio" id="guardadosVacio" hidden>
+      <h2 class="vacio__titulo">Todavía no ha guardado ningún equipo</h2>
+      <p class="vacio__texto">Pulse «Guardar» en la ficha de un equipo y aparecerá aquí para volver a verlo cuando quiera.</p>
+      <a class="btn btn--ambar" href="equipos.html">Ver equipos publicados</a>
+    </div>
+  </section>
+
+</div>
+</main>
+
+<footer class="pie">
+  <div class="envoltura pie__inner">
+    <div class="pie__col">
+      <img class="pie__logo" src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias">
+      <p class="pie__legal">© 2026 MercaMaquinarias · Inversiones XZT, S.R.L., RNC 1-31-27975-9. Todos los derechos reservados.</p>
+      <p class="pie__texto">El uso de este sitio implica la aceptación de nuestra política de privacidad y los términos y condiciones de uso.</p>
+      <ul class="pie__lista">
+        <li><a href="legal.html">Centro legal</a></li>
+        <li><a href="legal.html#terminos">Términos y condiciones de uso</a></li>
+        <li><a href="legal.html#privacidad">Política de privacidad</a></li>
+        <li><a href="legal.html#anuncios">Política de publicación de anuncios</a></li>
+        <li><a href="contacto.html">Contacto</a></li>
+      </ul>
+    </div>
+    <div class="pie__col">
+      <h3 class="pie__titulo">Otros servicios</h3>
+      <ul class="pie__lista">
+        <li><a href="alquiler.html">Alquiler de equipos con operador, por hora</a></li>
+        <li><a href="importar.html">Importación de maquinaria</a></li>
+        <li><a href="dealers.html">Talleres y dealers de maquinaria</a></li>
+        <li><a href="categorias.html">Todas las categorías</a></li>
+      </ul>
+      <h3 class="pie__titulo">Síganos</h3>
+      <ul class="pie__lista">
+        <li><a href="https://instagram.com" rel="noopener">Instagram</a></li>
+        <li><a href="https://facebook.com" rel="noopener">Facebook</a></li>
+        <li><a href="mailto:hola@mercamaquinarias.com">hola@mercamaquinarias.com</a></li>
+      </ul>
+    </div>
+    <div class="pie__col">
+      <h3 class="pie__titulo">Enlaces</h3>
+      <ul class="pie__lista pie__lista--marcada">
+        <li><a href="alquiler.html"><b>Alquiler de equipos:</b> flota propia con operador, por hora</a></li>
+        <li><a href="importar.html"><b>Importación:</b> cotización según presupuesto</a></li>
+        <li><a href="planes.html"><b>Planes y precios:</b> cupos, niveles y beneficios</a></li>
+        <li><a href="dealers.html"><b>Directorio:</b> dealers y talleres</a></li>
+      </ul>
+      <p class="pie__sede">Santo Domingo, República Dominicana</p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/sesion.js"></script>
+<script src="assets/taxonomia.js"></script>
+<script src="assets/precios.js"></script>
+<script src="assets/servicios.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script src="assets/chat.js" defer></script>
+</body>
+</html>

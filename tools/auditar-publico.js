@@ -21,6 +21,8 @@ const PAGINAS = [
   ['/publicar.html', 'Publicar'],
   ['/panel.html', 'Panel (sin sesión)'],
   ['/admin.html', 'Admin (sin sesión)'],
+  // Sin nada guardado: tiene que ofrecer el catálogo, no quedarse en blanco.
+  ['/guardados.html', 'Guardados'],
 ];
 
 const fallos = [];
