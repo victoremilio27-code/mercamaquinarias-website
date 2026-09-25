@@ -1853,6 +1853,26 @@ async function montarPublicador() {
     selModelo.dispatchEvent(new Event('change'));
     if (!modeloConocido) $('#e-modelo-otro').value = e.modelo;
 
+    /* Motor y transmisión, con la misma cadena: el `change` de la
+       subcategoría de arriba ya llenó sus marcas, y el de cada marca
+       llena sus modelos. Faltaba: al duplicar un camión —que es justo
+       donde el comprador pregunta primero por el motor— el asistente
+       salía con el tren motriz en blanco aunque la copia lo trajera, y
+       el dealer tenía que volver a elegirlo. Vale igual para cualquier
+       borrador recuperado. En una excavadora no hay valores y no pasa
+       nada. */
+    [
+      ['#e-motor-marca', '#e-motor-modelo', e.motorMarca, e.motorModelo],
+      ['#e-trans-marca', '#e-trans-modelo', e.transmisionMarca, e.transmisionModelo],
+    ].forEach(([selMarca, selModeloTren, valorMarca, valorModelo]) => {
+      const sm = $(selMarca);
+      if (!sm || !valorMarca) return;
+      sm.value = valorMarca;
+      sm.dispatchEvent(new Event('change'));
+      const smod = $(selModeloTren);
+      if (smod && valorModelo) smod.value = valorModelo;
+    });
+
     $('#avisoBorrador').hidden = false;
     if (copia) {
       $('#avisoBorrador span').textContent =
