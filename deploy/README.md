@@ -310,6 +310,51 @@ ahí y se despliega: no hay que reentrenar nada.
 `MERCA_CHAT_MODELO` sin tocar código: `claude-haiku-4-5` sale más
 barato, `claude-opus-5` responde mejor y cuesta más.
 
+## 10b. Cobro por transferencia bancaria
+
+Es el camino de cobro mientras CardNet no esté afiliado: el comprador
+ve los datos de la cuenta, transfiere, y el personal marca el pago como
+recibido en la consola cuando lo ve en el banco. Solo entonces se
+otorgan los cupos y se emite el comprobante.
+
+Los datos de la cuenta **no están en el repositorio** ni tienen valor
+por defecto: solo los tiene Victor. Con cualquiera de las cinco
+variables vacía o mal escrita, la transferencia no se ofrece y el sitio
+sigue exactamente como antes. La cuenta tiene que ser **en pesos
+(DOP)**: los precios lo son.
+
+1. Añade las cinco líneas al archivo de secretos, cambiando cada
+   marcador entre ángulos por el dato real:
+
+   ```bash
+   cat >> /etc/mercamaquinarias.env <<'FIN'
+   MERCA_TRANSFERENCIA_BANCO=<nombre del banco, como lo reconoce el cliente>
+   MERCA_TRANSFERENCIA_TITULAR=<titular exacto de la cuenta>
+   MERCA_TRANSFERENCIA_RNC=<RNC de 9 dígitos o cédula de 11, con o sin guiones>
+   MERCA_TRANSFERENCIA_TIPO=<corriente o ahorros>
+   MERCA_TRANSFERENCIA_CUENTA=<número de cuenta en pesos, dígitos y guiones>
+   FIN
+   chmod 600 /etc/mercamaquinarias.env
+   systemctl restart mercamaquinarias
+   ```
+
+2. Comprueba que quedó encendida:
+   - el registro del servicio (`journalctl -u mercamaquinarias -n 50`) ya
+     **no** muestra el aviso de arranque que nombra las variables de la
+     transferencia que faltan;
+   - `planes.html` ofrece pagar por transferencia.
+
+   Si el aviso sigue saliendo, nombra la variable que falta o no valida
+   (nunca su valor): corrígela y reinicia otra vez.
+
+3. Para apagarla sin borrar los datos, añade `MERCA_TRANSFERENCIA=0` y
+   reinicia.
+
+**Qué cambia al encenderla.** El procesador de demostración, que aprueba
+siempre, deja de estar al alcance del comprador. Desde ese momento toda
+compra con importe queda **pendiente** hasta que el personal la marque
+como recibida en la consola; hasta entonces no hay cupos ni comprobante.
+
 ## 11. Mantenimiento automático
 
 Caducar anuncios, avisar de vencimientos, purgar y respaldar la base:
