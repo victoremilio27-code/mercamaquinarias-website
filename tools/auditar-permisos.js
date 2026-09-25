@@ -174,6 +174,8 @@ async function entrar(correo, clave) {
      vendedor confió solo al personal. */
   for (const [ruta, metodo, cuerpo, que] of [
     ['/admin/organizaciones', 'GET', null, 'directorio de empresas oculto'],
+    ['/admin/series', 'GET', null, 'lista de números de serie oculta'],
+    ['/admin/anuncios/cualquiera/serie', 'POST', { resultado: 'conforme' }, 'revisar una serie bloqueado'],
   ]) {
     const rr = await pedir(ruta, { metodo, cuerpo: cuerpo || undefined, cookie: cibao });
     comprobar(`${que} a cuenta sin permiso`, rr.estado === 404, `devolvió ${rr.estado}`);
