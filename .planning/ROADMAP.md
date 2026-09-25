@@ -165,7 +165,13 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. Lo que un vendedor lee en `publicar.html` sobre la verificación del número de serie se corresponde con la diligencia que el personal hace de verdad — o el texto ya no lo promete.
   4. El personal abre la página de un dealer, la edita en su nombre, y el dealer ve el cambio en su propia pantalla con su estado borrador/publicada respetado.
   5. Cada una de esas escrituras aparece en la bitácora con quién la hizo, cuándo y sobre qué organización.
-**Plans**: TBD
+**Plans**: 6 plans
+- [ ] 07-01-PLAN.md — Directorio de empresas y sello con motivo al retirarlo (ADMIN-02)
+- [ ] 07-02-PLAN.md — Revisión del número de serie por la bitácora y la serie deja de ser pública (ADMIN-03, CONF-01)
+- [ ] 07-03-PLAN.md — API para editar la página de un dealer en su nombre, sin publicar ni despublicar (ADMIN-04)
+- [ ] 07-04-PLAN.md — Consola: secciones «Empresas» y «Números de serie»
+- [ ] 07-05-PLAN.md — Editor de página en modo soporte y aviso al dealer
+- [ ] 07-06-PLAN.md — Texto de publicar, estado de la serie en el panel y en la ficha (CONF-01)
 **UI hint**: yes
 **Notas**: CONF-01 se cierra aquí porque ADMIN-03 es lo que la cumple; si la revisión no va a hacerse, el criterio 3 se satisface retirando el texto de `publicar.html:149`. La edición en nombre de otro (ADMIN-04) respeta las seis reglas visibles de la página del dealer ya existentes. Cuidado con los reductores de imagen: pintan fondo blanco y exportan JPEG, así que un logotipo PNG con transparencia pierde el alfa.
 
