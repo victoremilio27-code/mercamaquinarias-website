@@ -30,6 +30,7 @@
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
+    "bitacora:probar": "node tools/probar-bitacora.js",
     "db:flota": "node tools/seed.js --solo-flota",
     "taxonomia": "node tools/verificar-taxonomia.js"
   },

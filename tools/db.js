@@ -1817,8 +1817,8 @@ const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { cod
    SAVEPOINT y no BEGIN: las funciones que ya tienen su propia transacción
    (resolverSolicitud) tienen que poder ir dentro, y un BEGIN anidado lanza.
 
-   Este es el ÚNICO `INSERT INTO bitacora_admin` del repositorio;
-   tools/probar-bitacora.js lo cuenta. */
+   Este es el ÚNICO INSERT sobre la tabla bitacora_admin del
+   repositorio; tools/probar-bitacora.js cuenta la sentencia literal. */
 function enNombreDe({ idAdmin, idOrganizacion, accion, objetoTipo, objetoId, motivo, ip }, escribir) {
   if (!Object.prototype.hasOwnProperty.call(ACCIONES_BITACORA, accion)) {
     throw errorCodigo(`Acción de bitácora desconocida: «${accion}»`, 500);
