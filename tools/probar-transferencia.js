@@ -707,6 +707,217 @@ db.cargarSecuencia({
     ok(!/MERCA_TRANSFERENCIA/.test(`${completa.stdout}${completa.stderr}`), 'completa tampoco avisa');
   }
 
+  /* ── 05-02, tarea 2: la consola marca la transferencia como recibida o la anula ───
+     La administradora de la sección 7, ahora por el enrutador. La IP
+     llega por CF-Connecting-IP, que es la fiable detrás de Cloudflare. */
+
+  const IP_ADMIN = '190.1.2.3';
+  const comoAdmin = { cookie: `te_sesion=${db.abrirSesion(idAdmin)}`, 'cf-connecting-ip': IP_ADMIN };
+  const listarAdmin = (estado) =>
+    pedir({ url: `/api/admin/pagos${estado ? `?estado=${estado}` : ''}`, cabeceras: comoAdmin });
+  const recibido = (idPago, cuerpo = {}, cabeceras = comoAdmin) =>
+    pedir({ metodo: 'POST', url: `/api/admin/pagos/${idPago}/recibido`, cuerpo, cabeceras });
+  const anular = (idPago, cuerpo = {}, cabeceras = comoAdmin) =>
+    pedir({ metodo: 'POST', url: `/api/admin/pagos/${idPago}/anular`, cuerpo, cabeceras });
+  const todasLasFilas = () => consulta('SELECT COUNT(*) AS n FROM bitacora_admin').n;
+  const ultimaFila = (accion) =>
+    consulta('SELECT * FROM bitacora_admin WHERE accion = ? ORDER BY id DESC LIMIT 1', accion);
+  const leer = (texto) => { try { return JSON.parse(texto); } catch (_) { return null; } };
+  const TEXTO_D07 = 'La membresía que ampliaba este pago ya no existe. No se añadió ningún cupo ni se '
+    + 'emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
+
+  const idCompraTr = compraTransferencia && compraTransferencia.pago && compraTransferencia.pago.id;
+  const idAmpliaTr = ampliacionTransferencia && ampliacionTransferencia.pago && ampliacionTransferencia.pago.id;
+
+  console.log('\n24. GET /api/admin/pagos: las transferencias pendientes, y las aprobadas con su NCF');
+  {
+    const r = await listarAdmin();
+    const d = r.datos || {};
+    ok(r.codigo === 200 && d.estado === 'pendiente' && Array.isArray(d.pagos)
+      && d.pagos.some((p) => p.id === idCompraTr) && d.pagos.every((p) => p.procesador === 'transferencia'),
+    `código ${r.codigo}, estado ${d.estado}, ${d.pagos && d.pagos.length} pago(s)`);
+    const a = await listarAdmin('aprobado');
+    const fila = ((a.datos || {}).pagos || []).find((p) => p.id === pRecibida.id);
+    ok(a.codigo === 200 && (a.datos || {}).estado === 'aprobado' && !!fila && !!fila.factura && !!fila.factura.ncf,
+      `aprobado con NCF: ${fila && JSON.stringify(fila.factura)}`);
+  }
+
+  console.log('\n25. Marcar recibida: cupos, comprobante con NCF y fila de bitácora en la misma respuesta');
+  let comprobanteCompra = null;
+  {
+    const antesB02 = siguienteB02();
+    const antesMemb = membresiasDe(compradora.org.id);
+    const antesFilas = filasBitacora('pago.transferencia_recibida');
+    const r = idCompraTr ? await recibido(idCompraTr, { motivo: 'Ref. banco 123' }) : { codigo: 0, datos: {} };
+    const d = r.datos || {};
+    comprobanteCompra = d.comprobante;
+    ok(r.codigo === 200 && d.yaEstaba === false && !!d.pago && d.pago.estado === 'aprobado',
+      `código ${r.codigo}, pago ${d.pago && d.pago.estado}, yaEstaba ${d.yaEstaba}${d.error ? `, ${d.error}` : ''}`);
+    ok(!!d.membresia && d.membresia.anuncios_incluidos === 1, `membresía con ${d.membresia && d.membresia.anuncios_incluidos} cupo(s)`);
+    ok(!!d.comprobante && !!d.comprobante.numero && !!d.comprobante.tipo && !!d.comprobante.ncf
+      && Object.keys(d.comprobante).length === 3, `comprobante ${JSON.stringify(d.comprobante)}`);
+    ok(!!idCompraTr && db.pagoPorId(idCompraTr).estado === 'aprobado', 'en la base: aprobado');
+    ok(membresiasDe(compradora.org.id) === antesMemb + 1, `membresías ${membresiasDe(compradora.org.id)} (se esperaban ${antesMemb + 1})`);
+    ok(!!idCompraTr && facturasDelPago(idCompraTr) === 1, 'una factura');
+    ok(siguienteB02() === antesB02 + 1, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 1)`);
+    ok(filasBitacora('pago.transferencia_recibida') === antesFilas + 1, 'una fila de bitácora');
+    const fila = ultimaFila('pago.transferencia_recibida');
+    const antes = leer(fila && fila.antes);
+    const despues = leer(fila && fila.despues);
+    ok(!!fila && fila.organizacion_id === compradora.org.id && fila.admin_id === idAdmin
+      && fila.objeto_tipo === 'pago' && fila.objeto_id === idCompraTr,
+    `la fila: org ${fila && fila.organizacion_id}, admin ${fila && fila.admin_id}, objeto ${fila && fila.objeto_id}`);
+    ok(!!fila && fila.ip === IP_ADMIN, `IP de CF-Connecting-IP: ${fila && fila.ip}`);
+    ok(!!fila && fila.motivo === 'Ref. banco 123', `motivo: ${fila && fila.motivo}`);
+    ok(!!antes && antes.estado === 'pendiente' && !!despues && despues.estado === 'aprobado'
+      && despues.referencia === compraTransferencia.cobro.referencia && despues.yaEstaba === false,
+    `antes ${fila && fila.antes} → después ${fila && fila.despues}`);
+  }
+
+  console.log('\n26. Pulsar otra vez: 200, yaEstaba, el mismo comprobante, B02 quieto y otra fila');
+  {
+    const antesB02 = siguienteB02();
+    const antesFilas = filasBitacora('pago.transferencia_recibida');
+    const r = idCompraTr ? await recibido(idCompraTr, {}) : { codigo: 0, datos: {} };
+    const d = r.datos || {};
+    ok(r.codigo === 200 && d.yaEstaba === true, `código ${r.codigo}, yaEstaba ${d.yaEstaba}`);
+    ok(!!d.comprobante && !!comprobanteCompra && d.comprobante.numero === comprobanteCompra.numero
+      && d.comprobante.ncf === comprobanteCompra.ncf, 'el mismo comprobante');
+    ok(siguienteB02() === antesB02, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 0)`);
+    ok(!!idCompraTr && facturasDelPago(idCompraTr) === 1, 'sigue habiendo una factura');
+    ok(filasBitacora('pago.transferencia_recibida') === antesFilas + 1, 'una segunda fila (alguien pulsó)');
+  }
+
+  console.log('\n27. Lo que no se marca: otro procesador (409), inexistente (404), rechazado (409), y sin fila');
+  {
+    const pDemo = pendiente('DEMO-CONSOLA', { procesador: 'demo', idOrg: compradora.org.id });
+    const pRech = pendiente('RECHAZADA', { idOrg: compradora.org.id });
+    db.rechazarPago(pRech.id);
+    const antes = todasLasFilas();
+    const rDemo = await recibido(pDemo.id, {});
+    ok(rDemo.codigo === 409 && db.pagoPorId(pDemo.id).estado === 'pendiente',
+      `demo: código ${rDemo.codigo} (${(rDemo.datos || {}).error}), pago ${db.pagoPorId(pDemo.id).estado}`);
+    const rNo = await recibido('no-existe', {});
+    ok(rNo.codigo === 404, `inexistente: código ${rNo.codigo}`);
+    const rRech = await recibido(pRech.id, {});
+    ok(rRech.codigo === 409 && db.pagoPorId(pRech.id).estado === 'rechazado' && facturasDelPago(pRech.id) === 0,
+      `rechazado: código ${rRech.codigo} (${(rRech.datos || {}).error})`);
+    ok(todasLasFilas() === antes, `filas de bitácora: ${todasLasFilas() - antes} nuevas (se esperaban 0)`);
+  }
+
+  console.log('\n28. Ampliación cuya membresía ya no está: el listado lo dice y marcar recibido es 409 sin tocar nada');
+  {
+    ok(!!idSuscCompradora && !!idAmpliaTr, 'hay una ampliación pendiente de la sección 18');
+    ejecuta("UPDATE suscripciones SET estado = 'vencida' WHERE id = ?", idSuscCompradora);
+    const lista = ((await listarAdmin()).datos || {}).pagos || [];
+    const fila = lista.find((p) => p.id === idAmpliaTr);
+    ok(!!fila && fila.membresiaViva === false, `membresiaViva=${fila && fila.membresiaViva}`);
+    const antesFilas = todasLasFilas();
+    const antesB02 = siguienteB02();
+    const cupoAntes = cupoDe(idSuscCompradora);
+    const r = await recibido(idAmpliaTr, { motivo: 'Ref. banco 456' });
+    ok(r.codigo === 409 && (r.datos || {}).error === TEXTO_D07, `código ${r.codigo}: ${(r.datos || {}).error}`);
+    ok(db.pagoPorId(idAmpliaTr).estado === 'pendiente' && facturasDelPago(idAmpliaTr) === 0,
+      `pago ${db.pagoPorId(idAmpliaTr).estado}, facturas ${facturasDelPago(idAmpliaTr)}`);
+    ok(cupoDe(idSuscCompradora) === cupoAntes, 'la membresía vencida no recibió cupos');
+    ok(todasLasFilas() === antesFilas && siguienteB02() === antesB02, 'sin fila y sin NCF');
+
+    /* La carrera: la consulta previa todavía la ve, pero cuando se
+       aprueba ya no existe. db.aprobarPago lanza 404 y la ruta lo
+       traduce al mismo 409. */
+    const base = db.comprarCupos({
+      idOrg: compradora.org.id, idPlan: 'destacado', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('CARRERA-BASE') },
+    });
+    const pCarrera = db.registrarCobro({
+      idOrg: compradora.org.id, idSusc: base.id, cobro: cobroDe(2000, 'CARRERA'),
+      intencion: {
+        tipo: 'ampliacion', idSusc: base.id, cupoAnterior: 1, cupoNuevo: 2, anadidos: 1,
+        concepto: 'Ampliación de Destacado · 1 cupo más · hasta 2', cliente: CLIENTE, correoCliente: CLIENTE.correo,
+      },
+    });
+    ejecuta('UPDATE pagos SET suscripcion_id = NULL WHERE suscripcion_id = ?', base.id);
+    ejecuta('DELETE FROM suscripciones WHERE id = ?', base.id);
+    const suscripcionOriginal = db.suscripcion;
+    let rC = null;
+    const antesC = todasLasFilas();
+    try {
+      db.suscripcion = (idSusc, idOrg) => (idSusc === base.id ? { id: base.id } : suscripcionOriginal(idSusc, idOrg));
+      rC = await recibido(pCarrera.id, {});
+    } finally {
+      db.suscripcion = suscripcionOriginal;
+    }
+    ok(rC.codigo === 409 && (rC.datos || {}).error === TEXTO_D07, `carrera: código ${rC.codigo}: ${(rC.datos || {}).error}`);
+    ok(db.pagoPorId(pCarrera.id).estado === 'pendiente' && facturasDelPago(pCarrera.id) === 0
+      && todasLasFilas() === antesC, 'carrera: pago pendiente, sin factura y sin fila');
+  }
+
+  console.log('\n29. Anular: motivo obligatorio, rechazado sin NCF, con fila y correo al comprador');
+  {
+    const antesFilas = todasLasFilas();
+    const sin = await anular(idAmpliaTr, {});
+    const corto = await anular(idAmpliaTr, { motivo: 'no ' });
+    ok(sin.codigo === 400 && corto.codigo === 400 && todasLasFilas() === antesFilas
+      && db.pagoPorId(idAmpliaTr).estado === 'pendiente',
+    `sin motivo ${sin.codigo}, motivo corto ${corto.codigo}`);
+
+    const antesB02 = siguienteB02();
+    const MOTIVO = 'La membresía venció antes de recibir la transferencia';
+    const r = await anular(idAmpliaTr, { motivo: MOTIVO });
+    const d = r.datos || {};
+    ok(r.codigo === 200 && !!d.pago && d.pago.estado === 'rechazado', `código ${r.codigo}, pago ${d.pago && d.pago.estado}${d.error ? `, ${d.error}` : ''}`);
+    ok(db.pagoPorId(idAmpliaTr).estado === 'rechazado' && facturasDelPago(idAmpliaTr) === 0 && siguienteB02() === antesB02,
+      'en la base: rechazado, sin factura, sin NCF');
+    const fila = ultimaFila('pago.transferencia_anulada');
+    ok(!!fila && fila.objeto_id === idAmpliaTr && fila.motivo === MOTIVO && fila.organizacion_id === compradora.org.id
+      && fila.ip === IP_ADMIN && fila.admin_id === idAdmin, `la fila: ${fila && fila.objeto_id}, ${fila && fila.motivo}`);
+    const despues = leer(fila && fila.despues);
+    ok(!!despues && despues.estado === 'rechazado' && (leer(fila.antes) || {}).estado === 'pendiente',
+      `antes ${fila && fila.antes} → después ${fila && fila.despues}`);
+    const refAmp = ampliacionTransferencia.cobro.referencia;
+    const aviso = correosCon(refAmp).find((c) => paraDe(c) === 'compradora-transferencia@prueba.invalid'
+      && c.texto.includes(MOTIVO));
+    ok(!!aviso && sinTelefono(aviso), 'correo al comprador con el motivo, sin teléfono');
+
+    const antes2 = todasLasFilas();
+    const otraVez = await anular(idAmpliaTr, { motivo: MOTIVO });
+    ok(otraVez.codigo === 409 && todasLasFilas() === antes2, `anular otra vez: ${otraVez.codigo}, sin fila`);
+    const aprobado = await anular(idCompraTr, { motivo: 'Intento sobre un pago ya aprobado' });
+    ok(aprobado.codigo === 409 && db.pagoPorId(idCompraTr).estado === 'aprobado' && todasLasFilas() === antes2,
+      `anular un aprobado: ${aprobado.codigo} (${(aprobado.datos || {}).error})`);
+    const pDemo = pendiente('DEMO-ANULA', { procesador: 'demo', idOrg: compradora.org.id });
+    const demo = await anular(pDemo.id, { motivo: 'No es una transferencia' });
+    ok(demo.codigo === 409 && db.pagoPorId(pDemo.id).estado === 'pendiente', `anular un demo: ${demo.codigo}`);
+    const no = await anular('no-existe', { motivo: 'No existe este pago' });
+    ok(no.codigo === 404 && todasLasFilas() === antes2, `anular inexistente: ${no.codigo}, sin fila`);
+  }
+
+  console.log('\n30. A quien no es administrador, las tres rutas le responden 404');
+  {
+    const lista = await pedir({ url: '/api/admin/pagos', cabeceras: compradora.cabeceras });
+    const pOtro = pendiente('NO-ADMIN', { idOrg: ajena.org.id });
+    const marca = await recibido(pOtro.id, {}, compradora.cabeceras);
+    const anula = await anular(pOtro.id, { motivo: 'Intento sin permiso' }, compradora.cabeceras);
+    ok(lista.codigo === 404 && marca.codigo === 404 && anula.codigo === 404,
+      `listar ${lista.codigo}, recibido ${marca.codigo}, anular ${anula.codigo}`);
+    ok(db.pagoPorId(pOtro.id).estado === 'pendiente', 'el pago sigue pendiente');
+  }
+
+  console.log('\n31. La guarda de la bitácora ve las dos escrituras nuevas');
+  {
+    const ruta = (patron) => api.RUTAS.find(([m, p]) => m === 'POST' && p.source === patron);
+    const rec = ruta('^\\/api\\/admin\\/pagos\\/([\\w-]+)\\/recibido$');
+    const anu = ruta('^\\/api\\/admin\\/pagos\\/([\\w-]+)\\/anular$');
+    ok(!!rec && rec[2].bitacora === 'pago.transferencia_recibida' && !api.ESCRITURAS_ADMIN_PROPIAS.has(rec[2]),
+      `recibido: ${rec ? rec[2].bitacora : 'sin ruta'}`);
+    ok(!!anu && anu[2].bitacora === 'pago.transferencia_anulada' && !api.ESCRITURAS_ADMIN_PROPIAS.has(anu[2]),
+      `anular: ${anu ? anu[2].bitacora : 'sin ruta'}`);
+    const idxGet = api.RUTAS.findIndex(([m, p]) => m === 'GET' && p.source === '^\\/api\\/admin\\/pagos$');
+    ok(idxGet >= 0, 'GET /api/admin/pagos está en RUTAS');
+    const fuente = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
+    ok(!/db\.aprobarPago/.test(fuente), 'api.js no llama a db.aprobarPago: la transición es pagos.confirmarPago');
+  }
+
   apagar();
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);
