@@ -151,7 +151,15 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. Con el interruptor en el ambiente de pruebas, un cobro aprobado otorga cupos y emite comprobante, y uno rechazado no deja ni cupos ni NCF consumido.
   4. La misma notificación de la pasarela entregada dos veces emite un solo comprobante y consume un solo NCF; y RD$2.000 llega a CardNet como `200000`.
   5. Un aviso perdido se recupera solo: la reconciliación encuentra el pago aprobado en la pasarela sin fila aprobada nuestra, completa la transición y el descuadre sale en el informe a gerencia.
-**Plans**: TBD
+**Plans**: 8 planes en 7 olas
+- [ ] 06-01-PLAN.md — Cliente de CardNet apagado tras MERCA_CARDNET: centavos en un solo punto, normalizar sin aprobar por duda, limpiar registros, las ocho llamadas con costura de pruebas, barrera de PCI y cardnet:probar en CI
+- [ ] 06-02-PLAN.md — Migración 2026-10-cardnet al final: columnas de pagos, tarjetas y renovación, clientes_procesador, pagos_eventos de solo añadir y referencia única en cardnet
+- [ ] 06-03-PLAN.md — CardNet en la transición única: PROCESADORES.cardnet, resolver compartido, selector de la fase 5 con cardnet, token leído del Customer, doble clic y activación de perfil
+- [ ] 06-04-PLAN.md — Rutas: 202 con la URL de captura, confirmar, estado del pago, tarjetas guardadas, notificación autenticada e idempotente, y CSP con frame-src solo encendido
+- [ ] 06-05-PLAN.md — Conciliación cada 10 minutos con su temporizador y el descuadre en el informe a gerencia
+- [ ] 06-06-PLAN.md — Pantallas: iframe de CardNet, método y tarjeta guardada en planes, tarjetas guardadas en el panel; apagado, igual que la fase 5
+- [ ] 06-07-PLAN.md — Cobro recurrente: renovación con consentimiento, aviso previo, tres intentos por ciclo y aviso de tarjeta por vencer
+- [ ] 06-08-PLAN.md — Los cinco criterios de extremo a extremo, batería completa apagado y procedimiento de encendido en deploy/README.md
 **UI hint**: yes
 **Notas**: PCI es frontera dura — la tokenización ocurre en el navegador; ninguna ruta nuestra puede recibir datos de tarjeta. Diseño completo en `.planning/research/cardnet.md`: módulo `tools/cardnet.js` con `https.request` a mano y cero dependencias, `POST /v1/api/purchase` para el primer cobro y las renovaciones, ruta de notificación antes de cualquier patrón genérico `/api/pagos/...`, autenticada con `crypto.timingSafeEqual` y sin limitador por IP. Las claves de QA publicadas por CardNet no entran al repositorio ni a `.env.example`. Pruebas con arnés propio (`tools/probar-pagos.js`) y doble de `tools/cardnet.js`: la red no se toca; las variables de entorno se fijan **antes** del `require` de `tools/db.js`. Queda una pregunta abierta de mayor impacto para CardNet: confirmar que `DataDo.Invoice` es un número de orden del comercio y no el NCF de la DGII.
 
