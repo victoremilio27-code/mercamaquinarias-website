@@ -1847,6 +1847,7 @@ const ACCIONES_BITACORA = Object.freeze({
   'organizacion.verificar': 'Sello de verificada',
   'dealer.resolver': 'Alta de dealer aprobada o rechazada',
   'anuncio.serie': 'Número de serie revisado',
+  'pagina.editar': 'Página del dealer editada en su nombre',
 });
 
 const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { codigo });
@@ -1941,6 +1942,16 @@ function bitacora({ organizacion, limite = 200 } = {}) {
 
 /* Alimenta el filtro de la consola: cada organización una vez, con el
    nombre de su anotación más reciente (si se renombró, sale el último). */
+/* Cuándo fue la última anotación de una acción sobre una organización.
+   Solo la fecha: el editor del dealer dice «el equipo de
+   MercaMaquinarias editó su página el …» sin nombrar al empleado. */
+const ultimaAnotacion = (idOrg, accion) => {
+  const f = abrir().prepare(`SELECT creada FROM bitacora_admin
+                              WHERE organizacion_id = ? AND accion = ?
+                              ORDER BY id DESC LIMIT 1`).get(idOrg, accion);
+  return f ? f.creada : null;
+};
+
 const organizacionesEnBitacora = () =>
   abrir().prepare(`
     SELECT b.organizacion_id AS id,
@@ -2129,17 +2140,23 @@ const borrarSeccion = (idSeccion, idOrg) => abrir()
   .run(idSeccion, idOrg).changes > 0;
 
 /* Reordena en una transacción: a mitad de camino la página tendría dos
-   bloques con el mismo número y se pintaría en un orden arbitrario. */
+   bloques con el mismo número y se pintaría en un orden arbitrario.
+
+   SAVEPOINT y no BEGIN: cuando el personal reordena en nombre del dealer
+   esto corre DENTRO del SAVEPOINT de enNombreDe, y un BEGIN anidado lanza
+   «cannot start a transaction within a transaction». Suelto, un
+   SAVEPOINT abre su propia transacción y RELEASE la confirma. */
 function ordenarSecciones(idOrg, ids) {
   const d = abrir();
-  d.exec('BEGIN');
+  d.exec('SAVEPOINT ordenar_secciones');
   try {
     const mover = d.prepare(
       'UPDATE organizacion_secciones SET orden = ? WHERE id = ? AND organizacion_id = ?');
     ids.forEach((idSeccion, i) => mover.run(i, idSeccion, idOrg));
-    d.exec('COMMIT');
+    d.exec('RELEASE ordenar_secciones');
   } catch (e) {
-    d.exec('ROLLBACK');
+    d.exec('ROLLBACK TO ordenar_secciones');
+    d.exec('RELEASE ordenar_secciones');
     throw e;
   }
   return seccionesDe(idOrg);
@@ -2163,18 +2180,21 @@ const quitarDeGaleria = (idFoto, idOrg) => abrir()
   .run(idFoto, idOrg).changes > 0;
 
 /* Los enlaces se reemplazan enteros: son cinco o seis y el editor los
-   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra. */
+   manda como lista. Cotejar cuál cambió costaría más de lo que ahorra.
+   SAVEPOINT por lo mismo que ordenarSecciones: tiene que poder ir dentro
+   de enNombreDe. */
 function guardarEnlaces(idOrg, lista) {
   const d = abrir();
-  d.exec('BEGIN');
+  d.exec('SAVEPOINT guardar_enlaces');
   try {
     d.prepare('DELETE FROM organizacion_enlaces WHERE organizacion_id = ?').run(idOrg);
     const meter = d.prepare(
       'INSERT INTO organizacion_enlaces (id, organizacion_id, tipo, valor, orden) VALUES (?, ?, ?, ?, ?)');
     lista.forEach((e, i) => meter.run(id(), idOrg, e.tipo, e.valor, i));
-    d.exec('COMMIT');
+    d.exec('RELEASE guardar_enlaces');
   } catch (e) {
-    d.exec('ROLLBACK');
+    d.exec('ROLLBACK TO guardar_enlaces');
+    d.exec('RELEASE guardar_enlaces');
     throw e;
   }
   return enlacesDe(idOrg);
@@ -3819,7 +3839,7 @@ module.exports = {
   anotarVisita, trafico, informe,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
   /* Bitácora: toda escritura de admin sobre otra organización, por una sola puerta. */
-  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora,
+  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora, ultimaAnotacion,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,
   crearSolicitudServicio, solicitudServicio, solicitudesServicio, marcarSolicitudServicio,
