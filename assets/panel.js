@@ -320,6 +320,8 @@ function filaAnuncio(a) {
              ${a.motor_marca ? 'Motor' : 'Falta el motor'}
            </button>`
         : ''}
+      <button type="button" class="btn-tabla" data-duplicar="${esc(a.id)}"
+        aria-label="Duplicar ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}">Duplicar</button>
       <button type="button" class="btn-tabla btn-tabla--borrar" data-borrar="${esc(a.id)}"
         aria-label="Eliminar ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}">Eliminar</button>
     </td>
@@ -812,6 +814,16 @@ async function montarPanel() {
     if (!btn) return;
     TREN_ABIERTO = TREN_ABIERTO === btn.dataset.tren ? null : btn.dataset.tren;
     pintarTabla();
+  });
+
+  /* Duplicar un anuncio (MET-04). No crea nada aquí: solo abre el
+     asistente en publicar.html con `?duplicar=<id>`, que es quien pide
+     la copia y la precarga. Publicar el nuevo anuncio sigue pasando
+     por el cupo, como cualquier otro. */
+  $('#filasAnuncios').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-duplicar]');
+    if (!btn) return;
+    location.href = `publicar.html?duplicar=${encodeURIComponent(btn.dataset.duplicar)}`;
   });
 
   /* Eliminar un anuncio.

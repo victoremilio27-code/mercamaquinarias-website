@@ -200,6 +200,36 @@ const borrarBorrador = () => {
   try { localStorage.removeItem(CLAVE_BORRADOR); } catch (_) { /* nada que borrar */ }
 };
 
+/* Duplicar un anuncio propio (MET-04): trae la copia del servidor y la
+   deja con la misma forma que `leerBorrador()`, lista para volcarse al
+   formulario. No toca `localStorage` ni el `estado` global: eso lo
+   decide quien llama, según haya o no un borrador a medio escribir que
+   el dueño no quiera perder.
+
+   El servidor ya deja el número de serie en blanco (`copiarAnuncio` en
+   tools/api.js): copiarlo publicaría dos anuncios con la misma serie,
+   que identifica una sola máquina. */
+async function cargarCopia(idAnuncio) {
+  try {
+    const r = await api(`/mis-anuncios/${encodeURIComponent(idAnuncio)}/copia`);
+    if (!r || !r.copia) return null;
+    const base = estadoInicial();
+    const c = r.copia;
+    return {
+      ...base,
+      equipo: { ...base.equipo, ...c.equipo },
+      precio: { ...base.precio, ...c.precio },
+      contacto: { ...base.contacto, ...c.contacto },
+      fotos: Array.isArray(c.fotos) ? c.fotos : [],
+      videos: Array.isArray(c.videos) ? c.videos : [],
+      paso: 0,
+      origen: c.origen || null,
+    };
+  } catch (_) {
+    return null;              // sin conexión, sin permiso o el anuncio ya no existe
+  }
+}
+
 
 /* ── Utilidades de formato ──────────────────────────────── */
 
@@ -1753,13 +1783,46 @@ async function montarPublicador() {
      Lo que no va a poder es publicarlo, y eso lo impide el servidor. */
   montarAvisoLegal('publicar');
 
-  const guardado = leerBorrador();
-  if (guardado) {
+  const previo = leerBorrador();
+  const idDuplicar = params().get('duplicar');
+  let copia = null;
+
+  // Duplicar (MET-04): se resuelve ANTES de tocar `estado`, porque el
+  // texto de confirmación necesita saber de qué equipo es la copia.
+  if (idDuplicar && haySesion()) {
+    copia = await cargarCopia(idDuplicar);
+    if (copia) {
+      const aMedio = previo && (previo.equipo.marca || previo.equipo.modelo);
+      if (aMedio && !window.confirm(
+        `Tiene un anuncio a medio escribir. ¿Reemplazarlo por la copia de ${copia.origen ? copia.origen.nombre : 'este equipo'}?`,
+      )) {
+        copia = null;          // se conserva el borrador que ya tenía
+      }
+    }
+    // Se quita el parámetro tanto si se usó la copia como si no: sin
+    // esto, recargar la página vuelve a preguntar o a copiar de nuevo.
+    history.replaceState(null, '', 'publicar.html');
+  }
+
+  const guardado = copia || previo;
+  if (copia) {
+    estado = copia;
+    guardarBorrador();
+  } else if (guardado) {
     estado = guardado;
     estado.paso = 0;    // se retoma desde el principio, con todo lleno
   }
 
-  montarPasoEquipo();
+  /* Con `await`: la categoría, la marca y el modelo son <select> que
+     `montarPasoEquipo` llena de <option> al recibir la taxonomía del
+     servidor, y `volcarEstadoAlFormulario` de aquí abajo solo puede
+     asignarles un valor si esa opción ya existe. Sin esperar, la
+     asignación llegaba antes que las opciones y un borrador —o una
+     copia— se recuperaba con la ficha técnica en blanco: el número de
+     serie sí quedaba (es un campo de texto), pero categoría, marca y
+     modelo no. Nunca se vio porque hasta ahora nadie había podido
+     probar esta pantalla en un navegador de verdad (ver 10-02-SUMMARY). */
+  await montarPasoEquipo();
   montarPasoFotos();
   montarPasoVideos();
   montarPasoPrecio();
@@ -1768,13 +1831,41 @@ async function montarPublicador() {
 
   if (guardado) {
     volcarEstadoAlFormulario();
-    // El change repuebla las subcategorías de la categoría guardada;
-    // su manejador limpia la elección, así que se repone después.
-    const sub = estado.equipo.subcategoria;
+    /* La cadena es categoría → subcategoría → marca → modelo: cada
+       nivel llena las <option> del siguiente al recibir su propio
+       `change`, así que hay que disparar los cuatro EN ORDEN y no solo
+       el primero. Antes solo se disparaba el de categoría y se
+       reponía a mano el valor de subcategoría sin avisar a marca: la
+       marca se quedaba con la lista vacía de «elija primero el tipo de
+       equipo» y modelo nunca llegaba a existir como <option>, aunque
+       `volcarEstadoAlFormulario` ya le hubiera puesto el valor un
+       instante antes. */
+    const e = estado.equipo;
     $('#e-categoria').dispatchEvent(new Event('change'));
-    estado.equipo.subcategoria = sub;
-    $('#e-subcategoria').value = sub;
+    $('#e-subcategoria').value = e.subcategoria;
+    $('#e-subcategoria').dispatchEvent(new Event('change'));
+    $('#e-marca').value = e.marca;
+    $('#e-marca').dispatchEvent(new Event('change'));
+
+    const selModelo = $('#e-modelo');
+    const modeloConocido = [...selModelo.options].some((o) => o.value === e.modelo);
+    selModelo.value = modeloConocido ? e.modelo : OTRO_MODELO;
+    selModelo.dispatchEvent(new Event('change'));
+    if (!modeloConocido) $('#e-modelo-otro').value = e.modelo;
+
     $('#avisoBorrador').hidden = false;
+    if (copia) {
+      $('#avisoBorrador span').textContent =
+        `Copia de ${copia.origen ? copia.origen.nombre : 'un anuncio anterior'}. `
+        + 'Cambie lo que sea distinto —número de serie, horas, precio y fotos— y publíquelo.';
+    }
+  } else if (idDuplicar && haySesion()) {
+    // Se pidió duplicar pero la copia no llegó (ya no es suyo, o no hay
+    // conexión) y no había ningún borrador que mostrar en su lugar: se
+    // avisa aquí mismo en vez de dejarlo sin explicación.
+    $('#avisoBorrador').hidden = false;
+    $('#avisoBorrador span').textContent =
+      'No se pudo cargar el anuncio para duplicar. Puede completar la ficha desde cero.';
   }
 
   // Los datos de contacto se rellenan con los de la cuenta: nadie
