@@ -133,7 +133,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   4. Ese marcado aparece en la bitácora de la Fase 4 con quién lo hizo y cuándo.
   5. Con CardNet apagado, este camino cubre de principio a fin comprar cupos y publicar un anuncio.
 **Plans**: 5 planes en 4 olas
-- [ ] 05-01-PLAN.md — Núcleo: la cuenta configurada fuera del repo, el procesador transferencia, confirmarPago dentro de la bitácora y transferencia:probar en CI
+- [x] 05-01-PLAN.md — Núcleo: la cuenta configurada fuera del repo, el procesador transferencia, confirmarPago dentro de la bitácora y transferencia:probar en CI
 - [ ] 05-02-PLAN.md — Rutas: compra y ampliación por transferencia con datos y referencia, correos, y /api/admin/pagos para marcar recibido o anular
 - [ ] 05-03-PLAN.md — Planes y panel: elegir transferencia, ver datos y referencia, pagos en espera; un 202 deja de anunciarse como compra hecha
 - [ ] 05-04-PLAN.md — Consola: sección de pagos por transferencia con marcado, anulación y la bitácora al día
@@ -299,7 +299,7 @@ entrega valor sin esperar a la siguiente.
 | 2. Tema claro y oscuro coherentes | 6/6 | Complete   | 2026-09-25 |
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
-| 5. Cobro por transferencia bancaria | 0/TBD | Not started | - |
+| 5. Cobro por transferencia bancaria | 1/5 | In Progress|  |
 | 6. CardNet construido y apagado | 0/TBD | Not started | - |
 | 7. Verificación y soporte al dealer | 0/TBD | Not started | - |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |

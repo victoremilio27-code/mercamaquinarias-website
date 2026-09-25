@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Fases 2, 3 y 4 publicadas en producción (PR #23 y #25). Fase 5 planificada, sin ejecutar."
+stopped_at: "Completado 05-01-PLAN.md (núcleo de la transferencia). Sigue 05-02."
 last_updated: "2026-09-25T23:00:00.000Z"
-last_activity: "2026-09-25 — Fusionados y desplegados el PR #23 (fase 2 + planes) y el #25 (fases 3 y 4). CI verde y sitio comprobado en vivo."
+last_activity: "2026-09-25 — 05-01: procesador transferencia apagado tras sus cinco variables, confirmarPago dentro de la bitácora, transferencia:probar en CI."
 progress:
   total_phases: 16
   completed_phases: 3
   total_plans: 21
-  completed_plans: 14
+  completed_plans: 15
   percent: 19
 ---
 
@@ -21,13 +21,13 @@ progress:
 Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 
 **Core value:** Ser el punto de referencia de República Dominicana para quien tenga, necesite o trabaje con maquinaria pesada — el vacío que hoy no ocupa nadie.
-**Current focus:** Phase 5 — Cobro por transferencia bancaria (planificada, 5 planes)
+**Current focus:** Phase 5 — Cobro por transferencia bancaria (en ejecución, 1 de 5)
 
 ## Current Position
 
-Phase: 5 de 16 (Cobro por transferencia bancaria) — planificada, sin ejecutar
-Plan: 0 de 5
-Status: Esperando luz verde de Victor para ejecutar la fase 5
+Phase: 5 de 16 (Cobro por transferencia bancaria) — en ejecución
+Plan: 1 de 5 (05-01 hecho; sigue 05-02, rutas)
+Status: Ejecutando la fase 5
 
 Hecho y en producción:
 - Fase 1: plan 01-01 (CI con `pruebas` y `navegador` antes de `desplegar`). Quedan 01-02, paso manual
@@ -69,6 +69,7 @@ Progress: [██░░░░░░░░] 19%
 |---|---|---|---|
 | Phase 02 P03 | 30 | 3 tasks | 2 files |
 | Phase 02 P04 | 75 | 2 tasks | 1 files |
+| Phase 05 P01 | 30 | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,7 @@ Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
 
 - **Regla de Victor, 2026-09-25:** el 14 de octubre todo lo que depende de nosotros está terminado. Si algo retrasa el lanzamiento, que sea la afiliación de CardNet, nunca nuestro trabajo. Consecuencia: el código de CardNet se escribe, prueba y certifica dentro de v1 (Fase 6), aunque la afiliación no esté aprobada.
+- **[05-01]** Con la transferencia encendida, `pagos.metodosDeCobro()` retira `demo`: toda compra con importe queda pendiente hasta que el personal la marque recibida. `db.aprobarPago` va con SAVEPOINT para poder ir dentro de `enNombreDe`; la emisión del comprobante queda fuera del envoltorio.
 - **Orden de fases fijado por Victor:** lanzamiento → transporte/financiamiento → lote del contador → deuda técnica. El roadmap lo respeta: fases 1-10 son v1, 11 es transporte/financiamiento, 12 el lote, 13 la deuda. Las fases 14-16 (inspección con informe, especificaciones e implementos filtrables, alertas) son v2 que no entraba en esos cuatro grupos y va detrás; su orden relativo puede cambiar cuando llegue el momento.
 - **`auto_advance` en `false`:** Victor da luz verde a cada fase por separado, así que cada fase se cortó para entregar valor sin esperar a la siguiente.
 - **Roadmap, Fase 1 primero:** hoy fusionar a `main` despliega a producción sin barrera de pruebas y hay una segunda persona empujando cambios. Cada día sin la barrera es un despliegue a ciegas.
@@ -116,5 +118,5 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 ## Session Continuity
 
 Last session: 2026-09-25
-Stopped at: Fases 2, 3 y 4 publicadas. Fase 5 planificada; se ejecuta cuando Victor lo diga.
+Stopped at: Completado 05-01-PLAN.md
 Resume file: None
