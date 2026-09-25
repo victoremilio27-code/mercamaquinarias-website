@@ -845,10 +845,6 @@ async function montarPanel() {
     }
   });
 
-  /* Añadir cupos a una membresía viva. Se pregunta cuántos y se dice
-     lo que cuesta ANTES de cobrarlo: prorrateado por los días que
-     queden, que casi siempre es bastante menos de lo que la gente
-     espera. */
   /* «Copiar» la referencia de un pago en espera. Si el navegador niega
      el portapapeles no se dice nada: la referencia sigue a la vista. */
   $('#panelPlan').addEventListener('click', async (ev) => {
@@ -860,6 +856,10 @@ async function montarPanel() {
     } catch (_) { /* sin portapapeles: caída silenciosa */ }
   });
 
+  /* Añadir cupos a una membresía viva. Se pregunta cuántos y se dice
+     lo que cuesta ANTES de cobrarlo: prorrateado por los días que
+     queden, que casi siempre es bastante menos de lo que la gente
+     espera. */
   $('#panelPlan').addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-ampliar]');
     if (!btn) return;

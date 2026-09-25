@@ -2229,10 +2229,6 @@ const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicad
 const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
 const comprobantePublico = (c) => c && { numero: c.numero, tipo: c.tipo, ncf: c.ncf };
 
-/* Un correo que no se espera. `enviar` devuelve una promesa con Brevo
-   y un objeto con el transporte de archivo, y la plantilla puede lanzar
-   antes de devolver nada: las dos cosas se cubren, porque una promesa
-   rechazada sin manejador tumba el proceso. */
 /* Lo que se compró, leído de la intención guardada en el pago. Una
    intención ilegible (pagos de antes de la fase 3) no rompe nada: sale
    como «Membresía», igual que en pagos.js y db.js. */
@@ -2242,6 +2238,10 @@ function intencionDePago(pago) {
   return i && typeof i === 'object' ? { ...i, concepto: i.concepto || 'Membresía' } : { concepto: 'Membresía' };
 }
 
+/* Un correo que no se espera. `enviar` devuelve una promesa con Brevo
+   y un objeto con el transporte de archivo, y la plantilla puede lanzar
+   antes de devolver nada: las dos cosas se cubren, porque una promesa
+   rechazada sin manejador tumba el proceso. */
 function sinEsperar(que, envio) {
   try {
     Promise.resolve(envio()).catch((e) => console.error(`correo: ${que} · ${e.message}`));
