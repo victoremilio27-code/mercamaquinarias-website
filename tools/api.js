@@ -1440,6 +1440,169 @@ const anularFactura = conAdmin(async (req, res, ctx, idFactura) => {
   return responder(res, 201, { nota, original: db.facturaPorId(idFactura) });
 });
 
+/* ── Administración: pagos por transferencia ────────────────
+ *
+ * La contingencia del lanzamiento (PAGO-09): sin pasarela, el cliente
+ * transfiere, el personal ve el ingreso en el banco y lo marca aquí.
+ * Una persona otorga cupos y consume un NCF en nombre de otra
+ * organización, así que las dos escrituras van por la bitácora
+ * (conAdminEnNombreDe) y la aprobación es la MISMA transición de
+ * siempre, pagos.confirmarPago; nunca la función de base suelta, que
+ * no emite el comprobante (probar-transferencia.js vigila que no
+ * aparezca en este archivo).
+ *
+ * Solo pagos con procesador 'transferencia' (D-06): un cobro de
+ * pasarela lo resuelve la pasarela o su reconciliación, nunca una
+ * persona pulsando un botón. */
+
+const ESTADOS_PAGO_CONSOLA = ['pendiente', 'aprobado', 'rechazado'];
+
+const listarPagosAdmin = conAdmin((req, res, ctx, consulta) => {
+  const pedido = consulta?.get('estado');
+  const estado = ESTADOS_PAGO_CONSOLA.includes(pedido) ? pedido : 'pendiente';
+  return responder(res, 200, { estado, pagos: db.pagosParaConsola({ estado }) });
+});
+
+/* D-07, el pendiente que dejó anotado la fase 3. Sumar los cupos a
+   una membresía vencida los regalaría sin plazo, y convertir la
+   ampliación en una compra nueva sería decidir por el cliente qué
+   compra. La única salida es anular y devolver el dinero en el banco. */
+const AMPLIACION_HUERFANA = 'La membresía que ampliaba este pago ya no existe. No se añadió ningún '
+  + 'cupo ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
+
+const SOLO_TRANSFERENCIAS = 'Este pago no es por transferencia: lo resuelve su pasarela, no la consola.';
+
+/* Lo que se comprueba ANTES de escribir, común a marcar y anular. Un
+   409 aquí no deja fila de bitácora: no se intentó ninguna escritura. */
+function pagoDeTransferencia(res, idPago) {
+  const pago = db.pagoPorId(idPago);
+  if (!pago) { fallo(res, 404, 'Ese pago no existe'); return null; }
+  if (pago.procesador !== 'transferencia') { fallo(res, 409, SOLO_TRANSFERENCIAS); return null; }
+  return pago;
+}
+
+const falloInterno = (res, e) => {
+  if (!e.codigo || e.codigo >= 500) {
+    console.error('pagos: fallo en la consola', e);
+    return fallo(res, 500, 'Error del servidor');
+  }
+  return fallo(res, e.codigo, e.message);
+};
+
+const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recibida', async (req, res, ctx, idPago) => {
+  const c = await leerCuerpo(req);
+  // Opcional: la referencia que da el banco, que es lo que contesta un reclamo.
+  const motivo = texto(c.motivo, 300);
+
+  const pago = pagoDeTransferencia(res, idPago);
+  if (!pago) return undefined;
+  if (pago.estado === 'rechazado' || pago.estado === 'devuelto') {
+    return fallo(res, 409, `Ese pago está ${pago.estado}: no se puede marcar como recibido.`);
+  }
+
+  const intencion = intencionDePago(pago);
+  const esAmpliacion = intencion.tipo === 'ampliacion';
+  /* Solo con el pago pendiente: pulsar otra vez sobre uno ya aprobado
+     no suma nada (aprobarPago devuelve yaEstaba) y es justo lo que
+     completa un comprobante cuya emisión falló. */
+  if (pago.estado === 'pendiente' && esAmpliacion
+    && !(intencion.idSusc && db.suscripcion(intencion.idSusc, pago.organizacion_id))) {
+    return fallo(res, 409, AMPLIACION_HUERFANA);
+  }
+
+  let r;
+  try {
+    r = pagos.confirmarPago(idPago, { envolver: (aprobar) => ctx.enNombreDe(pago.organizacion_id,
+        { objetoTipo: 'pago', objetoId: idPago, motivo },
+        () => {
+          const hecho = aprobar();
+          return {
+            antes: { estado: pago.estado },
+            despues: {
+              estado: hecho.pago.estado,
+              referencia: pago.referencia,
+              total: pago.total,
+              idSusc: (hecho.membresia && hecho.membresia.id) || null,
+              yaEstaba: hecho.yaEstaba,
+            },
+            resultado: hecho,
+          };
+        }),
+    });
+  } catch (e) {
+    /* La carrera: la membresía existía al comprobarlo y ya no al
+       aprobar. aprobarPago lanza 404 dentro del SAVEPOINT, que se
+       deshace entero (ni cupos ni fila), y al personal se le dice lo
+       mismo que si se hubiera visto antes. */
+    if (e.codigo === 404 && esAmpliacion) return fallo(res, 409, AMPLIACION_HUERFANA);
+    return falloInterno(res, e);
+  }
+
+  const cuerpo = {
+    pago: pagoPublico(r.pago),
+    membresia: r.membresia,
+    comprobante: comprobantePublico(r.comprobante),
+    yaEstaba: r.yaEstaba,
+  };
+  /* El pago quedó aprobado aunque la emisión fallara: no se deshace un
+     ingreso que entró. El comprobante sale en «pendientes» de Facturas
+     y pulsar «recibido» otra vez lo emite (recuperación de la fase 3). */
+  if (!r.comprobante && r.pago.estado === 'aprobado' && r.pago.total > 0) {
+    cuerpo.aviso = 'El pago quedó aprobado y los cupos otorgados, pero el comprobante no se pudo '
+      + 'emitir. Aparece en los pendientes de Facturas; vuelva a marcarlo como recibido para emitirlo.';
+  }
+  return responder(res, 200, cuerpo);
+});
+
+/* D-08. Queda 'rechazado', no 'devuelto': 'devuelto' es para un pago
+   aprobado con su nota de crédito B04, y aquí no hubo ni cupos ni NCF.
+   Si el cliente llegó a transferir, el dinero se devuelve en el banco. */
+const anularTransferencia = conAdminEnNombreDe('pago.transferencia_anulada', async (req, res, ctx, idPago) => {
+  const c = await leerCuerpo(req);
+  const motivo = texto(c.motivo, 300);
+  if (!motivo || motivo.length < 5) {
+    return fallo(res, 400, 'Escriba el motivo de la anulación: se le envía al cliente.');
+  }
+
+  const pago = pagoDeTransferencia(res, idPago);
+  if (!pago) return undefined;
+  if (pago.estado !== 'pendiente') {
+    return fallo(res, 409, pago.estado === 'aprobado'
+      ? 'Ese pago ya está aprobado. Para devolverlo, anule su comprobante con una nota de crédito en Facturas.'
+      : `Ese pago ya está ${pago.estado}.`);
+  }
+
+  let r;
+  try {
+    r = ctx.enNombreDe(pago.organizacion_id, { objetoTipo: 'pago', objetoId: idPago, motivo }, () => {
+      const hecho = pagos.rechazarPago(idPago, { motivo });
+      // Otro lo resolvió entre la lectura y aquí: sin cambio no hay fila.
+      if (!hecho.cambiado) {
+        throw Object.assign(new Error(`Ese pago ya está ${hecho.pago.estado}.`), { codigo: 409 });
+      }
+      return {
+        antes: { estado: pago.estado },
+        despues: { estado: hecho.pago.estado, referencia: pago.referencia, total: pago.total },
+        resultado: hecho,
+      };
+    });
+  } catch (e) {
+    return falloInterno(res, e);
+  }
+
+  const intencion = intencionDePago(pago);
+  if (intencion.correoCliente) {
+    sinEsperar(`anulación de la transferencia ${pago.referencia}`, () => correo.enviarTransferenciaAnulada({
+      para: intencion.correoCliente,
+      nombre: (intencion.cliente && intencion.cliente.razonSocial) || null,
+      referencia: pago.referencia,
+      motivo,
+    }));
+  }
+
+  return responder(res, 200, { pago: pagoPublico(r.pago), motivo });
+});
+
 /* Quién aceptó qué condiciones y cuándo.
  *
  * Es la respuesta a «demuestre que esta persona aceptó esto», y por eso
@@ -2897,6 +3060,11 @@ const RUTAS = [
   ['POST', /^\/api\/admin\/secuencias$/,                cargarSecuencia],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/reenviar$/, reenviarFactura],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/anular$/,   anularFactura],
+  /* Transferencias. Las dos escrituras van por la bitácora, no en
+     ESCRITURAS_ADMIN_PROPIAS: son en nombre de otra organización. */
+  ['GET',  /^\/api\/admin\/pagos$/,                     listarPagosAdmin],
+  ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/recibido$/, marcarTransferenciaRecibida],
+  ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/anular$/,   anularTransferencia],
   ['GET',  /^\/api\/admin\/solicitudes$/,               listarSolicitudes],
   ['GET',  /^\/api\/admin\/solicitudes\/([\w-]+)$/,     verSolicitud],
   ['POST', /^\/api\/admin\/solicitudes\/([\w-]+)$/,     resolverSolicitud],
