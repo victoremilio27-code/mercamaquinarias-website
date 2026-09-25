@@ -831,6 +831,56 @@ const MIGRACIONES = [
         AND estado_revision = 'aprobada'
         AND estado_pagina = 'borrador'`,
   ]],
+
+  /* Bitácora de administración. Decisión de Victor del 2026-09-25
+     (ADMIN-05): toda escritura que un administrador haga sobre otra
+     organización queda registrada con quién, cuándo, desde qué IP y qué
+     cambió. Sirve para contestar con prueba el reclamo de un cliente
+     empresa y para que el robo de la cuenta de administrador deje rastro.
+
+     Sin REFERENCES hacia usuarios ni organizaciones, a propósito: una
+     clave foránea con cascada borraría la prueba al borrar la cuenta, y
+     una sin cascada impediría borrarla. Por eso el correo, el nombre y la
+     organización se COPIAN en la fila en el momento de escribir.
+
+     Los dos disparadores hacen la tabla de solo añadir en la propia base:
+     aunque alguien escriba SQL a mano desde el sitio, un UPDATE o un
+     DELETE abortan. Quien tenga shell en el VPS puede hacer DROP; esa es
+     otra frontera.
+
+     De paso, las solicitudes de servicio guardan quién las atendió, no
+     solo cuándo: antes la columna `atendida` decía la hora y nadie sabía
+     a quién preguntar. */
+  ['2026-09-bitacora-admin', [
+    `CREATE TABLE IF NOT EXISTS bitacora_admin (
+       id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+       creada               TEXT NOT NULL,
+       admin_id             TEXT NOT NULL,
+       admin_correo         TEXT NOT NULL,
+       admin_nombre         TEXT,
+       organizacion_id      TEXT NOT NULL,
+       organizacion_nombre  TEXT NOT NULL,
+       accion               TEXT NOT NULL,
+       objeto_tipo          TEXT,
+       objeto_id            TEXT,
+       antes                TEXT,
+       despues              TEXT NOT NULL,
+       motivo               TEXT,
+       ip                   TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_bitacora_admin_org ON bitacora_admin (organizacion_id, id)',
+    `CREATE TRIGGER IF NOT EXISTS tr_bitacora_admin_sin_cambios
+       BEFORE UPDATE ON bitacora_admin
+     BEGIN
+       SELECT RAISE(ABORT, 'La bitácora de administración no se modifica');
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_bitacora_admin_sin_borrado
+       BEFORE DELETE ON bitacora_admin
+     BEGIN
+       SELECT RAISE(ABORT, 'La bitácora de administración no se borra');
+     END`,
+    'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
+  ]],
 ];
 
 function migrar() {
@@ -1353,12 +1403,16 @@ function solicitudServicio(idSol) {
 const solicitudesServicio = ({ servicio, estado } = {}) => {
   const donde = [];
   const args = {};
-  if (servicio) { donde.push('servicio = :servicio'); args.servicio = servicio; }
-  if (estado) { donde.push('estado = :estado'); args.estado = estado; }
+  if (servicio) { donde.push('s.servicio = :servicio'); args.servicio = servicio; }
+  if (estado) { donde.push('s.estado = :estado'); args.estado = estado; }
 
-  return abrir().prepare(`SELECT * FROM solicitudes_servicio
+  /* El LEFT JOIN trae el nombre de quien la atendió para la consola; si
+     la cuenta ya no existe, la solicitud sale igual, con el nombre nulo. */
+  return abrir().prepare(`SELECT s.*, u.nombre AS atendida_por_nombre, u.correo AS atendida_por_correo
+      FROM solicitudes_servicio s
+      LEFT JOIN usuarios u ON u.id = s.atendida_por
       ${donde.length ? `WHERE ${donde.join(' AND ')}` : ''}
-      ORDER BY creada DESC LIMIT 200`).all(args)
+      ORDER BY s.creada DESC LIMIT 200`).all(args)
     .map((s) => {
       let detalle = {};
       try { detalle = JSON.parse(s.detalle); } catch (_) { /* guardado a mano */ }
@@ -1366,11 +1420,19 @@ const solicitudesServicio = ({ servicio, estado } = {}) => {
     });
 };
 
-const marcarSolicitudServicio = (idSol, estado, nota) =>
-  abrir().prepare(`UPDATE solicitudes_servicio
-       SET estado = ?, nota = COALESCE(?, nota), atendida = ?
+/* Guarda quién la atendió además de cuándo, y lo borra si vuelve a
+   `nueva`: una reabierta no la está atendiendo nadie. Devuelve si la
+   fila existía; antes no devolvía nada útil y la API contestaba «ok»
+   a un id inventado. */
+const marcarSolicitudServicio = (idSol, estado, nota, idAdmin) => {
+  const reabierta = estado === 'nueva';
+  const info = abrir().prepare(`UPDATE solicitudes_servicio
+       SET estado = ?, nota = COALESCE(?, nota), atendida = ?, atendida_por = ?
      WHERE id = ?`)
-    .run(estado, nota || null, estado === 'nueva' ? null : ahora(), idSol);
+    .run(estado, nota || null, reabierta ? null : ahora(),
+      reabierta ? null : (idAdmin || null), idSol);
+  return info.changes > 0;
+};
 
 /* ── Flota propia (alquiler y transporte) ───────────────── */
 
@@ -1684,7 +1746,10 @@ const contarPendientes = () =>
 
 /* Aprueba o rechaza. Mueve la solicitud y la organización a la vez:
    dejar una aprobada y la otra pendiente es justo el estado que haría
-   invisible a un dealer ya admitido. */
+   invisible a un dealer ya admitido.
+   Va con SAVEPOINT y no con BEGIN porque tiene que poder ir dentro de
+   `enNombreDe` (que ya abrió el suyo): un BEGIN anidado lanza en SQLite.
+   Suelta, fuera de transacción, un SAVEPOINT se comporta como un BEGIN. */
 function resolverSolicitud(idSolicitud, { aprobar, idRevisor, motivo }) {
   const d = abrir();
   const s = d.prepare('SELECT * FROM solicitudes_dealer WHERE id = ?').get(idSolicitud);
@@ -1696,7 +1761,7 @@ function resolverSolicitud(idSolicitud, { aprobar, idRevisor, motivo }) {
   const estado = aprobar ? 'aprobada' : 'rechazada';
   const t = ahora();
 
-  d.prepare('BEGIN').run();
+  d.prepare('SAVEPOINT resolver_solicitud').run();
   try {
     d.prepare(`UPDATE solicitudes_dealer
                SET estado = ?, revisada = ?, revisada_por = ?, motivo = ?
@@ -1706,9 +1771,10 @@ function resolverSolicitud(idSolicitud, { aprobar, idRevisor, motivo }) {
     d.prepare('UPDATE organizaciones SET estado_revision = ?, actualizada = ? WHERE id = ?')
       .run(estado, t, s.organizacion_id);
 
-    d.prepare('COMMIT').run();
+    d.prepare('RELEASE resolver_solicitud').run();
   } catch (e) {
-    d.prepare('ROLLBACK').run();
+    d.prepare('ROLLBACK TO resolver_solicitud').run();
+    d.prepare('RELEASE resolver_solicitud').run();
     throw e;
   }
 
@@ -1722,6 +1788,119 @@ function marcarAdmin(correo, esAdmin = true) {
     .run(esAdmin ? 1 : 0, String(correo).trim().toLowerCase());
   return info.changes > 0;
 }
+
+/* ── Bitácora de administración ───────────────────────────── */
+
+/* Catálogo cerrado de acciones: nombre → rótulo que enseña la consola.
+   Una acción que no esté aquí se rechaza. Las fases 5 y 7 (transferencia
+   recibida, número de serie, página del dealer) añaden la suya aquí en el
+   MISMO cambio que la usa; si no, su escritura no arranca. */
+const ACCIONES_BITACORA = Object.freeze({
+  'organizacion.verificar': 'Sello de verificada',
+  'dealer.resolver': 'Alta de dealer aprobada o rechazada',
+});
+
+const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { codigo });
+
+/* La única puerta. Toda escritura de un administrador sobre otra
+   organización pasa por aquí o no se hace.
+
+   La escritura va DENTRO, como callback, en la misma transacción que la
+   anotación: si existiera un «anotar después», bastaría con olvidar la
+   segunda llamada para que una escritura quedara sin rastro. Sin
+   anotación no hay escritura, y una escritura que falla no deja anotación.
+
+   `escribir(org)` recibe la fila de la organización leída ANTES de
+   escribir (para construir `antes` sin otra consulta), tiene que ser
+   síncrono y devolver `{ antes, despues, resultado }`.
+
+   SAVEPOINT y no BEGIN: las funciones que ya tienen su propia transacción
+   (resolverSolicitud) tienen que poder ir dentro, y un BEGIN anidado lanza.
+
+   Este es el ÚNICO `INSERT INTO bitacora_admin` del repositorio;
+   tools/probar-bitacora.js lo cuenta. */
+function enNombreDe({ idAdmin, idOrganizacion, accion, objetoTipo, objetoId, motivo, ip }, escribir) {
+  if (!Object.prototype.hasOwnProperty.call(ACCIONES_BITACORA, accion)) {
+    throw errorCodigo(`Acción de bitácora desconocida: «${accion}»`, 500);
+  }
+
+  // 404 y no 403, con el mismo criterio que conAdmin: no revelar nada.
+  const admin = usuarioPorId(idAdmin);
+  if (!admin || !admin.es_admin) throw errorCodigo('No encontrado', 404);
+
+  const d = abrir();
+  const org = d.prepare('SELECT * FROM organizaciones WHERE id = ?').get(idOrganizacion);
+  if (!org) throw errorCodigo('Esa empresa no existe', 404);
+
+  d.prepare('SAVEPOINT bitacora_escritura').run();
+  try {
+    const hecho = escribir(org);
+
+    // Una escritura asíncrona terminaría después de la anotación, cuando
+    // la transacción ya no la cubre. Se rechaza entera.
+    if (hecho && typeof hecho.then === 'function') {
+      hecho.then(() => {}, () => {});
+      throw errorCodigo('La escritura en nombre de otro tiene que ser síncrona', 500);
+    }
+    // Sin «qué cambió», la fila no contesta un reclamo.
+    if (!hecho || typeof hecho !== 'object' || hecho.despues === undefined) {
+      throw errorCodigo('La escritura en nombre de otro tiene que decir qué cambió', 500);
+    }
+
+    d.prepare(`INSERT INTO bitacora_admin
+        (creada, admin_id, admin_correo, admin_nombre, organizacion_id, organizacion_nombre,
+         accion, objeto_tipo, objeto_id, antes, despues, motivo, ip)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(ahora(), admin.id, admin.correo, admin.nombre || null, org.id, org.nombre,
+        accion, objetoTipo || null, objetoId || null,
+        hecho.antes === undefined ? null : JSON.stringify(hecho.antes),
+        JSON.stringify(hecho.despues),
+        motivo ? String(motivo).slice(0, 500) : null,
+        ip ? String(ip).slice(0, 64) : null);
+
+    d.prepare('RELEASE bitacora_escritura').run();
+    return hecho.resultado;
+  } catch (e) {
+    d.prepare('ROLLBACK TO bitacora_escritura').run();
+    d.prepare('RELEASE bitacora_escritura').run();
+    throw e;
+  }
+}
+
+const leerJSON = (texto) => {
+  if (texto == null) return null;
+  try { return JSON.parse(texto); } catch (_) { return null; /* guardado a mano */ }
+};
+
+/* Lo que enseña la consola, lo más reciente primero. El `id`
+   autoincremental ordena sin ambigüedad aunque dos filas compartan
+   segundo. */
+function bitacora({ organizacion, limite = 200 } = {}) {
+  const tope = Math.min(Math.max(parseInt(limite, 10) || 200, 1), 500);
+  const filas = organizacion
+    ? abrir().prepare('SELECT * FROM bitacora_admin WHERE organizacion_id = ? ORDER BY id DESC LIMIT ?')
+      .all(organizacion, tope)
+    : abrir().prepare('SELECT * FROM bitacora_admin ORDER BY id DESC LIMIT ?').all(tope);
+
+  return filas.map((f) => ({
+    ...f,
+    antes: leerJSON(f.antes),
+    despues: leerJSON(f.despues),
+    rotulo: ACCIONES_BITACORA[f.accion] || f.accion,
+  }));
+}
+
+/* Alimenta el filtro de la consola: cada organización una vez, con el
+   nombre de su anotación más reciente (si se renombró, sale el último). */
+const organizacionesEnBitacora = () =>
+  abrir().prepare(`
+    SELECT b.organizacion_id AS id,
+           (SELECT organizacion_nombre FROM bitacora_admin x
+             WHERE x.organizacion_id = b.organizacion_id ORDER BY x.id DESC LIMIT 1) AS nombre,
+           COUNT(*) AS entradas
+      FROM bitacora_admin b
+     GROUP BY b.organizacion_id
+     ORDER BY nombre COLLATE NOCASE`).all();
 
 /* Directorio público. Un dealer sale publicado cuando se cumplen las
    dos condiciones, que son independientes entre sí: el administrador
@@ -3336,6 +3515,8 @@ module.exports = {
   /* Tráfico e informes. */
   anotarVisita, trafico, informe,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
+  /* Bitácora: toda escritura de admin sobre otra organización, por una sola puerta. */
+  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,
   crearSolicitudServicio, solicitudServicio, solicitudesServicio, marcarSolicitudServicio,
