@@ -141,7 +141,7 @@ button { font: inherit; }
 
 .skip {
   position: absolute; left: 12px; top: -60px; z-index: 100;
-  background: var(--ambar); color: var(--azul);
+  background: var(--ambar); color: var(--sobre-ambar);
   padding: 9px 16px; border-radius: var(--r);
   font-weight: 700; transition: top .18s ease;
 }
@@ -185,7 +185,7 @@ button { font: inherit; }
 
 .cab__nav { display: flex; align-items: center; gap: 21px; margin-right: auto; }
 .cab__nav a {
-  color: #D5DEE5;
+  color: var(--sobre-oscuro-2);
   font-size: 13.5px;
   font-weight: 600;
   padding: 4px 0;
@@ -302,7 +302,10 @@ select, .calc__campo input {
   font-size: 12.5px;
   color: var(--azul);
 }
-select:hover, .calc__campo input:hover { border-color: #C9C6BC; }
+/* El #C9C6BC de antes no existía en oscuro y en claro era MÁS pálido que
+   el borde de reposo (--app-borde-control): el realce apagaba el borde.
+   --gris-acero es más marcado que el de reposo en los dos temas. */
+select:hover, .calc__campo input:hover { border-color: var(--gris-acero); }
 select:focus, .calc__campo input:focus { outline: none; border-color: var(--ambar); box-shadow: 0 0 0 2px rgba(242, 169, 0, .2); }
 
 .form__pie {
@@ -437,7 +440,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   z-index: 2;
   padding: 3px 9px;
   background: var(--ambar);
-  color: var(--azul);
+  color: var(--sobre-ambar);
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: .04em;
@@ -551,14 +554,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   align-items: center;
   justify-content: center;
   min-height: 96px;
-  background: repeating-linear-gradient(135deg, #F2F0EA 0 10px, #EDEBE4 10px 20px);
-  border: 1px dashed #CFCCC2;
+  background: repeating-linear-gradient(135deg, var(--app-bg) 0 10px, var(--app-soft) 10px 20px);
+  border: 1px dashed var(--linea);
   border-radius: var(--r-tarjeta);
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: #9E9C93;
+  color: var(--app-muted);
 }
 .anuncio--ancho { min-height: 90px; margin-bottom: var(--gap); }
 
@@ -626,7 +629,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-size: 14px;
   color: var(--azul);
 }
-.heroe__buscar input::placeholder { color: #92A0AA; }
+.heroe__buscar input::placeholder { color: var(--app-muted); }
 .heroe__buscar input:focus-visible, .heroe__buscar select:focus-visible {
   outline: 2px solid var(--ambar); outline-offset: 1px;
 }
@@ -879,22 +882,25 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
    compensa publicar hoy en vez de dentro de tres meses, y como renglón
    gris junto a los demás no la leía nadie.
 
-   La caja va SIEMPRE en ámbar con tinta azul noche, en los dos temas.
-   Los valores van literales y no por token a propósito: en oscuro,
-   `--azul` pasa a ser #F7F5EF y `--blanco` a #0B0C0C —los roles se
-   invierten— así que `color: var(--azul)` habría dejado texto casi
-   blanco sobre ámbar al cambiar de tema. El ámbar de marca no se
-   redefine, de modo que con la tinta fija el contraste es el mismo
-   siempre: 10.4:1. */
+   La caja va SIEMPRE en ámbar con tinta oscura, en los dos temas. No
+   vale `color: var(--azul)`: en oscuro `--azul` pasa a ser #F7F5EF y
+   habría dejado texto casi blanco sobre ámbar. La tinta es
+   --sobre-ambar, que vale lo mismo en los dos bloques (antes era el
+   azul noche #071A2B de la marca vieja, escrito a mano): 10.9:1.
+
+   El ámbar liso debajo del degradado no se ve, pero es el color de
+   fondo de la caja: sin él, quien calcula el fondo (el navegador para
+   el contraste, el comprobador del 02-03) veía la página de detrás y
+   medía tinta oscura sobre el fondo oscuro del tema. */
 .oferta {
-  --oferta-tinta: #071A2B;
+  --oferta-tinta: var(--sobre-ambar);
 
   position: relative;
   overflow: hidden;
   margin-top: 14px;
   padding: 18px 20px;
   border-radius: var(--r-tarjeta);
-  background: linear-gradient(135deg, #E09C00 0%, var(--ambar) 45%, #FFCF63 100%);
+  background: var(--ambar) linear-gradient(135deg, #E09C00 0%, var(--ambar) 45%, #FFCF63 100%);
   color: var(--oferta-tinta);
   box-shadow: 0 12px 30px rgba(242, 169, 0, .3);
 }
@@ -944,7 +950,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: flex; flex-wrap: wrap; align-items: center;
   justify-content: space-between; gap: 8px 14px;
   margin-top: 15px; padding-top: 12px;
-  border-top: 1px solid rgba(7, 26, 43, .22);
+  border-top: 1px solid rgba(21, 21, 21, .22);   /* la tinta de la caja, al 22 % */
   font-size: 12.5px; font-weight: 600;
 }
 
@@ -1216,7 +1222,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 32px; height: 32px;
   border-radius: 8px;
   background: var(--ambar);
-  color: var(--azul);
+  color: var(--sobre-ambar);
 }
 .cat-tarjeta__cuerpo { display: grid; grid-template-rows: minmax(42px, auto) auto; gap: 6px; padding: 16px; text-align: left; }
 .cat-tarjeta__nombre { display: block; min-width: 0; font-family: var(--display); font-weight: 700; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
@@ -1296,7 +1302,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-weight: 700;
 }
 .duracion__op input:checked + span { background: var(--azul); color: var(--blanco); }
-.duracion__op input:checked + span b { background: var(--ambar); color: var(--azul); }
+.duracion__op input:checked + span b { background: var(--ambar); color: var(--sobre-ambar); }
 .duracion__op input:focus-visible + span { outline: 2px solid var(--ambar); outline-offset: 2px; }
 
 /* ── Planes ─────────────────────────────────────────────── */
@@ -1331,7 +1337,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   top: -1px; right: -1px;
   padding: 3px 10px;
   background: var(--ambar);
-  color: var(--azul);
+  color: var(--sobre-ambar);
   font-size: 10.5px;
   font-weight: 700;
   border-radius: 0 var(--r) 0 5px;
@@ -1573,7 +1579,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .aviso-demo .ico { width: 13px; height: 13px; stroke-width: 2.2; }
 
-.mapa__pais { fill: var(--gris-neutro); stroke: #D2CFC5; stroke-width: 1.5; stroke-linejoin: round; }
+.mapa__pais { fill: var(--gris-neutro); stroke: var(--linea); stroke-width: 1.5; stroke-linejoin: round; }
 .mapa__ref { fill: var(--gris-acero); opacity: .45; }
 .mapa__ref-txt {
   fill: var(--gris-acero);
@@ -1848,7 +1854,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .pasos__cuerpo span { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .pasos__it--activo .pasos__btn { background: var(--sup-calida); border-color: var(--ambar-texto); }
-.pasos__it--activo .pasos__num { background: var(--ambar); }
+.pasos__it--activo .pasos__num { background: var(--ambar); color: var(--sobre-ambar); }
 .pasos__it--hecho .pasos__num { background: var(--verde); color: var(--blanco); }
 .pasos__it--hecho .pasos__cuerpo b { color: var(--gris-acero); }
 
@@ -2063,7 +2069,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .plan-op__hueco { height: 16px; }
 .plan-op__cinta {
   padding: 2px 7px;
-  background: var(--ambar); color: var(--azul);
+  background: var(--ambar); color: var(--sobre-ambar);
   border-radius: 3px;
   font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
 }
@@ -2149,17 +2155,18 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* ── Vista previa ───────────────────────────────────────── */
 
 .panel--previa { background: var(--azul); border-color: var(--azul-2); color: var(--blanco); }
-/* El panel es oscuro en los dos temas, así que el rótulo y la nota van
-   con el token de sobre-oscuro y no con --texto-claro. Este último pasó
-   a ser gris de texto apagado para superficie clara; dejarlo aquí
-   hundía el rótulo a 3.47 sobre el panel, cuando antes iba a 8.51. */
+/* La regla de arriba NO manda: la piel app pinta todo .panel con
+   --app-card más abajo, con la misma especificidad, así que este panel
+   es una tarjeta más, blanca en claro y oscura en oscuro. El 02-01 lo
+   dio por oscuro y puso --sobre-oscuro-2: en claro quedaba a 1.3:1
+   sobre blanco. Va con el gris apagado de la tarjeta, que gira. */
 .vista-previa__rotulo {
   display: flex; align-items: center; gap: 7px;
   margin-bottom: 11px;
   font-size: 10.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase;
-  color: var(--sobre-oscuro-2);
+  color: var(--app-muted);
 }
-.vista-previa__rotulo .ico { width: 14px; height: 14px; color: var(--ambar); }
+.vista-previa__rotulo .ico { width: 14px; height: 14px; color: var(--ambar-texto); }
 .aviso--previa { background: var(--blanco); border-radius: var(--r); overflow: hidden; padding-bottom: 10px; }
 .aviso--previa .aviso__foto { display: block; position: relative; aspect-ratio: 4 / 3; background: var(--gris-neutro); }
 .aviso--previa .aviso__foto img { width: 100%; height: 100%; object-fit: cover; }
@@ -2168,7 +2175,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .aviso--previa .aviso__specs { display: block; padding: 2px 11px 0; font-size: 11.5px; color: var(--gris-acero); }
 .aviso--previa .aviso__precio { display: block; padding: 5px 11px 0; font-family: var(--display); font-weight: 800; font-size: 16px; color: var(--azul); }
 .aviso--previa .pastilla { margin: 7px 0 0 11px; }
-.vista-previa__nota { margin-top: 9px; font-size: 11.5px; color: var(--sobre-oscuro-2); }
+.vista-previa__nota { margin-top: 9px; font-size: 11.5px; color: var(--app-muted); }
 
 .pastilla--ambar { background: rgba(242, 169, 0, .16); color: var(--ambar-texto); }
 
@@ -2618,7 +2625,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero); border-bottom: 1px solid var(--linea);
 }
 .tabla-anuncios .col-num { text-align: right; }
-.tabla-anuncios tbody tr:hover { background: #FCFBF7; }
+/* Era #FCFBF7 fijo: en oscuro la fila bajo el cursor se volvía blanca a
+   18.9:1 en medio del panel. El comprobador no lo ve (mide el reposo). */
+.tabla-anuncios tbody tr:hover { background: var(--app-soft); }
 
 .celda-equipo { display: flex; align-items: center; gap: 11px; font-weight: 400; }
 .celda-equipo__foto {
@@ -2673,7 +2682,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 38px; height: 38px; flex: none;
   background: var(--azul); color: var(--blanco); border-radius: 9px;
 }
-.identidad--dealer .identidad__sello { background: var(--ambar); color: var(--azul); }
+.identidad--dealer .identidad__sello { background: var(--ambar); color: var(--sobre-ambar); }
 .identidad__cuerpo { display: grid; gap: 2px; min-width: 0; }
 .identidad__nombre { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 14px; }
 .identidad__meta { font-size: 12px; color: var(--gris-acero); }
@@ -3022,6 +3031,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
    lo oculta apunta a elementos HTML, y el plano seguía dibujándose
    detrás de la fotografía. Se dice aquí y se acabó la duda. */
 .heroe__plano[hidden] { display: none; }
+
+/* El degradado que apaga el plano hacia el titular funde con el fondo
+   del héroe, así que lleva su mismo token. Antes eran tres
+   stop-color="#071A2B" escritos en el SVG de index.html: el azul noche
+   de la marca vieja, que no giraba con el tema. */
+#desvanece stop { stop-color: var(--app-bg); }
 
 /* Por debajo de 900 px el titular ocupa casi todo el ancho y el plano
    competiría con él. Se retira: es ambiente, no información. */
@@ -3964,7 +3979,7 @@ body.sin-scroll { overflow: hidden; }
   color: var(--sobre-oscuro-2);
   cursor: pointer;
 }
-.chat__cerrar:hover { background: rgba(255, 255, 255, .1); color: var(--blanco); }
+.chat__cerrar:hover { background: rgba(255, 255, 255, .1); color: var(--sobre-oscuro); }
 .chat__cerrar:focus-visible { outline: 2px solid var(--ambar); outline-offset: 1px; }
 .chat__cerrar svg {
   width: 16px; height: 16px;
