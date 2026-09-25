@@ -1198,7 +1198,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   overflow: hidden;
   transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
-.cat-tarjeta:hover { border-color: var(--ambar); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(7, 26, 43, .07); }
+.cat-tarjeta:hover { border-color: var(--ambar); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(20, 22, 22, .07); }
 
 .cat-tarjeta__foto {
   position: relative;
@@ -1994,7 +1994,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   position: absolute; inset: auto 0 0 0;
   display: flex; justify-content: center; gap: 4px;
   padding: 5px;
-  background: linear-gradient(transparent, rgba(7, 26, 43, .82));
+  background: linear-gradient(transparent, var(--velo-foto));
 }
 .foto__btn {
   display: flex; align-items: center; justify-content: center;
@@ -2359,7 +2359,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   cursor: pointer;
   transition: background-color .15s ease, color .15s ease;
 }
-.pestanas__op--activa { background: var(--blanco); color: var(--azul); border-color: var(--app-borde-control); box-shadow: 0 1px 3px rgba(7, 26, 43, .12); }
+.pestanas__op--activa { background: var(--blanco); color: var(--azul); border-color: var(--app-borde-control); box-shadow: 0 1px 3px rgba(20, 22, 22, .12); }
 
 .acceso__aviso {
   margin-bottom: 14px; padding: 10px 13px;
@@ -2501,7 +2501,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .nota-rnc {
   display: flex; align-items: flex-start; gap: 9px;
   margin-top: 14px; padding: 11px 13px;
-  background: rgba(7, 26, 43, .05); border-radius: var(--r);
+  background: var(--app-soft); border-radius: var(--r);
   font-size: 11.5px; line-height: 1.55; color: var(--texto-2);
 }
 .nota-rnc .ico { flex: none; width: 16px; height: 16px; color: var(--azul); }
@@ -2607,7 +2607,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .plan-estado dd { margin: 4px 0 0; font-size: 13.5px; font-weight: 600; }
 .plan-estado a { color: var(--ambar-texto); font-weight: 700; }
 
-.pastilla--azul { background: rgba(7, 26, 43, .1); color: var(--azul); }
+.pastilla--azul { background: var(--app-soft); color: var(--azul); }
 
 .filtros-panel { display: flex; gap: 5px; }
 .filtro-panel {
@@ -2644,7 +2644,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .estado--activo  { background: rgba(21, 122, 75, .12); color: var(--texto-ok); }
 .estado--pausado { background: rgba(242, 169, 0, .16); color: var(--ambar-texto); }
 .estado--vencido { background: rgba(96, 113, 125, .14); color: var(--gris-acero); }
-.estado--vendido { background: rgba(7, 26, 43, .1); color: var(--azul); }
+.estado--vendido { background: var(--app-soft); color: var(--azul); }
 
 .vigencia { font-size: 12px; font-variant-numeric: tabular-nums; }
 .vigencia--pronto { color: var(--texto-peligro); font-weight: 700; }
@@ -2692,7 +2692,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .invitacion-dealer {
   display: flex; align-items: flex-start; gap: 10px;
   margin-top: 14px; padding: 12px 14px;
-  background: rgba(7, 26, 43, .05); border-radius: var(--r);
+  background: var(--app-soft); border-radius: var(--r);
   font-size: 12px; line-height: 1.6; color: var(--texto-2);
 }
 .invitacion-dealer .ico { flex: none; width: 17px; height: 17px; margin-top: 2px; color: var(--azul); }
@@ -3478,6 +3478,9 @@ main { position: relative; }
      suele estar en el tercio superior y el suelo ocupa el resto. */
   object-position: center 42%;
 }
+/* Inerte, conserva el azul noche viejo: la piel app oculta
+   .heroe__foto con display: none !important. Si vuelve, este velo pasa
+   a --velo-foto antes de encenderlo. */
 .heroe__foto::after {
   content: '';
   position: absolute; inset: 0;
@@ -3528,7 +3531,7 @@ main { position: relative; }
 
 /* Eliminar un anuncio. Va en rojo y el último de la fila: es la única
    acción del panel que no se puede deshacer. */
-.btn-tabla--borrar { color: var(--texto-peligro); border-color: rgba(179, 38, 30, .3); }
+.btn-tabla--borrar { color: var(--texto-peligro); border-color: var(--texto-peligro); } /* el rojo al 30 % se quedaba bajo el 3:1 de un contorno de control */
 .btn-tabla--borrar:hover { background: var(--sup-error); border-color: var(--texto-peligro); }
 .btn-tabla--borrar:disabled { opacity: .6; cursor: progress; }
 
@@ -3616,7 +3619,7 @@ main { position: relative; }
     display: block;
     position: fixed; inset: 0;
     z-index: 55;
-    background: rgba(7, 26, 43, .5);
+    background: rgba(20, 22, 22, .5);
   }
 
   /* Quien pidió menos movimiento no recibe el deslizamiento. */
@@ -3723,6 +3726,8 @@ body.sin-scroll { overflow: hidden; }
 
 /* Velo por debajo del texto: sin él, un nombre blanco sobre una foto
    clara no se lee. Solo en la mitad inferior, que es donde va. */
+/* Inerte, conserva el azul noche viejo: la piel app redefine este
+   velo más abajo (rgba(0, 0, 0, .96)) con la misma especificidad. */
 .mosaico__pieza::after {
   content: '';
   position: absolute; inset: 0;
@@ -3922,7 +3927,7 @@ body.sin-scroll { overflow: hidden; }
   font-family: var(--display);
   font-size: 14px; font-weight: 700; letter-spacing: -.01em;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(7, 26, 43, .28), inset 0 -3px 0 var(--ambar);
+  box-shadow: 0 4px 16px rgba(20, 22, 22, .28), inset 0 -3px 0 var(--ambar);
   transition: background-color .15s ease, transform .15s ease;
 }
 .chat__lanzador:hover { background: var(--azul-2); transform: translateY(-1px); }
@@ -3942,7 +3947,7 @@ body.sin-scroll { overflow: hidden; }
   background: var(--blanco);
   border: 1px solid var(--linea);
   border-radius: var(--r);
-  box-shadow: 0 12px 40px rgba(7, 26, 43, .22);
+  box-shadow: 0 12px 40px rgba(20, 22, 22, .22);
   overflow: hidden;
   animation: chat-entra .16s ease-out;
 }
@@ -4824,10 +4829,12 @@ main > .envoltura > section.panel {
   width: 96px; height: 96px;
   display: grid; place-items: center;
   overflow: hidden;
-  background: var(--blanco);
+  /* Blanco fijo, no var(--blanco): en oscuro ese token es casi negro y
+     el logotipo oscuro que este recuadro existe para sostener se perdía. */
+  background: #FFFFFF;
   border: 1px solid var(--linea);
   border-radius: var(--r);
-  box-shadow: 0 2px 10px rgba(7, 26, 43, .12);
+  box-shadow: 0 2px 10px rgba(20, 22, 22, .12);
 }
 .perfil__logo img { width: 100%; height: 100%; object-fit: contain; }
 
