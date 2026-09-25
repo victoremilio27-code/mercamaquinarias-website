@@ -36,10 +36,34 @@
     b.title = oscuro ? 'Tema claro' : 'Tema oscuro';
   }
 
+  /* La barra del navegador en el móvil: Chrome en Android la pinta del
+     color de este meta, y Safari en iOS tiñe con él la zona de la hora
+     y la de los botones.
+
+     Los dos valores son, exactamente, los de `--app-bg` de cada bloque
+     de tema en `styles.css`. Es el único sitio del proyecto donde el
+     fondo de la aplicación vive escrito dos veces, porque un meta no
+     entiende de variables CSS: quien cambie `--app-bg` tiene que venir
+     aquí detrás, o la barra se queda del color viejo.
+
+     Antes el meta llevaba `#071A2B` fijo en cada página —el azul noche
+     de la marca vieja, que la piel app ya no usa—, así que la barra
+     salía de un color que no aparecía en ninguna otra parte del sitio,
+     y no se movía al cambiar de tema. */
+  function barra(t) {
+    var m = document.querySelector('meta[name="theme-color"]');
+    // Hoy lo llevan todas las páginas que cargan este archivo, pero una
+    // página nueva puede nacer sin él y esto corre en el <head>: si
+    // lanzara aquí, se caería con ella el resto del arranque del tema.
+    if (!m) return;
+    m.setAttribute('content', t === 'dark' ? '#191A1A' : '#F4F4F1');
+  }
+
   function aplicar(t) {
     raiz.setAttribute('data-theme', t);
     logos(t);
     boton(t);
+    barra(t);
   }
 
   /* Sin elección guardada, manda el sistema.
@@ -61,7 +85,19 @@
     }
   }
 
-  raiz.setAttribute('data-theme', preferido());
+  /* Estas dos líneas corren en el <head>, antes de pintar. El meta ya
+     está en el DOM cuando llegan —va en la línea 8 de cada página y
+     este <script> en la 28—, así que la barra se puede fijar aquí
+     mismo. Esperar a DOMContentLoaded sería dejar a quien entra con el
+     tema oscuro con la barra clara hasta el final de la carga: el
+     mismo destello que la línea del `data-theme` existe para evitar.
+
+     El tema se guarda en una variable porque `preferido()` va a
+     `localStorage` y a `matchMedia`: no hay razón para preguntarlo dos
+     veces seguidas, y menos aquí, que es camino crítico. */
+  var inicial = preferido();
+  raiz.setAttribute('data-theme', inicial);
+  barra(inicial);
 
   document.addEventListener('DOMContentLoaded', function () {
     var cab = document.querySelector('.cab__inner');
