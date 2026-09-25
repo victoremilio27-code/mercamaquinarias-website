@@ -38,6 +38,7 @@ process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 
 const db = require('./db');
 const facturas = require('./facturas');
+const pagos = require('./pagos');
 
 const ID_ORG = 'org-pagos';
 const ID_ORG_AMPLIA = 'org-pagos-amplia';
@@ -279,6 +280,188 @@ console.log('\n9. Un pago confirmado días después se fecha y se cuenta el día
   ok(cobrosEntre(`${mes}-01`, finDeMes) === 0, `cobros de ${mes}: ${cobrosEntre(`${mes}-01`, finDeMes)} (se esperaban 0)`);
 }
 
-console.log();
-console.log(fallos ? `${fallos} de ${comprobaciones} comprobación(es) fallidas` : `Todo correcto (${comprobaciones} comprobaciones)`);
-process.exitCode = fallos ? 1 : 0;
+/* ── 03-02: la transición completa, con comprobante ───────
+   Desde aquí se prueba `tools/pagos.js`, que es quien junta los cupos
+   y el comprobante. Lo que se mide es lo que no se puede deshacer: la
+   factura, el NCF consumido de la secuencia y el correo al cliente. */
+
+const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+const BANDEJA = path.join(__dirname, '..', '.tmp', 'correos');
+const SALTO = /\r?\n/;
+
+const siguienteB02 = () => {
+  const s = consulta("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B02' AND activa = 1");
+  return s ? s.siguiente : null;
+};
+const facturasDelPago = (idPago) =>
+  consulta("SELECT COUNT(*) AS n FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'", idPago).n;
+
+/* Los correos al cliente de un comprobante. El transporte de archivo
+   deja cada correo como .txt con las cabeceras arriba; se cuentan los
+   que van al cliente y llevan en el asunto el número del comprobante y
+   la referencia del cobro, que es única de esta pasada. */
+function correosAlCliente(numero, ref) {
+  if (!fs.existsSync(BANDEJA)) return 0;
+  return fs.readdirSync(BANDEJA).filter((f) => f.endsWith('.txt'))
+    .map((f) => fs.readFileSync(path.join(BANDEJA, f), 'utf8').split(SALTO))
+    .filter((l) => l.includes(`Para: ${CLIENTE.correo}`))
+    .map((l) => (l.find((x) => x.startsWith('Asunto: ')) || ''))
+    .filter((a) => a.includes(numero) && a.includes(ref)).length;
+}
+
+const pendienteDeCompra = (etiqueta, cupo = 1) => db.registrarCobro({
+  idOrg: ID_ORG, cobro: cobroDe(3500 * cupo, etiqueta), intencion: intencionCompra(cupo, 30),
+});
+
+(async () => {
+  console.log('\n10. Confirmar un pendiente otorga la membresía y emite su comprobante');
+  db.cargarSecuencia({
+    tipo: 'B02', nombre: 'Consumidor final', desde: 1, hasta: 50,
+    vence: '2027-12-31', usaSitio: true,
+  });
+  const b02Antes = siguienteB02();
+  const pConfirma = pendienteDeCompra('CONFIRMA', 2);
+  let r1 = null;
+  const e1 = lanza(() => { r1 = pagos.confirmarPago(pConfirma.id); });
+  ok(!e1 && !!r1 && !!r1.comprobante && !!r1.comprobante.ncf,
+    e1 ? `lanzó: ${e1.message}` : `comprobante=${r1 && r1.comprobante && r1.comprobante.numero} ncf=${r1 && r1.comprobante && r1.comprobante.ncf}`);
+  ok(!!r1 && !!r1.membresia && r1.membresia.anuncios_incluidos === 2,
+    `membresía con ${r1 && r1.membresia && r1.membresia.anuncios_incluidos} cupo(s) (se esperaban 2)`);
+  ok(db.pagoPorId(pConfirma.id).estado === 'aprobado', `pago ${db.pagoPorId(pConfirma.id).estado}`);
+
+  console.log('\n11. Confirmar otra vez no duplica: misma factura, un NCF, un correo');
+  let r2 = null;
+  const e2 = lanza(() => { r2 = pagos.confirmarPago(pConfirma.id); });
+  ok(!e2 && !!r2 && r2.yaEstaba === true, e2 ? `lanzó: ${e2.message}` : `yaEstaba=${r2 && r2.yaEstaba}`);
+  ok(!!r1 && !!r2 && !!r1.comprobante && !!r2.comprobante
+    && r2.comprobante.id === r1.comprobante.id && r2.comprobante.ncf === r1.comprobante.ncf,
+  `misma factura: ${r2 && r2.comprobante && r2.comprobante.ncf}`);
+  ok(facturasDelPago(pConfirma.id) === 1, `facturas del pago: ${facturasDelPago(pConfirma.id)} (se esperaba 1)`);
+  ok(siguienteB02() === b02Antes + 1, `B02 avanzó ${siguienteB02() - b02Antes} (se esperaba 1)`);
+  await esperar(200);
+  const nCorreos = r1 && r1.comprobante ? correosAlCliente(r1.comprobante.numero, pConfirma.referencia) : 0;
+  ok(nCorreos === 1, `correos al cliente con ese comprobante: ${nCorreos} (se esperaba 1)`);
+
+  console.log('\n12. Un rechazo no emite ni consume NCF');
+  {
+    const antes = siguienteB02();
+    const p = pendienteDeCompra('RECHAZA');
+    let r = null;
+    const e = lanza(() => { r = pagos.rechazarPago(p.id); });
+    ok(!e && !!r && r.cambiado === true && r.pago.estado === 'rechazado',
+      e ? `lanzó: ${e.message}` : `estado=${r && r.pago.estado}`);
+    ok(facturasDelPago(p.id) === 0, `facturas del pago: ${facturasDelPago(p.id)} (se esperaba 0)`);
+    ok(siguienteB02() === antes, `B02 avanzó ${siguienteB02() - antes} (se esperaba 0)`);
+
+    console.log('\n13. Confirmar un rechazado no hace nada');
+    const susc = suscripcionesDe(ID_ORG);
+    let rc = null;
+    const ec = lanza(() => { rc = pagos.confirmarPago(p.id); });
+    ok(!ec && !!rc && rc.comprobante === null, ec ? `lanzó: ${ec.message}` : `comprobante=${rc && rc.comprobante}`);
+    ok(facturasDelPago(p.id) === 0 && suscripcionesDe(ID_ORG) === susc,
+      `facturas=${facturasDelPago(p.id)} membresías=${suscripcionesDe(ID_ORG)} (se esperaban 0 y ${susc})`);
+  }
+
+  console.log('\n14. Si la emisión falla, el cobro sigue aprobado y confirmar otra vez la completa');
+  {
+    const p = pendienteDeCompra('FALLA-EMISION');
+    const original = facturas.emitirPorPago;
+    let r = null;
+    let e = null;
+    try {
+      facturas.emitirPorPago = () => { throw new Error('emisión simulada que falla'); };
+      e = lanza(() => { r = pagos.confirmarPago(p.id); });
+    } finally {
+      facturas.emitirPorPago = original;
+    }
+    const fila = db.pagoPorId(p.id);
+    ok(!e, e ? `confirmarPago lanzó: ${e.message}` : 'confirmarPago no lanza');
+    ok(!!r && r.comprobante === null, `comprobante=${r && r.comprobante}`);
+    ok(fila.estado === 'aprobado' && !!fila.suscripcion_id,
+      `pago ${fila.estado} con membresía ${fila.suscripcion_id}`);
+
+    let r2b = null;
+    const e2b = lanza(() => { r2b = pagos.confirmarPago(p.id); });
+    ok(!e2b && !!r2b && !!r2b.comprobante && facturasDelPago(p.id) === 1,
+      e2b ? `lanzó: ${e2b.message}` : `segunda confirmación emitió ${r2b && r2b.comprobante && r2b.comprobante.numero}`);
+  }
+
+  console.log('\n15. Una ampliación confirmada factura los cupos añadidos, no el total');
+  {
+    const base = db.comprarCupos({
+      idOrg: ID_ORG_AMPLIA, idPlan: 'destacado', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: `PRUEBA-BASE2-${SELLO}` },
+    });
+    const p = db.registrarCobro({
+      idOrg: ID_ORG_AMPLIA, idSusc: base.id, cobro: cobroDe(3000, 'AMPLIA2'),
+      intencion: {
+        tipo: 'ampliacion', idSusc: base.id, cupoAnterior: 1, cupoNuevo: 3, anadidos: 2,
+        concepto: 'Ampliación de Destacado · 2 cupos más · hasta 3', cliente: CLIENTE, correoCliente: CLIENTE.correo,
+      },
+    });
+    const original = facturas.emitirPorPago;
+    let visto = null;
+    let r = null;
+    try {
+      facturas.emitirPorPago = (pago, opciones) => { visto = opciones; return original(pago, opciones); };
+      r = pagos.confirmarPago(p.id);
+    } finally {
+      facturas.emitirPorPago = original;
+    }
+    const det = visto && visto.detalle;
+    ok(!!det && det.cantidad === 2 && det.cantidad * det.precio_unitario === 3000,
+      det ? `detalle: ${det.cantidad} × ${det.precio_unitario} (${det.periodo})` : 'no se emitió');
+    ok(!!r && !!r.membresia && r.membresia.anuncios_incluidos === 3 && !!r.comprobante,
+      `cupo ${r && r.membresia && r.membresia.anuncios_incluidos} y comprobante ${r && r.comprobante && r.comprobante.numero}`);
+  }
+
+  console.log('\n16. cobrar pregunta al procesador y acaba en aprobado, rechazado o pendiente');
+  {
+    const pA = pendienteDeCompra('COBRA-DEMO');
+    const rA = await pagos.cobrar(pA);
+    ok(rA.estado === 'aprobado' && !!rA.comprobante, `demo: ${rA.estado} con ${rA.comprobante && rA.comprobante.numero}`);
+
+    const demo = pagos.PROCESADORES.demo;
+    try {
+      pagos.PROCESADORES.demo = async () => ({ resultado: 'rechazado', motivo: '51' });
+      const pR = pendienteDeCompra('COBRA-RECHAZO');
+      const rR = await pagos.cobrar(pR);
+      ok(rR.estado === 'rechazado' && rR.motivo === '51' && facturasDelPago(pR.id) === 0
+        && db.pagoPorId(pR.id).estado === 'rechazado',
+      `rechazo: ${rR.estado} motivo=${rR.motivo} facturas=${facturasDelPago(pR.id)}`);
+    } finally {
+      pagos.PROCESADORES.demo = demo;
+    }
+
+    try {
+      pagos.PROCESADORES.demo = async () => { throw new Error('la red se cayó a mitad'); };
+      const pF = pendienteDeCompra('COBRA-FALLA');
+      const rF = await pagos.cobrar(pF);
+      ok(rF.estado === 'pendiente' && db.pagoPorId(pF.id).estado === 'pendiente' && facturasDelPago(pF.id) === 0,
+        `procesador que lanza: ${rF.estado}`);
+    } finally {
+      pagos.PROCESADORES.demo = demo;
+    }
+
+    let llamadas = 0;
+    try {
+      pagos.PROCESADORES.demo = async () => { llamadas++; return { resultado: 'aprobado' }; };
+      const pT = db.registrarCobro({
+        idOrg: ID_ORG, cobro: { ...cobroDe(3500, 'TRANSFERENCIA'), procesador: 'transferencia' },
+        intencion: intencionCompra(1, 30),
+      });
+      const rT = await pagos.cobrar(pT);
+      ok(rT.estado === 'pendiente' && llamadas === 0 && db.pagoPorId(pT.id).estado === 'pendiente',
+        `transferencia: ${rT.estado}, procesadores llamados: ${llamadas}`);
+    } finally {
+      pagos.PROCESADORES.demo = demo;
+    }
+  }
+
+  console.log();
+  console.log(fallos ? `${fallos} de ${comprobaciones} comprobación(es) fallidas` : `Todo correcto (${comprobaciones} comprobaciones)`);
+  process.exitCode = fallos ? 1 : 0;
+})().catch((e) => {
+  console.error('la prueba se cayó:', e);
+  process.exitCode = 1;
+});
