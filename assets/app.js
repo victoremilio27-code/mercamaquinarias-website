@@ -646,6 +646,13 @@ const VALOR_FILTRO = {
   itbis: { 1: 'ITBIS incluido' },
 };
 
+/* El texto del chip, o '' si el valor no es uno de los conocidos. Solo
+   claves propias: con `?permuta=constructor` la búsqueda directa
+   devolvía la función heredada de Object, el filtro se daba por aplicado
+   y el chip decía «function Object() { [native code] }». */
+const textoValorFiltro = (k, v) =>
+  (Object.prototype.hasOwnProperty.call(VALOR_FILTRO[k], v) ? VALOR_FILTRO[k][v] : '');
+
 /* Enlaces de paginación. Se muestran ventanas de cinco páginas para
    que la tira no crezca sin fin cuando haya cientos. */
 function paginacionHTML({ pagina, paginas }) {
@@ -681,7 +688,7 @@ async function montarResultados() {
   // Un valor que el servidor no reconoce (`permuta=si`) no filtra allí;
   // aquí tampoco se enseña como aplicado, o el chip mentiría.
   Object.keys(VALOR_FILTRO).forEach((k) => {
-    if (filtros[k] && !VALOR_FILTRO[k][filtros[k]]) filtros[k] = '';
+    if (filtros[k] && !textoValorFiltro(k, filtros[k])) filtros[k] = '';
   });
 
   const form = $('#filtros');
@@ -742,7 +749,7 @@ async function montarResultados() {
       q.delete(k);
       q.delete('pagina');
       const valor = k === 'categoria' ? nombreCategoria(v)
-        : VALOR_FILTRO[k] ? (VALOR_FILTRO[k][v] || v)
+        : VALOR_FILTRO[k] ? (textoValorFiltro(k, v) || v)
         : /precio/i.test(k) ? pesos(v)
         : k === 'horasMax' ? `${miles(v)} h`
         : v;

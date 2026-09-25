@@ -182,6 +182,15 @@ async function bloqueMoneda() {
   r = await catalogo('orden=precio-asc&q=caterpillar');
   comprobar(r.total === 4, 'orden por precio con búsqueda de texto y sin rango de precio responde');
 
+  // ORDENES_SQL[clave] con una clave heredada de Object («constructor»,
+  // «toString») devolvía una función, se interpolaba en el ORDER BY y
+  // el catálogo público respondía 500 a cualquiera que la escribiera.
+  console.log('\nUn orden que es nombre de Object no revienta el catálogo');
+  for (const clave of ['constructor', 'toString', '__proto__']) {
+    const x = await pedir({ url: `/api/anuncios?orden=${clave}` });
+    comprobar(x.codigo === 200 && x.datos && x.datos.total === 4, `«orden=${clave}» responde 200 con el orden por defecto`);
+  }
+
   console.log('\nLa respuesta dice con qué tasa comparó');
   comprobar(r.tasaUsd && r.tasaUsd.tasa === precios.TASA_USD_POR_DEFECTO,
     `el catálogo devuelve tasaUsd (${r.tasaUsd && r.tasaUsd.tasa})`);

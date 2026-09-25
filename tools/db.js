@@ -2930,7 +2930,11 @@ function buscarAnuncios(f = {}) {
   const porPagina = Math.min(Number(f.porPagina) || POR_PAGINA, POR_PAGINA_MAX);
   const paginas = Math.max(1, Math.ceil(total / porPagina));
   const pagina = Math.min(Math.max(1, Number(f.pagina) || 1), paginas);
-  const orden = ORDENES_SQL[f.orden] || ORDENES_SQL[ORDEN_POR_DEFECTO];
+  // Solo claves propias: `ORDENES_SQL['constructor']` es una función
+  // heredada de Object, se interpolaba en el ORDER BY y `?orden=toString`
+  // tumbaba el catálogo público con un 500.
+  const orden = Object.hasOwn(ORDENES_SQL, f.orden || '')
+    ? ORDENES_SQL[f.orden] : ORDENES_SQL[ORDEN_POR_DEFECTO];
 
   const sqlPagina = `
     SELECT a.id, a.categoria, a.subcategoria, a.marca, a.modelo, a.anio, a.condicion,

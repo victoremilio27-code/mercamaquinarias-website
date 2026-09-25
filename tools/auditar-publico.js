@@ -179,6 +179,15 @@ async function vigilar(p, pagina) {
   if (!/Acepta permuta/.test(v.chips)) anota('Catálogo', 'lógica', '?permuta=1 no pinta su chip');
   if (!v.tarjetas.length) anota('Catálogo', 'lógica', 'el filtro de permuta no devuelve nada con la siembra de demostración');
 
+  // Un valor que es nombre de Object no es un filtro: el servidor lo
+  // ignora y el chip no debe enseñar la función heredada.
+  v = await conFiltro('permuta=constructor&orden=toString');
+  console.log(`  ?permuta=constructor: chips «${v.chips.replace(/\s+/g, ' ').trim()}»`);
+  if (/function|native code/.test(v.chips) || v.permuta) {
+    anota('Catálogo', 'lógica', '?permuta=constructor se da por filtro aplicado');
+  }
+  if (!v.tarjetas.length) anota('Catálogo', 'lógica', '?orden=toString deja el catálogo sin resultados');
+
   v = await conFiltro('itbis=1');
   console.log(`  ?itbis=1: ${v.tarjetas.length} resultados, casilla ${v.itbis ? 'marcada' : 'SIN MARCAR'}`);
   if (!v.itbis || !v.tarjetas.length) anota('Catálogo', 'lógica', 'el filtro de ITBIS incluido no funciona en pantalla');
