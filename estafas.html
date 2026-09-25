@@ -62,9 +62,9 @@
       cómo se compra y se vende maquinaria en República Dominicana.</p>
   </header>
 
-  <p class="acceso__aviso">MercaMaquinarias verifica el teléfono que un anunciante publica, no el equipo que
-    ofrece ni la operación que usted pacte con él. La responsabilidad de comprobar lo que va a comprar, y a
-    quién le paga, es suya.</p>
+  <p class="acceso__aviso">MercaMaquinarias solo muestra teléfonos que el anunciante confirmó con un código, pero
+    no revisa el equipo que ofrece ni la operación que usted pacte con él. La responsabilidad de comprobar lo
+    que va a comprar, y a quién le paga, es suya.</p>
 
   <!-- Índice. La misma razón que en legal.html: quien entra aquí busca
        una respuesta concreta —qué documento pedir, a quién reportar—
@@ -127,8 +127,8 @@
     <h2 class="panel__titulo" id="t-documentos"><em>3.</em> Documentos que debe pedir</h2>
     <div class="prosa">
       <dl class="ficha-tecnica">
-        <div><dt>Matrícula</dt><dd>A nombre de quien le vende, o con el traspaso correspondiente si es otra persona.</dd></div>
-        <div><dt>Certificación de propiedad</dt><dd>Solicitada ante la DGII, para confirmar que el equipo no tiene gravámenes ni litigios declarados.</dd></div>
+        <div><dt>Matrícula</dt><dd>Si el equipo está registrado en la DGII —los camiones siempre; mucha maquinaria de obra también—, a nombre de quien le vende, o con el traspaso correspondiente si es otra persona.</dd></div>
+        <div><dt>Certificación de propiedad</dt><dd>Emitida por la DGII, para confirmar quién es el propietario registrado. Pregunte también si el equipo tiene oposiciones o gravámenes inscritos.</dd></div>
         <div><dt>RNC del vendedor</dt><dd>Si vende como empresa, verifique que el RNC exista y esté activo en la DGII.</dd></div>
         <div><dt>DUA</dt><dd>Si el equipo es importado, el Documento Único Aduanero debe corresponder a ese equipo, no a otro.</dd></div>
         <div><dt>Número de serie o de chasis</dt><dd>Debe ser idéntico en el equipo físico, la matrícula y la certificación de propiedad.</dd></div>
@@ -156,8 +156,16 @@
   <section class="panel" id="mercamaquinarias" aria-labelledby="t-mm">
     <h2 class="panel__titulo" id="t-mm"><em>5.</em> Qué hace y qué no hace MercaMaquinarias</h2>
     <div class="prosa">
-      <p><span class="pastilla pastilla--verde">Sí</span> Cotejamos el teléfono que el anunciante declara antes
-        de mostrarlo en su anuncio, para que no sea un número inventado o copiado de otro anuncio.</p>
+      <!-- Aquí decía que el teléfono se cotejaba «para que no sea un número
+           inventado o copiado de otro anuncio». Con la vía por correo —la
+           única mientras los SMS de Brevo estén apagados— eso no es cierto:
+           se prueba que el titular de la cuenta declara el número, no que
+           el teléfono sea suyo. La ficha distingue las dos vías y esta
+           página tiene que decir lo mismo. -->
+      <p><span class="pastilla pastilla--verde">Sí</span> Solo mostramos en un anuncio los teléfonos que el
+        anunciante confirmó con un código: por SMS al propio teléfono, o desde el correo verificado de su cuenta.
+        La ficha dice por cuál de las dos vías. Así cada número queda atado a una cuenta identificable; no
+        garantiza quién contesta al otro lado.</p>
       <p><span class="pastilla pastilla--verde">Sí</span> A los dealers verificados les cotejamos además la
         existencia registral del negocio.</p>
       <p><span class="pastilla pastilla--roja">No</span> No somos parte de la compraventa: no inspeccionamos el
