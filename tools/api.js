@@ -2595,9 +2595,125 @@ function verAnuncio(req, res, ctx, idAnuncio) {
   /* `ctx` es null cuando no hay sesión, que es el caso normal aquí:
      esta ruta la llama cualquier visitante del catálogo. */
   const esSuyo = !!ctx && !!ctx.organizacion && a.organizacion_id === ctx.organizacion.id;
-  if (!esSuyo) PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
+  if (!esSuyo) {
+    PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
+    /* CONF-03: a quien no es el dueño, solo los teléfonos verificados.
+       El filtro va aquí y no solo en el navegador: esconderlo con
+       JavaScript deja el número a la vista de cualquiera que abra la
+       respuesta en la consola, que es justo quien copia anuncios. */
+    a.telefonos = (a.telefonos || [])
+      .filter((t) => t.verificado)
+      .map((t) => ({ numero: t.numero, tipo: t.tipo, nota: t.nota, verificado: true, via: t.via }));
+  }
   return responder(res, 200, { anuncio: a });
 }
+
+/* ── Contactos verificados (fase 9, CONF-03) ────────────────
+ *
+ * Un teléfono no sale en ningún anuncio hasta que la organización lo
+ * verifica. Dos vías con las mismas dos rutas:
+ *
+ *   · correo — el código va al correo de la cuenta con sesión, que ya
+ *     está verificado (sin eso no se entra). Es la vía de hoy.
+ *   · sms    — el código va al propio teléfono. Solo si el interruptor
+ *     MERCA_SMS está encendido; hasta que se paguen los créditos de
+ *     Brevo, la API la rechaza con un mensaje que manda al correo.
+ *
+ * Encender el SMS no toca estas rutas: correo.smsActivo() lo decide en
+ * cada petición. */
+
+const ocultarCorreo = (c) => String(c || '').replace(/^(.)[^@]*(@.*)$/, '$1•••$2');
+const ocultarNumero = (n) => `(${n.slice(0, 3)}) •••-${n.slice(6)}`;
+
+const listarContactos = conSesion((req, res, ctx) => {
+  if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  return responder(res, 200, {
+    contactos: db.contactosDe(ctx.organizacion.id),
+    sms: correo.smsActivo(),
+  });
+});
+
+const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
+  if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  const c = await leerCuerpo(req);
+  const numero = db.normalizarNumero(c.numero);
+  if (!numero) return fallo(res, 400, 'Indique un teléfono de 10 dígitos');
+  const via = c.via === 'sms' ? 'sms' : 'correo';
+
+  if (via === 'sms' && !correo.smsActivo()) {
+    return fallo(res, 400, 'La verificación por SMS todavía no está disponible. Verifique el número por correo.');
+  }
+
+  /* Dos topes. Por número, para que nadie bombardee un teléfono ajeno
+     con SMS; por organización, porque cada SMS cuesta créditos. */
+  const idOrg = ctx.organizacion.id;
+  if (!db.permitir(`contacto-codigo:${idOrg}:${numero}`, 5, 60)
+    || !db.permitir(`contacto-org:${idOrg}`, 20, 60)) {
+    return fallo(res, 429, 'Ha pedido demasiados códigos. Espere una hora y vuelva a intentarlo.');
+  }
+
+  const r = db.pedirCodigoContacto({ idOrg, numero, via });
+  if (r.yaVerificado) return responder(res, 200, { yaVerificado: true, via: r.via, numero });
+
+  let envio;
+  if (via === 'sms') {
+    envio = await correo.enviarSms({
+      numero,
+      texto: correo.textoSmsContacto({ codigo: r.codigo, minutos: r.minutos }),
+    });
+  } else {
+    envio = await correo.enviarCodigoContacto({
+      para: ctx.usuario.correo,
+      nombre: ctx.usuario.nombre,
+      numero,
+      codigo: r.codigo,
+      minutos: r.minutos,
+    });
+  }
+  if (!envio || !envio.entregado) {
+    return fallo(res, 502, via === 'sms'
+      ? 'No se pudo enviar el SMS. Pruebe a verificar el número por correo.'
+      : 'No se pudo enviar el correo. Inténtelo de nuevo en unos minutos.');
+  }
+
+  return responder(res, 200, {
+    enviado: true,
+    via,
+    numero,
+    destino: via === 'sms' ? ocultarNumero(numero) : ocultarCorreo(ctx.usuario.correo),
+    minutos: r.minutos,
+  });
+});
+
+const confirmarContacto = conSesion(async (req, res, ctx) => {
+  if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`contacto-confirmar:${origen(req)}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
+  }
+
+  const r = db.confirmarCodigoContacto({
+    idOrg: ctx.organizacion.id,
+    numero: c.numero,
+    codigo: c.codigo,
+    idUsuario: ctx.usuario.id,
+  });
+  if (!r.ok) {
+    const mensajes = {
+      inexistente: 'No hay ningún código pendiente para ese número. Solicite uno nuevo.',
+      vencido: 'El código venció. Solicite uno nuevo.',
+      agotado: 'Demasiados intentos con ese código. Solicite uno nuevo.',
+      usado: 'Ese código ya se utilizó.',
+      incorrecto: r.restantes > 0
+        ? `Código incorrecto. Le quedan ${r.restantes} ${r.restantes === 1 ? 'intento' : 'intentos'}.`
+        : 'Código incorrecto. Solicite uno nuevo.',
+    };
+    return fallo(res, 400, mensajes[r.motivo] || 'Código incorrecto');
+  }
+
+  const contacto = db.contactosDe(ctx.organizacion.id).find((x) => x.numero === r.numero) || null;
+  return responder(res, 200, { contacto });
+});
 
 /* Registro de una interacción. Va sin sesión a propósito: lo llama
    cualquier visitante del catálogo. */
@@ -2715,6 +2831,11 @@ const RUTAS = [
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)$/, cambiarEstado],
   ['DELETE', /^\/api\/anuncios\/([\w-]+)$/, eliminarAnuncio],
+
+  // Teléfonos verificados: ninguno sin verificar sale en un anuncio.
+  ['GET',  /^\/api\/contactos$/,           listarContactos],
+  ['POST', /^\/api\/contactos\/codigo$/,    pedirCodigoContacto],
+  ['POST', /^\/api\/contactos\/confirmar$/, confirmarContacto],
 
   // Capacidad: se compra antes de publicar y se amplía prorrateada.
   ['GET',  /^\/api\/membresias$/,                    misPlanes],

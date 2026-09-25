@@ -32,8 +32,10 @@ process.env.MERCA_CORREO = 'archivo';
 process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 delete process.env.MERCA_SMS;               // el interruptor, apagado como en producción
 
+const { EventEmitter } = require('events');
 const db = require('./db.js');
 const correo = require('./correo.js');
+const api = require('./api.js');
 
 let bien = 0;
 let mal = 0;
@@ -215,6 +217,140 @@ function bloqueSms() {
     'lleva el código y el número');
 }
 
+/* Una petición de verdad contra el enrutador, con req y res fingidos.
+   Copia del arnés de probar-seguridad.js: cada archivo de prueba lleva
+   el suyo, a propósito. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-contactos', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      setHeader() {},
+      writeHead(c) { res.codigo = c; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
+/* El último código que dejó el transporte de archivo, del correo o del SMS. */
+function ultimoCodigo(carpeta) {
+  if (!fs.existsSync(carpeta)) return null;
+  const txt = fs.readdirSync(carpeta).filter((f) => f.endsWith('.txt')).sort().pop();
+  if (!txt) return null;
+  const m = /(\d{6})/.exec(fs.readFileSync(path.join(carpeta, txt), 'utf8').split('\n\n').slice(1).join('\n'));
+  return m ? m[1] : null;
+}
+
+/* ── Bloque «La API» ─────────────────────────────────────── */
+async function bloqueApi() {
+  const { a, b } = sembrado;
+  const IP = '201.9.9.9';
+  const comoA = { cookie: `te_sesion=${db.abrirSesion(a.idUsuario)}`, 'cf-connecting-ip': IP };
+  const comoB = { cookie: `te_sesion=${db.abrirSesion(b.idUsuario)}`, 'cf-connecting-ip': IP };
+
+  // Un anuncio nuevo de A con dos números que nadie ha verificado.
+  const idNuevo = anuncio(a.org.id, a.idUsuario, [
+    { numero: '(849) 555-0001', tipo: 'ambos', nota: 'Taller' },
+    { numero: '(849) 555-0002', tipo: 'llamadas', nota: null },
+  ]);
+  const telefonosDe = async (cabeceras) => {
+    const r = await pedir({ url: `/api/anuncios/${idNuevo}`, cabeceras });
+    return (r.datos && r.datos.anuncio && r.datos.anuncio.telefonos) || null;
+  };
+
+  console.log('\nCriterio 1 · ningún contacto sin verificar en la ficha');
+  let tels = await telefonosDe();
+  comprobar(Array.isArray(tels) && tels.length === 0, 'sin sesión, la ficha no trae ninguno de los dos números');
+  tels = await telefonosDe(comoB);
+  comprobar(Array.isArray(tels) && tels.length === 0, 'con la sesión de otra organización, tampoco');
+  tels = await telefonosDe(comoA);
+  comprobar(Array.isArray(tels) && tels.length === 2 && tels.every((t) => t.verificado === false),
+    'el dueño ve los dos, marcados sin verificar');
+
+  console.log('\nCriterio 2 · con el SMS apagado, el correo basta');
+  let r = await pedir({ url: '/api/contactos', cabeceras: comoA });
+  comprobar(r.codigo === 200 && r.datos.sms === false, 'GET /api/contactos dice que el SMS está apagado');
+  comprobar(r.datos.contactos.some((c) => c.numero === '8495550001' && !c.verificado), 'y lista el número sin verificar');
+
+  const antesSms = fs.existsSync(correo.BANDEJA_SMS) ? fs.readdirSync(correo.BANDEJA_SMS).length : 0;
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/codigo', cuerpo: { numero: '(849) 555-0001', via: 'sms' }, cabeceras: comoA });
+  const despuesSms = fs.existsSync(correo.BANDEJA_SMS) ? fs.readdirSync(correo.BANDEJA_SMS).length : 0;
+  comprobar(r.codigo === 400 && /correo/.test(r.datos.error) && despuesSms === antesSms,
+    'pedir por SMS responde 400, manda al correo y no envía nada');
+
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/codigo', cuerpo: { numero: '555', via: 'correo' }, cabeceras: comoA });
+  comprobar(r.codigo === 400, 'un número incompleto responde 400');
+
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/codigo', cuerpo: { numero: '(849) 555-0001', via: 'correo' } });
+  comprobar(r.codigo === 401, 'sin sesión responde 401');
+
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/codigo', cuerpo: { numero: '(849) 555-0001', via: 'correo' }, cabeceras: comoA });
+  comprobar(r.codigo === 200 && r.datos.enviado && r.datos.via === 'correo' && r.datos.destino.includes('•••'),
+    'por correo responde 200 con el destino enmascarado');
+  const codigoCorreo = ultimoCodigo(correo.BANDEJA);
+  const archivoCorreo = fs.readdirSync(correo.BANDEJA).filter((f) => f.endsWith('.txt')).sort().pop();
+  comprobar(codigoCorreo && archivoCorreo.includes('vendedora-a@ejemplo.test'), 'el código llega al correo de la cuenta');
+
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/confirmar', cuerpo: { numero: '8495550001', codigo: codigoCorreo }, cabeceras: comoB });
+  comprobar(r.codigo === 400, 'B no puede confirmar con el código de A');
+
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/confirmar', cuerpo: { numero: '8495550001', codigo: codigoCorreo }, cabeceras: comoA });
+  comprobar(r.codigo === 200 && r.datos.contacto && r.datos.contacto.verificado && r.datos.contacto.via === 'correo',
+    'A confirma y el número queda verificado por correo');
+
+  tels = await telefonosDe();
+  comprobar(tels.length === 1 && tels[0].numero === '(849) 555-0001' && tels[0].via === 'correo',
+    'la ficha pública trae ahora ese número, y solo ese');
+  comprobar(tels[0].nota === 'Taller' && tels[0].tipo === 'ambos', 'con su uso y su nota');
+
+  // Y en un anuncio que ya estaba publicado con el mismo número.
+  const idOtro = anuncio(a.org.id, a.idUsuario, [{ numero: '849-555-0001', tipo: 'whatsapp' }]);
+  r = await pedir({ url: `/api/anuncios/${idOtro}` });
+  comprobar(r.datos.anuncio.telefonos.length === 1, 'y aparece también en otro anuncio de A que lo lleva');
+
+  console.log('\nCriterio 3 · encender el SMS no pide tocar el flujo');
+  process.env.MERCA_SMS = 'archivo';
+  r = await pedir({ url: '/api/contactos', cabeceras: comoA });
+  comprobar(r.datos.sms === true, 'GET /api/contactos dice que el SMS está encendido');
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/codigo', cuerpo: { numero: '(849) 555-0002', via: 'sms' }, cabeceras: comoA });
+  comprobar(r.codigo === 200 && r.datos.via === 'sms' && r.datos.destino === '(849) •••-0002', 'la misma ruta envía por SMS');
+  const codigoSms = ultimoCodigo(correo.BANDEJA_SMS);
+  r = await pedir({ metodo: 'POST', url: '/api/contactos/confirmar', cuerpo: { numero: '(849) 555-0002', codigo: codigoSms }, cabeceras: comoA });
+  comprobar(r.codigo === 200 && r.datos.contacto.via === 'sms', 'la misma ruta de confirmar lo verifica por SMS');
+  tels = await telefonosDe();
+  comprobar(tels.length === 2 && tels.some((t) => t.via === 'sms'), 'y la ficha pública trae los dos, uno por SMS');
+  delete process.env.MERCA_SMS;
+
+  console.log('\nLímites');
+  let ultimo;
+  for (let i = 0; i < 6; i++) {
+    ultimo = await pedir({ metodo: 'POST', url: '/api/contactos/codigo', cuerpo: { numero: '(809) 555-7777', via: 'correo' }, cabeceras: comoB });
+  }
+  comprobar(ultimo.codigo === 429, 'el sexto código para el mismo número en una hora responde 429');
+
+  console.log('\nNinguna ruta da un número por verificado sin código');
+  const fuente = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
+  comprobar(!fuente.includes('marcarContactoVerificado'), 'tools/api.js no llama a marcarContactoVerificado');
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · contactos verificados\n');
   sembrar();
@@ -224,6 +360,9 @@ function bloqueSms() {
 
   console.log('\nEl SMS');
   bloqueSms();
+
+  console.log('\nLa API');
+  await bloqueApi();
 
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
