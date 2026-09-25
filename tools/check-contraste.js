@@ -105,13 +105,17 @@ const EXCEPCIONES = [
   // reproductor.
   { selector: '.videos__pieza', reglas: [3] },
 
-  // El sello va sobre la fotografía, no sobre la página: su fondo
-  // oscuro es justo lo que lo hace legible sea cual sea la foto.
-  { selector: '.foto__sello', reglas: [3] },
+  // La cuenta de fotos del anuncio va encima de la fotografía, no de la
+  // página, y la foto no cambia con el tema: su velo (--velo-foto) y su
+  // letra blanca tampoco deben. El comprobador la ve «congelada» porque
+  // no ve la imagen y mide el marcador gris que hay detrás, que sí gira.
+  // Medido a mano sobre los extremos: 9.01:1 sobre una foto blanca y
+  // 18.91:1 sobre una negra, así que se lee con cualquier foto.
+  { selector: '.aviso__fotos', reglas: [3] },
 
   // Cabecera de marca fijada oscura en los dos temas, igual que el
   // mosaico. Exenta de la regla 3 y NO de la 1: su texto sigue teniendo
-  // que leerse, y hoy no se lee.
+  // que leerse, y la regla 1 lo sigue midiendo en los dos temas.
   { selector: '.perfil', reglas: [3] },
 
   // `ajustarContraste`, en `assets/app.js`, le elige el color midiendo
