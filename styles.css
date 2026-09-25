@@ -2312,6 +2312,19 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .detalle__condiciones .ico { width: 14px; height: 14px; color: var(--verde); stroke-width: 2.4; flex: none; }
 
+/* Guardar y compartir, bajo el precio (fase 10). Botones de línea como
+   los demás de la ficha: la acción principal sigue siendo contactar. */
+.detalle__acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; }
+.btn--accion { height: 34px; padding: 0 14px; font-size: 13px; }
+.btn--accion .ico { width: 15px; height: 15px; }
+.btn--accion.is-activo { border-color: var(--ambar); background: var(--sup-calida); }
+.btn--accion.is-activo .ico { fill: currentColor; }
+.detalle__enlace-guardados { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
+.detalle__enlace-guardados:hover { text-decoration: underline; }
+.detalle__compartir { display: flex; gap: 7px; margin: 6px 0 4px; }
+.detalle__estado { min-height: 1em; margin-top: 4px; font-size: 12px; color: var(--gris-acero); }
+.detalle__estado:empty { margin-top: 0; min-height: 0; }
+
 .detalle__aviso {
   margin-top: 12px; padding-top: 11px;
   border-top: 1px solid var(--linea-suave);
