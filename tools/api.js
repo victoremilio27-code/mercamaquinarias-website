@@ -31,6 +31,23 @@ const servicios = require('../assets/servicios.js');
 const legales = require('../assets/legales.js');
 const facturas = require('./facturas');
 const pagos = require('./pagos');
+const transferencia = require('./transferencia');
+
+/* La transferencia se apaga sola si falta un dato o uno no valida, y
+   eso es lo correcto con la cuenta a medias. Pero un error de tecleo
+   en el VPS la apagaría en silencio y el sitio seguiría cobrando con
+   demo sin que nadie lo notara. Si hay alguna variable puesta y aun
+   así no está encendida, se avisa una vez al arrancar, con los
+   NOMBRES de lo que falta: los valores son datos bancarios y no van
+   al registro del servidor.
+
+   Una variable vacía cuenta como no puesta: es como quedan en el
+   archivo de entorno mientras la cuenta no existe, y ahí apagada es
+   lo que se quiere. */
+if (Object.keys(process.env).some((k) => k.startsWith('MERCA_TRANSFERENCIA_') && String(process.env[k]).trim())
+  && transferencia.faltantes().length) {
+  console.warn(`transferencia: apagada; faltan o no validan ${transferencia.faltantes().join(', ')}`);
+}
 
 const { ITBIS } = precios;
 const COOKIE = 'te_sesion';
@@ -1934,12 +1951,17 @@ const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
 
 /* ── Rutas: planes y cobro ──────────────────────────────── */
 
+/* `metodosPago` son solo los nombres de los métodos, para que la
+   pantalla sepa qué ofrecer. Los datos de la cuenta NO van aquí: es una
+   ruta pública, y la cuenta solo se enseña con sesión, a quien ya pidió
+   pagar. */
 const listarPlanes = (req, res) => responder(res, 200, {
   planes: db.planes(),
   itbis: precios.ITBIS,
   duraciones: precios.DURACIONES,
   cuposPorUnoGratis: precios.CUPOS_POR_UNO_GRATIS,
   cupoMaximo: precios.CUPO_MAXIMO,
+  metodosPago: pagos.metodosDeCobro(),
 });
 
 /* Lo que cuesta un cupo de este nivel durante treinta días.
@@ -1963,9 +1985,32 @@ const referenciaCobro = () =>
    siempre: quien compraba cinco Destacados no podía mover a ellos un
    equipo que ya tenía publicado en Estándar. */
 
+/* Los datos de la cuenta a la que se transfiere, con el buzón al que
+   se manda el comprobante de la transferencia. Null si la transferencia
+   está apagada: nunca se inventa una cuenta. Solo sale en respuestas
+   con sesión (D-10). */
+function datosDeCuenta() {
+  const d = transferencia.datosTransferencia();
+  return d ? { ...d, correo: correo.BUZONES.facturacion } : null;
+}
+
+/* Para un pendiente por transferencia que quedó sin cuenta que enseñar
+   (se apagó después de pedirlo): se le dice a quién escribir en vez de
+   dejarle un pago que no sabe cómo completar. */
+const SIN_DATOS_TRANSFERENCIA = 'Para completar este pago, escríbanos a '
+  + `${correo.BUZONES.facturacion} con la referencia y le indicamos cómo hacerlo.`;
+
 const misPlanes = conSesion((req, res, ctx) => {
   const lista = db.suscripcionesDe(ctx.organizacion.id);
+  /* Solo los de SU organización: la consulta filtra por el id de la
+     sesión, nunca por uno que llegue en la petición. */
+  const pagosPendientes = db.pagosPendientesDe(ctx.organizacion.id);
+  const porTransferencia = pagosPendientes.some((p) => p.procesador === 'transferencia');
+  const cuenta = porTransferencia ? datosDeCuenta() : null;
   return responder(res, 200, {
+    pagosPendientes,
+    ...(cuenta ? { transferencia: cuenta } : {}),
+    ...(porTransferencia && !cuenta ? { avisoTransferencia: SIN_DATOS_TRANSFERENCIA } : {}),
     membresias: lista.map((s) => ({
       ...s,
       // Qué costaría el siguiente cupo, para poder decirlo en el panel
@@ -2013,8 +2058,63 @@ const NO_APROBADO = 'El pago no fue aprobado. No se le cobró nada, no se añadi
   + 'y no se emitió comprobante.';
 const EN_PROCESO = 'Su pago está en proceso. Los cupos y el comprobante aparecerán cuando se confirme.';
 
+/* Sin plazo prometido: lo confirma una persona mirando el banco, y un
+   «en 24 horas» que no se cumple un viernes por la tarde es un reclamo. */
+const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicada. Los cupos y el '
+  + 'comprobante fiscal llegan cuando confirmemos el ingreso.';
+
 const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
 const comprobantePublico = (c) => c && { numero: c.numero, tipo: c.tipo, ncf: c.ncf };
+
+/* Un correo que no se espera. `enviar` devuelve una promesa con Brevo
+   y un objeto con el transporte de archivo, y la plantilla puede lanzar
+   antes de devolver nada: las dos cosas se cubren, porque una promesa
+   rechazada sin manejador tumba el proceso. */
+/* Lo que se compró, leído de la intención guardada en el pago. Una
+   intención ilegible (pagos de antes de la fase 3) no rompe nada: sale
+   como «Membresía», igual que en pagos.js y db.js. */
+function intencionDePago(pago) {
+  let i = null;
+  try { i = JSON.parse(pago.intencion); } catch (_) { /* se trata abajo */ }
+  return i && typeof i === 'object' ? { ...i, concepto: i.concepto || 'Membresía' } : { concepto: 'Membresía' };
+}
+
+function sinEsperar(que, envio) {
+  try {
+    Promise.resolve(envio()).catch((e) => console.error(`correo: ${que} · ${e.message}`));
+  } catch (e) {
+    console.error(`correo: ${que} · ${e.message}`);
+  }
+}
+
+/* Lo que sale al pedir pagar por transferencia: al comprador, los
+   datos para transferir; al buzón de facturación, el aviso de que hay
+   un ingreso por esperar (es un buzón propio, no el contador: nada se
+   envía a un contador). Sin esperar a ninguno de los dos. */
+function avisarTransferenciaPedida(ctx, { referencia, total, concepto }) {
+  const cuenta = transferencia.datosTransferencia();
+  const dinero = `RD$${Number(total).toLocaleString('en-US')}`;
+  const empresa = (ctx.organizacion && ctx.organizacion.nombre) || ctx.usuario.nombre;
+  if (cuenta) {
+    sinEsperar(`datos de transferencia ${referencia}`, () => correo.enviarDatosTransferencia({
+      para: ctx.usuario.correo, nombre: ctx.usuario.nombre, referencia, total, concepto, datos: cuenta,
+    }));
+  }
+  sinEsperar(`aviso interno de la transferencia ${referencia}`, () => correo.avisarInternamente({
+    buzon: 'facturacion',
+    asunto: `Transferencia en espera ${referencia} · ${empresa} · ${dinero}`,
+    texto: [
+      'Un cliente pidió pagar por transferencia. Cuando el ingreso aparezca en el banco,',
+      'márquelo como recibido en la consola (Pagos): eso otorga los cupos y emite el comprobante.',
+      '',
+      `Referencia: ${referencia}`,
+      `Empresa:    ${empresa}`,
+      `Cliente:    ${ctx.usuario.nombre || '(sin nombre)'} <${ctx.usuario.correo}>`,
+      `Concepto:   ${concepto}`,
+      `Importe:    ${dinero} (ITBIS incluido)`,
+    ].join('\n'),
+  }));
+}
 
 const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
@@ -2036,8 +2136,21 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     : {
       ...precios.precioCompra({ precioUnitario: precioUnitario(plan), cupo, dias }),
       referencia: referenciaCobro(),
-      procesador: 'demo',
     };
+
+  /* El procesador lo elige el SERVIDOR (D-03). Antes era el literal
+     'demo', que aprueba siempre: con la transferencia encendida eso
+     habría regalado cupos a quien comprara. Lo que pida el navegador se
+     valida contra la lista del servidor y, si no está, 400 ANTES de
+     anotar nada: un método no disponible no deja pago. El importe cero
+     no pasa por ningún procesador y no se valida. */
+  if (!cobro.procesador && cobro.total > 0) {
+    try {
+      cobro.procesador = pagos.procesadorDeCobro(c.metodo);
+    } catch (e) {
+      return fallo(res, e.codigo || 400, e.message);
+    }
+  }
 
   /* Datos fiscales, si los pidió.
    *
@@ -2094,6 +2207,13 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
   }
   if (r.estado !== 'aprobado') {
+    if (pago.procesador === 'transferencia') {
+      responder(res, 202, {
+        membresia: null, cobro, comprobante: null, pago: pagoPublico(r.pago),
+        aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta(),
+      });
+      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
+    }
     return responder(res, 202, {
       membresia: null, cobro, comprobante: null, pago: pagoPublico(r.pago), aviso: EN_PROCESO,
     });
@@ -2134,8 +2254,16 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
         diasRestantes: precios.diasRestantes(s.fin) ?? dias,
       }),
       referencia: referenciaCobro(),
-      procesador: 'demo',
     };
+
+  // El procesador lo elige el servidor, igual que en la compra (D-03).
+  if (!cobro.procesador && cobro.total > 0) {
+    try {
+      cobro.procesador = pagos.procesadorDeCobro(c.metodo);
+    } catch (e) {
+      return fallo(res, e.codigo || 400, e.message);
+    }
+  }
 
   if (!(cobro.total > 0)) {
     const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
@@ -2171,6 +2299,13 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
     return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
   }
   if (r.estado !== 'aprobado') {
+    if (pago.procesador === 'transferencia') {
+      responder(res, 202, {
+        membresia: db.suscripcion(idSusc, org.id), cobro, comprobante: null,
+        pago: pagoPublico(r.pago), aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta(),
+      });
+      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
+    }
     return responder(res, 202, {
       membresia: db.suscripcion(idSusc, org.id), cobro, comprobante: null,
       pago: pagoPublico(r.pago), aviso: EN_PROCESO,
