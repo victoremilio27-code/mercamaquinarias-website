@@ -286,6 +286,11 @@ main { padding-block: 16px 40px; }
 
 .campo { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 10px; }
 .campo > label { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); }
+/* Rótulo de un grupo de casillas (no es un <label> de un solo control)
+   y ayuda bajo el control: los dos respetan las columnas de la rejilla,
+   o la ayuda caería en la columna estrecha del rótulo. */
+.campo > .campo__rotulo { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); align-self: start; }
+.campo > .campo-v__ayuda { grid-column: 2; margin-top: -4px; }
 
 .rango { display: flex; align-items: center; gap: 7px; }
 .rango span { font-size: 12px; color: var(--gris-acero); flex: none; }

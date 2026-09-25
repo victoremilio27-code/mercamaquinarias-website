@@ -627,12 +627,23 @@ function montarBuscador() {
    se puede compartir, marcar y volver atrás con el botón del
    navegador, que es lo que se espera de un catálogo. */
 const CAMPOS_BUSQUEDA = ['q', 'categoria', 'subcategoria', 'marca', 'provincia',
-  'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax'];
+  'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax',
+  'disponibilidad', 'permuta', 'itbis'];
 
 const ROTULO_FILTRO = {
   q: 'Búsqueda', categoria: 'Categoría', subcategoria: 'Tipo', marca: 'Marca',
   provincia: 'Provincia', condicion: 'Condición', anioMin: 'Desde', anioMax: 'Hasta',
   precioMin: 'Desde', precioMax: 'Hasta', horasMax: 'Hasta',
+  // «Venta» y no «Condición»: ese rótulo ya es el del estado del equipo.
+  disponibilidad: 'Dónde', permuta: 'Venta', itbis: 'Venta',
+};
+
+/* Lo que dice el chip de los filtros que no son una cifra ni un nombre:
+   el valor de la URL (`bajo-pedido`, `1`) no es algo que se lea. */
+const VALOR_FILTRO = {
+  disponibilidad: { 'en-pais': 'Ya en el país', 'bajo-pedido': 'Bajo pedido' },
+  permuta: { 1: 'Acepta permuta' },
+  itbis: { 1: 'ITBIS incluido' },
 };
 
 /* Enlaces de paginación. Se muestran ventanas de cinco páginas para
@@ -667,6 +678,11 @@ async function montarResultados() {
   const p = params();
   const filtros = {};
   CAMPOS_BUSQUEDA.forEach((k) => { filtros[k] = p.get(k) || ''; });
+  // Un valor que el servidor no reconoce (`permuta=si`) no filtra allí;
+  // aquí tampoco se enseña como aplicado, o el chip mentiría.
+  Object.keys(VALOR_FILTRO).forEach((k) => {
+    if (filtros[k] && !VALOR_FILTRO[k][filtros[k]]) filtros[k] = '';
+  });
 
   const form = $('#filtros');
   const mando = $('#ordenResultados');
@@ -681,6 +697,9 @@ async function montarResultados() {
     Object.entries(filtros).forEach(([k, v]) => {
       const campo = form.elements[k];
       if (!campo || !v) return;
+      // Una casilla se marca, no se reescribe: asignarle `value`
+      // cambiaría lo que manda al enviarse y la dejaría sin marcar.
+      if (campo.type === 'checkbox') { campo.checked = v === campo.value; return; }
       if (campo.tagName === 'SELECT' && ![...campo.options].some((o) => o.value === v)) {
         campo.add(new Option(v, v));
       }
@@ -723,6 +742,7 @@ async function montarResultados() {
       q.delete(k);
       q.delete('pagina');
       const valor = k === 'categoria' ? nombreCategoria(v)
+        : VALOR_FILTRO[k] ? (VALOR_FILTRO[k][v] || v)
         : /precio/i.test(k) ? pesos(v)
         : k === 'horasMax' ? `${miles(v)} h`
         : v;

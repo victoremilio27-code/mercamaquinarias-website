@@ -140,6 +140,23 @@
           <label for="f-lugar">Provincia</label>
           <select id="f-lugar" name="provincia" data-provincias><option value="">Todas las provincias</option></select>
         </div>
+        <!-- Si la máquina ya está aquí o hay que importarla. -->
+        <div class="campo">
+          <label for="f-disp">Dónde está</label>
+          <select id="f-disp" name="disponibilidad">
+            <option value="">En el país o bajo pedido</option>
+            <option value="en-pais">Ya en el país</option>
+            <option value="bajo-pedido">Bajo pedido</option>
+          </select>
+        </div>
+        <!-- Permuta e ITBIS incluido: antes solo se leían en la ficha. -->
+        <div class="campo" role="group" aria-labelledby="f-venta">
+          <span class="campo__rotulo" id="f-venta">Venta</span>
+          <div class="casillas">
+            <label class="casilla"><input type="checkbox" name="permuta" value="1"><span>Acepta permuta</span></label>
+            <label class="casilla"><input type="checkbox" name="itbis" value="1"><span>Precio con ITBIS incluido</span></label>
+          </div>
+        </div>
 
         <div class="form__pie">
           <a class="btn btn--linea" href="equipos.html">Limpiar</a>

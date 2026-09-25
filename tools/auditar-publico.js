@@ -132,9 +132,69 @@ async function vigilar(p, pagina) {
     const tel = await p.$('a[href^="tel:"], [data-telefono], .contacto__tel');
     console.log(`  contacto visible: ${tel ? 'sí' : 'NO'}`);
     if (!tel) anota('Ficha de equipo', 'ux', 'no se ve forma de contactar al vendedor');
+    // Fase 8 (CAT-02): la ficha dice si la máquina está en el país o es
+    // bajo pedido, sin tener que preguntarlo por teléfono.
+    const dispo = await p.$eval('.detalle__disponibilidad', (el) => el.textContent.trim()).catch(() => '');
+    console.log(`  dice dónde está: ${dispo ? dispo.slice(0, 40) : 'NO'}`);
+    if (!/República Dominicana|Bajo pedido/.test(dispo)) {
+      anota('Ficha de equipo', 'lógica', 'la ficha no dice si el equipo está en el país o es bajo pedido');
+    }
   } else {
     anota('Catálogo', 'lógica', 'ninguna tarjeta enlaza a la ficha del equipo');
   }
+
+  // ── Fase 8: moneda, disponibilidad, permuta e ITBIS como filtros ──
+  // La siembra de demostración trae un anuncio en US$ bajo pedido y
+  // otros con permuta y con ITBIS incluido: sin ellos no habría qué
+  // encontrar y estas comprobaciones darían falsos avisos.
+  await vigilar(p, 'Catálogo');
+  await p.goto(`${BASE}/equipos.html`, { waitUntil: 'networkidle0' });
+  await new Promise((r) => setTimeout(r, 500));
+  for (const [sel, que] of [
+    ['select[name="disponibilidad"]', 'el selector «Dónde está»'],
+    ['input[type="checkbox"][name="permuta"]', 'la casilla «Acepta permuta»'],
+    ['input[type="checkbox"][name="itbis"]', 'la casilla «Precio con ITBIS incluido»'],
+  ]) {
+    if (!(await p.$(sel))) anota('Catálogo', 'lógica', `falta ${que} en los filtros`);
+  }
+  const nota = await p.$eval('#notaTasa', (el) => (el.hidden ? '' : el.textContent)).catch(() => '');
+  console.log(`  nota de la tasa: ${nota || 'NO'}`);
+  if (!/US\$.*RD\$/.test(nota)) anota('Catálogo', 'ux', 'no se dice con qué tasa se comparan los precios en US$');
+
+  const conFiltro = async (consulta) => {
+    await p.goto(`${BASE}/equipos.html?${consulta}`, { waitUntil: 'networkidle0' });
+    await new Promise((r) => setTimeout(r, 600));
+    return p.evaluate(() => ({
+      tarjetas: [...document.querySelectorAll('.rejilla > li')].map((li) => li.innerText),
+      chips: document.querySelector('#chipsFiltros') ? document.querySelector('#chipsFiltros').innerText : '',
+      permuta: !!(document.querySelector('input[name="permuta"]') || {}).checked,
+      itbis: !!(document.querySelector('input[name="itbis"]') || {}).checked,
+      disponibilidad: (document.querySelector('select[name="disponibilidad"]') || {}).value,
+    }));
+  };
+
+  let v = await conFiltro('permuta=1');
+  console.log(`  ?permuta=1: ${v.tarjetas.length} resultados, casilla ${v.permuta ? 'marcada' : 'SIN MARCAR'}`);
+  if (!v.permuta) anota('Catálogo', 'lógica', '?permuta=1 no deja marcada la casilla');
+  if (!/Acepta permuta/.test(v.chips)) anota('Catálogo', 'lógica', '?permuta=1 no pinta su chip');
+  if (!v.tarjetas.length) anota('Catálogo', 'lógica', 'el filtro de permuta no devuelve nada con la siembra de demostración');
+
+  v = await conFiltro('itbis=1');
+  console.log(`  ?itbis=1: ${v.tarjetas.length} resultados, casilla ${v.itbis ? 'marcada' : 'SIN MARCAR'}`);
+  if (!v.itbis || !v.tarjetas.length) anota('Catálogo', 'lógica', 'el filtro de ITBIS incluido no funciona en pantalla');
+
+  v = await conFiltro('disponibilidad=bajo-pedido');
+  console.log(`  ?disponibilidad=bajo-pedido: ${v.tarjetas.length} resultados`);
+  if (v.disponibilidad !== 'bajo-pedido') anota('Catálogo', 'lógica', 'el selector no refleja ?disponibilidad=bajo-pedido');
+  if (!v.tarjetas.length || !v.tarjetas.every((t) => /Bajo pedido/.test(t))) {
+    anota('Catálogo', 'lógica', 'el filtro bajo pedido no devuelve solo tarjetas marcadas «Bajo pedido»');
+  }
+
+  // CAT-01 en pantalla: el anuncio en dólares entra en un rango en pesos.
+  v = await conFiltro('precioMin=6000000&orden=precio-desc');
+  const enDolares = v.tarjetas.some((t) => /US\$/.test(t));
+  console.log(`  «desde RD$6,000,000» incluye un anuncio en US$: ${enDolares ? 'sí' : 'NO'}`);
+  if (!enDolares) anota('Catálogo', 'lógica', 'un anuncio en US$ no entra en el rango «desde RD$6,000,000»');
 
   // Perfil público de dealer
   await vigilar(p, 'Perfil de dealer');
