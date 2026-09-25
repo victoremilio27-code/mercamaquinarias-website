@@ -145,7 +145,7 @@ huérfanos y sin duplicados.
 | CONF-02 | Phase 9 — Contactos verificados y estafas | Pendiente | `research/mercado.md`, huecos priorizados |
 | CONF-03 | Phase 9 — Contactos verificados y estafas | Pendiente | `PROJECT.md` Fase 1; créditos SMS pendientes |
 | MET-01 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-01` (evento y columna), `10-02` (guardar en la ficha) y `10-03` (compartidos y tarjeta del panel) |
-| MET-02 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`; metadatos ya en `tools/meta.js` |
+| MET-02 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-02` (botón compartir y metadatos) verificado en `10-04` con un navegador real |
 | MET-03 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-03`: `panel.html` lista cada contacto con su anuncio y su hora, filtrable por equipo y canal |
 | MET-04 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-03`: «Duplicar» en el panel precarga `publicar.html` sin el número de serie |
 | UI-01 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-05` y `02-06`: los literales congelados pasan a sus tokens y la única pieza fija deliberada que quedaba, la cuenta de fotos sobre la imagen, entra en las excepciones con su razón. `check-contraste` en 0 en las 17 rutas y los dos temas |

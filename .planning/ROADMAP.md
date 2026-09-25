@@ -42,7 +42,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
 - [ ] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana
-- [ ] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio
+- [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
 
@@ -208,7 +208,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 10-01-PLAN.md — Servidor: contactos atribuibles permanentes, guardados por ids, vista previa con miniatura, copia de un anuncio y borrado que respeta archivos compartidos (con `metricas:probar`)
 - [x] 10-02-PLAN.md — Ficha: guardar y compartir, y la página `guardados.html`
 - [x] 10-03-PLAN.md — Panel: contactos recibidos, compartidos en la tarjeta y duplicar hacia el asistente de publicar
-- [ ] 10-04-PLAN.md — Recorrido de navegador de los cuatro criterios dentro de `npm run auditar`
+- [x] 10-04-PLAN.md — Recorrido de navegador de los cuatro criterios dentro de `npm run auditar`
 **UI hint**: yes
 **Notas**: La infraestructura ya está y nadie la usa: la columna y el tipo de evento `favorito` y `compartir` existen en `tools/db.js` sin emisor, y los metadatos de compartir están hechos en `tools/meta.js`. Los eventos de métrica tienen deduplicación cubierta por `tools/probar-seguridad.js`: no se rompe.
 
@@ -308,7 +308,7 @@ entrega valor sin esperar a la siguiente.
 | 7. Verificación y soporte al dealer | 0/TBD | Not started | - |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |
 | 9. Contactos verificados y estafas | 0/TBD | Not started | - |
-| 10. Alcance y métricas del vendedor | 3/4 | In Progress|  |
+| 10. Alcance y métricas del vendedor | 4/4 | Complete   | 2026-09-25 |
 | 11. Transporte y financiamiento | 0/TBD | Not started | - |
 | 12. Lote mensual de comprobantes | 0/TBD | Not started | - |
 | 13. Deuda técnica | 0/TBD | Not started | - |
