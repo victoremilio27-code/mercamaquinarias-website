@@ -191,7 +191,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Un vendedor verifica su contacto por correo y ese contacto aparece en su anuncio; con los créditos SMS apagados, el correo basta.
   3. El día que se enciendan los SMS, la verificación por teléfono funciona sin volver a tocar el flujo.
   4. El aviso de la ficha lleva a una página de señales de estafa escrita para el mercado dominicano.
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 09-01-PLAN.md — Tabla de contactos verificados, código por número y SMS apagado tras el interruptor
+- [ ] 09-02-PLAN.md — Rutas de verificación y filtro público de la ficha; la semilla sale verificada
+- [ ] 09-03-PLAN.md — El vendedor verifica sus números desde el panel y desde el paso 4 de publicar
+- [ ] 09-04-PLAN.md — Ficha con teléfonos verificados y página de señales de estafa enlazada desde el aviso
 **UI hint**: yes
 **Notas**: Los créditos SMS de Brevo están pendientes de pago: la vía SMS se entrega construida y apagada tras el interruptor, igual que el resto. `tools/correo.js` es el único punto de envío y ya tiene transporte de archivo para desarrollo. La página de estafas es texto, no código, y no publica ningún teléfono.
 
