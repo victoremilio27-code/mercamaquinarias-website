@@ -201,6 +201,39 @@ async function bloqueMoneda() {
   comprobar(db.tasaUsd().tasa === 41.5 && db.tasaUsd().fuente === 'entorno',
     'sin ajuste, manda MERCA_TASA_USD (y admite la coma decimal)');
   delete process.env.MERCA_TASA_USD;
+
+  console.log('\nSolo un administrador cambia la tasa');
+  const ruta = '/api/admin/tasa-cambio';
+  let x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { tasa: 10 } });
+  comprobar(x.codigo === 404 || x.codigo === 401, `sin sesión no se cambia (respondió ${x.codigo})`);
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { tasa: 60 }, cabeceras: S.comoVendedor });
+  comprobar(x.codigo === 404, `un anunciante recibe 404 (respondió ${x.codigo})`);
+  comprobar(db.tasaUsd().fuente === 'defecto', 'y la tasa no se movió');
+  x = await pedir({ url: ruta, cabeceras: S.comoVendedor });
+  comprobar(x.codigo === 404, 'tampoco la puede leer por la ruta de administración');
+
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { tasa: '60.25' }, cabeceras: S.comoAdmin });
+  comprobar(x.codigo === 200 && x.datos.tasa === 60.25 && x.datos.fuente === 'ajuste',
+    `el administrador la fija en 60.25 (respondió ${x.codigo})`);
+  r = await catalogo('');
+  comprobar(r.tasaUsd.tasa === 60.25, 'y el catálogo compara con ella');
+
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { tasa: 630 }, cabeceras: S.comoAdmin });
+  comprobar(x.codigo === 400 && db.tasaUsd().tasa === 60.25, 'una tasa fuera de rango (630) se rechaza con 400 y no se guarda');
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { tasa: 'sesenta' }, cabeceras: S.comoAdmin });
+  comprobar(x.codigo === 400, 'un texto que no es número también');
+
+  x = await pedir({ url: ruta, cabeceras: S.comoAdmin });
+  comprobar(x.codigo === 200 && x.datos.porDefecto === precios.TASA_USD_POR_DEFECTO && x.datos.minimo === precios.TASA_USD_MIN,
+    'la lectura de administración dice la vigente, el rango y la de partida');
+
+  x = await pedir({ metodo: 'PATCH', url: ruta, cuerpo: { tasa: '' }, cabeceras: S.comoAdmin });
+  comprobar(x.codigo === 200 && x.datos.fuente === 'defecto' && x.datos.tasa === precios.TASA_USD_POR_DEFECTO,
+    'vacío vuelve a la de partida');
+
+  comprobar(api.ESCRITURAS_ADMIN_PROPIAS.size > 0
+    && api.RUTAS.some(([m, p, h]) => m === 'PATCH' && p.test(ruta) && api.ESCRITURAS_ADMIN_PROPIAS.has(h)),
+  'la escritura de la tasa está declarada como propia de la plataforma (no va a la bitácora)');
 }
 
 (async () => {

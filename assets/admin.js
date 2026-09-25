@@ -925,6 +925,7 @@ async function montarAdmin() {
   montarFlota();
   montarPub();
   montarHeroe();
+  montarTasa();
 }
 
 /* ── Fotografía de la portada ───────────────────────────────
@@ -1043,6 +1044,59 @@ async function montarHeroe() {
 
   montarLegales();
   montarFacturasAdmin();
+}
+
+/* ── Tasa de referencia del dólar ───────────────────────────
+   Con ella el catálogo compara los precios en US$ con los de RD$ al
+   filtrar y ordenar. La línea de origen dice de dónde sale la vigente:
+   «valor por defecto» es la señal de que nadie ha puesto la oficial. */
+const ORIGEN_TASA = {
+  ajuste: (t) => `Fijada por el equipo${t.actualizado ? ` el ${new Date(t.actualizado).toLocaleDateString('es-DO')}` : ''}`,
+  entorno: () => 'Tomada de la configuración del servidor',
+  defecto: () => 'Valor por defecto: todavía nadie ha fijado la tasa',
+};
+
+async function montarTasa() {
+  const form = $('#formTasa');
+  if (!form) return;
+
+  const aviso = (mensaje, ok = false) => {
+    const el = $('#avisoTasa');
+    el.hidden = !mensaje;
+    el.textContent = mensaje || '';
+    el.classList.toggle('acceso__aviso--ok', ok);
+  };
+
+  const pintar = (t) => {
+    if (!t) return;
+    $('#tasa-usd').value = t.tasa;
+    $('#tasaOrigen').textContent = (ORIGEN_TASA[t.fuente] || ORIGEN_TASA.defecto)(t);
+    if (t.minimo && t.maximo) {
+      $('#tasaAyuda').textContent = `Entre ${t.minimo} y ${t.maximo}, con hasta dos decimales.`;
+    }
+  };
+
+  const guardar = async (tasa, exito) => {
+    aviso('');
+    try {
+      const r = await api('/admin/tasa-cambio', { metodo: 'PATCH', cuerpo: { tasa } });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      pintar(r);
+      aviso(exito(r), true);
+    } catch (e) { aviso(e.message); }
+  };
+
+  pintar(await api('/admin/tasa-cambio', { silencioso: true }));
+
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const tasa = $('#tasa-usd').value.trim();
+    if (!tasa) return aviso('Escriba la tasa, o use «Volver al valor por defecto».');
+    return guardar(tasa, (r) => `Guardada: RD$${r.tasa} por dólar. El catálogo ya compara con ella.`);
+  });
+
+  $('#btnTasaDefecto').addEventListener('click', () =>
+    guardar('', (r) => `Se quitó la tasa fijada. Vuelve a valer RD$${r.tasa} por dólar.`));
 }
 
 /* ── Comprobantes ───────────────────────────────────────── */

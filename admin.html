@@ -360,6 +360,33 @@
       <p class="panel__nota">Sin fotografía fijada, la portada toma una de las últimas máquinas publicadas y cambia en cada visita. Si tampoco hay equipos publicados, se queda con la ilustración técnica.</p>
     </section>
 
+    <!-- Tasa de referencia del dólar. El catálogo la usa para comparar
+         precios en pesos y en dólares al filtrar y ordenar. El valor de
+         partida (assets/precios.js) no es la tasa oficial: se fija aquí. -->
+    <section class="panel" aria-labelledby="t-tasa">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-tasa"><em>Tasa</em> de referencia del dólar</h2>
+        <p class="panel__meta" id="tasaOrigen">&mdash;</p>
+      </div>
+
+      <p class="acceso__aviso" id="avisoTasa" role="alert" hidden></p>
+
+      <form id="formTasa" novalidate>
+        <div class="campos">
+          <label class="campo-v"><span>Pesos por dólar</span>
+            <input type="text" id="tasa-usd" inputmode="decimal" autocomplete="off" placeholder="Ej. 63.50">
+            <small class="campo-v__ayuda" id="tasaAyuda">Entre 20 y 200, con hasta dos decimales.</small>
+          </label>
+        </div>
+        <div class="acciones">
+          <button class="btn btn--ambar" type="submit">Guardar tasa</button>
+          <button class="btn btn--linea" type="button" id="btnTasaDefecto">Volver al valor por defecto</button>
+        </div>
+      </form>
+
+      <p class="panel__nota">Solo para comparar y ordenar precios del catálogo: con ella, un equipo publicado en US$ entra en el filtro «desde RD$…» y se ordena con los de pesos. Ningún precio publicado cambia.</p>
+    </section>
+
     <!-- Publicidad de la portada. Un espacio sin campaña vigente no se
          dibuja: la portada no muestra recuadros vacíos. -->
     <section class="panel" aria-labelledby="t-pub">

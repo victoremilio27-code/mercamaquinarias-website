@@ -844,6 +844,38 @@ const editarPortada = conAdmin(async (req, res) => {
   return responder(res, 200, { heroe: db.heroePortada() });
 });
 
+/* Tasa de referencia del dólar. Solo administración.
+
+   El catálogo la usa para COMPARAR precios en pesos y en dólares al
+   filtrar y ordenar; ningún precio publicado cambia con ella. Sin
+   fijar, vale la de MERCA_TASA_USD o la de partida de precios.js, que
+   no es la oficial: Victor la fija aquí. */
+const verTasaCambio = conAdmin((req, res) => responder(res, 200, {
+  ...db.tasaUsd(),
+  minimo: precios.TASA_USD_MIN,
+  maximo: precios.TASA_USD_MAX,
+  porDefecto: precios.TASA_USD_POR_DEFECTO,
+}));
+
+/* Vacío o null vuelve a la tasa de entorno o de partida. Fuera de rango
+   es un error de tecleo (630 por 63) y se rechaza: aceptarlo reordenaría
+   el catálogo entero sin que nadie lo notara. */
+const editarTasaCambio = conAdmin(async (req, res) => {
+  const c = await leerCuerpo(req);
+  const crudo = c.tasa == null ? '' : String(c.tasa).trim();
+  if (crudo === '') {
+    db.guardarAjuste('tasa_usd', '');
+  } else {
+    const tasa = precios.tasaValida(crudo);
+    if (!tasa) {
+      return fallo(res, 400,
+        `La tasa tiene que ser un número entre ${precios.TASA_USD_MIN} y ${precios.TASA_USD_MAX} pesos por dólar`);
+    }
+    db.guardarAjuste('tasa_usd', String(tasa));
+  }
+  return responder(res, 200, db.tasaUsd());
+});
+
 /* ── Rutas: solicitudes de servicio ─────────────────────────
    Alquiler, transporte e importación. Antes estos formularios no
    llegaban a ningún sitio: pintaban un resumen en pantalla y le pedían
@@ -2666,6 +2698,7 @@ const ESCRITURAS_ADMIN_PROPIAS = new Set([
      de tools/facturas.js. Pregunta abierta para Victor (D-01 de 04-01). */
   anularFactura,
   marcarSolicitudServicio, // la manda un visitante, no una organización; guarda atendida_por
+  editarTasaCambio,       // la tasa de referencia del catálogo es de la plataforma
 ]);
 
 const RUTAS = [
@@ -2741,6 +2774,10 @@ const RUTAS = [
   // Portada: fotografía del héroe y fotos por categoría.
   ['GET',   /^\/api\/portada$/,                         verPortada],
   ['PATCH', /^\/api\/admin\/portada$/,                  editarPortada],
+
+  // Tasa de referencia del dólar con que el catálogo compara precios.
+  ['GET',   /^\/api\/admin\/tasa-cambio$/,              verTasaCambio],
+  ['PATCH', /^\/api\/admin\/tasa-cambio$/,              editarTasaCambio],
 
   // Publicidad. La lectura y el clic son públicos; la gestión, no.
   ['GET',  /^\/api\/publicidad$/,                       listarPublicidad],

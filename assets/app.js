@@ -739,6 +739,15 @@ async function montarResultados() {
   const r = await buscarEquipos({ ...filtros, orden: p.get('orden'), pagina: p.get('pagina') });
   cont.setAttribute('aria-busy', 'false');
 
+  // Se dice con qué cambio se compararon los dólares: un comprador que
+  // filtra «desde RD$1,000,000» y ve un precio en US$ tiene que poder
+  // entender por qué está ahí.
+  const notaTasa = $('#notaTasa');
+  if (notaTasa && r.tasaUsd && r.tasaUsd.tasa) {
+    notaTasa.textContent = `Los precios en US$ se comparan a RD$${Number(r.tasaUsd.tasa).toLocaleString('en-US')} por dólar.`;
+    notaTasa.hidden = false;
+  }
+
   if (resumen) {
     resumen.innerHTML = r.total
       ? `<b class="num">${miles(r.total)}</b> ${r.total === 1 ? 'equipo' : 'equipos'}${
