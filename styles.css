@@ -3,6 +3,23 @@
    Tokens de la Guía de Marca v1.0 (2026)
    ═══════════════════════════════════════════════════════════ */
 
+/* Los var() de esta hoja NO llevan color de reserva. Se quitaron los 62 que
+   había. Mientras estaban, una definición que faltara se disimulaba sola y el
+   fallo salía a la luz meses después, en el tema que nadie miraba: los cinco
+   tokens semánticos vivían solo en el bloque oscuro y en claro los pintaba la
+   reserva, sin que nada lo delatara. Dos estaban además copiados cruzados, con
+   el valor del vecino, que es justo el error que esta costumbre producía y
+   escondía a la vez. Si ahora falta una definición, se rompe a la vista.
+
+   Quedan nueve var() con segundo argumento y NO son colores. No los quites:
+     - --avance, --uso, --muestra-alto y --pub-arranque los rellena el JS en
+       marcha. El segundo argumento es el valor de partida mientras el script
+       no ha corrido; sin él la cabecera pegajosa se solapa y las barras de
+       progreso arrancan descuadradas.
+     - --app-accent, --app-text y --app-muted encadenan a otro token de la guía
+       de marca, no a un color escrito a mano. Si el primero faltara, el
+       segundo tampoco lo taparía en silencio. */
+
 :root {
   /* Paleta de marca · MercaMaquinarias, guía v1.0.
      Los valores son EXACTAMENTE los de la guía; solo cambia el nombre
@@ -23,6 +40,14 @@
   --azul:        #071A2B;
   --blanco:      #FFFFFF;
   --ambar:       #F2A900;
+  /* --ambar-hondo tenía dos oficios y solo un valor. Como SUPERFICIE
+     —relleno de botón, cinta del plan, relleno de casilla marcada,
+     realce de borde— sigue siendo éste, que es el ámbar de la marca.
+     Como TEXTO sobre superficie clara se quedaba en 2.68:1 contra el
+     hueso del fondo y 2.95 contra la tarjeta, así que todos esos usos
+     pasaron a --ambar-texto (#8F6100 en claro, el mismo #F2A900 en
+     oscuro). Si añade un uso nuevo, la pregunta es qué pinta: letras
+     sobre algo claro van al de texto; lo demás, aquí. */
   --ambar-hondo: #C98A00;
   --hueso:       #F7F5EF;
   --gris-neutro: #E7E6E0;
@@ -116,7 +141,7 @@ button { font: inherit; }
 
 .skip {
   position: absolute; left: 12px; top: -60px; z-index: 100;
-  background: var(--ambar); color: var(--azul);
+  background: var(--ambar); color: var(--sobre-ambar);
   padding: 9px 16px; border-radius: var(--r);
   font-weight: 700; transition: top .18s ease;
 }
@@ -160,7 +185,7 @@ button { font: inherit; }
 
 .cab__nav { display: flex; align-items: center; gap: 21px; margin-right: auto; }
 .cab__nav a {
-  color: #D5DEE5;
+  color: var(--sobre-oscuro-2);
   font-size: 13.5px;
   font-weight: 600;
   padding: 4px 0;
@@ -188,7 +213,7 @@ button { font: inherit; }
   gap: 4px;
   margin-left: auto;
   background: transparent;
-  border: 1px solid var(--linea-dark);
+  border: 1px solid var(--app-borde-control);
   border-radius: var(--r);
   cursor: pointer;
 }
@@ -231,7 +256,7 @@ main { padding-block: 16px 40px; }
   margin-bottom: 14px;
   border-bottom: 1px solid var(--linea-suave);
 }
-.panel__titulo em { font-style: normal; color: var(--ambar-hondo); }
+.panel__titulo em { font-style: normal; color: var(--ambar-texto); }
 .panel__titulo--limpio { border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
 
 .panel__cabeza {
@@ -246,7 +271,7 @@ main { padding-block: 16px 40px; }
 }
 .panel__meta { font-size: 12.5px; color: var(--gris-acero); }
 
-.panel__texto { font-size: 13.5px; line-height: 1.62; color: var(--texto-2, #33475A); }
+.panel__texto { font-size: 13.5px; line-height: 1.62; color: var(--texto-2); }
 .panel__texto b { font-weight: 700; color: var(--azul); }
 
 /* ── Formulario de búsqueda ─────────────────────────────── */
@@ -271,13 +296,16 @@ select, .calc__campo input {
   height: 31px;
   padding: 0 8px;
   background: var(--blanco);
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: 4px;
   font-family: var(--cuerpo);
   font-size: 12.5px;
   color: var(--azul);
 }
-select:hover, .calc__campo input:hover { border-color: #C9C6BC; }
+/* El #C9C6BC de antes no existía en oscuro y en claro era MÁS pálido que
+   el borde de reposo (--app-borde-control): el realce apagaba el borde.
+   --gris-acero es más marcado que el de reposo en los dos temas. */
+select:hover, .calc__campo input:hover { border-color: var(--gris-acero); }
 select:focus, .calc__campo input:focus { outline: none; border-color: var(--ambar); box-shadow: 0 0 0 2px rgba(242, 169, 0, .2); }
 
 .form__pie {
@@ -289,7 +317,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 6px;
 }
 .form__enlaces { display: grid; gap: 3px; }
-.form__enlaces a { font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo); }
+.form__enlaces a { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
 .form__enlaces a:hover { text-decoration: underline; }
 
 /* ── Botones ────────────────────────────────────────────── */
@@ -315,7 +343,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .btn--ambar:hover { background: var(--ambar-hondo); }
 .btn--azul { background: var(--azul); color: var(--blanco); }
 .btn--azul:hover { background: var(--azul-2); }
-.btn--linea { background: transparent; color: var(--azul); border-color: var(--linea); }
+.btn--linea { background: transparent; color: var(--azul); border-color: var(--app-borde-control); }
 .btn--linea:hover { background: var(--hueso); border-color: var(--ambar); }
 .btn--bloque { width: 100%; height: 38px; margin-top: 14px; }
 .btn--grande { height: 42px; padding: 0 24px; font-size: 14.5px; }
@@ -332,7 +360,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-weight: 600;
   transition: color .15s ease;
 }
-.tipos a:hover { color: var(--ambar-hondo); }
+.tipos a:hover { color: var(--ambar-texto); }
 .tipos b { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--gris-acero); }
 
 .tipos__ico {
@@ -342,11 +370,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 30px; height: 30px;
   border-radius: 7px;
   background: rgba(242, 169, 0, .12);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .tipos__ico .ico { width: 19px; height: 19px; }
 
-.tipos__todos a { justify-content: flex-end; color: var(--ambar-hondo); font-size: 12.5px; }
+.tipos__todos a { justify-content: flex-end; color: var(--ambar-texto); font-size: 12.5px; }
 
 /* ── Destacados ─────────────────────────────────────────── */
 
@@ -376,7 +404,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r-tarjeta);
   transition: border-color .15s ease, background-color .15s ease;
 }
-.dest:hover { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.dest:hover { border-color: var(--ambar); background: var(--sup-calida); }
 
 .dest__foto {
   display: flex;
@@ -402,7 +430,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .panel__nota { margin-top: 9px; font-size: 11.5px; line-height: 1.5; color: var(--gris-acero); }
 
 .tipos__pie { padding-top: 9px; border-top: 1px solid var(--linea-suave); text-align: right; }
-.tipos__pie a { font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo); }
+.tipos__pie a { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
 .tipos__pie a:hover { text-decoration: underline; }
 
 /* Marca de esquina: destacado / verificado */
@@ -412,7 +440,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   z-index: 2;
   padding: 3px 9px;
   background: var(--ambar);
-  color: var(--azul);
+  color: var(--sobre-ambar);
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: .04em;
@@ -430,7 +458,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero);
 }
 .datos-linea li { display: flex; align-items: center; gap: 6px; }
-.datos-linea .ico { width: 15px; height: 15px; color: var(--ambar-hondo); }
+.datos-linea .ico { width: 15px; height: 15px; color: var(--ambar-texto); }
 
 /* ── Calculadora ────────────────────────────────────────── */
 
@@ -481,7 +509,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   gap: 8px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--texto-2, #33475A);
+  color: var(--texto-2);
 }
 .lista-punteada a::before {
   content: "";
@@ -491,7 +519,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   background: var(--ambar);
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
 }
-.lista-punteada a:hover { color: var(--ambar-hondo); }
+.lista-punteada a:hover { color: var(--ambar-texto); }
 
 .pastilla {
   display: inline-flex;
@@ -505,7 +533,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .pastilla .ico { width: 12px; height: 12px; stroke-width: 2.6; }
 /* El verde solo comunica confianza verificada. */
-.pastilla--verde { background: rgba(21, 122, 75, .1); color: var(--verde); }
+/* Letra en --texto-ok y no en --verde: el verde de marca sobre su propio
+   tinte quedaba a 4.04:1 en claro. El tinte se queda; es relleno. */
+.pastilla--verde { background: rgba(21, 122, 75, .1); color: var(--texto-ok); }
 
 .nota-verificado {
   margin-top: 14px;
@@ -524,14 +554,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   align-items: center;
   justify-content: center;
   min-height: 96px;
-  background: repeating-linear-gradient(135deg, #F2F0EA 0 10px, #EDEBE4 10px 20px);
-  border: 1px dashed #CFCCC2;
+  background: repeating-linear-gradient(135deg, var(--app-bg) 0 10px, var(--app-soft) 10px 20px);
+  border: 1px dashed var(--linea);
   border-radius: var(--r-tarjeta);
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: #9E9C93;
+  color: var(--app-muted);
 }
 .anuncio--ancho { min-height: 90px; margin-bottom: var(--gap); }
 
@@ -599,7 +629,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-size: 14px;
   color: var(--azul);
 }
-.heroe__buscar input::placeholder { color: #92A0AA; }
+.heroe__buscar input::placeholder { color: var(--app-muted); }
 .heroe__buscar input:focus-visible, .heroe__buscar select:focus-visible {
   outline: 2px solid var(--ambar); outline-offset: 1px;
 }
@@ -655,7 +685,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero);
   transition: color .15s ease;
 }
-.marcas a:hover { color: var(--ambar-hondo); }
+.marcas a:hover { color: var(--ambar-texto); }
 
 /* ── Rejilla de anuncios ────────────────────────────────── */
 
@@ -691,7 +721,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   line-height: 1.32;
   transition: color .15s ease;
 }
-.aviso a:hover .aviso__nombre { color: var(--ambar-hondo); }
+.aviso a:hover .aviso__nombre { color: var(--ambar-texto); }
 
 .aviso__specs { font-size: 11.5px; color: var(--gris-acero); }
 
@@ -708,9 +738,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   position: absolute; right: 6px; bottom: 6px;
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 7px;
-  background: rgba(7, 26, 43, .78);
+  background: var(--velo-foto);
   border-radius: 999px;
-  font-size: 11px; font-weight: 600; color: var(--blanco);
+  font-size: 11px; font-weight: 600; color: var(--sobre-oscuro);
 }
 .aviso__fotos .ico { width: 12px; height: 12px; stroke-width: 2; }
 
@@ -772,14 +802,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-bottom: 4px;
   border-radius: 7px;
   background: rgba(242, 169, 0, .14);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .dealer__nombre { font-size: 13px; font-weight: 700; line-height: 1.3; }
 .dealer__meta { font-size: 11.5px; color: var(--gris-acero); margin-bottom: 6px; }
 /* El sello se ancla abajo para que no lo desalinee un nombre de dos líneas. */
 .dealer .pastilla { margin-top: auto; }
 
-.enlace-mas { font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo); }
+.enlace-mas { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
 .enlace-mas:hover { text-decoration: underline; }
 
 /* ── Pie ────────────────────────────────────────────────── */
@@ -844,7 +874,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-size: 13px;
   line-height: 1.5;
 }
-.realce .ico { margin-top: 1px; color: var(--ambar-hondo); width: 16px; height: 16px; }
+.realce .ico { margin-top: 1px; color: var(--ambar-texto); width: 16px; height: 16px; }
 .realce b { font-weight: 700; }
 
 /* ── Oferta de lanzamiento (portada) ─────────────────────────
@@ -852,22 +882,25 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
    compensa publicar hoy en vez de dentro de tres meses, y como renglón
    gris junto a los demás no la leía nadie.
 
-   La caja va SIEMPRE en ámbar con tinta azul noche, en los dos temas.
-   Los valores van literales y no por token a propósito: en oscuro,
-   `--azul` pasa a ser #F7F5EF y `--blanco` a #0B0C0C —los roles se
-   invierten— así que `color: var(--azul)` habría dejado texto casi
-   blanco sobre ámbar al cambiar de tema. El ámbar de marca no se
-   redefine, de modo que con la tinta fija el contraste es el mismo
-   siempre: 10.4:1. */
+   La caja va SIEMPRE en ámbar con tinta oscura, en los dos temas. No
+   vale `color: var(--azul)`: en oscuro `--azul` pasa a ser #F7F5EF y
+   habría dejado texto casi blanco sobre ámbar. La tinta es
+   --sobre-ambar, que vale lo mismo en los dos bloques (antes era el
+   azul noche #071A2B de la marca vieja, escrito a mano): 10.9:1.
+
+   El ámbar liso debajo del degradado no se ve, pero es el color de
+   fondo de la caja: sin él, quien calcula el fondo (el navegador para
+   el contraste, el comprobador del 02-03) veía la página de detrás y
+   medía tinta oscura sobre el fondo oscuro del tema. */
 .oferta {
-  --oferta-tinta: #071A2B;
+  --oferta-tinta: var(--sobre-ambar);
 
   position: relative;
   overflow: hidden;
   margin-top: 14px;
   padding: 18px 20px;
   border-radius: var(--r-tarjeta);
-  background: linear-gradient(135deg, #E09C00 0%, var(--ambar) 45%, #FFCF63 100%);
+  background: var(--ambar) linear-gradient(135deg, #E09C00 0%, var(--ambar) 45%, #FFCF63 100%);
   color: var(--oferta-tinta);
   box-shadow: 0 12px 30px rgba(242, 169, 0, .3);
 }
@@ -917,7 +950,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: flex; flex-wrap: wrap; align-items: center;
   justify-content: space-between; gap: 8px 14px;
   margin-top: 15px; padding-top: 12px;
-  border-top: 1px solid rgba(7, 26, 43, .22);
+  border-top: 1px solid rgba(21, 21, 21, .22);   /* la tinta de la caja, al 22 % */
   font-size: 12.5px; font-weight: 600;
 }
 
@@ -951,7 +984,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   gap: 8px;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--texto-2, #33475A);
+  color: var(--texto-2);
 }
 .lista-punteada--pasos li::before {
   content: "";
@@ -966,7 +999,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .panel--servicio .btn--bloque { margin-top: auto; }
 
 .servicio__puntos { display: grid; gap: 8px; margin: 14px 0 4px; }
-.servicio__puntos li { display: flex; gap: 9px; font-size: 13px; line-height: 1.5; color: var(--texto-2, #33475A); }
+.servicio__puntos li { display: flex; gap: 9px; font-size: 13px; line-height: 1.5; color: var(--texto-2); }
 .servicio__puntos .ico { flex: none; margin-top: 1px; width: 15px; height: 15px; stroke-width: 2.4; color: var(--verde); }
 
 .marcas__nota { margin-left: auto; font-size: 11.5px; color: var(--gris-acero); white-space: nowrap; }
@@ -979,13 +1012,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   gap: 7px;
   padding: 4px 11px;
   background: var(--hueso);
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
 }
 .chip span { color: var(--gris-acero); font-weight: 400; }
-.chip:hover { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.chip:hover { border-color: var(--ambar); background: var(--sup-calida); }
 /* El nombre del filtro dentro del chip: sin él, "2019" y "Santiago"
    no dicen por qué campo se está filtrando. */
 .chip__clave { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
@@ -1008,11 +1041,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 34px; height: 32px; padding: 0 11px;
   background: var(--blanco);
-  border: 1px solid var(--linea); border-radius: 4px;
+  border: 1px solid var(--app-borde-control); border-radius: 4px;
   font-size: 12.5px; font-weight: 600; color: var(--azul);
   transition: border-color .15s ease, background .15s ease;
 }
-.paginacion__it:hover { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.paginacion__it:hover { border-color: var(--ambar); background: var(--sup-calida); }
 .paginacion__it[aria-current="page"] {
   background: var(--azul); border-color: var(--azul); color: var(--blanco);
 }
@@ -1040,7 +1073,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* Un bloque vacío siempre ofrece la salida: quien llega y no encuentra
    nada tiene que saber qué hacer, no quedarse mirando un hueco. */
 .vacio-min { padding: 20px 4px; font-size: 12.5px; line-height: 1.6; color: var(--gris-acero); }
-.vacio-min a { font-weight: 600; color: var(--ambar-hondo); text-decoration: underline; }
+.vacio-min a { font-weight: 600; color: var(--ambar-texto); text-decoration: underline; }
 .vacio-min--ancho { grid-column: 1 / -1; padding: 34px 20px; text-align: center; }
 
 /* ── Encabezado de página interior ──────────────────────── */
@@ -1057,12 +1090,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.022em;
   line-height: 1.1;
 }
-.pagina__titulo em { font-style: normal; color: var(--ambar-hondo); }
+.pagina__titulo em { font-style: normal; color: var(--ambar-texto); }
 .pagina__sub { margin-top: 9px; max-width: 66ch; font-size: 14px; line-height: 1.6; color: var(--gris-acero); }
 
 .miga { font-size: 12px; color: var(--gris-acero); margin-bottom: 12px; }
 .miga a { font-weight: 600; }
-.miga a:hover { color: var(--ambar-hondo); }
+.miga a:hover { color: var(--ambar-texto); }
 
 .barra-resultados {
   display: flex;
@@ -1137,7 +1170,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .detalle__ofertas { font-size: 12.5px; color: var(--verde); font-weight: 600; margin-top: 4px; }
 .detalle__dealer { margin-top: 12px; font-size: 12.5px; color: var(--gris-acero); }
-.detalle__dealer a { font-weight: 600; color: var(--ambar-hondo); }
+.detalle__dealer a { font-weight: 600; color: var(--ambar-texto); }
 
 .ficha-tecnica { margin: 16px 0 0; border-top: 1px solid var(--linea-suave); }
 .ficha-tecnica > div {
@@ -1150,7 +1183,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .ficha-tecnica dt { color: var(--gris-acero); }
 .ficha-tecnica dd { margin: 0; font-weight: 600; text-align: right; }
-.ficha-tecnica dd a { color: var(--ambar-hondo); }
+.ficha-tecnica dd a { color: var(--ambar-texto); }
 
 /* ── Tarjetas de categoría ──────────────────────────────── */
 
@@ -1165,7 +1198,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   overflow: hidden;
   transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
-.cat-tarjeta:hover { border-color: var(--ambar); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(7, 26, 43, .07); }
+.cat-tarjeta:hover { border-color: var(--ambar); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(20, 22, 22, .07); }
 
 .cat-tarjeta__foto {
   position: relative;
@@ -1189,7 +1222,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 32px; height: 32px;
   border-radius: 8px;
   background: var(--ambar);
-  color: var(--azul);
+  color: var(--sobre-ambar);
 }
 .cat-tarjeta__cuerpo { display: grid; grid-template-rows: minmax(42px, auto) auto; gap: 6px; padding: 16px; text-align: left; }
 .cat-tarjeta__nombre { display: block; min-width: 0; font-family: var(--display); font-weight: 700; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
@@ -1210,9 +1243,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .fin__cabeza { padding-bottom: 10px; margin-bottom: 11px; border-bottom: 1px solid var(--linea-suave); }
 .fin__nombre { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: -.014em; margin-top: 3px; }
-.fin__enfoque { font-size: 13px; line-height: 1.6; color: var(--texto-2, #33475A); margin-bottom: 13px; }
+.fin__enfoque { font-size: 13px; line-height: 1.6; color: var(--texto-2); margin-bottom: 13px; }
 .fin__req { display: grid; gap: 5px; margin: 7px 0 14px; }
-.fin__req li { display: flex; gap: 8px; font-size: 12.5px; color: var(--texto-2, #33475A); }
+.fin__req li { display: flex; gap: 8px; font-size: 12.5px; color: var(--texto-2); }
 .fin__req li::before {
   content: "";
   flex: none;
@@ -1225,7 +1258,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .fin__contacto > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 12.5px; }
 .fin__contacto dt { color: var(--gris-acero); }
 .fin__contacto dd { margin: 0; font-weight: 600; text-align: right; }
-.fin__contacto a { color: var(--ambar-hondo); }
+.fin__contacto a { color: var(--ambar-texto); }
 
 /* ── Planes de publicación ──────────────────────────────── */
 
@@ -1264,12 +1297,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 2px 7px;
   border-radius: 999px;
   background: rgba(21, 122, 75, .12);
-  color: var(--verde);
+  color: var(--texto-ok);
   font-size: 10.5px;
   font-weight: 700;
 }
 .duracion__op input:checked + span { background: var(--azul); color: var(--blanco); }
-.duracion__op input:checked + span b { background: var(--ambar); color: var(--azul); }
+.duracion__op input:checked + span b { background: var(--ambar); color: var(--sobre-ambar); }
 .duracion__op input:focus-visible + span { outline: 2px solid var(--ambar); outline-offset: 2px; }
 
 /* ── Planes ─────────────────────────────────────────────── */
@@ -1304,7 +1337,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   top: -1px; right: -1px;
   padding: 3px 10px;
   background: var(--ambar);
-  color: var(--azul);
+  color: var(--sobre-ambar);
   font-size: 10.5px;
   font-weight: 700;
   border-radius: 0 var(--r) 0 5px;
@@ -1338,10 +1371,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: 5px;
   font-size: 11.5px;
   font-weight: 700;
-  color: var(--verde);
+  color: var(--texto-ok);
 }
 .plan__ahorro span { font-weight: 500; color: var(--gris-acero); }
-.plan__ahorro--par { background: rgba(242, 169, 0, .12); color: var(--ambar-hondo); }
+.plan__ahorro--par { background: rgba(242, 169, 0, .12); color: var(--ambar-texto); }
 
 /* Precio que regirá cuando la promo termine: se dice de frente. */
 .plan__despues {
@@ -1371,12 +1404,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 10px;
   font-size: 11.5px;
   line-height: 1.45;
-  color: var(--texto-2, #33475A);
+  color: var(--texto-2);
 }
-.plan__portada .ico { flex: none; margin-top: 1px; width: 14px; height: 14px; color: var(--ambar-hondo); }
+.plan__portada .ico { flex: none; margin-top: 1px; width: 14px; height: 14px; color: var(--ambar-texto); }
 
 .plan__incluye { display: grid; gap: 7px; margin: 14px 0 16px; }
-.plan__incluye li { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; color: var(--texto-2, #33475A); }
+.plan__incluye li { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; color: var(--texto-2); }
 .plan__incluye li::before {
   content: "";
   flex: none;
@@ -1406,7 +1439,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 100%;
   padding: 8px 10px;
   background: var(--blanco);
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: 4px;
   font-family: var(--cuerpo);
   font-size: 13px;
@@ -1464,14 +1497,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   transition: border-color .15s ease, background-color .15s ease;
 }
 .alq:hover { border-color: var(--ambar); }
-.alq:has(input:checked) { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.alq:has(input:checked) { border-color: var(--ambar); background: var(--sup-calida); }
 .alq input { width: 16px; height: 16px; accent-color: var(--ambar-hondo); }
 .alq__ico {
   display: flex; align-items: center; justify-content: center;
   width: 30px; height: 30px;
   border-radius: 7px;
   background: rgba(242, 169, 0, .12);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .alq__nombre { display: block; font-size: 13px; font-weight: 600; }
 .alq__detalle { display: block; font-size: 11.5px; color: var(--gris-acero); }
@@ -1488,8 +1521,8 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .resumen__lista > div { display: flex; justify-content: space-between; gap: 14px; padding: 5px 0; border-bottom: 1px solid var(--linea-suave); font-size: 12.5px; }
 .resumen__lista dt { color: var(--gris-acero); }
 .resumen__lista dd { margin: 0; font-weight: 600; text-align: right; }
-.resumen__nota { margin-top: 12px; font-size: 12.5px; line-height: 1.6; color: var(--texto-2, #33475A); }
-.resumen__nota a { font-weight: 700; color: var(--ambar-hondo); }
+.resumen__nota { margin-top: 12px; font-size: 12.5px; line-height: 1.6; color: var(--texto-2); }
+.resumen__nota a { font-weight: 700; color: var(--ambar-texto); }
 
 /* ── Mapa de seguimiento ────────────────────────────────── */
 
@@ -1506,7 +1539,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   height: 36px;
   padding: 0 11px;
   background: var(--blanco);
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: 4px;
   font-family: var(--cuerpo);
   font-size: 13px;
@@ -1546,7 +1579,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .aviso-demo .ico { width: 13px; height: 13px; stroke-width: 2.2; }
 
-.mapa__pais { fill: var(--gris-neutro); stroke: #D2CFC5; stroke-width: 1.5; stroke-linejoin: round; }
+.mapa__pais { fill: var(--gris-neutro); stroke: var(--linea); stroke-width: 1.5; stroke-linejoin: round; }
 .mapa__ref { fill: var(--gris-acero); opacity: .45; }
 .mapa__ref-txt {
   fill: var(--gris-acero);
@@ -1639,7 +1672,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
   background: currentColor;
 }
-.estado--ruta      { color: var(--ambar-hondo); }
+.estado--ruta      { color: var(--ambar-texto); }
 .estado--cargando  { color: var(--gris-acero); }
 .estado--entregado { color: var(--verde); }
 .estado--sin       { color: var(--gris-acero); }
@@ -1662,7 +1695,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 34px; height: 34px;
   border-radius: 8px;
   background: rgba(242, 169, 0, .13);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .cama__ico .ico { width: 21px; height: 21px; }
 .cama__nombre { display: block; font-size: 13.5px; font-weight: 700; }
@@ -1690,15 +1723,15 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.008em;
 }
 .bloque__titulo:first-child { margin-top: 4px; }
-.bloque__titulo .ico { width: 17px; height: 17px; color: var(--ambar-hondo); }
+.bloque__titulo .ico { width: 17px; height: 17px; color: var(--ambar-texto); }
 
 .acciones { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
 .acciones--pie { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--linea-suave); }
 
 .form-largo { margin-top: 14px; }
 
-.prosa { font-size: 13.5px; line-height: 1.68; color: var(--texto-2, #33475A); max-width: 70ch; }
-.prosa a { font-weight: 600; color: var(--ambar-hondo); }
+.prosa { font-size: 13.5px; line-height: 1.68; color: var(--texto-2); max-width: 70ch; }
+.prosa a { font-weight: 600; color: var(--ambar-texto); }
 .prosa a:hover { text-decoration: underline; }
 .prosa p + p { margin-top: 11px; }
 .prosa h3 { font-family: var(--display); font-weight: 700; font-size: 16px; color: var(--azul); margin: 18px 0 7px; }
@@ -1721,7 +1754,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  color: var(--gris-acero, #60717D);
+  color: var(--gris-acero);
 }
 
 /* Título de panel pequeño, para los formularios internos. */
@@ -1743,12 +1776,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-family: var(--display);
   font-weight: 800;
   font-size: 15px;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
   line-height: 1.5;
 }
 .indice-legal a { font-weight: 600; color: var(--azul); }
-.indice-legal a:hover { color: var(--ambar-hondo); text-decoration: underline; }
-.indice-legal span { font-size: 12.5px; line-height: 1.5; color: var(--gris-acero, #60717D); }
+.indice-legal a:hover { color: var(--ambar-texto); text-decoration: underline; }
+.indice-legal span { font-size: 12.5px; line-height: 1.5; color: var(--gris-acero); }
 
 /* Al saltar desde el índice, el título no se queda pegado al borde de
    arriba ni escondido bajo la barra fija. */
@@ -1772,13 +1805,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin-bottom: var(--gap);
   padding: 11px 14px;
-  background: var(--sup-calida, #FFFDF7);
+  background: var(--sup-calida);
   border: 1px solid var(--ambar);
   border-left: 3px solid var(--ambar);
   border-radius: var(--r);
   font-size: 12.5px;
 }
-.aviso-borrador .ico { color: var(--ambar-hondo); }
+.aviso-borrador .ico { color: var(--ambar-texto); }
 .aviso-borrador span { flex: 1; min-width: 200px; }
 .aviso-borrador .btn { height: 30px; padding: 0 12px; font-size: 12px; }
 
@@ -1820,8 +1853,8 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .pasos__cuerpo b { font-size: 12.5px; font-weight: 700; color: var(--azul); }
 .pasos__cuerpo span { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.pasos__it--activo .pasos__btn { background: var(--sup-calida, #FFFDF7); border-color: var(--ambar); }
-.pasos__it--activo .pasos__num { background: var(--ambar); }
+.pasos__it--activo .pasos__btn { background: var(--sup-calida); border-color: var(--ambar-texto); }
+.pasos__it--activo .pasos__num { background: var(--ambar); color: var(--sobre-ambar); }
 .pasos__it--hecho .pasos__num { background: var(--verde); color: var(--blanco); }
 .pasos__it--hecho .pasos__cuerpo b { color: var(--gris-acero); }
 
@@ -1856,23 +1889,23 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: flex; align-items: flex-start; gap: 8px;
   margin-bottom: 14px;
   padding: 10px 13px;
-  background: var(--sup-error, #FDF3F3);
-  border: 1px solid #E8C4C4;
-  border-left: 3px solid #B3261E;
+  background: var(--sup-error);
+  border: 1px solid var(--borde-error);
+  border-left: 3px solid var(--texto-peligro);
   border-radius: var(--r);
   font-size: 12.5px;
-  color: var(--texto-error, #7A1B15);
+  color: var(--texto-error);
 }
-.paso__aviso .ico { color: #B3261E; margin-top: 1px; }
+.paso__aviso .ico { color: var(--texto-error); margin-top: 1px; }
 
-.campo-v--error input, .campo-v--error select, .campo-v--error textarea { border-color: #B3261E; }
-.campo-v__error { font-size: 11.5px; font-weight: 600; color: #B3261E; }
+.campo-v--error input, .campo-v--error select, .campo-v--error textarea { border-color: var(--texto-peligro); }
+.campo-v__error { font-size: 11.5px; font-weight: 600; color: var(--texto-peligro); }
 .campo-v--inactivo > span { opacity: .55; }
 
 .campo-doble { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 8px; }
 .campo-doble input, .campo-doble select {
   width: 100%; height: 36px; padding: 0 10px;
-  background: var(--blanco); border: 1px solid var(--linea); border-radius: 4px;
+  background: var(--blanco); border: 1px solid var(--app-borde-control); border-radius: 4px;
   font-family: var(--cuerpo); font-size: 13px; color: var(--azul);
 }
 
@@ -1891,7 +1924,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   transition: border-color .15s ease, background-color .15s ease;
 }
 .opcion:hover { border-color: var(--ambar); }
-.opcion:has(input:checked) { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); box-shadow: 0 0 0 2px rgba(242, 169, 0, .14); }
+.opcion:has(input:checked) { border-color: var(--ambar); background: var(--sup-calida); box-shadow: 0 0 0 2px rgba(242, 169, 0, .14); }
 .opcion input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--ambar-hondo); }
 .opcion__cuerpo { display: grid; gap: 2px; }
 .opcion__nombre { font-size: 13px; font-weight: 700; }
@@ -1905,7 +1938,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 18px; padding: 12px 14px;
   background: var(--hueso); border: 1px solid var(--linea); border-radius: var(--r);
 }
-.casilla--condiciones a { font-weight: 700; color: var(--ambar-hondo); text-decoration: underline; }
+.casilla--condiciones a { font-weight: 700; color: var(--ambar-texto); text-decoration: underline; }
 
 .btn--chico { height: 32px; padding: 0 13px; font-size: 12.5px; margin-top: 10px; }
 
@@ -1920,15 +1953,15 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   text-align: center;
   transition: border-color .15s ease, background-color .15s ease;
 }
-.zona-fotos--activa { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.zona-fotos--activa { border-color: var(--ambar); background: var(--sup-calida); }
 .zona-fotos--cargando { opacity: .6; pointer-events: none; }
-.zona-fotos__ico { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; color: var(--ambar-hondo); }
+.zona-fotos__ico { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; color: var(--ambar-texto); }
 .zona-fotos__titulo { font-size: 13.5px; font-weight: 600; }
 .zona-fotos__nota { font-size: 11.5px; color: var(--gris-acero); }
 .zona-fotos__btn { margin-top: 8px; cursor: pointer; }
 
 .contador-fotos { margin-top: 12px; font-size: 12.5px; color: var(--gris-acero); }
-.cuenta-aviso { color: #B3261E; font-weight: 600; }
+.cuenta-aviso { color: var(--texto-peligro); font-weight: 600; }
 
 .fotos {
   display: grid;
@@ -1951,17 +1984,17 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .foto__sello {
   position: absolute; top: 6px; left: 6px;
   padding: 2px 7px;
-  background: var(--ambar); color: var(--azul);
+  background: var(--ambar); color: var(--sobre-ambar);
   border-radius: 3px;
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
 }
-.foto__sello--aviso { background: #B3261E; color: var(--blanco); }
+.foto__sello--aviso { background: var(--sup-error); color: var(--texto-error); }
 
 .foto__mandos {
   position: absolute; inset: auto 0 0 0;
   display: flex; justify-content: center; gap: 4px;
   padding: 5px;
-  background: linear-gradient(transparent, rgba(7, 26, 43, .82));
+  background: linear-gradient(transparent, var(--velo-foto));
 }
 .foto__btn {
   display: flex; align-items: center; justify-content: center;
@@ -1974,7 +2007,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .foto__btn:disabled { opacity: .35; cursor: default; }
 .foto__btn:not(:disabled):hover { background: var(--ambar); }
-.foto__btn--quitar:not(:disabled):hover { background: #B3261E; color: var(--blanco); }
+.foto__btn--quitar:not(:disabled):hover { background: var(--sup-error); color: var(--texto-error); }
 .foto__btn .ico { width: 13px; height: 13px; }
 
 /* ── Teléfonos ──────────────────────────────────────────── */
@@ -1989,14 +2022,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border: 1px solid var(--linea);
   border-radius: var(--r);
 }
-.telefono__ico { display: flex; color: var(--ambar-hondo); }
+.telefono__ico { display: flex; color: var(--ambar-texto); }
 .telefono__quitar {
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px;
-  background: transparent; border: 1px solid var(--linea); border-radius: 4px;
+  background: transparent; border: 1px solid var(--app-borde-control); border-radius: 4px;
   color: var(--gris-acero); cursor: pointer;
 }
-.telefono__quitar:not(:disabled):hover { border-color: #B3261E; color: #B3261E; }
+.telefono__quitar:not(:disabled):hover { border-color: var(--texto-peligro); color: var(--texto-peligro); }
 .telefono__quitar:disabled { opacity: .35; cursor: default; }
 .telefono__quitar .ico { width: 14px; height: 14px; }
 
@@ -2020,7 +2053,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .plan-op:hover { border-color: var(--ambar); }
 .plan-op--sugerido { border-color: var(--ambar); }
-.plan-op--elegido { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); box-shadow: 0 0 0 3px rgba(242, 169, 0, .18); }
+.plan-op--elegido { border-color: var(--ambar); background: var(--sup-calida); box-shadow: 0 0 0 3px rgba(242, 169, 0, .18); }
 .plan-op input { position: absolute; opacity: 0; pointer-events: none; }
 
 /* El distintivo ocupa su propia fila y esa fila se reserva en todas
@@ -2036,7 +2069,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .plan-op__hueco { height: 16px; }
 .plan-op__cinta {
   padding: 2px 7px;
-  background: var(--ambar); color: var(--azul);
+  background: var(--ambar); color: var(--sobre-ambar);
   border-radius: 3px;
   font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
 }
@@ -2052,11 +2085,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 7px; padding: 2px 8px;
   background: rgba(21, 122, 75, .12);
   border-radius: 3px;
-  font-size: 11px; font-weight: 700; color: var(--verde);
+  font-size: 11px; font-weight: 700; color: var(--texto-ok);
 }
 .plan-op__cuantas { margin-top: 6px; font-weight: 600; color: var(--azul); }
 .plan-op__incluye { display: grid; gap: 5px; margin-top: 10px; }
-.plan-op__incluye li { display: flex; gap: 6px; font-size: 11.5px; line-height: 1.45; color: var(--texto-2, #33475A); }
+.plan-op__incluye li { display: flex; gap: 6px; font-size: 11.5px; line-height: 1.45; color: var(--texto-2); }
 .plan-op__incluye .ico { width: 13px; height: 13px; flex: none; margin-top: 2px; color: var(--verde); }
 
 /* ── Resumen del pedido y pago ──────────────────────────── */
@@ -2074,7 +2107,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .pedido__total dt { font-weight: 700; color: var(--azul) !important; }
 .pedido__total dd { font-family: var(--display); font-weight: 800; font-size: 17px; }
 .pedido__vacio { display: flex; gap: 8px; font-size: 12px; color: var(--gris-acero); line-height: 1.5; }
-.pedido__vacio .ico { flex: none; color: var(--ambar-hondo); }
+.pedido__vacio .ico { flex: none; color: var(--ambar-texto); }
 
 .pedido--destacado {
   margin-top: 14px; padding: 14px 16px;
@@ -2084,14 +2117,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r);
 }
 
-.marca-tarjeta { float: right; font-size: 11px; font-weight: 700; color: var(--ambar-hondo); }
+.marca-tarjeta { float: right; font-size: 11px; font-weight: 700; color: var(--ambar-texto); }
 
 .nota-segura {
   display: flex; align-items: flex-start; gap: 8px;
   margin-top: 14px; padding: 11px 13px;
   background: rgba(21, 122, 75, .07);
   border-radius: var(--r);
-  font-size: 11.5px; line-height: 1.55; color: var(--texto-ok, #2C4A3C);
+  font-size: 11.5px; line-height: 1.55; color: var(--texto-ok);
 }
 .nota-segura .ico { flex: none; width: 16px; height: 16px; color: var(--verde); }
 
@@ -2102,13 +2135,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .nota-membresia {
   display: flex; align-items: flex-start; gap: 9px;
   margin-top: 14px; padding: 12px 14px;
-  background: var(--sup-calida, #FFFDF7);
+  background: var(--sup-calida);
   border: 1px solid var(--ambar);
   border-left: 3px solid var(--ambar);
   border-radius: var(--r);
-  font-size: 12px; line-height: 1.6; color: var(--texto-2, #33475A);
+  font-size: 12px; line-height: 1.6; color: var(--texto-2);
 }
-.nota-membresia .ico { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--ambar-hondo); }
+.nota-membresia .ico { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--ambar-texto); }
 .nota-membresia b { color: var(--azul); }
 .nota-membresia #renovacionTexto { font-weight: 600; color: var(--azul); }
 
@@ -2122,13 +2155,18 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* ── Vista previa ───────────────────────────────────────── */
 
 .panel--previa { background: var(--azul); border-color: var(--azul-2); color: var(--blanco); }
+/* La regla de arriba NO manda: la piel app pinta todo .panel con
+   --app-card más abajo, con la misma especificidad, así que este panel
+   es una tarjeta más, blanca en claro y oscura en oscuro. El 02-01 lo
+   dio por oscuro y puso --sobre-oscuro-2: en claro quedaba a 1.3:1
+   sobre blanco. Va con el gris apagado de la tarjeta, que gira. */
 .vista-previa__rotulo {
   display: flex; align-items: center; gap: 7px;
   margin-bottom: 11px;
   font-size: 10.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase;
-  color: var(--texto-claro);
+  color: var(--app-muted);
 }
-.vista-previa__rotulo .ico { width: 14px; height: 14px; color: var(--ambar); }
+.vista-previa__rotulo .ico { width: 14px; height: 14px; color: var(--ambar-texto); }
 .aviso--previa { background: var(--blanco); border-radius: var(--r); overflow: hidden; padding-bottom: 10px; }
 .aviso--previa .aviso__foto { display: block; position: relative; aspect-ratio: 4 / 3; background: var(--gris-neutro); }
 .aviso--previa .aviso__foto img { width: 100%; height: 100%; object-fit: cover; }
@@ -2137,9 +2175,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .aviso--previa .aviso__specs { display: block; padding: 2px 11px 0; font-size: 11.5px; color: var(--gris-acero); }
 .aviso--previa .aviso__precio { display: block; padding: 5px 11px 0; font-family: var(--display); font-weight: 800; font-size: 16px; color: var(--azul); }
 .aviso--previa .pastilla { margin: 7px 0 0 11px; }
-.vista-previa__nota { margin-top: 9px; font-size: 11.5px; color: var(--texto-claro); }
+.vista-previa__nota { margin-top: 9px; font-size: 11.5px; color: var(--app-muted); }
 
-.pastilla--ambar { background: rgba(242, 169, 0, .16); color: var(--ambar-hondo); }
+.pastilla--ambar { background: rgba(242, 169, 0, .16); color: var(--ambar-texto); }
 
 /* ── Confirmación ───────────────────────────────────────── */
 
@@ -2152,7 +2190,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .publicado__sello .ico { width: 28px; height: 28px; }
 .publicado__titulo { font-family: var(--display); font-weight: 800; font-size: 24px; letter-spacing: -.02em; }
-.publicado__texto { max-width: 56ch; margin: 8px auto 0; font-size: 13.5px; line-height: 1.62; color: var(--texto-2, #33475A); }
+.publicado__texto { max-width: 56ch; margin: 8px auto 0; font-size: 13.5px; line-height: 1.62; color: var(--texto-2); }
 .publicado__datos { max-width: 420px; margin: 20px auto 0; text-align: left; }
 .publicado__datos > div {
   display: flex; justify-content: space-between; gap: 14px;
@@ -2186,7 +2224,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 .zona-videos { margin-top: var(--gap); }
 .zona-videos__limite { margin-top: 10px; }
-.zona-videos__limite b { color: var(--ambar-hondo); }
+.zona-videos__limite b { color: var(--ambar-texto); }
 
 .video-progreso {
   width: min(320px, 100%);
@@ -2224,11 +2262,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .galeria__it {
   display: block; width: 100%; aspect-ratio: 4 / 3;
   padding: 0; background: none;
-  border: 1px solid var(--linea); border-radius: 4px;
+  border: 1px solid var(--app-borde-control); border-radius: 4px;
   overflow: hidden; cursor: pointer;
 }
 .galeria__it img { width: 100%; height: 100%; object-fit: cover; }
-.galeria__it--activa { border-color: var(--ambar); box-shadow: 0 0 0 2px rgba(242, 169, 0, .25); }
+.galeria__it--activa { border-color: var(--ambar-texto); box-shadow: 0 0 0 2px rgba(242, 169, 0, .25); }
 
 .detalle__bloque { margin-top: 18px; }
 
@@ -2253,11 +2291,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-size: 12.5px; font-weight: 600; color: var(--azul);
   transition: border-color .15s ease, background .15s ease;
 }
-.contactos__it:hover { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
-.contactos__it .ico { width: 15px; height: 15px; color: var(--ambar-hondo); }
+.contactos__it:hover { border-color: var(--ambar); background: var(--sup-calida); }
+.contactos__it .ico { width: 15px; height: 15px; color: var(--ambar-texto); }
 .contactos__it--whatsapp { border-color: rgba(21, 122, 75, .35); color: var(--verde); }
 .contactos__it--whatsapp .ico { color: var(--verde); }
-.contactos__it--whatsapp:hover { border-color: var(--verde); background: var(--sup-ok, #F2FAF6); }
+.contactos__it--whatsapp:hover { border-color: var(--verde); background: var(--sup-ok); }
 
 /* Ubicación bajo el título de la ficha. */
 .detalle__sitio {
@@ -2295,7 +2333,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-left: auto;
   height: 32px;
   padding: 0 13px;
-  border: 1px solid var(--linea-dark);
+  border: 1px solid var(--app-borde-control);
   border-radius: var(--r);
   font-family: var(--cuerpo);
   font-size: 12.5px; font-weight: 600;
@@ -2316,20 +2354,20 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .pestanas__op {
   flex: 1;
   padding: 8px 12px;
-  background: transparent; border: 0; border-radius: 4px;
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
   font-size: 13px; font-weight: 600; color: var(--gris-acero);
   cursor: pointer;
   transition: background-color .15s ease, color .15s ease;
 }
-.pestanas__op--activa { background: var(--blanco); color: var(--azul); box-shadow: 0 1px 3px rgba(7, 26, 43, .12); }
+.pestanas__op--activa { background: var(--blanco); color: var(--azul); border-color: var(--app-borde-control); box-shadow: 0 1px 3px rgba(20, 22, 22, .12); }
 
 .acceso__aviso {
   margin-bottom: 14px; padding: 10px 13px;
-  background: var(--sup-error, #FDF3F3); border: 1px solid #E8C4C4; border-left: 3px solid #B3261E;
-  border-radius: var(--r); font-size: 12.5px; color: var(--texto-error, #7A1B15);
+  background: var(--sup-error); border: 1px solid var(--borde-error); border-left: 3px solid var(--texto-peligro);
+  border-radius: var(--r); font-size: 12.5px; color: var(--texto-error);
 }
 .acceso__legal { margin-top: 12px; font-size: 11.5px; color: var(--gris-acero); text-align: center; }
-.acceso__legal a { font-weight: 600; color: var(--ambar-hondo); }
+.acceso__legal a { font-weight: 600; color: var(--ambar-texto); }
 .acceso .btn--bloque { margin-top: 18px; }
 
 /* Aceptación de las condiciones al crear la cuenta.
@@ -2347,7 +2385,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: 12px;
   font-size: 12.5px;
   line-height: 1.55;
-  color: var(--texto-2, #33475A);
+  color: var(--texto-2);
   cursor: pointer;
 }
 .acepta input {
@@ -2357,7 +2395,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   flex: none;
   cursor: pointer;
 }
-.acepta a { font-weight: 600; color: var(--ambar-hondo); }
+.acepta a { font-weight: 600; color: var(--ambar-texto); }
 .acepta a:hover { text-decoration: underline; }
 
 /* Aviso de condiciones nuevas, para quien ya tenía cuenta. Se enseña
@@ -2377,8 +2415,8 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .aviso-legal__titulo {
   font-family: var(--display); font-weight: 700; font-size: 15.5px; color: var(--azul);
 }
-.aviso-legal__texto { font-size: 13px; line-height: 1.6; color: var(--texto-2, #33475A); }
-.aviso-legal__texto a { font-weight: 600; color: var(--ambar-hondo); }
+.aviso-legal__texto { font-size: 13px; line-height: 1.6; color: var(--texto-2); }
+.aviso-legal__texto a { font-weight: 600; color: var(--ambar-texto); }
 .aviso-legal__acciones { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
 
 /* Lo que se acepta al pulsar «contratar», justo debajo del botón. */
@@ -2389,7 +2427,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero);
   text-align: center;
 }
-.pedido__legal a { font-weight: 600; color: var(--ambar-hondo); }
+.pedido__legal a { font-weight: 600; color: var(--ambar-texto); }
 .pedido__legal a:hover { text-decoration: underline; }
 
 /* Tabla de aceptaciones, en administración.
@@ -2413,12 +2451,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 9px 10px 9px 0;
   vertical-align: top;
   border-bottom: 1px solid var(--linea-suave);
-  color: var(--texto-2, #33475A);
+  color: var(--texto-2);
 }
 .tabla-legales tr:last-child td { border-bottom: 0; }
 /* Estado de los dos envíos de un comprobante, en administración. */
 .envio { display: inline-block; font-size: 11px; font-weight: 600; white-space: nowrap; }
-.envio--si { color: var(--verde, #1E7B4D); }
+.envio--si { color: var(--verde); }
 .envio--no { color: var(--gris-acero); }
 .acciones-fila { display: flex; flex-wrap: wrap; gap: 5px; }
 .secuencias { margin-top: 16px; font-size: 12.5px; }
@@ -2434,7 +2472,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   gap: 10px;
   margin-bottom: 12px;
 }
-.form-secuencia__eco { margin: 8px 0 0; color: var(--gris-acero, #60717D); min-height: 1.2em; }
+.form-secuencia__eco { margin: 8px 0 0; color: var(--gris-acero); min-height: 1.2em; }
 .campo-v--casilla { flex-direction: row; align-items: center; gap: 8px; }
 .campo-v--casilla input { width: auto; }
 .campo-v--chico { max-width: 190px; }
@@ -2463,14 +2501,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .nota-rnc {
   display: flex; align-items: flex-start; gap: 9px;
   margin-top: 14px; padding: 11px 13px;
-  background: rgba(7, 26, 43, .05); border-radius: var(--r);
-  font-size: 11.5px; line-height: 1.55; color: var(--texto-2, #33475A);
+  background: var(--app-soft); border-radius: var(--r);
+  font-size: 11.5px; line-height: 1.55; color: var(--texto-2);
 }
 .nota-rnc .ico { flex: none; width: 16px; height: 16px; color: var(--azul); }
 
 .acceso__aviso--bien {
-  background: rgba(21, 122, 75, .08); border-color: #B9D7C8;
-  border-left-color: var(--verde); color: var(--texto-ok, #1B5638);
+  background: var(--sup-ok); border-color: var(--borde-ok);
+  border-left-color: var(--verde); color: var(--texto-ok);
 }
 
 .acceso__enlace {
@@ -2479,14 +2517,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .enlace-plano {
   padding: 0; background: none; border: 0;
-  font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo);
+  font-size: 12.5px; font-weight: 600; color: var(--ambar-texto);
   text-decoration: underline; cursor: pointer;
 }
 .enlace-plano:hover { color: var(--azul); }
 
 /* Campo del código: dígitos grandes y separados, que es como se leen
    cuando se copian del correo. */
-.codigo__intro { font-size: 13px; line-height: 1.6; color: var(--texto-2, #33475A); margin-bottom: 16px; }
+.codigo__intro { font-size: 13px; line-height: 1.6; color: var(--texto-2); margin-bottom: 16px; }
 .campo-v--codigo input {
   height: 54px;
   font-family: var(--display); font-size: 26px; font-weight: 700;
@@ -2506,13 +2544,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 12px 14px;
   background: var(--blanco); border: 1px solid var(--linea); border-radius: var(--r);
 }
-.suc-admin--principal { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
-.suc-admin__ico { display: flex; color: var(--ambar-hondo); }
+.suc-admin--principal { border-color: var(--ambar); background: var(--sup-calida); }
+.suc-admin__ico { display: flex; color: var(--ambar-texto); }
 .suc-admin__cuerpo { display: grid; gap: 2px; min-width: 0; }
 .suc-admin__nombre { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
 .suc-admin__meta { font-size: 11.5px; color: var(--gris-acero); }
 .suc-admin__acciones { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
-.btn-tabla--quitar:hover { border-color: #B3261E; color: #B3261E; }
+.btn-tabla--quitar:hover { border-color: var(--texto-peligro); color: var(--texto-peligro); }
 
 .form-sucursal {
   margin-top: 16px; padding: 16px 18px;
@@ -2526,8 +2564,8 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .form-sucursal .acciones { margin-top: 14px; }
 
 .ventajas { display: grid; gap: 13px; margin-top: 14px; }
-.ventajas li { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; line-height: 1.55; color: var(--texto-2, #33475A); }
-.ventajas .ico { flex: none; width: 17px; height: 17px; margin-top: 1px; color: var(--ambar-hondo); }
+.ventajas li { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; line-height: 1.55; color: var(--texto-2); }
+.ventajas .ico { flex: none; width: 17px; height: 17px; margin-top: 1px; color: var(--ambar-texto); }
 .ventajas b { color: var(--azul); }
 
 /* ── Panel del anunciante ───────────────────────────────── */
@@ -2555,7 +2593,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .metrica__ico {
   display: flex; align-items: center; justify-content: center;
   width: 38px; height: 38px; flex: none;
-  background: rgba(242, 169, 0, .12); color: var(--ambar-hondo);
+  background: rgba(242, 169, 0, .12); color: var(--ambar-texto);
   border-radius: 9px;
 }
 .metrica__cuerpo { display: grid; min-width: 0; }
@@ -2567,9 +2605,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .plan-estado > div { padding: 11px 13px; background: var(--hueso); border-radius: var(--r); }
 .plan-estado dt { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--gris-acero); }
 .plan-estado dd { margin: 4px 0 0; font-size: 13.5px; font-weight: 600; }
-.plan-estado a { color: var(--ambar-hondo); font-weight: 700; }
+.plan-estado a { color: var(--ambar-texto); font-weight: 700; }
 
-.pastilla--azul { background: rgba(7, 26, 43, .1); color: var(--azul); }
+.pastilla--azul { background: var(--app-soft); color: var(--azul); }
 
 .filtros-panel { display: flex; gap: 5px; }
 .filtro-panel {
@@ -2587,7 +2625,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero); border-bottom: 1px solid var(--linea);
 }
 .tabla-anuncios .col-num { text-align: right; }
-.tabla-anuncios tbody tr:hover { background: #FCFBF7; }
+/* Era #FCFBF7 fijo: en oscuro la fila bajo el cursor se volvía blanca a
+   18.9:1 en medio del panel. El comprobador no lo ve (mide el reposo). */
+.tabla-anuncios tbody tr:hover { background: var(--app-soft); }
 
 .celda-equipo { display: flex; align-items: center; gap: 11px; font-weight: 400; }
 .celda-equipo__foto {
@@ -2597,27 +2637,27 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .celda-equipo__foto img { width: 100%; height: 100%; object-fit: cover; }
 .celda-equipo__nombre { display: block; font-size: 13px; font-weight: 700; }
-.celda-equipo__nombre:hover { color: var(--ambar-hondo); }
+.celda-equipo__nombre:hover { color: var(--ambar-texto); }
 .celda-equipo__meta { display: block; font-size: 11.5px; color: var(--gris-acero); }
 
 .estado { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
-.estado--activo  { background: rgba(21, 122, 75, .12); color: var(--verde); }
-.estado--pausado { background: rgba(242, 169, 0, .16); color: var(--ambar-hondo); }
+.estado--activo  { background: rgba(21, 122, 75, .12); color: var(--texto-ok); }
+.estado--pausado { background: rgba(242, 169, 0, .16); color: var(--ambar-texto); }
 .estado--vencido { background: rgba(96, 113, 125, .14); color: var(--gris-acero); }
-.estado--vendido { background: rgba(7, 26, 43, .1); color: var(--azul); }
+.estado--vendido { background: var(--app-soft); color: var(--azul); }
 
 .vigencia { font-size: 12px; font-variant-numeric: tabular-nums; }
-.vigencia--pronto { color: #B3261E; font-weight: 700; }
+.vigencia--pronto { color: var(--texto-peligro); font-weight: 700; }
 .vigencia--fin { color: var(--gris-acero); }
 .vigencia--membresia { color: var(--verde); font-weight: 600; }
 
 .col-acciones { text-align: right; white-space: nowrap; }
 .btn-tabla {
   padding: 5px 10px; margin-left: 4px;
-  background: transparent; border: 1px solid var(--linea); border-radius: 4px;
+  background: transparent; border: 1px solid var(--app-borde-control); border-radius: 4px;
   font-size: 11.5px; font-weight: 600; color: var(--azul); cursor: pointer;
 }
-.btn-tabla:hover { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.btn-tabla:hover { border-color: var(--ambar); background: var(--sup-calida); }
 .btn-tabla--fuerte:hover { border-color: var(--verde); color: var(--verde); }
 .btn-tabla:disabled { opacity: .5; cursor: progress; }
 
@@ -2634,61 +2674,75 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   background: var(--hueso); border: 1px solid var(--linea); border-radius: var(--r);
   font-size: 12.5px; line-height: 1.55;
 }
-.identidad--dealer { background: var(--sup-calida, #FFFDF7); border-color: var(--ambar); }
-.identidad--anonima { align-items: flex-start; color: var(--texto-2, #33475A); }
+.identidad--dealer { background: var(--sup-calida); border-color: var(--ambar); }
+.identidad--anonima { align-items: flex-start; color: var(--texto-2); }
 .identidad--anonima .ico { flex: none; width: 18px; height: 18px; margin-top: 1px; color: var(--gris-acero); }
 .identidad__sello {
   display: flex; align-items: center; justify-content: center;
   width: 38px; height: 38px; flex: none;
   background: var(--azul); color: var(--blanco); border-radius: 9px;
 }
-.identidad--dealer .identidad__sello { background: var(--ambar); color: var(--azul); }
+.identidad--dealer .identidad__sello { background: var(--ambar); color: var(--sobre-ambar); }
 .identidad__cuerpo { display: grid; gap: 2px; min-width: 0; }
 .identidad__nombre { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 14px; }
 .identidad__meta { font-size: 12px; color: var(--gris-acero); }
-.identidad__nota { font-size: 11.5px; color: var(--texto-2, #33475A); }
-.identidad a { font-weight: 700; color: var(--ambar-hondo); text-decoration: underline; }
+.identidad__nota { font-size: 11.5px; color: var(--texto-2); }
+.identidad a { font-weight: 700; color: var(--ambar-texto); text-decoration: underline; }
 
 .invitacion-dealer {
   display: flex; align-items: flex-start; gap: 10px;
   margin-top: 14px; padding: 12px 14px;
-  background: rgba(7, 26, 43, .05); border-radius: var(--r);
-  font-size: 12px; line-height: 1.6; color: var(--texto-2, #33475A);
+  background: var(--app-soft); border-radius: var(--r);
+  font-size: 12px; line-height: 1.6; color: var(--texto-2);
 }
 .invitacion-dealer .ico { flex: none; width: 17px; height: 17px; margin-top: 2px; color: var(--azul); }
 .invitacion-dealer b { color: var(--azul); }
-.invitacion-dealer a { font-weight: 700; color: var(--ambar-hondo); text-decoration: underline; }
+.invitacion-dealer a { font-weight: 700; color: var(--ambar-texto); text-decoration: underline; }
 
 /* ── Perfil público del dealer ──────────────────────────── */
 
+/* La cabecera de marca del dealer es oscura en los DOS temas, igual que
+   el mosaico de categorías. Antes pintaba el fondo con var(--azul), que
+   se invierte con el tema: en oscuro vale crema, así que la cabecera se
+   volvía clara y su propio texto, escrito para fondo oscuro, se quedaba
+   a 1.31:1. Por eso el fondo va fijo (el mismo #141616 que --azul vale
+   en claro) y todo lo de dentro usa --sobre-oscuro, que existe con el
+   mismo valor en los dos bloques de tema. Nada de aquí dentro puede
+   usar --blanco, --azul, --hueso ni --gris-acero: esos giran. */
 .perfil {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start; gap: 18px;
   padding: 22px 24px; margin-bottom: var(--gap);
-  background: var(--azul); color: var(--blanco);
+  background: #141616; color: var(--sobre-oscuro);
   border-radius: var(--r);
   border-bottom: 3px solid var(--ambar);
 }
 .perfil__sello {
   display: flex; align-items: center; justify-content: center;
   width: 60px; height: 60px;
-  background: var(--ambar); color: var(--azul); border-radius: 12px;
+  background: var(--ambar); color: var(--sobre-ambar); border-radius: 12px;
 }
 .perfil__sello .ico { width: 30px; height: 30px; }
 .perfil__nombre { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -.022em; }
 .perfil__meta {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  margin-top: 8px; font-size: 12.5px; color: var(--texto-claro);
+  margin-top: 8px; font-size: 12.5px; color: var(--sobre-oscuro-2);
 }
-.perfil__meta b { color: var(--blanco); }
-.perfil__texto { margin-top: 11px; font-size: 13.5px; line-height: 1.62; color: #D5DEE5; max-width: 70ch; }
+.perfil__meta b { color: var(--sobre-oscuro); }
+.perfil__texto { margin-top: 11px; font-size: 13.5px; line-height: 1.62; color: var(--sobre-oscuro-2); max-width: 70ch; }
+/* El «Verificado» de la cabecera: el verde de --verde o --texto-ok está
+   pensado para papel claro y sobre este fondo fijo se hundía (1.9:1 en
+   el tema claro). Letra clara y el verde queda en el relleno. */
+.perfil .pastilla--verde { background: rgba(61, 186, 126, .22); color: var(--sobre-oscuro); }
 .perfil__categorias { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
 .perfil__categorias span {
   padding: 3px 10px; background: rgba(255, 255, 255, .1); border-radius: 99px;
   font-size: 11.5px; font-weight: 600;
 }
 .perfil__acciones { display: grid; gap: 7px; }
-.perfil__acciones .btn--linea { color: var(--blanco); border-color: var(--linea-dark); }
+/* Sin fondo propio: la piel app le pone a .btn--linea el de la tarjeta,
+   que en claro es blanco, y la letra clara quedaba blanco sobre blanco. */
+.perfil__acciones .btn--linea { background: transparent; color: var(--sobre-oscuro); border-color: var(--app-borde-control); }
 .perfil__acciones .btn--linea:hover { background: var(--azul-2); border-color: var(--ambar); }
 
 .sucursales { display: grid; gap: 8px; margin-top: 12px; }
@@ -2698,10 +2752,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 11px 13px;
   background: var(--hueso); border-radius: var(--r);
 }
-.sucursal__ico { display: flex; color: var(--ambar-hondo); }
+.sucursal__ico { display: flex; color: var(--ambar-texto); }
 .sucursal b { font-size: 13px; }
 .sucursal__meta { display: block; font-size: 11.5px; color: var(--gris-acero); }
-.sucursal__tel { font-size: 13px; font-weight: 700; color: var(--ambar-hondo); }
+.sucursal__tel { font-size: 13px; font-weight: 700; color: var(--ambar-texto); }
 
 /* ── Adaptable ──────────────────────────────────────────── */
 
@@ -2828,11 +2882,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .solicitud__intro {
   margin: 0 0 18px;
   padding: 11px 13px;
-  background: var(--hueso, #F7F5EF);
+  background: var(--hueso);
   border-left: 3px solid var(--ambar);
   border-radius: var(--r);
   font-size: 12.5px; line-height: 1.6;
-  color: var(--gris-acero, #33475A);
+  color: var(--gris-acero);
 }
 
 .solicitud__bloque {
@@ -2845,7 +2899,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 0; margin-bottom: 11px;
   font-family: var(--display); font-size: 12px; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* Ayuda bajo un campo: el sitio donde se explica que el RNC no se
@@ -2853,10 +2907,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .campo-v__ayuda {
   display: block; margin-top: 4px;
   font-size: 11.5px; line-height: 1.5;
-  color: var(--texto-claro, #60717D);
+  color: var(--texto-claro);
 }
 
-.pastilla--roja { background: rgba(179, 38, 30, .1); color: #B3261E; }
+.pastilla--roja { background: rgba(179, 38, 30, .1); color: var(--texto-peligro); }
 
 /* ── Cola de revisión ───────────────────────────────────── */
 
@@ -2864,7 +2918,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 .revision__vacio {
   padding: 34px 20px; text-align: center;
-  font-size: 13.5px; color: var(--texto-claro, #60717D);
+  font-size: 13.5px; color: var(--texto-claro);
 }
 
 .solicitudes { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
@@ -2877,12 +2931,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r);
 }
 .sol--aprobada { border-left-color: var(--verde); }
-.sol--rechazada { border-left-color: #B3261E; }
+.sol--rechazada { border-left-color: var(--texto-peligro); }
 
 .sol__cabeza { display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px; }
 .sol__nombre { font-family: var(--display); font-size: 15.5px; font-weight: 700; color: var(--azul); }
-.sol__meta { font-size: 12.5px; color: var(--gris-acero, #33475A); }
-.sol__fecha { margin-left: auto; font-size: 11.5px; color: var(--texto-claro, #60717D); }
+.sol__meta { font-size: 12.5px; color: var(--gris-acero); }
+.sol__fecha { margin-left: auto; font-size: 11.5px; color: var(--texto-claro); }
 
 .sol__acciones { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 
@@ -2898,7 +2952,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .sol__datos dt {
   font-size: 11px; font-weight: 700; letter-spacing: .05em;
-  text-transform: uppercase; color: var(--texto-claro, #60717D);
+  text-transform: uppercase; color: var(--texto-claro);
 }
 .sol__datos dd { margin: 2px 0 0; font-size: 13.5px; color: var(--azul); }
 .sol__datos dd.num { font-variant-numeric: tabular-nums; letter-spacing: .04em; }
@@ -2908,13 +2962,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   background: rgba(179, 38, 30, .05);
   border: 1px dashed rgba(179, 38, 30, .3);
   border-radius: var(--r);
-  font-size: 11.5px; line-height: 1.55; color: var(--texto-error, #7A1B15);
+  font-size: 11.5px; line-height: 1.55; color: var(--texto-error);
 }
 
 .sol__motivo { margin-top: 11px; }
 .sol__motivo textarea {
   width: 100%; min-height: 62px; padding: 9px 11px;
-  background: var(--blanco); border: 1px solid var(--linea); border-radius: 4px;
+  background: var(--blanco); border: 1px solid var(--app-borde-control); border-radius: 4px;
   font-family: var(--cuerpo); font-size: 13px; color: var(--azul); resize: vertical;
 }
 
@@ -2929,7 +2983,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .flota-alta__abrir {
   cursor: pointer; list-style: none;
   font-family: var(--display); font-size: 13px; font-weight: 700;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .flota-alta__abrir::-webkit-details-marker { display: none; }
 .flota-alta__abrir::before { content: '+ '; }
@@ -2950,7 +3004,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: block; margin-bottom: 10px;
   font-family: var(--display); font-size: 12px; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2977,6 +3031,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
    lo oculta apunta a elementos HTML, y el plano seguía dibujándose
    detrás de la fotografía. Se dice aquí y se acabó la duda. */
 .heroe__plano[hidden] { display: none; }
+
+/* El degradado que apaga el plano hacia el titular funde con el fondo
+   del héroe, así que lleva su mismo token. Antes eran tres
+   stop-color="#071A2B" escritos en el SVG de index.html: el azul noche
+   de la marca vieja, que no giraba con el tema. */
+#desvanece stop { stop-color: var(--app-bg); }
 
 /* Por debajo de 900 px el titular ocupa casi todo el ancho y el plano
    competiría con él. Se retira: es ambiente, no información. */
@@ -3106,7 +3166,7 @@ main { position: relative; }
   display: block; margin-bottom: 10px;
   font-family: var(--display); font-size: 12px; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* Alta de un elemento de la flota. Plegado por defecto: la pantalla se
@@ -3115,7 +3175,7 @@ main { position: relative; }
 .flota-alta__abrir {
   cursor: pointer; list-style: none;
   font-family: var(--display); font-size: 13px; font-weight: 700;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .flota-alta__abrir::-webkit-details-marker { display: none; }
 .flota-alta__abrir::before { content: '+ '; }
@@ -3157,14 +3217,14 @@ main { position: relative; }
   width: 100%; min-width: 118px; padding: 5px 8px;
   font-family: var(--cuerpo); font-size: 12.5px; font-weight: 600;
   color: var(--azul); background: var(--blanco);
-  border: 1px solid var(--linea); border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--app-borde-control); border-radius: 7px; cursor: pointer;
 }
 .plan-celda__sel:disabled { opacity: .6; cursor: progress; }
 .plan-celda__fijo { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); }
 
 .acceso__aviso--ok {
-  color: var(--texto-ok, #14532D); background: rgba(21, 122, 75, .07);
-  border-color: rgba(21, 122, 75, .25); border-left-color: var(--verde);
+  color: var(--texto-ok); background: var(--sup-ok);
+  border-color: var(--borde-ok); border-left-color: var(--verde);
 }
 
 /* Bloque de media columna en la portada, donde estaba la calculadora
@@ -3326,7 +3386,7 @@ main { position: relative; }
 .pub-muestra:not(:has(.pub-muestra__letra)) .pub-muestra__pie {
   font-size: 12px;
   font-weight: 600;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* 90 px de alto no dan para cuatro renglones apilados: en el banner de
@@ -3418,6 +3478,9 @@ main { position: relative; }
      suele estar en el tercio superior y el suelo ocupa el resto. */
   object-position: center 42%;
 }
+/* Inerte, conserva el azul noche viejo: la piel app oculta
+   .heroe__foto con display: none !important. Si vuelve, este velo pasa
+   a --velo-foto antes de encenderlo. */
 .heroe__foto::after {
   content: '';
   position: absolute; inset: 0;
@@ -3449,7 +3512,7 @@ main { position: relative; }
 .heroe-ajuste__vacia {
   display: grid; place-items: center; aspect-ratio: 16 / 9;
   background: var(--azul); border-radius: 7px;
-  font-size: 12.5px; font-weight: 600; color: var(--texto-claro);
+  font-size: 12.5px; font-weight: 600; color: var(--sobre-oscuro-2);
 }
 .heroe-ajuste__estado { font-size: 11.5px; color: var(--gris-acero); }
 
@@ -3460,16 +3523,16 @@ main { position: relative; }
 .tren-edita { display: grid; gap: 11px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
 .tren-edita__pie { display: flex; align-items: center; gap: 10px; }
 .tren-edita__aviso { font-size: 12px; font-weight: 600; color: var(--verde); }
-.tren-edita__aviso--error { color: #B3261E; }
+.tren-edita__aviso--error { color: var(--texto-peligro); }
 
 /* Un camión sin motor declarado se señala: en un cabezote es lo
    primero que pregunta el comprador. */
-.btn-tabla--avisa { border-color: var(--ambar-hondo); color: var(--ambar-hondo); font-weight: 700; }
+.btn-tabla--avisa { border-color: var(--ambar-texto); color: var(--ambar-texto); font-weight: 700; } /* --ambar-hondo daba 2.95:1 en claro, bajo el 3:1 de un contorno; en oscuro los dos valen #F2A900 */
 
 /* Eliminar un anuncio. Va en rojo y el último de la fila: es la única
    acción del panel que no se puede deshacer. */
-.btn-tabla--borrar { color: #B3261E; border-color: rgba(179, 38, 30, .3); }
-.btn-tabla--borrar:hover { background: var(--sup-error, #FDF3F3); border-color: #B3261E; }
+.btn-tabla--borrar { color: var(--texto-peligro); border-color: var(--texto-peligro); } /* el rojo al 30 % se quedaba bajo el 3:1 de un contorno de control */
+.btn-tabla--borrar:hover { background: var(--sup-error); border-color: var(--texto-peligro); }
 .btn-tabla--borrar:disabled { opacity: .6; cursor: progress; }
 
 /* Par de acciones al pie de cada bloque de servicio de la portada.
@@ -3501,7 +3564,7 @@ main { position: relative; }
 
 .realce--aviso { border-left-color: var(--ambar-hondo); }
 .pedido__nota { margin-top: 10px; font-size: 12px; color: var(--gris-acero); }
-.pedido__nota a { color: var(--ambar-hondo); font-weight: 600; }
+.pedido__nota a { color: var(--ambar-texto); font-weight: 600; }
 
 /* ── Filtros en móvil ───────────────────────────────────────
    En escritorio los filtros son la columna izquierda de siempre. En
@@ -3527,7 +3590,7 @@ main { position: relative; }
   .filtros__cerrar {
     display: inline-grid; place-items: center;
     width: 32px; height: 32px; flex: none;
-    background: transparent; border: 1px solid var(--linea); border-radius: var(--r);
+    background: transparent; border: 1px solid var(--app-borde-control); border-radius: var(--r);
     font-size: 20px; line-height: 1; color: var(--azul); cursor: pointer;
   }
   .filtros__cabeza { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -3556,7 +3619,7 @@ main { position: relative; }
     display: block;
     position: fixed; inset: 0;
     z-index: 55;
-    background: rgba(7, 26, 43, .5);
+    background: rgba(20, 22, 22, .5);
   }
 
   /* Quien pidió menos movimiento no recibe el deslizamiento. */
@@ -3615,11 +3678,11 @@ body.sin-scroll { overflow: hidden; }
 .carrusel__flecha {
   display: grid; place-items: center;
   width: 30px; height: 30px;
-  background: var(--blanco); border: 1px solid var(--linea); border-radius: var(--r);
+  background: var(--blanco); border: 1px solid var(--app-borde-control); border-radius: var(--r);
   color: var(--azul); cursor: pointer;
   transition: border-color .15s ease, background-color .15s ease;
 }
-.carrusel__flecha:hover:not(:disabled) { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.carrusel__flecha:hover:not(:disabled) { border-color: var(--ambar); background: var(--sup-calida); }
 .carrusel__flecha:disabled { opacity: .35; cursor: default; }
 .carrusel__flecha .ico { width: 15px; height: 15px; }
 .carrusel__flecha--atras .ico { transform: rotate(180deg); }
@@ -3663,6 +3726,8 @@ body.sin-scroll { overflow: hidden; }
 
 /* Velo por debajo del texto: sin él, un nombre blanco sobre una foto
    clara no se lee. Solo en la mitad inferior, que es donde va. */
+/* Inerte, conserva el azul noche viejo: la piel app redefine este
+   velo más abajo (rgba(0, 0, 0, .96)) con la misma especificidad. */
 .mosaico__pieza::after {
   content: '';
   position: absolute; inset: 0;
@@ -3785,7 +3850,7 @@ body.sin-scroll { overflow: hidden; }
   transition: color .15s ease, background-color .15s ease;
 }
 .ver-clave:hover { color: var(--azul); background: var(--hueso); }
-.ver-clave--activo { color: var(--ambar-hondo); }
+.ver-clave--activo { color: var(--ambar-texto); }
 .ver-clave .ico { width: 17px; height: 17px; }
 
 /* Con la ayuda debajo del campo, el botón sube para no montarse. */
@@ -3823,15 +3888,15 @@ body.sin-scroll { overflow: hidden; }
 .resumen__error {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 12px 14px;
-  background: var(--sup-error, #FDF3F3); border: 1px solid #E8C4C4; border-left: 3px solid #B3261E;
-  border-radius: var(--r); font-size: 13.5px; color: var(--texto-error, #7A1B15);
+  background: var(--sup-error); border: 1px solid var(--borde-error); border-left: 3px solid var(--texto-peligro);
+  border-radius: var(--r); font-size: 13.5px; color: var(--texto-error);
 }
 .resumen__error .ico { flex: none; width: 17px; height: 17px; }
 
 /* Galería de un tipo de equipo, en el panel de administración. */
 .flota-fotos { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .flota-fotos img { width: 64px; height: 44px; object-fit: cover; border-radius: 4px; border: 1px solid var(--linea); }
-.sol__meta--aviso { color: var(--ambar-hondo); }
+.sol__meta--aviso { color: var(--ambar-texto); }
 
 /* ═══════════════════════════════════════════════════════════
    Asistente de soporte (widget flotante)
@@ -3853,16 +3918,16 @@ body.sin-scroll { overflow: hidden; }
 
 .chat__lanzador {
   display: flex; align-items: center; gap: 9px;
-  padding: 12px 18px;
+  padding: 12px 18px 15px;
   background: var(--azul);
   color: var(--blanco);
   border: 0;
-  border-bottom: 3px solid var(--ambar);
+  /* el filo ambar bajo, ahora en sombra interior: ver box-shadow */
   border-radius: var(--r);
   font-family: var(--display);
   font-size: 14px; font-weight: 700; letter-spacing: -.01em;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(7, 26, 43, .28);
+  box-shadow: 0 4px 16px rgba(20, 22, 22, .28), inset 0 -3px 0 var(--ambar);
   transition: background-color .15s ease, transform .15s ease;
 }
 .chat__lanzador:hover { background: var(--azul-2); transform: translateY(-1px); }
@@ -3882,7 +3947,7 @@ body.sin-scroll { overflow: hidden; }
   background: var(--blanco);
   border: 1px solid var(--linea);
   border-radius: var(--r);
-  box-shadow: 0 12px 40px rgba(7, 26, 43, .22);
+  box-shadow: 0 12px 40px rgba(20, 22, 22, .22);
   overflow: hidden;
   animation: chat-entra .16s ease-out;
 }
@@ -3905,17 +3970,21 @@ body.sin-scroll { overflow: hidden; }
   font-size: 15px; font-weight: 800; letter-spacing: -.01em;
   color: var(--blanco);
 }
-.chat__sub { margin: 3px 0 0; font-size: 11.5px; color: var(--texto-claro); }
+/* La cabecera del chat va sobre azul en los dos temas y el chat sale en
+   TODAS las páginas: es el sitio donde un token equivocado se nota más.
+   Con --texto-claro convertido en gris para superficie clara, este
+   subtítulo caía a 3.47 sobre el fondo de la cabecera. */
+.chat__sub { margin: 3px 0 0; font-size: 11.5px; color: var(--sobre-oscuro-2); }
 
 .chat__cerrar {
   flex: none;
   display: grid; place-items: center;
   width: 28px; height: 28px;
   background: none; border: 0; border-radius: 4px;
-  color: var(--texto-claro);
+  color: var(--sobre-oscuro-2);
   cursor: pointer;
 }
-.chat__cerrar:hover { background: rgba(255, 255, 255, .1); color: var(--blanco); }
+.chat__cerrar:hover { background: rgba(255, 255, 255, .1); color: var(--sobre-oscuro); }
 .chat__cerrar:focus-visible { outline: 2px solid var(--ambar); outline-offset: 1px; }
 .chat__cerrar svg {
   width: 16px; height: 16px;
@@ -3953,7 +4022,7 @@ body.sin-scroll { overflow: hidden; }
 }
 /* Cuando algo falla, el aviso se distingue del resto de respuestas:
    lleva los contactos y conviene que se vea que es otra cosa. */
-.chat__msg--aviso { border-left: 3px solid var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.chat__msg--aviso { border-left: 3px solid var(--ambar); background: var(--sup-calida); }
 
 /* El ámbar sobre blanco da 2.95:1 y no llega al mínimo de 4.5:1. Un
    enlace es justo lo que hay que poder leer para pulsarlo, así que el
@@ -3994,7 +4063,7 @@ body.sin-scroll { overflow: hidden; }
 .chat__sug-it {
   padding: 7px 11px;
   background: var(--blanco);
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: 100px;
   font-family: var(--cuerpo);
   font-size: 12px; font-weight: 600;
@@ -4002,7 +4071,7 @@ body.sin-scroll { overflow: hidden; }
   cursor: pointer;
   transition: border-color .12s ease, background-color .12s ease;
 }
-.chat__sug-it:hover { border-color: var(--ambar); background: var(--sup-calida, #FFFDF7); }
+.chat__sug-it:hover { border-color: var(--ambar); background: var(--sup-calida); }
 .chat__sug-it:focus-visible { outline: 2px solid var(--ambar); outline-offset: 1px; }
 
 /* ── Escribir ───────────────────────────────────────────── */
@@ -4018,7 +4087,7 @@ body.sin-scroll { overflow: hidden; }
   min-height: 38px; max-height: 120px;
   padding: 9px 11px;
   background: var(--blanco);
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: var(--r);
   font-family: var(--cuerpo);
   font-size: 13.5px; line-height: 1.45;
@@ -4064,7 +4133,7 @@ body.sin-scroll { overflow: hidden; }
    para no tapar contenido. */
 @media (max-width: 560px) {
   .chat { right: 12px; bottom: 12px; }
-  .chat__lanzador { padding: 12px; }
+  .chat__lanzador { padding: 12px 12px 15px; }
   .chat__lanzador-txt { display: none; }
 
   .chat__panel {
@@ -4104,6 +4173,16 @@ body.sin-scroll { overflow: hidden; }
   --linea-suave: #ECECE7;
   --gris-acero:  #5F6364;
 
+  /* Los cuatro de la guía de marca que el bloque oscuro ya redefinía y
+     este no. Repiten el valor del :root general a propósito: mientras
+     solo existieran en el oscuro parecía que al claro se le habían
+     olvidado, y no había forma de saberlo sin leer los dos bloques
+     seguidos. Escritos en los dos, la simetría está a la vista. */
+  --blanco:      #FFFFFF;
+  --gris-neutro: #E7E6E0;
+  --ambar-hondo: #C98A00;
+  --verde:       #157A4B;
+
   --app-bg:      #F4F4F1;
   --app-card:    #FFFFFF;
   --app-soft:    #EEEEEA;
@@ -4111,10 +4190,67 @@ body.sin-scroll { overflow: hidden; }
   --app-text:    #141616;
   --app-muted:   #5F6364;
   --app-accent:  #F2A900;
-  --app-accent-texto: #9A6800;   /* ámbar legible sobre claro */
+
+  /* El ámbar de texto y su alias se mueven SIEMPRE en bloque; separarlos
+     es el error que esto viene a cerrar. El #9A6800 de antes se midió
+     solo contra la tarjeta blanca (4.82) y ahí cumplía, pero sobre el
+     hueso del fondo caía a 4.38 y sobre la superficie suave a 4.15, que
+     es justo donde viven los chips y los filtros. Estos dan 5.42 sobre
+     tarjeta, 4.91 sobre fondo y 4.66 sobre suave. */
+  --app-accent-texto: #8F6100;
+  --ambar-texto:      #8F6100;
+
   --app-sombra:  0 10px 30px rgba(20, 22, 22, .07);
   --app-vidrio:  rgba(255, 255, 255, .88);
   --texto-2:     #3D4345;
+
+  /* Borde de los controles, token nuevo y aparte de --app-line. El
+     filete decorativo entre bloques de contenido sigue siendo aquel, a
+     1.30, y está bien así porque no delimita nada pulsable. Este es
+     para lo que se puede tocar: 3.58 sobre tarjeta, 3.25 sobre fondo y
+     3.08 sobre superficie suave. */
+  --app-borde-control: #848889;
+
+  /* Texto apagado sobre superficie clara. Antes solo estaba en el :root
+     general, con el azul pálido #A2B4C1 que en realidad es para ir
+     SOBRE panel oscuro; en el tema claro eso dejaba la ayuda de los
+     campos y la fecha de las solicitudes casi invisibles. Cuatro sitios
+     llevaban escrito #60717D como color de reserva, o sea que su autor
+     creía que pintaba gris: nunca se aplicó, porque el token sí estaba
+     definido. 5.24 sobre tarjeta, 4.75 sobre fondo, 4.50 sobre suave. */
+  --texto-claro: #686D70;
+
+  /* Superficies y textos semánticos. Vivían solo en el bloque oscuro,
+     así que en claro los pintaba el color de reserva de cada var() y
+     bastaba con olvidar uno para que un aviso saliera en negro. */
+  --sup-calida:  #FFFDF7;
+  --sup-error:   #FDF3F3;
+  --sup-ok:      #F2FAF6;
+  --texto-error: #7A1B15;    /* 10.53 sobre tarjeta, 9.67 sobre la superficie de error */
+  --texto-ok:    #14532D;    /* 9.11 sobre tarjeta, 8.58 sobre la de ok. Antes convivían tres verdes distintos para este mismo papel, los tres como color de reserva; se unifican en el de más contraste */
+  --texto-peligro: #B3261E;  /* 6.54 sobre tarjeta, 6.00 sobre la superficie de error */
+  --borde-error: #E8C4C4;
+  --borde-ok:    #B9D7C8;
+
+  /* Texto sobre superficies que son oscuras en los DOS temas: el
+     mosaico, la cuenta de fotos sobre la imagen, la cabecera del chat y
+     la del perfil del dealer. Valen lo mismo en los dos bloques a
+     propósito; escribirlo en ambos es lo que deja constancia de que es
+     deliberado y no un olvido. (Aquí se nombraban también el sello de
+     la foto y la vista previa de publicar: el sello es ámbar y la vista
+     previa la pinta la piel app como tarjeta, así que ninguno de los dos
+     es superficie oscura.) */
+  --sobre-oscuro:   #FFFFFF;
+  --sobre-oscuro-2: #D5DEE5;
+
+  /* Letra sobre el ámbar de marca, que no se invierte. Antes cada caja
+     ámbar ponía var(--azul) y en oscuro eso es crema: 1.84:1. */
+  --sobre-ambar:    #151515;
+
+  /* Velo de las pastillas que van SOBRE una fotografía. Sustituye al
+     azul noche de la marca vieja (rgba de #071A2B); la foto no cambia
+     con el tema, así que el velo tampoco. */
+  --velo-foto:      rgba(20, 22, 22, .78);
   color-scheme: light;
 }
 
@@ -4138,7 +4274,11 @@ body.sin-scroll { overflow: hidden; }
   --app-text:    #F7F5EF;
   --app-muted:   #A8AAA9;
   --app-accent:  #F2A900;
+
+  /* Igual que en claro: los dos juntos, nunca uno solo. */
   --app-accent-texto: #F2A900;
+  --ambar-texto:      #F2A900;
+
   --app-sombra:  0 14px 40px rgba(0, 0, 0, .35);
   --app-vidrio:  rgba(25, 26, 26, .9);
   --texto-2:     #C9CBCA;
@@ -4147,6 +4287,23 @@ body.sin-scroll { overflow: hidden; }
   --texto-error: #F3A29C;
   --sup-ok:      #10201A;
   --texto-ok:    #8FD9B4;
+
+  /* El oscuro también sube a 3, por decisión expresa: hoy está en 1.66 y
+     incumple igual que el claro. Que «se lea mejor» no lo hace correcto,
+     y lo que se persigue en esta fase es que los dos temas se comporten
+     idéntico. 4.27 sobre tarjeta, 3.80 sobre fondo, 3.30 sobre suave. */
+  --app-borde-control: #727677;
+
+  --texto-peligro: #F3A29C;  /* el #B3261E del claro se queda en 2.66 aquí */
+  --borde-error:   #5A2A26;  /* 1.49 sobre la superficie de error, a la par del claro. El #E8C4C4 del claro daría 10.87 aquí: un contorno chillón alrededor de un aviso */
+  --borde-ok:      #1A4530;  /* 1.56 sobre la de ok, a la par del claro */
+
+  /* Mismos valores que en el bloque claro, y es a propósito: van sobre
+     superficies que son oscuras en los dos temas. */
+  --sobre-oscuro:   #FFFFFF;
+  --sobre-oscuro-2: #D5DEE5;
+  --sobre-ambar:    #151515;
+  --velo-foto:      rgba(20, 22, 22, .78);
   color-scheme: dark;
 }
 
@@ -4154,9 +4311,9 @@ html { background: var(--app-bg); }
 body { background: var(--app-bg); color: var(--app-text); transition: background-color .2s ease, color .2s ease; }
 
 /* Ámbar: los botones llevan texto oscuro en los dos temas. */
-.btn--ambar, .btn--ambar:hover { color: #151515; }
+.btn--ambar, .btn--ambar:hover { color: #151515; border-color: var(--ambar-texto); }
 .btn { border-radius: 13px; }
-.btn--linea { background: var(--app-card); color: var(--app-text); border-color: var(--app-line); }
+.btn--linea { background: var(--app-card); color: var(--app-text); border-color: var(--app-borde-control); }
 .btn--linea:hover { background: var(--app-soft); }
 .panel__titulo em, .banda__titulo em, .heroe__titulo em { color: var(--app-accent-texto); }
 .enlace-mas { color: var(--app-accent-texto); }
@@ -4172,16 +4329,16 @@ body { background: var(--app-bg); color: var(--app-text); transition: background
   background: var(--app-accent); color: #151515 !important;
 }
 .cab__nav-cta:hover { filter: brightness(1.05); }
-.cab__cuenta { color: var(--app-text); border-color: var(--app-line); }
+.cab__cuenta { color: var(--app-text); border-color: var(--app-borde-control); }
 .cab__cuenta:hover { background: var(--app-soft); color: var(--app-text); }
-.cab__toggle { border-color: var(--app-line); background: var(--app-card); border-radius: 12px; }
+.cab__toggle { border-color: var(--app-borde-control); background: var(--app-card); border-radius: 12px; }
 .cab__toggle span { background: var(--app-text); }
 
 .tema-toggle {
   display: inline-grid; place-items: center; flex: none;
   width: 44px; height: 44px; padding: 0;
   background: var(--app-card); color: var(--app-text);
-  border: 1px solid var(--app-line); border-radius: 12px;
+  border: 1px solid var(--app-borde-control); border-radius: 12px;
   cursor: pointer;
 }
 .tema-toggle:hover { background: var(--app-soft); }
@@ -4222,7 +4379,7 @@ body { background: var(--app-bg); color: var(--app-text); transition: background
   border-radius: 22px; box-shadow: var(--app-sombra); backdrop-filter: none;
 }
 .heroe__buscar input, .heroe__buscar select {
-  background: var(--app-soft); color: var(--app-text); border: 1px solid transparent; border-radius: 15px;
+  background: var(--app-soft); color: var(--app-text); border: 1px solid var(--app-borde-control); border-radius: 15px;
 }
 .heroe__buscar input::placeholder { color: var(--app-muted); }
 .heroe__buscar .btn { border-radius: 15px; }
@@ -4230,7 +4387,7 @@ body { background: var(--app-bg); color: var(--app-text); transition: background
 .heroe__atajos a {
   flex: 0 0 auto; padding: 9px 16px;
   background: var(--app-card); color: var(--app-text);
-  border: 1px solid var(--app-line); border-radius: 999px;
+  border: 1px solid var(--app-borde-control); border-radius: 999px;
   font-size: 13px; font-weight: 600;
 }
 .heroe__atajos a:hover { border-color: var(--app-accent); }
@@ -4256,7 +4413,21 @@ section[aria-labelledby="t-buscar"] { display: none; }
 
 /* Campos */
 .form input, .form select, .campo input, .campo select, textarea {
-  background: var(--app-soft); border-color: var(--app-line); color: var(--app-text);
+  background: var(--app-soft); border-color: var(--app-borde-control); color: var(--app-text);
+}
+
+/* Las casillas y los radios los dibuja el navegador con su propia
+   apariencia, así que el relleno de campo de texto que heredaban de las
+   reglas de arriba y de `.campo-v input` nunca llegó a verse. En el
+   estilo calculado sí seguía estando, y ahí lo leía el comprobador: dos
+   cajas blancas a 1.10:1 del fondo en `importar.html`, que nadie podría
+   encontrar mirando la pantalla. Se les quita el relleno heredado; el
+   color de la marca lo pone `accent-color`, que no se toca. */
+.form input[type="checkbox"], .form input[type="radio"],
+.campo input[type="checkbox"], .campo input[type="radio"],
+.campo-v input[type="checkbox"], .campo-v input[type="radio"] {
+  background: none;
+  border: 0;
 }
 
 /* ── Categorías: fotos de estudio sobre negro en los dos temas ── */
@@ -4271,7 +4442,7 @@ section[aria-labelledby="t-buscar"] { display: none; }
 .mosaico__pieza::after, .mosaico__pieza--vacia::after { content: ""; position: absolute; inset: auto 0 0; height: 36%; background: linear-gradient(transparent, rgba(0, 0, 0, .96)); }
 .mosaico__cuerpo { position: absolute; inset: auto 10px 14px; z-index: 2; display: block; padding: 0; background: transparent; text-align: center; }
 .mosaico__nombre, .mosaico > li:first-child .mosaico__nombre, .mosaico__pieza--vacia .mosaico__nombre {
-  color: #FFFFFF; font-family: var(--display); font-size: clamp(14px, 1.5vw, 20px); font-weight: 800; line-height: 1.08; text-wrap: balance;
+  color: var(--sobre-oscuro); font-family: var(--display); font-size: clamp(14px, 1.5vw, 20px); font-weight: 800; line-height: 1.08; text-wrap: balance;
 }
 .mosaico__total { display: none; }
 .mosaico__ico { display: none; }
@@ -4284,7 +4455,7 @@ section[aria-labelledby="t-buscar"] { display: none; }
   border-radius: 22px; box-shadow: var(--app-sombra);
 }
 .banda__ico { background: rgba(242, 169, 0, .14); color: var(--app-accent-texto); border-radius: 12px; }
-.banda__acciones .btn--linea { color: var(--app-text); border-color: var(--app-line); }
+.banda__acciones .btn--linea { color: var(--app-text); border-color: var(--app-borde-control); }
 .banda__acciones .btn--linea:hover { background: var(--app-soft); }
 
 /* ── Pie ── */
@@ -4293,8 +4464,10 @@ section[aria-labelledby="t-buscar"] { display: none; }
 .pie__texto, .pie__lista a, .pie__sede { color: var(--app-muted); }
 .pie__lista a:hover { color: var(--app-accent-texto); }
 
-/* Texto sobre fotografía: siempre claro. */
-.aviso__fotos, .foto__sello { color: #FFFFFF; }
+/* Texto sobre fotografía: siempre claro. El sello de la foto salía de
+   aquí también, pero su relleno es ámbar: blanco sobre ámbar a 1.84:1.
+   El sello pinta su propia letra en su regla. */
+.aviso__fotos { color: var(--sobre-oscuro); }
 
 /* La banda de servicios se ajusta al número de tarjetas.
    Con el transporte suspendido quedan dos, y tres columnas dejarían
@@ -4447,7 +4620,7 @@ main > .envoltura > section.panel {
   border-radius: 50%;
   font-size: 13px; font-weight: 700; line-height: 1;
 }
-.regla--si .regla__marca { background: var(--verde); color: #fff; }
+.regla--si .regla__marca { background: var(--verde); color: var(--blanco); }
 .regla--no .regla__marca { background: var(--gris-neutro); color: var(--gris-acero); }
 
 .regla__titulo { font-size: 14px; }
@@ -4531,11 +4704,14 @@ main > .envoltura > section.panel {
   width: 26px; height: 26px;
   display: grid; place-items: center;
   border: 0; border-radius: 50%;
-  background: rgba(7, 26, 43, .78);
-  color: #fff; font-size: 17px; line-height: 1;
+  background: var(--velo-foto);
+  color: var(--sobre-oscuro); font-size: 17px; line-height: 1;
   cursor: pointer;
 }
-.galeria-editor__quitar:hover { background: var(--azul); }
+/* Era var(--azul): en oscuro, crema detrás de la aspa blanca. Quitar es
+   borrar, así que al pasar el cursor toma el rojo de peligro, como el
+   botón de quitar foto de publicar. */
+.galeria-editor__quitar:hover { background: var(--sup-error); color: var(--texto-error); }
 .galeria-editor__vacio {
   grid-column: 1 / -1;
   font-size: 13px; color: var(--gris-acero);
@@ -4572,7 +4748,7 @@ main > .envoltura > section.panel {
 .bloque__orden button {
   width: 24px; height: 18px;
   display: grid; place-items: center;
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: 4px;
   background: var(--blanco);
   font-size: 9px; line-height: 1;
@@ -4600,7 +4776,7 @@ main > .envoltura > section.panel {
 .bloque__titulo:focus { outline: none; border-bottom-color: var(--ambar); }
 
 .bloque__acciones { display: flex; gap: 12px; align-items: center; }
-.enlace-plano--peligro { color: #A3342A; }
+.enlace-plano--peligro { color: var(--texto-peligro); }
 
 .bloque__nota {
   margin: 10px 0 0;
@@ -4611,7 +4787,7 @@ main > .envoltura > section.panel {
   width: 100%;
   margin-top: 10px;
   padding: 9px 11px;
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: var(--r);
   font: inherit; font-size: 14px;
   background: var(--hueso);
@@ -4633,8 +4809,8 @@ main > .envoltura > section.panel {
   border-radius: var(--r);
   font-size: 13.5px;
 }
-.aviso-linea--bien { background: #E8F3ED; color: #10512F; }
-.aviso-linea--mal { background: #FBEBE9; color: #8C2B22; }
+.aviso-linea--bien { background: var(--sup-ok); color: var(--texto-ok); }
+.aviso-linea--mal { background: var(--sup-error); color: var(--texto-error); }
 
 /* ── La página pública del dealer ───────────────────────── */
 
@@ -4653,30 +4829,33 @@ main > .envoltura > section.panel {
   width: 96px; height: 96px;
   display: grid; place-items: center;
   overflow: hidden;
-  background: var(--blanco);
+  /* Blanco fijo, no var(--blanco): en oscuro ese token es casi negro y
+     el logotipo oscuro que este recuadro existe para sostener se perdía. */
+  background: #FFFFFF;
   border: 1px solid var(--linea);
   border-radius: var(--r);
-  box-shadow: 0 2px 10px rgba(7, 26, 43, .12);
+  box-shadow: 0 2px 10px rgba(20, 22, 22, .12);
 }
 .perfil__logo img { width: 100%; height: 100%; object-fit: contain; }
 
 .perfil__lema {
   margin: 4px 0 0;
   font-size: 15px; font-style: italic;
-  color: var(--gris-acero);
+  color: var(--sobre-oscuro-2);   /* va dentro de .perfil, fija oscura */
 }
 
 .perfil__redes { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .perfil__red {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 12px;
-  border: 1px solid var(--linea);
+  border: 1px solid var(--app-borde-control);
   border-radius: var(--r-pildora);
   font-size: 13px;
   text-decoration: none;
   color: inherit;
 }
-.perfil__red:hover { background: var(--hueso); }
+/* --hueso gira con el tema: en claro ponía papel detrás de la letra clara. */
+.perfil__red:hover { background: rgba(255, 255, 255, .1); }
 
 .perfil-seccion { margin-top: 32px; }
 .perfil-seccion__titulo {

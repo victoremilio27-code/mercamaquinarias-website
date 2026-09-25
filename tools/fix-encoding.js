@@ -31,8 +31,16 @@ const ARREGLOS = [
   [/⬺/g, '&rsaquo;'],                          // › (quedó como carácter válido pero equivocado)
 ];
 
-/* Lo que sí debe aparecer fuera de ASCII: acentos y signos del español. */
-const PERMITIDO = /[ -ÿ–—‘’“”→›]/;
+/* Lo que sí debe aparecer fuera de ASCII: acentos y signos del español.
+
+   Los dos últimos se añadieron cuando esta comprobación entró en CI: sin
+   ellos salía 1 sobre el repositorio limpio, diciendo «0 archivo(s) por
+   reparar» y suspendiendo igual. No son mojibake, son lo que se quiso
+   escribir: «…» son los puntos suspensivos de cuenta.html e index.html y
+   «═» arma los separadores de sección de los comentarios de legal.html.
+   La lista se queda estrecha a propósito: cada carácter que se añade aquí
+   es un mojibake que esta herramienta deja de cazar. */
+const PERMITIDO = /[ -ÿ–—‘’“”→›…═]/;
 
 let cambiados = 0;
 const sospechosos = [];

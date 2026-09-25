@@ -11,11 +11,12 @@
     "check": "node tools/check-links.js",
     "check:encoding": "node tools/fix-encoding.js --check",
     "check:motion": "node tools/check-motion.js",
+    "check:contraste": "node tools/check-contraste.js",
     "favicon": "node tools/make-favicon.js",
     "db:reset": "node -e \"require('fs').readdirSync('db').filter(f=>f.startsWith('mercamaquinarias.db')).forEach(f=>require('fs').rmSync('db/'+f))\"",
     "db:demo": "node tools/seed.js",
     "db:demo:limpiar": "node tools/seed.js --vaciar",
-    "auditar": "node tools/verificar-taxonomia.js && node tools/auditar-publico.js && node tools/auditar-flujos.js && node tools/auditar-permisos.js",
+    "auditar": "node tools/verificar-taxonomia.js && node tools/auditar-publico.js && node tools/auditar-flujos.js && node tools/auditar-permisos.js && node tools/check-contraste.js",
     "auditar:publico": "node tools/auditar-publico.js",
     "auditar:flujos": "node tools/auditar-flujos.js",
     "auditar:permisos": "node tools/auditar-permisos.js",
@@ -31,6 +32,9 @@
     "dealer:probar": "node tools/probar-pagina-dealer.js",
     "db:flota": "node tools/seed.js --solo-flota",
     "taxonomia": "node tools/verificar-taxonomia.js"
+  },
+  "engines": {
+    "node": ">=22.5"
   },
   "devDependencies": {
     "puppeteer": "^25.4.0"
