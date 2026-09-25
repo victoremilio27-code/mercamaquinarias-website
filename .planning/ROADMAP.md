@@ -37,7 +37,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper (completed 2026-09-25)
 - [ ] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma
 - [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
-- [ ] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet
+- [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
 - [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
 - [ ] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
@@ -135,9 +135,9 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **Plans**: 5 planes en 4 olas
 - [x] 05-01-PLAN.md — Núcleo: la cuenta configurada fuera del repo, el procesador transferencia, confirmarPago dentro de la bitácora y transferencia:probar en CI
 - [x] 05-02-PLAN.md — Rutas: compra y ampliación por transferencia con datos y referencia, correos, y /api/admin/pagos para marcar recibido o anular
-- [ ] 05-03-PLAN.md — Planes y panel: elegir transferencia, ver datos y referencia, pagos en espera; un 202 deja de anunciarse como compra hecha
-- [ ] 05-04-PLAN.md — Consola: sección de pagos por transferencia con marcado, anulación y la bitácora al día
-- [ ] 05-05-PLAN.md — Criterio 5 de extremo a extremo en el arnés, batería completa y verificación humana en los dos temas
+- [x] 05-03-PLAN.md — Planes y panel: elegir transferencia, ver datos y referencia, pagos en espera; un 202 deja de anunciarse como compra hecha
+- [x] 05-04-PLAN.md — Consola: sección de pagos por transferencia con marcado, anulación y la bitácora al día
+- [x] 05-05-PLAN.md — Criterio 5 de extremo a extremo en el arnés, batería completa y verificación humana en los dos temas
 **UI hint**: yes
 **Notas**: Es la contingencia de lanzamiento y es barata: quita la dependencia externa de la fecha firme, así que va bien antes de CardNet, no después. Usa exactamente la transición `pendiente → aprobado` de la Fase 3 — la misma función, no una copia. `planes.perfil_publico` se usa tal como está; no se proponen planes ni precios nuevos.
 
@@ -307,7 +307,7 @@ entrega valor sin esperar a la siguiente.
 | 2. Tema claro y oscuro coherentes | 6/6 | Complete   | 2026-09-25 |
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
-| 5. Cobro por transferencia bancaria | 2/5 | In Progress|  |
+| 5. Cobro por transferencia bancaria | 5/5 | Complete   | 2026-09-25 |
 | 6. CardNet construido y apagado | 0/TBD | Not started | - |
 | 7. Verificación y soporte al dealer | 0/TBD | Not started | - |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |
