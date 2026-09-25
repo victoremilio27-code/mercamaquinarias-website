@@ -456,6 +456,106 @@ function montarBandeja() {
   cargarBandeja();
 }
 
+/* ═══ Pagos por transferencia ════════════════════════════
+   El servidor no puede saber cuándo entra el dinero en la cuenta: lo
+   confirma una persona desde aquí. Al marcarlo recibido se otorgan los
+   cupos y se emite el comprobante en ese momento; al anularlo no se
+   otorga nada y el cliente recibe el motivo por correo.
+
+   Una ampliación cuya membresía ya no existe no ofrece «recibido»: el
+   servidor la rechazaría con 409 (D-07), y el botón solo invitaría a
+   pulsarlo. Lo único que procede es anularla y devolver el dinero.
+
+   El correo del comprador se pinta como texto y sin enlace de teléfono:
+   el soporte es por correo y el asistente, nada más. Los atributos son
+   `data-pagos-*` para no engancharse a los `data-estado` de la cola. */
+
+let PAGOS_ESTADO = 'pendiente';
+
+const PAGOS_VACIO = {
+  pendiente: 'No hay transferencias pendientes.',
+  aprobado: 'Todavía no se ha recibido ninguna transferencia.',
+  rechazado: 'No hay transferencias anuladas.',
+};
+
+function avisarPagos(mensaje, bien = false) {
+  const aviso = $('#avisoPagos');
+  if (!aviso) return;
+  aviso.hidden = !mensaje;
+  aviso.className = `acceso__aviso${bien ? ' acceso__aviso--bien' : ''}`;
+  aviso.textContent = mensaje || '';
+}
+
+/* Con céntimos: el total lleva ITBIS y rara vez es redondo, y el
+   personal lo coteja contra el extracto del banco cifra a cifra. */
+const importePago = (n) => `RD$${Number(n || 0).toLocaleString('en-US', {
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+})}`;
+
+function pagoHTML(p) {
+  const clase = { aprobado: 'sol--aprobada', rechazado: 'sol--rechazada' }[p.estado] || '';
+  const huerfana = p.estado === 'pendiente' && p.membresiaViva === false;
+  const f = p.factura;
+
+  return `<li class="sol ${clase}" data-id="${esc(p.id)}" data-referencia="${esc(p.referencia)}" data-total="${esc(p.total)}">
+    <div class="sol__cabeza">
+      <b class="sol__nombre num">${esc(p.referencia)}</b>
+      <span class="sol__meta">${esc(p.organizacion || '')}</span>
+      <span class="sol__fecha">${fechaHora(p.creado)}</span>
+    </div>
+    <p class="sol__meta">${esc(p.concepto || 'Membresía')} · <b class="num">${esc(importePago(p.total))}</b></p>
+    ${p.correoCliente ? `<p class="sol__meta">Comprador: ${esc(p.correoCliente)}</p>` : ''}
+    ${huerfana ? `<p class="sol__meta sol__meta--aviso">La membresía que ampliaba este pago ya no existe: anúlelo y devuelva la transferencia.</p>` : ''}
+    ${p.estado === 'aprobado' ? `<p class="sol__meta">Recibido${p.confirmado ? ` el ${fechaHora(p.confirmado)}` : ''} · ${f && f.ncf
+      ? `comprobante <span class="num">${esc(f.ncf)}</span>`
+      : 'sin comprobante emitido: vuelva a marcarlo como recibido para emitirlo'}</p>` : ''}
+    ${p.estado === 'rechazado' ? `<p class="sol__meta">Anulado${p.actualizado ? ` el ${fechaHora(p.actualizado)}` : ''}. No se otorgó nada ni se emitió comprobante.</p>` : ''}
+    ${p.estado === 'pendiente' ? `
+    <div class="sol__acciones">
+      ${huerfana ? '' : '<button type="button" class="btn btn--ambar btn--chico" data-pago-accion="recibido">Marcar recibido</button>'}
+      <button type="button" class="btn btn--linea btn--chico" data-pago-accion="anular">Anular</button>
+    </div>` : ''}
+    ${p.estado === 'aprobado' && !(f && f.ncf) ? `
+    <div class="sol__acciones">
+      <button type="button" class="btn btn--ambar btn--chico" data-pago-accion="recibido">Emitir el comprobante</button>
+    </div>` : ''}
+  </li>`;
+}
+
+async function cargarPagos() {
+  if (!$('#listaPagos')) return;
+  const datos = await api(`/admin/pagos?estado=${encodeURIComponent(PAGOS_ESTADO)}`, { silencioso: true });
+  if (!datos) return avisarPagos('No se pudieron cargar los pagos por transferencia.');
+
+  const lista = datos.pagos || [];
+  $('#listaPagos').innerHTML = lista.map(pagoHTML).join('');
+  const vacio = $('#pagosVacia');
+  vacio.hidden = lista.length > 0;
+  vacio.textContent = PAGOS_VACIO[PAGOS_ESTADO] || PAGOS_VACIO.pendiente;
+
+  const pendientes = PAGOS_ESTADO === 'pendiente'
+    ? lista
+    : ((await api('/admin/pagos?estado=pendiente', { silencioso: true })) || {}).pagos;
+  const n = Array.isArray(pendientes) ? pendientes.length : null;
+  $('#metaPagos').textContent = n == null ? ''
+    : n === 0 ? 'Ninguna en espera' : `${n} en espera`;
+}
+
+function montarPagos() {
+  if (!$('#listaPagos')) return;
+
+  $('#filtrosPagos').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-pagos-estado]');
+    if (!boton) return;
+    PAGOS_ESTADO = boton.dataset.pagosEstado;
+    elegirFiltro(boton);
+    avisarPagos('');
+    cargarPagos();
+  });
+
+  cargarPagos();
+}
+
 /* ═══ Flota propia ═══════════════════════════════════════
    Los equipos de alquiler y las camas de transporte. Estaban escritos
    a mano en assets/data.js, así que quitar una excavadora del alquiler
@@ -921,6 +1021,7 @@ async function montarAdmin() {
 
   await cargar();
   montarBandeja();
+  montarPagos();
   montarBitacora();
   montarFlota();
   montarPub();
