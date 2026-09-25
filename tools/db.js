@@ -908,6 +908,81 @@ const MIGRACIONES = [
      END`,
     'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
   ]],
+
+  /* Cobro con tarjeta por CardNet (fase 6), construido y apagado.
+   *
+   * Un pago de pasarela necesita su propio rastro: el id de compra de
+   * CardNet, la autorización y el código con que respondió, y cuántas
+   * veces se intentó. Un rechazo guardaba solo 'rechazado' y nadie
+   * podía decirle al anunciante por qué.
+   *
+   * La referencia del pago es la clave de idempotencia que viaja en
+   * `UniqueID`: dos cobros de CardNet con la misma referencia serían
+   * dos cargos que CardNet trataría como uno. De ahí el índice único.
+   * Es PARCIAL (solo `procesador = 'cardnet'`) porque las referencias
+   * antiguas nunca se garantizaron únicas: un índice sobre toda la
+   * columna podría fallar al migrar y, como `migrar()` lanza, tumbar el
+   * arranque en producción.
+   *
+   * `pagos_eventos` guarda cada aviso y cada consulta a CardNet, ya
+   * limpios de datos de tarjeta, y es de solo añadir como la bitácora:
+   * es lo que reconstruye qué pasó cuando hay una discusión.
+   *
+   * Los índices sobre columnas nuevas viven solo aquí y no en
+   * schema.sql: schema.sql se ejecuta ANTES de migrar(), y en una base
+   * vieja esas columnas todavía no existen. Una base nueva también los
+   * recibe, porque en ella corren todas las migraciones. */
+  ['2026-10-cardnet', [
+    'ALTER TABLE pagos ADD COLUMN procesador_id TEXT',
+    'ALTER TABLE pagos ADD COLUMN autorizacion TEXT',
+    'ALTER TABLE pagos ADD COLUMN codigo_respuesta TEXT',
+    'ALTER TABLE pagos ADD COLUMN motivo TEXT',
+    'ALTER TABLE pagos ADD COLUMN intentos INTEGER NOT NULL DEFAULT 0',
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_cardnet_referencia ON pagos (referencia) WHERE procesador = 'cardnet'",
+    'CREATE INDEX IF NOT EXISTS ix_pagos_procesador_id ON pagos (procesador, procesador_id)',
+    'ALTER TABLE metodos_pago ADD COLUMN procesador_cliente_id TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN procesador_perfil_id TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN activo INTEGER NOT NULL DEFAULT 1',
+    'ALTER TABLE metodos_pago ADD COLUMN fallos_seguidos INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE metodos_pago ADD COLUMN borrado TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN aviso_vencimiento TEXT',
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_metodos_perfil
+       ON metodos_pago (organizacion_id, procesador, procesador_perfil_id)
+       WHERE procesador_perfil_id IS NOT NULL`,
+    'ALTER TABLE suscripciones ADD COLUMN metodo_pago_id TEXT',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_automatica INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_aceptada TEXT',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_intentos INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_proxima TEXT',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_avisada TEXT',
+    `CREATE TABLE IF NOT EXISTS clientes_procesador (
+       organizacion_id TEXT NOT NULL,
+       procesador      TEXT NOT NULL,
+       cliente_id      TEXT NOT NULL,
+       creado          TEXT NOT NULL,
+       PRIMARY KEY (organizacion_id, procesador)
+     )`,
+    `CREATE TABLE IF NOT EXISTS pagos_eventos (
+       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+       pago_id    TEXT,
+       procesador TEXT NOT NULL,
+       origen     TEXT NOT NULL,
+       tipo       TEXT NOT NULL,
+       cuerpo     TEXT,
+       creado     TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_pagos_eventos_pago ON pagos_eventos (pago_id, id)',
+    `CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_cambios
+       BEFORE UPDATE ON pagos_eventos
+     BEGIN
+       SELECT RAISE(ABORT, 'Los eventos de pago no se modifican');
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_borrado
+       BEFORE DELETE ON pagos_eventos
+     BEGIN
+       SELECT RAISE(ABORT, 'Los eventos de pago no se borran');
+     END`,
+  ]],
 ];
 
 function migrar() {

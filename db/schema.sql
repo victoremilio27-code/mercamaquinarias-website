@@ -514,7 +514,17 @@ CREATE TABLE IF NOT EXISTS suscripciones (
   fin             TEXT,                    -- NULL en membresía viva
   proximo_cargo   TEXT,
   cancelada       TEXT,
-  creada          TEXT NOT NULL
+  creada          TEXT NOT NULL,
+  -- Renovación automática con tarjeta guardada (CardNet): solo con la
+  -- casilla marcada por el anunciante, que queda fechada en
+  -- `renovacion_aceptada`. `renovacion_avisada` es el `fin` del ciclo ya
+  -- avisado por correo, para no avisar dos veces.
+  metodo_pago_id        TEXT,
+  renovacion_automatica INTEGER NOT NULL DEFAULT 0,
+  renovacion_aceptada   TEXT,
+  renovacion_intentos   INTEGER NOT NULL DEFAULT 0,
+  renovacion_proxima    TEXT,
+  renovacion_avisada    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_susc_org ON suscripciones (organizacion_id, estado);
@@ -532,10 +542,24 @@ CREATE TABLE IF NOT EXISTS metodos_pago (
   vence_mes       INTEGER,
   vence_anio      INTEGER,
   predeterminado  INTEGER NOT NULL DEFAULT 0,
-  creado          TEXT NOT NULL
+  creado          TEXT NOT NULL,
+  -- El cliente (`CustomerId`) y el perfil (`PaymentProfileId`) en CardNet.
+  procesador_cliente_id TEXT,
+  procesador_perfil_id  TEXT,
+  -- 0 mientras el banco no active el perfil con su código.
+  activo          INTEGER NOT NULL DEFAULT 1,
+  -- Rechazos seguidos: con tres, la renovación deja de intentarla.
+  fallos_seguidos INTEGER NOT NULL DEFAULT 0,
+  -- Borrado lógico: los pagos cobrados con ella siguen apuntándola.
+  borrado         TEXT,
+  -- El mes (AAAA-MM) del último aviso de tarjeta por vencer.
+  aviso_vencimiento TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_metodos_org ON metodos_pago (organizacion_id);
+-- ux_metodos_perfil (organizacion_id, procesador, procesador_perfil_id)
+-- vive en la migración 2026-10-cardnet de tools/db.js: este archivo se
+-- ejecuta antes de migrar() y en una base vieja la columna aún no existe.
 
 CREATE TABLE IF NOT EXISTS pagos (
   id              TEXT PRIMARY KEY,
@@ -554,12 +578,61 @@ CREATE TABLE IF NOT EXISTS pagos (
   -- `intencion` (JSON) hasta que el dinero se confirma en `confirmado`.
   intencion       TEXT,
   confirmado      TEXT,
-  actualizado     TEXT
+  actualizado     TEXT,
+  -- Lo que dijo la pasarela: su id de compra, la autorización del
+  -- emisor, el código de respuesta y el motivo que se le dio al
+  -- anunciante si se rechazó. `intentos`: cuántas veces se envió.
+  procesador_id    TEXT,
+  autorizacion     TEXT,
+  codigo_respuesta TEXT,
+  motivo           TEXT,
+  intentos         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS ix_pagos_org ON pagos (organizacion_id, creado);
 CREATE INDEX IF NOT EXISTS ix_pagos_suscripcion ON pagos (suscripcion_id);
 CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos (estado, creado);
+-- La referencia es la clave de idempotencia que viaja a CardNet en
+-- `UniqueID`. Única solo entre pagos de CardNet: las antiguas no lo eran.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_cardnet_referencia ON pagos (referencia) WHERE procesador = 'cardnet';
+-- ix_pagos_procesador_id (procesador, procesador_id) vive en la
+-- migración 2026-10-cardnet: en una base vieja la columna aún no existe
+-- cuando se ejecuta este archivo.
+
+-- El cliente de cada organización en la pasarela (`CustomerId` de CardNet).
+CREATE TABLE IF NOT EXISTS clientes_procesador (
+  organizacion_id TEXT NOT NULL,
+  procesador      TEXT NOT NULL,
+  cliente_id      TEXT NOT NULL,
+  creado          TEXT NOT NULL,
+  PRIMARY KEY (organizacion_id, procesador)
+);
+
+-- Cada aviso y cada consulta a la pasarela, ya limpios de datos de
+-- tarjeta. De solo añadir: los dos disparadores abortan UPDATE y DELETE.
+CREATE TABLE IF NOT EXISTS pagos_eventos (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  pago_id    TEXT,
+  procesador TEXT NOT NULL,
+  origen     TEXT NOT NULL,
+  tipo       TEXT NOT NULL,
+  cuerpo     TEXT,
+  creado     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_pagos_eventos_pago ON pagos_eventos (pago_id, id);
+
+CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_cambios
+  BEFORE UPDATE ON pagos_eventos
+BEGIN
+  SELECT RAISE(ABORT, 'Los eventos de pago no se modifican');
+END;
+
+CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_borrado
+  BEFORE DELETE ON pagos_eventos
+BEGIN
+  SELECT RAISE(ABORT, 'Los eventos de pago no se borran');
+END;
 
 -- ── Inventario ─────────────────────────────────────────────
 
