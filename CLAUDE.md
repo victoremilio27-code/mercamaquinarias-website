@@ -86,8 +86,15 @@ En las pruebas con arnés, las variables de entorno se fijan **antes** de `requi
   ni expresiones regulares con `\s`/`\d` dentro de un heredoc de bash: se expanden o se
   destrozan. Usa las herramientas de escritura de archivos. Esto ya rompió trabajo dos
   veces.
-- **Saltos de línea:** el repositorio es CRLF (`core.autocrlf=true`), pero `styles.css`
-  es LF. Una búsqueda con `\n` no casa contra un archivo CRLF.
+- **Saltos de línea:** el repositorio es CRLF (`core.autocrlf=true`) y **`styles.css`
+  también**, como todo lo demás. Una búsqueda con `\n` no casa contra un archivo CRLF:
+  usa las herramientas de edición de archivos en vez de comparar cadenas a mano.
+  *(Aquí decía que `styles.css` era LF. Era falso: comprobado commit por commit, siempre
+  tuvo tantos retornos de carro como líneas. Si alguien "restaura el LF" provocará un
+  diff de 4.700 líneas que oculta el cambio real.)*
+  Lo que sí va en LF obligatoriamente está declarado en `.gitattributes`: los `.sh`, lo
+  de `deploy/` y los flujos de `.github/workflows/`. Corren en Linux y bash leería el
+  `\r` como parte del comando.
 - **El contexto de una ruta pública puede ser `null`.** Comprueba `!!ctx` antes de
   `ctx.organizacion`, o el 500 aparece solo para visitantes sin sesión.
 - **`api()` en `assets/sesion.js` lanza** cuando la respuesta no es `ok`. Quien la use en
