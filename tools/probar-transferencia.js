@@ -39,6 +39,7 @@ fs.mkdirSync(BANCO, { recursive: true });
 
 process.env.MERCA_DB = path.join(BANCO, 'prueba.db');
 process.env.MERCA_FACTURAS = path.join(BANCO, 'facturas');
+process.env.MERCA_FOTOS = path.join(BANCO, 'fotos');
 process.env.MERCA_CORREO = 'archivo';
 process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 
@@ -201,7 +202,11 @@ const paraDe = (c) => ((/^Para: (.*)$/m.exec(c.texto) || [])[1] || '').trim();
    puede llevar un número de teléfono ni mandar a WhatsApp. Diez
    dígitos seguidos o en grupos 3-3-4 es un teléfono dominicano. */
 const TELEFONO = /(?<!\d)\d{3}[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)/;
-const sinTelefono = (c) => !TELEFONO.test(c.texto) && !TELEFONO.test(c.html)
+/* Un NCF (B02 y ocho cifras; un e-CF, E y doce) lleva diez dígitos
+   seguidos tras la letra y casaba como teléfono en el correo del
+   comprobante. Se quita antes de buscar: no es un canal de contacto. */
+const sinNcf = (s) => String(s || '').replace(/\b[BE]\d{10,12}\b/g, '');
+const sinTelefono = (c) => !TELEFONO.test(sinNcf(c.texto)) && !TELEFONO.test(sinNcf(c.html))
   && !/whatsapp/i.test(c.texto) && !/whatsapp/i.test(c.html);
 const dinero = (n) => `RD$${Number(n).toLocaleString('en-US')}`;
 const pagosTotales = () => consulta('SELECT COUNT(*) AS n FROM pagos').n;
@@ -916,6 +921,144 @@ db.cargarSecuencia({
     ok(idxGet >= 0, 'GET /api/admin/pagos está en RUTAS');
     const fuente = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
     ok(!/db\.aprobarPago/.test(fuente), 'api.js no llama a db.aprobarPago: la transición es pagos.confirmarPago');
+  }
+
+  /* ── 05-05: extremo a extremo ─────────────────────────────────
+     El criterio 5 de la fase entero, por el enrutador y sin atajos:
+     una organización que no existía compra cupos por transferencia,
+     no puede publicar mientras el pago espera, el personal lo marca
+     recibido y entonces publica un anuncio que el público ve.
+
+     Es la razón de ser de la fase: el 14 de octubre tiene que poderse
+     cobrar y publicar sin CardNet ni nadie de fuera. Cada eslabón ya
+     tiene su prueba suelta arriba; esta falla si se rompe la cadena
+     aunque cada eslabón por separado siga en verde (por ejemplo, si el
+     marcado otorga cupos en una membresía que `publicar` no encuentra).
+
+     Organización NUEVA a propósito: con una de las secciones previas,
+     «una fila de bitácora» y «un comprobante» se contarían mezclados
+     con los de antes y la comprobación no diría nada. */
+
+  console.log('\n32. Extremo a extremo: comprar por transferencia, marcar recibido, publicar');
+  {
+    encender();
+    ok(JSON.stringify(pagos.metodosDeCobro()) === '["transferencia"]',
+      `encendida, el comprador solo tiene transferencia: ${JSON.stringify(pagos.metodosDeCobro())}`);
+    /* Si la fase 6 ya añadió su pasarela, aquí tiene que estar apagada:
+       el recorrido demuestra que se cobra SIN ningún procesador externo. */
+    const otros = Object.keys(pagos.PROCESADORES).filter((k) => k !== 'demo' && k !== 'transferencia');
+    ok(otros.every((k) => !pagos.metodosDeCobro().includes(k)),
+      `ninguna pasarela al alcance del comprador (${otros.length ? otros.join(', ') : 'ninguna definida'})`);
+
+    let llamadasDemoE2E = 0;
+    const demoAntes = pagos.PROCESADORES.demo;
+    pagos.PROCESADORES.demo = async () => { llamadasDemoE2E++; return { resultado: 'aprobado' }; };
+    try {
+      const nueva = cuentaConLegales('extremo-transferencia@prueba.invalid', 'Empresa de Extremo a Extremo');
+      const idOrgNueva = nueva.org && nueva.org.id;
+      ok(!!idOrgNueva && membresiasDe(idOrgNueva) === 0 && db.facturasDe(idOrgNueva).length === 0,
+        'la organización es nueva: sin membresías ni facturas');
+      const filasDeOrg = () =>
+        consulta('SELECT COUNT(*) AS n FROM bitacora_admin WHERE organizacion_id = ?', idOrgNueva).n;
+
+      // El catálogo de planes ofrece la transferencia, sin la cuenta.
+      const planes = await pedir({ url: '/api/planes', cabeceras: nueva.cabeceras });
+      ok(planes.codigo === 200 && JSON.stringify((planes.datos || {}).metodosPago) === '["transferencia"]',
+        `GET /api/planes: metodosPago=${JSON.stringify((planes.datos || {}).metodosPago)}`);
+
+      // Pide los cupos sin decir método: el servidor elige transferencia.
+      const antesB02 = siguienteB02();
+      const compra = await comprar({ plan: 'destacado', cupo: 1, dias: 30 }, nueva);
+      const c = compra.datos || {};
+      const ref = c.cobro && c.cobro.referencia;
+      const idPago = c.pago && c.pago.id;
+      ok(compra.codigo === 202 && !!c.pago && c.pago.estado === 'pendiente' && !!ref
+        && !!c.transferencia && c.transferencia.cuenta === '000-000000-0',
+      `compra: código ${compra.codigo}, pago ${c.pago && c.pago.estado}, referencia ${ref}`);
+
+      // Las fotos se suben antes, como hace publicar.html.
+      const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+        + 'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const foto = await pedir({ metodo: 'POST', url: '/api/fotos', cuerpo: { completa: PNG }, cabeceras: nueva.cabeceras });
+      const rutaFoto = (foto.datos || {}).completa;
+      ok(foto.codigo === 201 && /^\/fotos\//.test(rutaFoto || ''), `foto subida: ${foto.codigo} ${rutaFoto}`);
+      const ANUNCIO = {
+        categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567',
+        anio: 2019, condicion: 'usado', usoValor: 1000, usoUnidad: 'km',
+        descripcion: `Prueba de extremo a extremo de la transferencia ${SELLO}.`,
+        provincia: 'santo-domingo', precio: 1000000, moneda: 'DOP',
+        fotos: [rutaFoto, rutaFoto, rutaFoto],
+        /* El teléfono del VENDEDOR en su anuncio, que es la prestación
+           del plan; no es un canal de soporte del sitio. */
+        telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+      };
+
+      // Mientras el pago espera: no publica, y no hay nada otorgado ni emitido.
+      const antesDeTiempo = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO, cabeceras: nueva.cabeceras });
+      ok(antesDeTiempo.codigo === 402
+        && (antesDeTiempo.datos || {}).error === 'Todavía no tiene cupos. Contrate un plan para publicar este equipo.',
+      `publicar con el pago pendiente: ${antesDeTiempo.codigo} (${(antesDeTiempo.datos || {}).error})`);
+      const espera = (await misMembresias(nueva)).datos || {};
+      ok(Array.isArray(espera.pagosPendientes) && espera.pagosPendientes.length === 1
+        && espera.pagosPendientes[0].referencia === ref,
+      `pagosPendientes: ${JSON.stringify((espera.pagosPendientes || []).map((p) => p.referencia))}`);
+      ok(Array.isArray(espera.membresias) && espera.membresias.length === 0, 'ninguna membresía todavía');
+      ok(db.facturasDe(idOrgNueva).length === 0 && siguienteB02() === antesB02,
+        `sin factura ni NCF antes del marcado (facturas ${db.facturasDe(idOrgNueva).length}, B02 +${siguienteB02() - antesB02})`);
+      ok(filasDeOrg() === 0, 'sin fila de bitácora antes del marcado');
+
+      // El personal la ve en la consola y la marca recibida.
+      const consola = (await listarAdmin()).datos || {};
+      ok((consola.pagos || []).some((p) => p.id === idPago && p.referencia === ref && p.organizacion === 'Empresa de Extremo a Extremo'),
+        'la consola lista el pago con su referencia y la empresa');
+      const IP_E2E = '190.5.5.5';
+      const marcado = await recibido(idPago, { motivo: 'Ref. banco E2E' },
+        { ...comoAdmin, 'cf-connecting-ip': IP_E2E });
+      const m = marcado.datos || {};
+      ok(marcado.codigo === 200 && !!m.comprobante && /^B02\d{8}$/.test(m.comprobante.ncf || ''),
+        `marcar recibido: ${marcado.codigo}, NCF ${m.comprobante && m.comprobante.ncf}${m.error ? `, ${m.error}` : ''}`);
+
+      // Ahora sí: una membresía, un comprobante del pago, una fila.
+      ok(membresiasDe(idOrgNueva) === 1 && !!m.membresia && m.membresia.anuncios_incluidos === 1,
+        `membresías ${membresiasDe(idOrgNueva)}, cupos ${m.membresia && m.membresia.anuncios_incluidos}`);
+      const facturasOrg = db.facturasDe(idOrgNueva);
+      ok(facturasOrg.length === 1 && facturasDelPago(idPago) === 1
+        && facturasOrg[0].ncf === m.comprobante.ncf && siguienteB02() === antesB02 + 1,
+      `un comprobante con NCF ${facturasOrg[0] && facturasOrg[0].ncf}, B02 +${siguienteB02() - antesB02}`);
+      ok(filasDeOrg() === 1, `filas de bitácora de la organización: ${filasDeOrg()} (se esperaba 1)`);
+      const fila = consulta('SELECT * FROM bitacora_admin WHERE organizacion_id = ?', idOrgNueva);
+      ok(!!fila && fila.accion === 'pago.transferencia_recibida' && fila.ip === IP_E2E
+        && fila.objeto_id === idPago && fila.admin_id === idAdmin,
+      `la fila: ${fila && fila.accion}, IP ${fila && fila.ip}`);
+      const tras = (await misMembresias(nueva)).datos || {};
+      ok(Array.isArray(tras.pagosPendientes) && tras.pagosPendientes.length === 0, 'pagosPendientes vacío');
+
+      /* El comprobante se envía sin esperar a la respuesta: se le da un
+         momento al transporte de archivo antes de buscarlo. Se busca
+         por la referencia, que es de esta pasada: el NCF se repite en
+         cada base nueva y la bandeja guarda los correos de las
+         anteriores. */
+      let alCliente = null;
+      for (let i = 0; i < 40 && !alCliente; i++) {
+        alCliente = correosCon(ref).find((x) => paraDe(x) === 'extremo-transferencia@prueba.invalid'
+          && x.texto.includes(`NCF: ${m.comprobante.ncf}`)) || null;
+        if (!alCliente) await new Promise((r) => setTimeout(r, 50));
+      }
+      ok(!!alCliente, `correo del comprobante al comprador con el NCF y la referencia ${ref}`);
+      ok(!!alCliente && sinTelefono(alCliente), 'sin teléfono ni WhatsApp');
+
+      // Y publica: el anuncio sale en el catálogo público, sin sesión.
+      const publicado = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO, cabeceras: nueva.cabeceras });
+      const idAnuncio = publicado.datos && publicado.datos.anuncio && publicado.datos.anuncio.id;
+      ok(publicado.codigo === 201 && !!idAnuncio,
+        `publicar tras el marcado: ${publicado.codigo}${(publicado.datos || {}).error ? ` (${publicado.datos.error})` : ''}`);
+      const catalogo = await pedir({ url: '/api/anuncios?categoria=camiones&porPagina=50' });
+      ok(catalogo.codigo === 200 && ((catalogo.datos || {}).anuncios || []).some((a) => a.id === idAnuncio),
+        `el anuncio está en el catálogo público (${((catalogo.datos || {}).anuncios || []).length} en la página)`);
+    } finally {
+      pagos.PROCESADORES.demo = demoAntes;
+    }
+    ok(llamadasDemoE2E === 0, `el procesador demo se llamó ${llamadasDemoE2E} vez/veces en todo el recorrido`);
   }
 
   apagar();
