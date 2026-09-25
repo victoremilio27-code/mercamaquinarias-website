@@ -530,7 +530,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .pastilla .ico { width: 12px; height: 12px; stroke-width: 2.6; }
 /* El verde solo comunica confianza verificada. */
-.pastilla--verde { background: rgba(21, 122, 75, .1); color: var(--verde); }
+/* Letra en --texto-ok y no en --verde: el verde de marca sobre su propio
+   tinte quedaba a 4.04:1 en claro. El tinte se queda; es relleno. */
+.pastilla--verde { background: rgba(21, 122, 75, .1); color: var(--texto-ok); }
 
 .nota-verificado {
   margin-top: 14px;
@@ -1289,7 +1291,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 2px 7px;
   border-radius: 999px;
   background: rgba(21, 122, 75, .12);
-  color: var(--verde);
+  color: var(--texto-ok);
   font-size: 10.5px;
   font-weight: 700;
 }
@@ -1363,7 +1365,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: 5px;
   font-size: 11.5px;
   font-weight: 700;
-  color: var(--verde);
+  color: var(--texto-ok);
 }
 .plan__ahorro span { font-weight: 500; color: var(--gris-acero); }
 .plan__ahorro--par { background: rgba(242, 169, 0, .12); color: var(--ambar-texto); }
@@ -1882,16 +1884,16 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-bottom: 14px;
   padding: 10px 13px;
   background: var(--sup-error);
-  border: 1px solid #E8C4C4;
-  border-left: 3px solid #B3261E;
+  border: 1px solid var(--borde-error);
+  border-left: 3px solid var(--texto-peligro);
   border-radius: var(--r);
   font-size: 12.5px;
   color: var(--texto-error);
 }
-.paso__aviso .ico { color: #B3261E; margin-top: 1px; }
+.paso__aviso .ico { color: var(--texto-error); margin-top: 1px; }
 
-.campo-v--error input, .campo-v--error select, .campo-v--error textarea { border-color: #B3261E; }
-.campo-v__error { font-size: 11.5px; font-weight: 600; color: #B3261E; }
+.campo-v--error input, .campo-v--error select, .campo-v--error textarea { border-color: var(--texto-peligro); }
+.campo-v__error { font-size: 11.5px; font-weight: 600; color: var(--texto-peligro); }
 .campo-v--inactivo > span { opacity: .55; }
 
 .campo-doble { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 8px; }
@@ -1953,7 +1955,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .zona-fotos__btn { margin-top: 8px; cursor: pointer; }
 
 .contador-fotos { margin-top: 12px; font-size: 12.5px; color: var(--gris-acero); }
-.cuenta-aviso { color: #B3261E; font-weight: 600; }
+.cuenta-aviso { color: var(--texto-peligro); font-weight: 600; }
 
 .fotos {
   display: grid;
@@ -1999,7 +2001,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .foto__btn:disabled { opacity: .35; cursor: default; }
 .foto__btn:not(:disabled):hover { background: var(--ambar); }
-.foto__btn--quitar:not(:disabled):hover { background: #B3261E; color: var(--blanco); }
+.foto__btn--quitar:not(:disabled):hover { background: var(--sup-error); color: var(--texto-error); }
 .foto__btn .ico { width: 13px; height: 13px; }
 
 /* ── Teléfonos ──────────────────────────────────────────── */
@@ -2021,7 +2023,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   background: transparent; border: 1px solid var(--app-borde-control); border-radius: 4px;
   color: var(--gris-acero); cursor: pointer;
 }
-.telefono__quitar:not(:disabled):hover { border-color: #B3261E; color: #B3261E; }
+.telefono__quitar:not(:disabled):hover { border-color: var(--texto-peligro); color: var(--texto-peligro); }
 .telefono__quitar:disabled { opacity: .35; cursor: default; }
 .telefono__quitar .ico { width: 14px; height: 14px; }
 
@@ -2077,7 +2079,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 7px; padding: 2px 8px;
   background: rgba(21, 122, 75, .12);
   border-radius: 3px;
-  font-size: 11px; font-weight: 700; color: var(--verde);
+  font-size: 11px; font-weight: 700; color: var(--texto-ok);
 }
 .plan-op__cuantas { margin-top: 6px; font-weight: 600; color: var(--azul); }
 .plan-op__incluye { display: grid; gap: 5px; margin-top: 10px; }
@@ -2354,7 +2356,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 .acceso__aviso {
   margin-bottom: 14px; padding: 10px 13px;
-  background: var(--sup-error); border: 1px solid #E8C4C4; border-left: 3px solid #B3261E;
+  background: var(--sup-error); border: 1px solid var(--borde-error); border-left: 3px solid var(--texto-peligro);
   border-radius: var(--r); font-size: 12.5px; color: var(--texto-error);
 }
 .acceso__legal { margin-top: 12px; font-size: 11.5px; color: var(--gris-acero); text-align: center; }
@@ -2498,7 +2500,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .nota-rnc .ico { flex: none; width: 16px; height: 16px; color: var(--azul); }
 
 .acceso__aviso--bien {
-  background: rgba(21, 122, 75, .08); border-color: #B9D7C8;
+  background: var(--sup-ok); border-color: var(--borde-ok);
   border-left-color: var(--verde); color: var(--texto-ok);
 }
 
@@ -2541,7 +2543,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .suc-admin__nombre { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
 .suc-admin__meta { font-size: 11.5px; color: var(--gris-acero); }
 .suc-admin__acciones { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
-.btn-tabla--quitar:hover { border-color: #B3261E; color: #B3261E; }
+.btn-tabla--quitar:hover { border-color: var(--texto-peligro); color: var(--texto-peligro); }
 
 .form-sucursal {
   margin-top: 16px; padding: 16px 18px;
@@ -2630,13 +2632,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .celda-equipo__meta { display: block; font-size: 11.5px; color: var(--gris-acero); }
 
 .estado { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
-.estado--activo  { background: rgba(21, 122, 75, .12); color: var(--verde); }
+.estado--activo  { background: rgba(21, 122, 75, .12); color: var(--texto-ok); }
 .estado--pausado { background: rgba(242, 169, 0, .16); color: var(--ambar-texto); }
 .estado--vencido { background: rgba(96, 113, 125, .14); color: var(--gris-acero); }
 .estado--vendido { background: rgba(7, 26, 43, .1); color: var(--azul); }
 
 .vigencia { font-size: 12px; font-variant-numeric: tabular-nums; }
-.vigencia--pronto { color: #B3261E; font-weight: 700; }
+.vigencia--pronto { color: var(--texto-peligro); font-weight: 700; }
 .vigencia--fin { color: var(--gris-acero); }
 .vigencia--membresia { color: var(--verde); font-weight: 600; }
 
@@ -2899,7 +2901,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--texto-claro);
 }
 
-.pastilla--roja { background: rgba(179, 38, 30, .1); color: #B3261E; }
+.pastilla--roja { background: rgba(179, 38, 30, .1); color: var(--texto-peligro); }
 
 /* ── Cola de revisión ───────────────────────────────────── */
 
@@ -2920,7 +2922,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r);
 }
 .sol--aprobada { border-left-color: var(--verde); }
-.sol--rechazada { border-left-color: #B3261E; }
+.sol--rechazada { border-left-color: var(--texto-peligro); }
 
 .sol__cabeza { display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px; }
 .sol__nombre { font-family: var(--display); font-size: 15.5px; font-weight: 700; color: var(--azul); }
@@ -3206,8 +3208,8 @@ main { position: relative; }
 .plan-celda__fijo { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); }
 
 .acceso__aviso--ok {
-  color: var(--texto-ok); background: rgba(21, 122, 75, .07);
-  border-color: rgba(21, 122, 75, .25); border-left-color: var(--verde);
+  color: var(--texto-ok); background: var(--sup-ok);
+  border-color: var(--borde-ok); border-left-color: var(--verde);
 }
 
 /* Bloque de media columna en la portada, donde estaba la calculadora
@@ -3503,7 +3505,7 @@ main { position: relative; }
 .tren-edita { display: grid; gap: 11px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
 .tren-edita__pie { display: flex; align-items: center; gap: 10px; }
 .tren-edita__aviso { font-size: 12px; font-weight: 600; color: var(--verde); }
-.tren-edita__aviso--error { color: #B3261E; }
+.tren-edita__aviso--error { color: var(--texto-peligro); }
 
 /* Un camión sin motor declarado se señala: en un cabezote es lo
    primero que pregunta el comprador. */
@@ -3511,8 +3513,8 @@ main { position: relative; }
 
 /* Eliminar un anuncio. Va en rojo y el último de la fila: es la única
    acción del panel que no se puede deshacer. */
-.btn-tabla--borrar { color: #B3261E; border-color: rgba(179, 38, 30, .3); }
-.btn-tabla--borrar:hover { background: var(--sup-error); border-color: #B3261E; }
+.btn-tabla--borrar { color: var(--texto-peligro); border-color: rgba(179, 38, 30, .3); }
+.btn-tabla--borrar:hover { background: var(--sup-error); border-color: var(--texto-peligro); }
 .btn-tabla--borrar:disabled { opacity: .6; cursor: progress; }
 
 /* Par de acciones al pie de cada bloque de servicio de la portada.
@@ -3866,7 +3868,7 @@ body.sin-scroll { overflow: hidden; }
 .resumen__error {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 12px 14px;
-  background: var(--sup-error); border: 1px solid #E8C4C4; border-left: 3px solid #B3261E;
+  background: var(--sup-error); border: 1px solid var(--borde-error); border-left: 3px solid var(--texto-peligro);
   border-radius: var(--r); font-size: 13.5px; color: var(--texto-error);
 }
 .resumen__error .ico { flex: none; width: 17px; height: 17px; }
@@ -4598,7 +4600,7 @@ main > .envoltura > section.panel {
   border-radius: 50%;
   font-size: 13px; font-weight: 700; line-height: 1;
 }
-.regla--si .regla__marca { background: var(--verde); color: #fff; }
+.regla--si .regla__marca { background: var(--verde); color: var(--blanco); }
 .regla--no .regla__marca { background: var(--gris-neutro); color: var(--gris-acero); }
 
 .regla__titulo { font-size: 14px; }
@@ -4754,7 +4756,7 @@ main > .envoltura > section.panel {
 .bloque__titulo:focus { outline: none; border-bottom-color: var(--ambar); }
 
 .bloque__acciones { display: flex; gap: 12px; align-items: center; }
-.enlace-plano--peligro { color: #A3342A; }
+.enlace-plano--peligro { color: var(--texto-peligro); }
 
 .bloque__nota {
   margin: 10px 0 0;
@@ -4787,8 +4789,8 @@ main > .envoltura > section.panel {
   border-radius: var(--r);
   font-size: 13.5px;
 }
-.aviso-linea--bien { background: #E8F3ED; color: #10512F; }
-.aviso-linea--mal { background: #FBEBE9; color: #8C2B22; }
+.aviso-linea--bien { background: var(--sup-ok); color: var(--texto-ok); }
+.aviso-linea--mal { background: var(--sup-error); color: var(--texto-error); }
 
 /* ── La página pública del dealer ───────────────────────── */
 
