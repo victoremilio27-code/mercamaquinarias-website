@@ -89,7 +89,9 @@ vendedor, que la empresa recaude, y que el comprador navegue sin fricción.
 ## Constraints
 
 - **Timeline**: lanzamiento el **2026-10-14**, fecha definitiva fijada por Victor el 2026-09-25. Movió la fecha desde el 30 de septiembre por una razón explícita: *no sacrificar calidad ni funcionalidad por un plazo arbitrario*. Las fases se ordenan por lo que bloquea el lanzamiento, pero **la calidad manda sobre la fecha** hasta el 14 de octubre; a partir de ahí, la fecha es firme.
-  - Riesgo único sobre esa fecha: la afiliación a CardNet tarda 7-15 días hábiles más una certificación técnica obligatoria. Desde el 2026-09-25 eso cae entre el 6 y el 16 de octubre. **El expediente tiene que entrar esta semana**; si no, se lanza con la contingencia de transferencia bancaria.
+  - **Regla de Victor, 2026-09-25:** el 14 de octubre **todo lo que depende de nosotros tiene que estar terminado**, no solo lo que bloquea abrir. Si algo retrasa el lanzamiento, que sea la afiliación de CardNet — nunca nuestro trabajo.
+  - Consecuencia para el plan: el código de CardNet se escribe, se prueba y se certifica **dentro de v1**, aunque la afiliación no esté aprobada. Lo único que puede quedar pendiente el 14 de octubre es que CardNet encienda el interruptor.
+  - Riesgo sobre esa fecha: la afiliación tarda 7-15 días hábiles más una certificación técnica obligatoria. Desde el 2026-09-25 eso cae entre el 6 y el 16 de octubre. **El expediente tiene que entrar esta semana**; si no llega, se abre cobrando por transferencia (PAGO-09).
 - **Dependencies**: CardNet sin contratar; fechas de vencimiento de los NCF pendientes del contador; créditos SMS de Brevo y clave de Anthropic en espera. Todo lo que dependa de ellos se entrega construido y apagado tras un interruptor.
 - **Tech stack**: cero dependencias en tiempo de ejecución, `node:sqlite`, sin paso de compilación, sin TypeScript. Es deliberado y load-bearing.
 - **Security / fiscal**: un comprobante emitido nunca se borra ni se reescribe; las migraciones solo se añaden al final.
