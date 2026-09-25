@@ -204,7 +204,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Un visitante comparte la ficha y el enlace llega a WhatsApp con foto, título y precio.
   3. El anunciante ve, por cada contacto de WhatsApp, qué anuncio fue y cuándo, no solo el total.
   4. El anunciante duplica un anuncio desde el panel y solo edita lo que cambia.
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 10-01-PLAN.md — Servidor: contactos atribuibles permanentes, guardados por ids, vista previa con miniatura, copia de un anuncio y borrado que respeta archivos compartidos (con `metricas:probar`)
+- [ ] 10-02-PLAN.md — Ficha: guardar y compartir, y la página `guardados.html`
+- [ ] 10-03-PLAN.md — Panel: contactos recibidos, compartidos en la tarjeta y duplicar hacia el asistente de publicar
+- [ ] 10-04-PLAN.md — Recorrido de navegador de los cuatro criterios dentro de `npm run auditar`
 **UI hint**: yes
 **Notas**: La infraestructura ya está y nadie la usa: la columna y el tipo de evento `favorito` y `compartir` existen en `tools/db.js` sin emisor, y los metadatos de compartir están hechos en `tools/meta.js`. Los eventos de métrica tienen deduplicación cubierta por `tools/probar-seguridad.js`: no se rompe.
 
