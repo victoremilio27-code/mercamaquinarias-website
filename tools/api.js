@@ -1607,6 +1607,22 @@ const verificarOrganizacion = conAdminEnNombreDe('organizacion.verificar', async
   const motivo = texto(c.motivo, 300);
   try {
     ctx.enNombreDe(idOrg, { objetoTipo: 'organizacion', objetoId: idOrg, motivo }, (org) => {
+      /* Las dos reglas van DENTRO: un error lanzado aquí deshace el
+         SAVEPOINT y no deja fila, que es lo correcto para algo que no
+         llegó a hacerse.
+
+         El sello dice que se cotejó «la existencia registral del
+         negocio»: no tiene sentido en una cuenta particular ni en una
+         empresa cuya alta no se ha aprobado todavía (o se rechazó). */
+      if (verificada && (org.tipo !== 'dealer' || org.estado_revision !== 'aprobada')) {
+        throw Object.assign(new Error('Solo se verifica una empresa dealer con el alta aprobada'), { codigo: 409 });
+      }
+      /* Retirarlo es lo que genera el reclamo «¿por qué me lo
+         quitaron?». Sin un motivo escrito, la bitácora dice quién y
+         cuándo pero no contesta lo único que se va a preguntar. */
+      if (!verificada && org.verificada && !motivo) {
+        throw Object.assign(new Error('Escriba el motivo para retirar el sello'), { codigo: 400 });
+      }
       db.marcarVerificada(idOrg, verificada);
       return { antes: { verificada: !!org.verificada }, despues: { verificada } };
     });
@@ -1615,6 +1631,18 @@ const verificarOrganizacion = conAdminEnNombreDe('organizacion.verificar', async
     return fallo(res, e.codigo || 500, e.message);
   }
   return responder(res, 200, { verificada });
+});
+
+/* El directorio de empresas para el personal. De solo lectura: el
+   sello se cambia por verificarOrganizacion, que pasa por la bitácora. */
+const listarOrganizacionesAdmin = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  return responder(res, 200, {
+    empresas: db.organizacionesAdmin({
+      estado: texto(q.get('estado'), 20),
+      q: texto(q.get('q'), 80),
+    }),
+  });
 });
 
 /* La bitácora se lee por aquí y por ningún otro sitio. No existe, ni
@@ -2703,6 +2731,7 @@ const RUTAS = [
   ['POST',   /^\/api\/mi-pagina\/galeria$/,                 anadirAMiGaleria],
   ['DELETE', /^\/api\/mi-pagina\/galeria\/([\w-]+)$/,       quitarDeMiGaleria],
   ['PUT',    /^\/api\/mi-pagina\/enlaces$/,                 guardarMisEnlaces],
+  ['GET',    /^\/api\/admin\/organizaciones$/,               listarOrganizacionesAdmin],
   ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
   ['GET',    /^\/api\/admin\/bitacora$/,                     listarBitacora],
   ['GET',  /^\/api\/planes$/,            listarPlanes],

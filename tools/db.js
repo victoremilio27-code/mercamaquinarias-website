@@ -2191,6 +2191,44 @@ const marcarVerificada = (idOrg, valor) => abrir()
   .prepare('UPDATE organizaciones SET verificada = ?, actualizada = ? WHERE id = ?')
   .run(valor ? 1 : 0, ahora(), idOrg).changes > 0;
 
+/* El directorio de empresas de la consola (ADMIN-02).
+ *
+ * Antes el sello solo se podía tocar desde la pestaña «Aprobadas» de la
+ * cola de solicitudes: una empresa sin solicitud (dada de alta por línea
+ * de comandos) o perdida entre muchas era, en la práctica, inalcanzable.
+ *
+ * Como `dealersPublicos`, no selecciona `rnc` ni el correo de la cuenta:
+ * el directorio no los necesita, y lo que no viaja no se escapa. */
+const ESTADOS_REVISION_ADMIN = ['aprobada', 'pendiente', 'rechazada'];
+
+function organizacionesAdmin({ estado, q } = {}) {
+  const donde = ["o.tipo = 'dealer'"];
+  const args = [];
+  if (ESTADOS_REVISION_ADMIN.includes(estado)) {
+    donde.push('o.estado_revision = ?');
+    args.push(estado);
+  }
+  const buscado = String(q || '').trim().slice(0, 80);
+  if (buscado) {
+    // Un «%» o un «_» escritos en el buscador son letras, no comodines.
+    // LIKE ya ignora mayúsculas en ASCII; las tildes cuentan.
+    donde.push("o.nombre LIKE ? ESCAPE '\\'");
+    args.push(`%${buscado.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  }
+
+  return abrir().prepare(`
+    SELECT o.id, o.nombre, o.slug, o.verificada, o.estado_revision, o.estado_pagina,
+           o.perfil_publico, o.creada,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND a.estado = 'activo') AS activos,
+           0 AS series_pendientes
+      FROM organizaciones o
+     WHERE ${donde.join(' AND ')}
+     ORDER BY o.nombre COLLATE NOCASE
+     LIMIT 500`).all(...args)
+    .map((o) => ({ ...o, verificada: !!o.verificada, perfil_publico: !!o.perfil_publico }));
+}
+
 function apagarPerfilesSinPlan() {
   const d = abrir();
   const sinPlan = d.prepare(`
@@ -3676,6 +3714,7 @@ module.exports = {
   anadirAGaleria, quitarDeGaleria, galeriaDe,
   guardarEnlaces, enlacesDe,
   publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
+  organizacionesAdmin,
 
   /* Tráfico e informes. */
   anotarVisita, trafico, informe,
