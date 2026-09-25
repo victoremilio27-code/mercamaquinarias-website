@@ -2485,6 +2485,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
   margin: 12px 0 0; font-size: 12.5px; color: var(--app-muted);
 }
+/* La sección del panel iba sin regla propia y su título quedaba pegado
+   al párrafo de encima, sin separarse de lo que no es un pago. */
+.pagos-espera { margin: 18px 0; }
 .realce--espera a { font-weight: 600; color: var(--ambar-texto); }
 .realce--espera a:hover { text-decoration: underline; }
 
