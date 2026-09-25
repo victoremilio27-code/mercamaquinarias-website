@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: "Plan 02-04 terminado: cero hallazgos de tipo control (eran 271) y el ambar separado en sus dos papeles. El comprobador baja de 621 a 317; lo que queda es de 02-05."
-last_updated: "2026-09-25T14:23:33.565Z"
+last_updated: "2026-09-25T19:06:49.193Z"
 last_activity: "2026-09-25 — Plan 01-01 ejecutado. El flujo `Verificar y desplegar` corre en cada Pull Request y el despliegue lleva `needs: [pruebas, navegador]`. Comprobado en la pasada real del PR #23: `pruebas` verde en 15 s, `navegador` verde en 1 m 49 s, `desplegar` omitido."
 progress:
   total_phases: 16
   completed_phases: 0
-  total_plans: 16
-  completed_plans: 5
+  total_plans: 21
+  completed_plans: 6
   percent: 0
 ---
 
@@ -30,7 +30,7 @@ Plan: 1 de 3 en la fase actual
 Status: In progress — 01-01 terminado; 01-02 es paso manual de Victor
 Last activity: 2026-09-25 — Plan 01-01 ejecutado. El flujo `Verificar y desplegar` corre en cada Pull Request y el despliegue lleva `needs: [pruebas, navegador]`. Comprobado en la pasada real del PR #23: `pruebas` verde en 15 s, `navegador` verde en 1 m 49 s, `desplegar` omitido.
 
-Progress: [███░░░░░░░] 31%
+Progress: [███░░░░░░░] 29%
 
 ## Performance Metrics
 
@@ -103,6 +103,6 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 
 ## Session Continuity
 
-Last session: 2026-09-25T14:23:33.559Z
+Last session: 2026-09-25T19:06:49.186Z
 Stopped at: Plan 02-04 terminado: cero hallazgos de tipo control (eran 271) y el ambar separado en sus dos papeles. El comprobador baja de 621 a 317; lo que queda es de 02-05.
 Resume file: None
