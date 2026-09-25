@@ -346,6 +346,19 @@ async function bloqueApi() {
   }
   comprobar(ultimo.codigo === 429, 'el sexto código para el mismo número en una hora responde 429');
 
+  /* El tope por organización no basta para el SMS: abriendo varias
+     cuentas se podía acosar un teléfono ajeno, cinco mensajes por cuenta.
+     Tres desde A y tres desde B al mismo número: el sexto ya no sale. */
+  process.env.MERCA_SMS = 'archivo';
+  const respuestas = [];
+  for (const quien of [comoA, comoB, comoA, comoB, comoA, comoB]) {
+    respuestas.push(await pedir({ metodo: 'POST', url: '/api/contactos/codigo',
+      cuerpo: { numero: '(809) 555-6666', via: 'sms' }, cabeceras: { ...quien, 'cf-connecting-ip': '201.8.8.8' } }));
+  }
+  comprobar(respuestas.slice(0, 5).every((x) => x.codigo === 200) && respuestas[5].codigo === 429,
+    'el sexto SMS al mismo número responde 429 aunque venga repartido entre dos cuentas');
+  delete process.env.MERCA_SMS;
+
   console.log('\nNinguna ruta da un número por verificado sin código');
   const fuente = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
   comprobar(!fuente.includes('marcarContactoVerificado'), 'tools/api.js no llama a marcarContactoVerificado');

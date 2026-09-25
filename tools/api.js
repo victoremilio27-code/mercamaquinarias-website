@@ -2644,12 +2644,23 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
     return fallo(res, 400, 'La verificación por SMS todavía no está disponible. Verifique el número por correo.');
   }
 
-  /* Dos topes. Por número, para que nadie bombardee un teléfono ajeno
-     con SMS; por organización, porque cada SMS cuesta créditos. */
+  /* Topes por número dentro de la organización, por organización
+     (cada SMS cuesta créditos) y por conexión. */
   const idOrg = ctx.organizacion.id;
   if (!db.permitir(`contacto-codigo:${idOrg}:${numero}`, 5, 60)
-    || !db.permitir(`contacto-org:${idOrg}`, 20, 60)) {
+    || !db.permitir(`contacto-org:${idOrg}`, 20, 60)
+    || !db.permitir(`contacto-ip:${origen(req)}`, 30, 60)) {
     return fallo(res, 429, 'Ha pedido demasiados códigos. Espere una hora y vuelva a intentarlo.');
+  }
+
+  /* Y el SMS, además, por número y SIN mirar la organización. Los topes
+     de arriba son por cuenta: quien quisiera acosar un teléfono ajeno
+     con mensajes solo tenía que abrir varias cuentas, cinco SMS cada
+     una. Este tope es del teléfono, venga de donde venga, y también
+     acota los intentos de adivinar un código ajeno por SMS: cinco
+     códigos a la hora, cinco intentos cada uno, entre todas las cuentas. */
+  if (via === 'sms' && !db.permitir(`contacto-sms:${numero}`, 5, 60)) {
+    return fallo(res, 429, 'Ese número ya recibió varios SMS en la última hora. Espere y vuelva a intentarlo.');
   }
 
   const r = db.pedirCodigoContacto({ idOrg, numero, via });

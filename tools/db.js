@@ -1341,7 +1341,12 @@ function confirmarCodigoContacto({ idOrg, numero, codigo, idUsuario }) {
   if (!fila || !fila.codigo_hash) return { ok: false, motivo: 'inexistente' };
   if (fila.codigo_expira < ahora()) return { ok: false, motivo: 'vencido' };
   if (fila.intentos >= MAX_INTENTOS_CODIGO) {
-    d.prepare('UPDATE contactos_verificados SET codigo_hash = NULL WHERE id = ?').run(fila.id);
+    /* Se anula el código entero, no solo el hash: con la vía y el
+       vencimiento puestos, el panel seguía ofreciendo el campo de un
+       código que ya no existe. */
+    d.prepare(`UPDATE contactos_verificados
+               SET codigo_hash = NULL, codigo_via = NULL, codigo_expira = NULL
+               WHERE id = ?`).run(fila.id);
     return { ok: false, motivo: 'agotado' };
   }
 
@@ -1383,14 +1388,17 @@ function contactosDe(idOrg) {
     return porNumero.get(n);
   };
 
-  const filas = d.prepare(`SELECT numero, via, verificado, codigo_via, codigo_expira
+  const filas = d.prepare(`SELECT numero, via, verificado, codigo_hash, codigo_via, codigo_expira, intentos
     FROM contactos_verificados WHERE organizacion_id = ?`).all(idOrg);
   for (const f of filas) {
     const e = entrada(f.numero);
     e.verificado = !!f.verificado;
     e.via = f.verificado ? f.via : null;
     e.fecha = f.verificado || null;
-    e.pendiente = f.codigo_via && f.codigo_expira > t ? f.codigo_via : null;
+    // Un código pendiente es uno que todavía se puede usar: vigente y
+    // sin los cinco intentos gastados. Si no, el panel no ofrece el campo.
+    e.pendiente = f.codigo_hash && f.codigo_via && f.codigo_expira > t && f.intentos < MAX_INTENTOS_CODIGO
+      ? f.codigo_via : null;
   }
 
   const usados = d.prepare(`SELECT c.numero, c.anuncio_id FROM anuncio_contactos c
