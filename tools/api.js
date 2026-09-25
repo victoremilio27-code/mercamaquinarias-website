@@ -194,6 +194,45 @@ const conAdmin = (manejador) => conSesion((req, res, ctx, ...resto) => {
   return manejador(req, res, ctx, ...resto);
 });
 
+/* Escrituras de un administrador EN NOMBRE DE otra organización.
+   Decisión de Victor del 2026-09-25 (ADMIN-05): toda escritura de admin
+   sobre otra organización queda en la bitácora, con quién, cuándo, desde
+   qué IP y qué cambió. Una ruta así va envuelta aquí o no se hace.
+
+   Es conAdmin (sigue respondiendo 404 a quien no lo es) más un
+   `ctx.enNombreDe(idOrganizacion, { objetoTipo, objetoId, motivo }, escribir)`
+   que llama a db.enNombreDe con el administrador de la sesión, la acción
+   fija de este envoltorio y la IP de origen(req). El manejador no recibe
+   esos tres datos como parámetro, así que no puede falsearlos.
+
+   La función devuelta lleva `bitacora = accion`: es lo que lee la guarda
+   de tools/probar-bitacora.js al recorrer RUTAS, que falla si una ruta de
+   escritura de /api/admin/ ni pasa por aquí ni está declarada en
+   ESCRITURAS_ADMIN_PROPIAS. Nota para la fase 7: si la edición asistida
+   de la página del dealer se monta sobre rutas que NO cuelgan de
+   /api/admin/, esa fase tiene que ensanchar la guarda en el mismo cambio. */
+function conAdminEnNombreDe(accion, manejador) {
+  // Falla al arrancar, no en la primera petición de un administrador.
+  if (!Object.prototype.hasOwnProperty.call(db.ACCIONES_BITACORA, accion)) {
+    throw new Error(`conAdminEnNombreDe: acción «${accion}» fuera de ACCIONES_BITACORA`);
+  }
+  const envuelto = conAdmin((req, res, ctx, ...resto) => {
+    const enNombreDe = (idOrganizacion, { objetoTipo, objetoId, motivo } = {}, escribir) =>
+      db.enNombreDe({
+        idAdmin: ctx.usuario.id,
+        idOrganizacion,
+        accion,
+        objetoTipo,
+        objetoId,
+        motivo,
+        ip: origen(req),
+      }, escribir);
+    return manejador(req, res, { ...ctx, enNombreDe }, ...resto);
+  });
+  envuelto.bitacora = accion;
+  return envuelto;
+}
+
 /* ── Validación ─────────────────────────────────────────── */
 
 const texto = (v, max = 500) => (v == null ? null : String(v).trim().slice(0, max) || null);
@@ -929,16 +968,29 @@ const listarSolicitudesServicio = conAdmin((req, res, ctx, consulta) => {
         ? q.get('servicio') : undefined,
       estado: ['nueva', 'atendida', 'cerrada'].includes(q.get('estado')) ? q.get('estado') : undefined,
     }),
+    /* Para que la consola pinte los filtros desde aquí y sepa cuáles
+       están apagados, en vez de tener su propia lista que se desfase. */
+    servicios: { activos: SERVICIOS_SOLICITUD, historicos: SERVICIOS_HISTORICOS },
   });
 });
 
+/* Guarda quién la atendió. No va por la bitácora: la manda un
+   visitante, no una organización, y el «quién» queda en su propia fila. */
 const marcarSolicitudServicio = conAdmin(async (req, res, ctx, idSol) => {
   const c = await leerCuerpo(req);
   if (!['nueva', 'atendida', 'cerrada'].includes(c.estado)) {
     return fallo(res, 400, 'Estado inválido');
   }
-  db.marcarSolicitudServicio(idSol, c.estado, texto(c.nota, 500));
-  return responder(res, 200, { ok: true, estado: c.estado });
+  if (!db.marcarSolicitudServicio(idSol, c.estado, texto(c.nota, 500), ctx.usuario.id)) {
+    return fallo(res, 404, 'Esa solicitud no existe');
+  }
+  const s = db.solicitudServicio(idSol);
+  const quien = s.atendida_por ? db.usuarioPorId(s.atendida_por) : null;
+  return responder(res, 200, {
+    ok: true,
+    estado: c.estado,
+    solicitud: { ...s, atendida_por_nombre: quien ? quien.nombre : null },
+  });
 });
 
 /* ── Rutas: taxonomía ───────────────────────────────────── */
@@ -1395,7 +1447,11 @@ const verSolicitud = conAdmin((req, res, ctx, idSolicitud) => {
   return responder(res, 200, { solicitud: s });
 });
 
-const resolverSolicitud = conAdmin(async (req, res, ctx, idSolicitud) => {
+/* Aprobar o rechazar el alta cambia `estado_revision` de otra
+   organización: va por la bitácora. Un intento que falla (409 porque
+   ya estaba resuelta) lanza dentro del SAVEPOINT y no deja fila. El
+   correo al dealer va FUERA de la transacción, después. */
+const resolverSolicitud = conAdminEnNombreDe('dealer.resolver', async (req, res, ctx, idSolicitud) => {
   const c = await leerCuerpo(req);
   const aprobar = c.decision === 'aprobar';
   if (!aprobar && c.decision !== 'rechazar') {
@@ -1404,9 +1460,21 @@ const resolverSolicitud = conAdmin(async (req, res, ctx, idSolicitud) => {
   const motivo = texto(c.motivo, 500);
   if (!aprobar && !motivo) return fallo(res, 400, 'Escriba el motivo del rechazo');
 
+  const previa = db.solicitudCompleta(idSolicitud);
+  if (!previa) return fallo(res, 404, 'Esa solicitud no existe');
+
   let s;
   try {
-    s = db.resolverSolicitud(idSolicitud, { aprobar, idRevisor: ctx.usuario.id, motivo });
+    s = ctx.enNombreDe(previa.organizacion_id,
+      { objetoTipo: 'solicitud_dealer', objetoId: idSolicitud, motivo },
+      (org) => {
+        const hecha = db.resolverSolicitud(idSolicitud, { aprobar, idRevisor: ctx.usuario.id, motivo });
+        return {
+          antes: { solicitud: previa.estado, estado_revision: org.estado_revision },
+          despues: { solicitud: hecha.estado, estado_revision: aprobar ? 'aprobada' : 'rechazada' },
+          resultado: hecha,
+        };
+      });
   } catch (e) {
     return fallo(res, e.codigo || 500, e.message);
   }
@@ -1529,12 +1597,39 @@ function verDealer(req, res, ctx, slug) {
  * comandos: un dealer que se registraba por el sitio no podía
  * obtenerlo nunca. La pastilla verde se pinta en cinco pantallas para
  * una condición que era inalcanzable por la vía normal. */
-const verificarOrganizacion = conAdmin(async (req, res, ctx, idOrg) => {
+/* Va por la bitácora (ADMIN-05): cambia el sello de otra organización.
+   Se anota aunque el valor no cambie: alguien pulsó, y eso es lo que la
+   bitácora cuenta. */
+const verificarOrganizacion = conAdminEnNombreDe('organizacion.verificar', async (req, res, ctx, idOrg) => {
   const c = await leerCuerpo(req);
-  if (!db.marcarVerificada(idOrg, !!c.verificada)) {
-    return fallo(res, 404, 'Esa empresa no existe');
+  const verificada = !!c.verificada;
+  const motivo = texto(c.motivo, 300);
+  try {
+    ctx.enNombreDe(idOrg, { objetoTipo: 'organizacion', objetoId: idOrg, motivo }, (org) => {
+      db.marcarVerificada(idOrg, verificada);
+      return { antes: { verificada: !!org.verificada }, despues: { verificada } };
+    });
+  } catch (e) {
+    if (e.codigo === 404) return fallo(res, 404, 'Esa empresa no existe');
+    return fallo(res, e.codigo || 500, e.message);
   }
-  return responder(res, 200, { verificada: !!c.verificada });
+  return responder(res, 200, { verificada });
+});
+
+/* La bitácora se lee por aquí y por ningún otro sitio. No existe, ni
+   debe existir, una ruta que la edite, la borre o le añada filas: las
+   filas solo nacen dentro de db.enNombreDe. */
+const listarBitacora = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  const organizacion = texto(q.get('organizacion'), 64);
+  const pedido = parseInt(q.get('limite'), 10);
+  const limite = Number.isFinite(pedido) ? Math.min(Math.max(pedido, 1), 500) : 200;
+  return responder(res, 200, {
+    entradas: db.bitacora({ organizacion, limite }),
+    organizaciones: db.organizacionesEnBitacora(),
+    acciones: db.ACCIONES_BITACORA,
+    organizacion: organizacion || null,
+  });
 });
 
 /* ── Rutas: la página propia del dealer ─────────────────── */
@@ -2550,6 +2645,28 @@ async function evento(req, res, ctx) {
 
 /* ── Enrutador ──────────────────────────────────────────── */
 
+/* Escrituras de administrador que NO son en nombre de otra organización
+   y por eso no van a la bitácora. Cada una lleva su porqué: la guarda de
+   tools/probar-bitacora.js exige que toda ruta de escritura bajo
+   /api/admin/ esté aquí o pase por conAdminEnNombreDe, nunca las dos.
+   Añadir una escritura de admin sin decidir dónde va rompe la barrera. */
+const ESCRITURAS_ADMIN_PROPIAS = new Set([
+  editarPortada,          // la portada es de la plataforma
+  crearPublicidad,        // los espacios de publicidad son de la plataforma
+  editarPublicidad,       // ídem
+  eliminarPublicidad,     // ídem
+  crearFlota,             // la flota propia es de MercaMaquinarias
+  editarFlota,            // ídem
+  eliminarFlota,          // ídem
+  cargarSecuencia,        // las secuencias NCF son de la plataforma ante la DGII
+  reenviarFactura,        // reenviar un comprobante no cambia datos de nadie
+  /* La nota de crédito la emite la plataforma sobre su propio documento
+     fiscal, y meterla en enNombreDe exige anidar la transacción de NCF
+     de tools/facturas.js. Pregunta abierta para Victor (D-01 de 04-01). */
+  anularFactura,
+  marcarSolicitudServicio, // la manda un visitante, no una organización; guarda atendida_por
+]);
+
 const RUTAS = [
   ['POST', /^\/api\/cuenta\/registro$/,     registro],
   ['POST', /^\/api\/cuenta\/entrar$/,       entrar],
@@ -2586,6 +2703,7 @@ const RUTAS = [
   ['DELETE', /^\/api\/mi-pagina\/galeria\/([\w-]+)$/,       quitarDeMiGaleria],
   ['PUT',    /^\/api\/mi-pagina\/enlaces$/,                 guardarMisEnlaces],
   ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
+  ['GET',    /^\/api\/admin\/bitacora$/,                     listarBitacora],
   ['GET',  /^\/api\/planes$/,            listarPlanes],
   ['GET',  /^\/api\/estadisticas$/,      estadisticas],
   ['POST', /^\/api\/anuncios$/,          publicar],
@@ -2674,4 +2792,4 @@ async function manejar(req, res, ruta) {
   return fallo(res, 404, 'Ruta inexistente');
 }
 
-module.exports = { manejar, ITBIS };
+module.exports = { manejar, ITBIS, RUTAS, ESCRITURAS_ADMIN_PROPIAS };
