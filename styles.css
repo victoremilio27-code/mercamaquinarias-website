@@ -758,6 +758,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.01em;
 }
 .aviso__ofertas { font-size: 11px; color: var(--verde); font-weight: 600; }
+/* «Bajo pedido» en la tarjeta (fase 8). El tinte ámbar al 16 % sobre el
+   fondo gris de la tarjeta dejaba la letra a 4.45:1 en claro; al 10 %,
+   como la pastilla verde, pasa de 4.5 y en oscuro el contraste sube. */
+.aviso__pie .pastilla--ambar { background: rgba(242, 169, 0, .1); }
 
 .aviso__vendedor {
   display: flex; align-items: center; gap: 4px;
