@@ -733,9 +733,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   position: absolute; right: 6px; bottom: 6px;
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 7px;
-  background: rgba(7, 26, 43, .78);
+  background: var(--velo-foto);
   border-radius: 999px;
-  font-size: 11px; font-weight: 600; color: var(--blanco);
+  font-size: 11px; font-weight: 600; color: var(--sobre-oscuro);
 }
 .aviso__fotos .ico { width: 12px; height: 12px; stroke-width: 2; }
 
@@ -1976,11 +1976,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .foto__sello {
   position: absolute; top: 6px; left: 6px;
   padding: 2px 7px;
-  background: var(--ambar); color: var(--azul);
+  background: var(--ambar); color: var(--sobre-ambar);
   border-radius: 3px;
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
 }
-.foto__sello--aviso { background: #B3261E; color: var(--blanco); }
+.foto__sello--aviso { background: var(--sup-error); color: var(--texto-error); }
 
 .foto__mandos {
   position: absolute; inset: auto 0 0 0;
@@ -2690,37 +2690,48 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 /* ── Perfil público del dealer ──────────────────────────── */
 
+/* La cabecera de marca del dealer es oscura en los DOS temas, igual que
+   el mosaico de categorías. Antes pintaba el fondo con var(--azul), que
+   se invierte con el tema: en oscuro vale crema, así que la cabecera se
+   volvía clara y su propio texto, escrito para fondo oscuro, se quedaba
+   a 1.31:1. Por eso el fondo va fijo (el mismo #141616 que --azul vale
+   en claro) y todo lo de dentro usa --sobre-oscuro, que existe con el
+   mismo valor en los dos bloques de tema. Nada de aquí dentro puede
+   usar --blanco, --azul, --hueso ni --gris-acero: esos giran. */
 .perfil {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start; gap: 18px;
   padding: 22px 24px; margin-bottom: var(--gap);
-  background: var(--azul); color: var(--blanco);
+  background: #141616; color: var(--sobre-oscuro);
   border-radius: var(--r);
   border-bottom: 3px solid var(--ambar);
 }
 .perfil__sello {
   display: flex; align-items: center; justify-content: center;
   width: 60px; height: 60px;
-  background: var(--ambar); color: var(--azul); border-radius: 12px;
+  background: var(--ambar); color: var(--sobre-ambar); border-radius: 12px;
 }
 .perfil__sello .ico { width: 30px; height: 30px; }
 .perfil__nombre { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -.022em; }
-/* La cabecera del perfil es oscura en los dos temas, como el panel de la
-   vista previa. El hermano de abajo, .perfil__texto, ya llevaba el
-   #D5DEE5 a mano: es el mismo color que ahora tiene nombre. */
 .perfil__meta {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   margin-top: 8px; font-size: 12.5px; color: var(--sobre-oscuro-2);
 }
-.perfil__meta b { color: var(--blanco); }
-.perfil__texto { margin-top: 11px; font-size: 13.5px; line-height: 1.62; color: #D5DEE5; max-width: 70ch; }
+.perfil__meta b { color: var(--sobre-oscuro); }
+.perfil__texto { margin-top: 11px; font-size: 13.5px; line-height: 1.62; color: var(--sobre-oscuro-2); max-width: 70ch; }
+/* El «Verificado» de la cabecera: el verde de --verde o --texto-ok está
+   pensado para papel claro y sobre este fondo fijo se hundía (1.9:1 en
+   el tema claro). Letra clara y el verde queda en el relleno. */
+.perfil .pastilla--verde { background: rgba(61, 186, 126, .22); color: var(--sobre-oscuro); }
 .perfil__categorias { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
 .perfil__categorias span {
   padding: 3px 10px; background: rgba(255, 255, 255, .1); border-radius: 99px;
   font-size: 11.5px; font-weight: 600;
 }
 .perfil__acciones { display: grid; gap: 7px; }
-.perfil__acciones .btn--linea { color: var(--blanco); border-color: var(--app-borde-control); }
+/* Sin fondo propio: la piel app le pone a .btn--linea el de la tarjeta,
+   que en claro es blanco, y la letra clara quedaba blanco sobre blanco. */
+.perfil__acciones .btn--linea { background: transparent; color: var(--sobre-oscuro); border-color: var(--app-borde-control); }
 .perfil__acciones .btn--linea:hover { background: var(--azul-2); border-color: var(--ambar); }
 
 .sucursales { display: grid; gap: 8px; margin-top: 12px; }
@@ -4200,12 +4211,24 @@ body.sin-scroll { overflow: hidden; }
   --borde-ok:    #B9D7C8;
 
   /* Texto sobre superficies que son oscuras en los DOS temas: el
-     mosaico, la banda del vídeo, el sello de la foto, la vista previa de
-     publicar, la cabecera del chat y la del perfil del dealer. Valen lo
-     mismo en los dos bloques a propósito; escribirlo en ambos es lo que
-     deja constancia de que es deliberado y no un olvido. */
+     mosaico, la cuenta de fotos sobre la imagen, la cabecera del chat y
+     la del perfil del dealer. Valen lo mismo en los dos bloques a
+     propósito; escribirlo en ambos es lo que deja constancia de que es
+     deliberado y no un olvido. (Aquí se nombraban también el sello de
+     la foto y la vista previa de publicar: el sello es ámbar y la vista
+     previa la pinta la piel app como tarjeta, así que ninguno de los dos
+     es superficie oscura.) */
   --sobre-oscuro:   #FFFFFF;
   --sobre-oscuro-2: #D5DEE5;
+
+  /* Letra sobre el ámbar de marca, que no se invierte. Antes cada caja
+     ámbar ponía var(--azul) y en oscuro eso es crema: 1.84:1. */
+  --sobre-ambar:    #151515;
+
+  /* Velo de las pastillas que van SOBRE una fotografía. Sustituye al
+     azul noche de la marca vieja (rgba de #071A2B); la foto no cambia
+     con el tema, así que el velo tampoco. */
+  --velo-foto:      rgba(20, 22, 22, .78);
   color-scheme: light;
 }
 
@@ -4257,6 +4280,8 @@ body.sin-scroll { overflow: hidden; }
      superficies que son oscuras en los dos temas. */
   --sobre-oscuro:   #FFFFFF;
   --sobre-oscuro-2: #D5DEE5;
+  --sobre-ambar:    #151515;
+  --velo-foto:      rgba(20, 22, 22, .78);
   color-scheme: dark;
 }
 
@@ -4395,7 +4420,7 @@ section[aria-labelledby="t-buscar"] { display: none; }
 .mosaico__pieza::after, .mosaico__pieza--vacia::after { content: ""; position: absolute; inset: auto 0 0; height: 36%; background: linear-gradient(transparent, rgba(0, 0, 0, .96)); }
 .mosaico__cuerpo { position: absolute; inset: auto 10px 14px; z-index: 2; display: block; padding: 0; background: transparent; text-align: center; }
 .mosaico__nombre, .mosaico > li:first-child .mosaico__nombre, .mosaico__pieza--vacia .mosaico__nombre {
-  color: #FFFFFF; font-family: var(--display); font-size: clamp(14px, 1.5vw, 20px); font-weight: 800; line-height: 1.08; text-wrap: balance;
+  color: var(--sobre-oscuro); font-family: var(--display); font-size: clamp(14px, 1.5vw, 20px); font-weight: 800; line-height: 1.08; text-wrap: balance;
 }
 .mosaico__total { display: none; }
 .mosaico__ico { display: none; }
@@ -4417,8 +4442,10 @@ section[aria-labelledby="t-buscar"] { display: none; }
 .pie__texto, .pie__lista a, .pie__sede { color: var(--app-muted); }
 .pie__lista a:hover { color: var(--app-accent-texto); }
 
-/* Texto sobre fotografía: siempre claro. */
-.aviso__fotos, .foto__sello { color: #FFFFFF; }
+/* Texto sobre fotografía: siempre claro. El sello de la foto salía de
+   aquí también, pero su relleno es ámbar: blanco sobre ámbar a 1.84:1.
+   El sello pinta su propia letra en su regla. */
+.aviso__fotos { color: var(--sobre-oscuro); }
 
 /* La banda de servicios se ajusta al número de tarjetas.
    Con el transporte suspendido quedan dos, y tres columnas dejarían
@@ -4655,11 +4682,14 @@ main > .envoltura > section.panel {
   width: 26px; height: 26px;
   display: grid; place-items: center;
   border: 0; border-radius: 50%;
-  background: rgba(7, 26, 43, .78);
-  color: #fff; font-size: 17px; line-height: 1;
+  background: var(--velo-foto);
+  color: var(--sobre-oscuro); font-size: 17px; line-height: 1;
   cursor: pointer;
 }
-.galeria-editor__quitar:hover { background: var(--azul); }
+/* Era var(--azul): en oscuro, crema detrás de la aspa blanca. Quitar es
+   borrar, así que al pasar el cursor toma el rojo de peligro, como el
+   botón de quitar foto de publicar. */
+.galeria-editor__quitar:hover { background: var(--sup-error); color: var(--texto-error); }
 .galeria-editor__vacio {
   grid-column: 1 / -1;
   font-size: 13px; color: var(--gris-acero);
@@ -4787,7 +4817,7 @@ main > .envoltura > section.panel {
 .perfil__lema {
   margin: 4px 0 0;
   font-size: 15px; font-style: italic;
-  color: var(--gris-acero);
+  color: var(--sobre-oscuro-2);   /* va dentro de .perfil, fija oscura */
 }
 
 .perfil__redes { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
@@ -4800,7 +4830,8 @@ main > .envoltura > section.panel {
   text-decoration: none;
   color: inherit;
 }
-.perfil__red:hover { background: var(--hueso); }
+/* --hueso gira con el tema: en claro ponía papel detrás de la letra clara. */
+.perfil__red:hover { background: rgba(255, 255, 255, .1); }
 
 .perfil-seccion { margin-top: 32px; }
 .perfil-seccion__titulo {
