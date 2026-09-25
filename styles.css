@@ -40,6 +40,14 @@
   --azul:        #071A2B;
   --blanco:      #FFFFFF;
   --ambar:       #F2A900;
+  /* --ambar-hondo tenía dos oficios y solo un valor. Como SUPERFICIE
+     —relleno de botón, cinta del plan, relleno de casilla marcada,
+     realce de borde— sigue siendo éste, que es el ámbar de la marca.
+     Como TEXTO sobre superficie clara se quedaba en 2.68:1 contra el
+     hueso del fondo y 2.95 contra la tarjeta, así que todos esos usos
+     pasaron a --ambar-texto (#8F6100 en claro, el mismo #F2A900 en
+     oscuro). Si añade un uso nuevo, la pregunta es qué pinta: letras
+     sobre algo claro van al de texto; lo demás, aquí. */
   --ambar-hondo: #C98A00;
   --hueso:       #F7F5EF;
   --gris-neutro: #E7E6E0;
@@ -248,7 +256,7 @@ main { padding-block: 16px 40px; }
   margin-bottom: 14px;
   border-bottom: 1px solid var(--linea-suave);
 }
-.panel__titulo em { font-style: normal; color: var(--ambar-hondo); }
+.panel__titulo em { font-style: normal; color: var(--ambar-texto); }
 .panel__titulo--limpio { border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
 
 .panel__cabeza {
@@ -306,7 +314,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 6px;
 }
 .form__enlaces { display: grid; gap: 3px; }
-.form__enlaces a { font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo); }
+.form__enlaces a { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
 .form__enlaces a:hover { text-decoration: underline; }
 
 /* ── Botones ────────────────────────────────────────────── */
@@ -349,7 +357,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-weight: 600;
   transition: color .15s ease;
 }
-.tipos a:hover { color: var(--ambar-hondo); }
+.tipos a:hover { color: var(--ambar-texto); }
 .tipos b { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--gris-acero); }
 
 .tipos__ico {
@@ -359,11 +367,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 30px; height: 30px;
   border-radius: 7px;
   background: rgba(242, 169, 0, .12);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .tipos__ico .ico { width: 19px; height: 19px; }
 
-.tipos__todos a { justify-content: flex-end; color: var(--ambar-hondo); font-size: 12.5px; }
+.tipos__todos a { justify-content: flex-end; color: var(--ambar-texto); font-size: 12.5px; }
 
 /* ── Destacados ─────────────────────────────────────────── */
 
@@ -419,7 +427,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .panel__nota { margin-top: 9px; font-size: 11.5px; line-height: 1.5; color: var(--gris-acero); }
 
 .tipos__pie { padding-top: 9px; border-top: 1px solid var(--linea-suave); text-align: right; }
-.tipos__pie a { font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo); }
+.tipos__pie a { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
 .tipos__pie a:hover { text-decoration: underline; }
 
 /* Marca de esquina: destacado / verificado */
@@ -447,7 +455,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero);
 }
 .datos-linea li { display: flex; align-items: center; gap: 6px; }
-.datos-linea .ico { width: 15px; height: 15px; color: var(--ambar-hondo); }
+.datos-linea .ico { width: 15px; height: 15px; color: var(--ambar-texto); }
 
 /* ── Calculadora ────────────────────────────────────────── */
 
@@ -508,7 +516,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   background: var(--ambar);
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
 }
-.lista-punteada a:hover { color: var(--ambar-hondo); }
+.lista-punteada a:hover { color: var(--ambar-texto); }
 
 .pastilla {
   display: inline-flex;
@@ -672,7 +680,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero);
   transition: color .15s ease;
 }
-.marcas a:hover { color: var(--ambar-hondo); }
+.marcas a:hover { color: var(--ambar-texto); }
 
 /* ── Rejilla de anuncios ────────────────────────────────── */
 
@@ -708,7 +716,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   line-height: 1.32;
   transition: color .15s ease;
 }
-.aviso a:hover .aviso__nombre { color: var(--ambar-hondo); }
+.aviso a:hover .aviso__nombre { color: var(--ambar-texto); }
 
 .aviso__specs { font-size: 11.5px; color: var(--gris-acero); }
 
@@ -789,14 +797,14 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-bottom: 4px;
   border-radius: 7px;
   background: rgba(242, 169, 0, .14);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .dealer__nombre { font-size: 13px; font-weight: 700; line-height: 1.3; }
 .dealer__meta { font-size: 11.5px; color: var(--gris-acero); margin-bottom: 6px; }
 /* El sello se ancla abajo para que no lo desalinee un nombre de dos líneas. */
 .dealer .pastilla { margin-top: auto; }
 
-.enlace-mas { font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo); }
+.enlace-mas { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
 .enlace-mas:hover { text-decoration: underline; }
 
 /* ── Pie ────────────────────────────────────────────────── */
@@ -861,7 +869,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-size: 13px;
   line-height: 1.5;
 }
-.realce .ico { margin-top: 1px; color: var(--ambar-hondo); width: 16px; height: 16px; }
+.realce .ico { margin-top: 1px; color: var(--ambar-texto); width: 16px; height: 16px; }
 .realce b { font-weight: 700; }
 
 /* ── Oferta de lanzamiento (portada) ─────────────────────────
@@ -1057,7 +1065,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* Un bloque vacío siempre ofrece la salida: quien llega y no encuentra
    nada tiene que saber qué hacer, no quedarse mirando un hueco. */
 .vacio-min { padding: 20px 4px; font-size: 12.5px; line-height: 1.6; color: var(--gris-acero); }
-.vacio-min a { font-weight: 600; color: var(--ambar-hondo); text-decoration: underline; }
+.vacio-min a { font-weight: 600; color: var(--ambar-texto); text-decoration: underline; }
 .vacio-min--ancho { grid-column: 1 / -1; padding: 34px 20px; text-align: center; }
 
 /* ── Encabezado de página interior ──────────────────────── */
@@ -1074,12 +1082,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.022em;
   line-height: 1.1;
 }
-.pagina__titulo em { font-style: normal; color: var(--ambar-hondo); }
+.pagina__titulo em { font-style: normal; color: var(--ambar-texto); }
 .pagina__sub { margin-top: 9px; max-width: 66ch; font-size: 14px; line-height: 1.6; color: var(--gris-acero); }
 
 .miga { font-size: 12px; color: var(--gris-acero); margin-bottom: 12px; }
 .miga a { font-weight: 600; }
-.miga a:hover { color: var(--ambar-hondo); }
+.miga a:hover { color: var(--ambar-texto); }
 
 .barra-resultados {
   display: flex;
@@ -1154,7 +1162,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .detalle__ofertas { font-size: 12.5px; color: var(--verde); font-weight: 600; margin-top: 4px; }
 .detalle__dealer { margin-top: 12px; font-size: 12.5px; color: var(--gris-acero); }
-.detalle__dealer a { font-weight: 600; color: var(--ambar-hondo); }
+.detalle__dealer a { font-weight: 600; color: var(--ambar-texto); }
 
 .ficha-tecnica { margin: 16px 0 0; border-top: 1px solid var(--linea-suave); }
 .ficha-tecnica > div {
@@ -1167,7 +1175,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .ficha-tecnica dt { color: var(--gris-acero); }
 .ficha-tecnica dd { margin: 0; font-weight: 600; text-align: right; }
-.ficha-tecnica dd a { color: var(--ambar-hondo); }
+.ficha-tecnica dd a { color: var(--ambar-texto); }
 
 /* ── Tarjetas de categoría ──────────────────────────────── */
 
@@ -1242,7 +1250,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .fin__contacto > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 12.5px; }
 .fin__contacto dt { color: var(--gris-acero); }
 .fin__contacto dd { margin: 0; font-weight: 600; text-align: right; }
-.fin__contacto a { color: var(--ambar-hondo); }
+.fin__contacto a { color: var(--ambar-texto); }
 
 /* ── Planes de publicación ──────────────────────────────── */
 
@@ -1358,7 +1366,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--verde);
 }
 .plan__ahorro span { font-weight: 500; color: var(--gris-acero); }
-.plan__ahorro--par { background: rgba(242, 169, 0, .12); color: var(--ambar-hondo); }
+.plan__ahorro--par { background: rgba(242, 169, 0, .12); color: var(--ambar-texto); }
 
 /* Precio que regirá cuando la promo termine: se dice de frente. */
 .plan__despues {
@@ -1390,7 +1398,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   line-height: 1.45;
   color: var(--texto-2);
 }
-.plan__portada .ico { flex: none; margin-top: 1px; width: 14px; height: 14px; color: var(--ambar-hondo); }
+.plan__portada .ico { flex: none; margin-top: 1px; width: 14px; height: 14px; color: var(--ambar-texto); }
 
 .plan__incluye { display: grid; gap: 7px; margin: 14px 0 16px; }
 .plan__incluye li { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; color: var(--texto-2); }
@@ -1488,7 +1496,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 30px; height: 30px;
   border-radius: 7px;
   background: rgba(242, 169, 0, .12);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .alq__nombre { display: block; font-size: 13px; font-weight: 600; }
 .alq__detalle { display: block; font-size: 11.5px; color: var(--gris-acero); }
@@ -1506,7 +1514,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .resumen__lista dt { color: var(--gris-acero); }
 .resumen__lista dd { margin: 0; font-weight: 600; text-align: right; }
 .resumen__nota { margin-top: 12px; font-size: 12.5px; line-height: 1.6; color: var(--texto-2); }
-.resumen__nota a { font-weight: 700; color: var(--ambar-hondo); }
+.resumen__nota a { font-weight: 700; color: var(--ambar-texto); }
 
 /* ── Mapa de seguimiento ────────────────────────────────── */
 
@@ -1656,7 +1664,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
   background: currentColor;
 }
-.estado--ruta      { color: var(--ambar-hondo); }
+.estado--ruta      { color: var(--ambar-texto); }
 .estado--cargando  { color: var(--gris-acero); }
 .estado--entregado { color: var(--verde); }
 .estado--sin       { color: var(--gris-acero); }
@@ -1679,7 +1687,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   width: 34px; height: 34px;
   border-radius: 8px;
   background: rgba(242, 169, 0, .13);
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .cama__ico .ico { width: 21px; height: 21px; }
 .cama__nombre { display: block; font-size: 13.5px; font-weight: 700; }
@@ -1707,7 +1715,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.008em;
 }
 .bloque__titulo:first-child { margin-top: 4px; }
-.bloque__titulo .ico { width: 17px; height: 17px; color: var(--ambar-hondo); }
+.bloque__titulo .ico { width: 17px; height: 17px; color: var(--ambar-texto); }
 
 .acciones { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
 .acciones--pie { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--linea-suave); }
@@ -1715,7 +1723,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .form-largo { margin-top: 14px; }
 
 .prosa { font-size: 13.5px; line-height: 1.68; color: var(--texto-2); max-width: 70ch; }
-.prosa a { font-weight: 600; color: var(--ambar-hondo); }
+.prosa a { font-weight: 600; color: var(--ambar-texto); }
 .prosa a:hover { text-decoration: underline; }
 .prosa p + p { margin-top: 11px; }
 .prosa h3 { font-family: var(--display); font-weight: 700; font-size: 16px; color: var(--azul); margin: 18px 0 7px; }
@@ -1760,11 +1768,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-family: var(--display);
   font-weight: 800;
   font-size: 15px;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
   line-height: 1.5;
 }
 .indice-legal a { font-weight: 600; color: var(--azul); }
-.indice-legal a:hover { color: var(--ambar-hondo); text-decoration: underline; }
+.indice-legal a:hover { color: var(--ambar-texto); text-decoration: underline; }
 .indice-legal span { font-size: 12.5px; line-height: 1.5; color: var(--gris-acero); }
 
 /* Al saltar desde el índice, el título no se queda pegado al borde de
@@ -1795,7 +1803,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r);
   font-size: 12.5px;
 }
-.aviso-borrador .ico { color: var(--ambar-hondo); }
+.aviso-borrador .ico { color: var(--ambar-texto); }
 .aviso-borrador span { flex: 1; min-width: 200px; }
 .aviso-borrador .btn { height: 30px; padding: 0 12px; font-size: 12px; }
 
@@ -1922,7 +1930,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 18px; padding: 12px 14px;
   background: var(--hueso); border: 1px solid var(--linea); border-radius: var(--r);
 }
-.casilla--condiciones a { font-weight: 700; color: var(--ambar-hondo); text-decoration: underline; }
+.casilla--condiciones a { font-weight: 700; color: var(--ambar-texto); text-decoration: underline; }
 
 .btn--chico { height: 32px; padding: 0 13px; font-size: 12.5px; margin-top: 10px; }
 
@@ -1939,7 +1947,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .zona-fotos--activa { border-color: var(--ambar); background: var(--sup-calida); }
 .zona-fotos--cargando { opacity: .6; pointer-events: none; }
-.zona-fotos__ico { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; color: var(--ambar-hondo); }
+.zona-fotos__ico { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; color: var(--ambar-texto); }
 .zona-fotos__titulo { font-size: 13.5px; font-weight: 600; }
 .zona-fotos__nota { font-size: 11.5px; color: var(--gris-acero); }
 .zona-fotos__btn { margin-top: 8px; cursor: pointer; }
@@ -2006,7 +2014,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border: 1px solid var(--linea);
   border-radius: var(--r);
 }
-.telefono__ico { display: flex; color: var(--ambar-hondo); }
+.telefono__ico { display: flex; color: var(--ambar-texto); }
 .telefono__quitar {
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px;
@@ -2091,7 +2099,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .pedido__total dt { font-weight: 700; color: var(--azul) !important; }
 .pedido__total dd { font-family: var(--display); font-weight: 800; font-size: 17px; }
 .pedido__vacio { display: flex; gap: 8px; font-size: 12px; color: var(--gris-acero); line-height: 1.5; }
-.pedido__vacio .ico { flex: none; color: var(--ambar-hondo); }
+.pedido__vacio .ico { flex: none; color: var(--ambar-texto); }
 
 .pedido--destacado {
   margin-top: 14px; padding: 14px 16px;
@@ -2101,7 +2109,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r);
 }
 
-.marca-tarjeta { float: right; font-size: 11px; font-weight: 700; color: var(--ambar-hondo); }
+.marca-tarjeta { float: right; font-size: 11px; font-weight: 700; color: var(--ambar-texto); }
 
 .nota-segura {
   display: flex; align-items: flex-start; gap: 8px;
@@ -2125,7 +2133,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r);
   font-size: 12px; line-height: 1.6; color: var(--texto-2);
 }
-.nota-membresia .ico { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--ambar-hondo); }
+.nota-membresia .ico { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--ambar-texto); }
 .nota-membresia b { color: var(--azul); }
 .nota-membresia #renovacionTexto { font-weight: 600; color: var(--azul); }
 
@@ -2160,7 +2168,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .aviso--previa .pastilla { margin: 7px 0 0 11px; }
 .vista-previa__nota { margin-top: 9px; font-size: 11.5px; color: var(--sobre-oscuro-2); }
 
-.pastilla--ambar { background: rgba(242, 169, 0, .16); color: var(--ambar-hondo); }
+.pastilla--ambar { background: rgba(242, 169, 0, .16); color: var(--ambar-texto); }
 
 /* ── Confirmación ───────────────────────────────────────── */
 
@@ -2207,7 +2215,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 .zona-videos { margin-top: var(--gap); }
 .zona-videos__limite { margin-top: 10px; }
-.zona-videos__limite b { color: var(--ambar-hondo); }
+.zona-videos__limite b { color: var(--ambar-texto); }
 
 .video-progreso {
   width: min(320px, 100%);
@@ -2275,7 +2283,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   transition: border-color .15s ease, background .15s ease;
 }
 .contactos__it:hover { border-color: var(--ambar); background: var(--sup-calida); }
-.contactos__it .ico { width: 15px; height: 15px; color: var(--ambar-hondo); }
+.contactos__it .ico { width: 15px; height: 15px; color: var(--ambar-texto); }
 .contactos__it--whatsapp { border-color: rgba(21, 122, 75, .35); color: var(--verde); }
 .contactos__it--whatsapp .ico { color: var(--verde); }
 .contactos__it--whatsapp:hover { border-color: var(--verde); background: var(--sup-ok); }
@@ -2350,7 +2358,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   border-radius: var(--r); font-size: 12.5px; color: var(--texto-error);
 }
 .acceso__legal { margin-top: 12px; font-size: 11.5px; color: var(--gris-acero); text-align: center; }
-.acceso__legal a { font-weight: 600; color: var(--ambar-hondo); }
+.acceso__legal a { font-weight: 600; color: var(--ambar-texto); }
 .acceso .btn--bloque { margin-top: 18px; }
 
 /* Aceptación de las condiciones al crear la cuenta.
@@ -2378,7 +2386,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   flex: none;
   cursor: pointer;
 }
-.acepta a { font-weight: 600; color: var(--ambar-hondo); }
+.acepta a { font-weight: 600; color: var(--ambar-texto); }
 .acepta a:hover { text-decoration: underline; }
 
 /* Aviso de condiciones nuevas, para quien ya tenía cuenta. Se enseña
@@ -2399,7 +2407,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-family: var(--display); font-weight: 700; font-size: 15.5px; color: var(--azul);
 }
 .aviso-legal__texto { font-size: 13px; line-height: 1.6; color: var(--texto-2); }
-.aviso-legal__texto a { font-weight: 600; color: var(--ambar-hondo); }
+.aviso-legal__texto a { font-weight: 600; color: var(--ambar-texto); }
 .aviso-legal__acciones { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
 
 /* Lo que se acepta al pulsar «contratar», justo debajo del botón. */
@@ -2410,7 +2418,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   color: var(--gris-acero);
   text-align: center;
 }
-.pedido__legal a { font-weight: 600; color: var(--ambar-hondo); }
+.pedido__legal a { font-weight: 600; color: var(--ambar-texto); }
 .pedido__legal a:hover { text-decoration: underline; }
 
 /* Tabla de aceptaciones, en administración.
@@ -2500,7 +2508,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .enlace-plano {
   padding: 0; background: none; border: 0;
-  font-size: 12.5px; font-weight: 600; color: var(--ambar-hondo);
+  font-size: 12.5px; font-weight: 600; color: var(--ambar-texto);
   text-decoration: underline; cursor: pointer;
 }
 .enlace-plano:hover { color: var(--azul); }
@@ -2528,7 +2536,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   background: var(--blanco); border: 1px solid var(--linea); border-radius: var(--r);
 }
 .suc-admin--principal { border-color: var(--ambar); background: var(--sup-calida); }
-.suc-admin__ico { display: flex; color: var(--ambar-hondo); }
+.suc-admin__ico { display: flex; color: var(--ambar-texto); }
 .suc-admin__cuerpo { display: grid; gap: 2px; min-width: 0; }
 .suc-admin__nombre { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
 .suc-admin__meta { font-size: 11.5px; color: var(--gris-acero); }
@@ -2548,7 +2556,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 .ventajas { display: grid; gap: 13px; margin-top: 14px; }
 .ventajas li { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; line-height: 1.55; color: var(--texto-2); }
-.ventajas .ico { flex: none; width: 17px; height: 17px; margin-top: 1px; color: var(--ambar-hondo); }
+.ventajas .ico { flex: none; width: 17px; height: 17px; margin-top: 1px; color: var(--ambar-texto); }
 .ventajas b { color: var(--azul); }
 
 /* ── Panel del anunciante ───────────────────────────────── */
@@ -2576,7 +2584,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .metrica__ico {
   display: flex; align-items: center; justify-content: center;
   width: 38px; height: 38px; flex: none;
-  background: rgba(242, 169, 0, .12); color: var(--ambar-hondo);
+  background: rgba(242, 169, 0, .12); color: var(--ambar-texto);
   border-radius: 9px;
 }
 .metrica__cuerpo { display: grid; min-width: 0; }
@@ -2588,7 +2596,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .plan-estado > div { padding: 11px 13px; background: var(--hueso); border-radius: var(--r); }
 .plan-estado dt { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--gris-acero); }
 .plan-estado dd { margin: 4px 0 0; font-size: 13.5px; font-weight: 600; }
-.plan-estado a { color: var(--ambar-hondo); font-weight: 700; }
+.plan-estado a { color: var(--ambar-texto); font-weight: 700; }
 
 .pastilla--azul { background: rgba(7, 26, 43, .1); color: var(--azul); }
 
@@ -2618,12 +2626,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .celda-equipo__foto img { width: 100%; height: 100%; object-fit: cover; }
 .celda-equipo__nombre { display: block; font-size: 13px; font-weight: 700; }
-.celda-equipo__nombre:hover { color: var(--ambar-hondo); }
+.celda-equipo__nombre:hover { color: var(--ambar-texto); }
 .celda-equipo__meta { display: block; font-size: 11.5px; color: var(--gris-acero); }
 
 .estado { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
 .estado--activo  { background: rgba(21, 122, 75, .12); color: var(--verde); }
-.estado--pausado { background: rgba(242, 169, 0, .16); color: var(--ambar-hondo); }
+.estado--pausado { background: rgba(242, 169, 0, .16); color: var(--ambar-texto); }
 .estado--vencido { background: rgba(96, 113, 125, .14); color: var(--gris-acero); }
 .estado--vendido { background: rgba(7, 26, 43, .1); color: var(--azul); }
 
@@ -2668,7 +2676,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .identidad__nombre { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 14px; }
 .identidad__meta { font-size: 12px; color: var(--gris-acero); }
 .identidad__nota { font-size: 11.5px; color: var(--texto-2); }
-.identidad a { font-weight: 700; color: var(--ambar-hondo); text-decoration: underline; }
+.identidad a { font-weight: 700; color: var(--ambar-texto); text-decoration: underline; }
 
 .invitacion-dealer {
   display: flex; align-items: flex-start; gap: 10px;
@@ -2678,7 +2686,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .invitacion-dealer .ico { flex: none; width: 17px; height: 17px; margin-top: 2px; color: var(--azul); }
 .invitacion-dealer b { color: var(--azul); }
-.invitacion-dealer a { font-weight: 700; color: var(--ambar-hondo); text-decoration: underline; }
+.invitacion-dealer a { font-weight: 700; color: var(--ambar-texto); text-decoration: underline; }
 
 /* ── Perfil público del dealer ──────────────────────────── */
 
@@ -2722,10 +2730,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 11px 13px;
   background: var(--hueso); border-radius: var(--r);
 }
-.sucursal__ico { display: flex; color: var(--ambar-hondo); }
+.sucursal__ico { display: flex; color: var(--ambar-texto); }
 .sucursal b { font-size: 13px; }
 .sucursal__meta { display: block; font-size: 11.5px; color: var(--gris-acero); }
-.sucursal__tel { font-size: 13px; font-weight: 700; color: var(--ambar-hondo); }
+.sucursal__tel { font-size: 13px; font-weight: 700; color: var(--ambar-texto); }
 
 /* ── Adaptable ──────────────────────────────────────────── */
 
@@ -2869,7 +2877,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   padding: 0; margin-bottom: 11px;
   font-family: var(--display); font-size: 12px; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* Ayuda bajo un campo: el sitio donde se explica que el RNC no se
@@ -2953,7 +2961,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .flota-alta__abrir {
   cursor: pointer; list-style: none;
   font-family: var(--display); font-size: 13px; font-weight: 700;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .flota-alta__abrir::-webkit-details-marker { display: none; }
 .flota-alta__abrir::before { content: '+ '; }
@@ -2974,7 +2982,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: block; margin-bottom: 10px;
   font-family: var(--display); font-size: 12px; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -3130,7 +3138,7 @@ main { position: relative; }
   display: block; margin-bottom: 10px;
   font-family: var(--display); font-size: 12px; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* Alta de un elemento de la flota. Plegado por defecto: la pantalla se
@@ -3139,7 +3147,7 @@ main { position: relative; }
 .flota-alta__abrir {
   cursor: pointer; list-style: none;
   font-family: var(--display); font-size: 13px; font-weight: 700;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 .flota-alta__abrir::-webkit-details-marker { display: none; }
 .flota-alta__abrir::before { content: '+ '; }
@@ -3350,7 +3358,7 @@ main { position: relative; }
 .pub-muestra:not(:has(.pub-muestra__letra)) .pub-muestra__pie {
   font-size: 12px;
   font-weight: 600;
-  color: var(--ambar-hondo);
+  color: var(--ambar-texto);
 }
 
 /* 90 px de alto no dan para cuatro renglones apilados: en el banner de
@@ -3488,7 +3496,7 @@ main { position: relative; }
 
 /* Un camión sin motor declarado se señala: en un cabezote es lo
    primero que pregunta el comprador. */
-.btn-tabla--avisa { border-color: var(--ambar-hondo); color: var(--ambar-hondo); font-weight: 700; }
+.btn-tabla--avisa { border-color: var(--ambar-hondo); color: var(--ambar-texto); font-weight: 700; }
 
 /* Eliminar un anuncio. Va en rojo y el último de la fila: es la única
    acción del panel que no se puede deshacer. */
@@ -3525,7 +3533,7 @@ main { position: relative; }
 
 .realce--aviso { border-left-color: var(--ambar-hondo); }
 .pedido__nota { margin-top: 10px; font-size: 12px; color: var(--gris-acero); }
-.pedido__nota a { color: var(--ambar-hondo); font-weight: 600; }
+.pedido__nota a { color: var(--ambar-texto); font-weight: 600; }
 
 /* ── Filtros en móvil ───────────────────────────────────────
    En escritorio los filtros son la columna izquierda de siempre. En
@@ -3809,7 +3817,7 @@ body.sin-scroll { overflow: hidden; }
   transition: color .15s ease, background-color .15s ease;
 }
 .ver-clave:hover { color: var(--azul); background: var(--hueso); }
-.ver-clave--activo { color: var(--ambar-hondo); }
+.ver-clave--activo { color: var(--ambar-texto); }
 .ver-clave .ico { width: 17px; height: 17px; }
 
 /* Con la ayuda debajo del campo, el botón sube para no montarse. */
@@ -3855,7 +3863,7 @@ body.sin-scroll { overflow: hidden; }
 /* Galería de un tipo de equipo, en el panel de administración. */
 .flota-fotos { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .flota-fotos img { width: 64px; height: 44px; object-fit: cover; border-radius: 4px; border: 1px solid var(--linea); }
-.sol__meta--aviso { color: var(--ambar-hondo); }
+.sol__meta--aviso { color: var(--ambar-texto); }
 
 /* ═══════════════════════════════════════════════════════════
    Asistente de soporte (widget flotante)
