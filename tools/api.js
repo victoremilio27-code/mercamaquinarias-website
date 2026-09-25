@@ -30,6 +30,7 @@ const servicios = require('../assets/servicios.js');
    guardaría constancia de otra. */
 const legales = require('../assets/legales.js');
 const facturas = require('./facturas');
+const pagos = require('./pagos');
 
 const { ITBIS } = precios;
 const COOKIE = 'te_sesion';
@@ -193,6 +194,45 @@ const conAdmin = (manejador) => conSesion((req, res, ctx, ...resto) => {
   if (!u || !u.es_admin) return fallo(res, 404, 'No existe');
   return manejador(req, res, ctx, ...resto);
 });
+
+/* Escrituras de un administrador EN NOMBRE DE otra organización.
+   Decisión de Victor del 2026-09-25 (ADMIN-05): toda escritura de admin
+   sobre otra organización queda en la bitácora, con quién, cuándo, desde
+   qué IP y qué cambió. Una ruta así va envuelta aquí o no se hace.
+
+   Es conAdmin (sigue respondiendo 404 a quien no lo es) más un
+   `ctx.enNombreDe(idOrganizacion, { objetoTipo, objetoId, motivo }, escribir)`
+   que llama a db.enNombreDe con el administrador de la sesión, la acción
+   fija de este envoltorio y la IP de origen(req). El manejador no recibe
+   esos tres datos como parámetro, así que no puede falsearlos.
+
+   La función devuelta lleva `bitacora = accion`: es lo que lee la guarda
+   de tools/probar-bitacora.js al recorrer RUTAS, que falla si una ruta de
+   escritura de /api/admin/ ni pasa por aquí ni está declarada en
+   ESCRITURAS_ADMIN_PROPIAS. Nota para la fase 7: si la edición asistida
+   de la página del dealer se monta sobre rutas que NO cuelgan de
+   /api/admin/, esa fase tiene que ensanchar la guarda en el mismo cambio. */
+function conAdminEnNombreDe(accion, manejador) {
+  // Falla al arrancar, no en la primera petición de un administrador.
+  if (!Object.prototype.hasOwnProperty.call(db.ACCIONES_BITACORA, accion)) {
+    throw new Error(`conAdminEnNombreDe: acción «${accion}» fuera de ACCIONES_BITACORA`);
+  }
+  const envuelto = conAdmin((req, res, ctx, ...resto) => {
+    const enNombreDe = (idOrganizacion, { objetoTipo, objetoId, motivo } = {}, escribir) =>
+      db.enNombreDe({
+        idAdmin: ctx.usuario.id,
+        idOrganizacion,
+        accion,
+        objetoTipo,
+        objetoId,
+        motivo,
+        ip: origen(req),
+      }, escribir);
+    return manejador(req, res, { ...ctx, enNombreDe }, ...resto);
+  });
+  envuelto.bitacora = accion;
+  return envuelto;
+}
 
 /* ── Validación ─────────────────────────────────────────── */
 
@@ -929,16 +969,29 @@ const listarSolicitudesServicio = conAdmin((req, res, ctx, consulta) => {
         ? q.get('servicio') : undefined,
       estado: ['nueva', 'atendida', 'cerrada'].includes(q.get('estado')) ? q.get('estado') : undefined,
     }),
+    /* Para que la consola pinte los filtros desde aquí y sepa cuáles
+       están apagados, en vez de tener su propia lista que se desfase. */
+    servicios: { activos: SERVICIOS_SOLICITUD, historicos: SERVICIOS_HISTORICOS },
   });
 });
 
+/* Guarda quién la atendió. No va por la bitácora: la manda un
+   visitante, no una organización, y el «quién» queda en su propia fila. */
 const marcarSolicitudServicio = conAdmin(async (req, res, ctx, idSol) => {
   const c = await leerCuerpo(req);
   if (!['nueva', 'atendida', 'cerrada'].includes(c.estado)) {
     return fallo(res, 400, 'Estado inválido');
   }
-  db.marcarSolicitudServicio(idSol, c.estado, texto(c.nota, 500));
-  return responder(res, 200, { ok: true, estado: c.estado });
+  if (!db.marcarSolicitudServicio(idSol, c.estado, texto(c.nota, 500), ctx.usuario.id)) {
+    return fallo(res, 404, 'Esa solicitud no existe');
+  }
+  const s = db.solicitudServicio(idSol);
+  const quien = s.atendida_por ? db.usuarioPorId(s.atendida_por) : null;
+  return responder(res, 200, {
+    ok: true,
+    estado: c.estado,
+    solicitud: { ...s, atendida_por_nombre: quien ? quien.nombre : null },
+  });
 });
 
 /* ── Rutas: taxonomía ───────────────────────────────────── */
@@ -1395,7 +1448,11 @@ const verSolicitud = conAdmin((req, res, ctx, idSolicitud) => {
   return responder(res, 200, { solicitud: s });
 });
 
-const resolverSolicitud = conAdmin(async (req, res, ctx, idSolicitud) => {
+/* Aprobar o rechazar el alta cambia `estado_revision` de otra
+   organización: va por la bitácora. Un intento que falla (409 porque
+   ya estaba resuelta) lanza dentro del SAVEPOINT y no deja fila. El
+   correo al dealer va FUERA de la transacción, después. */
+const resolverSolicitud = conAdminEnNombreDe('dealer.resolver', async (req, res, ctx, idSolicitud) => {
   const c = await leerCuerpo(req);
   const aprobar = c.decision === 'aprobar';
   if (!aprobar && c.decision !== 'rechazar') {
@@ -1404,9 +1461,21 @@ const resolverSolicitud = conAdmin(async (req, res, ctx, idSolicitud) => {
   const motivo = texto(c.motivo, 500);
   if (!aprobar && !motivo) return fallo(res, 400, 'Escriba el motivo del rechazo');
 
+  const previa = db.solicitudCompleta(idSolicitud);
+  if (!previa) return fallo(res, 404, 'Esa solicitud no existe');
+
   let s;
   try {
-    s = db.resolverSolicitud(idSolicitud, { aprobar, idRevisor: ctx.usuario.id, motivo });
+    s = ctx.enNombreDe(previa.organizacion_id,
+      { objetoTipo: 'solicitud_dealer', objetoId: idSolicitud, motivo },
+      (org) => {
+        const hecha = db.resolverSolicitud(idSolicitud, { aprobar, idRevisor: ctx.usuario.id, motivo });
+        return {
+          antes: { solicitud: previa.estado, estado_revision: org.estado_revision },
+          despues: { solicitud: hecha.estado, estado_revision: aprobar ? 'aprobada' : 'rechazada' },
+          resultado: hecha,
+        };
+      });
   } catch (e) {
     return fallo(res, e.codigo || 500, e.message);
   }
@@ -1529,12 +1598,39 @@ function verDealer(req, res, ctx, slug) {
  * comandos: un dealer que se registraba por el sitio no podía
  * obtenerlo nunca. La pastilla verde se pinta en cinco pantallas para
  * una condición que era inalcanzable por la vía normal. */
-const verificarOrganizacion = conAdmin(async (req, res, ctx, idOrg) => {
+/* Va por la bitácora (ADMIN-05): cambia el sello de otra organización.
+   Se anota aunque el valor no cambie: alguien pulsó, y eso es lo que la
+   bitácora cuenta. */
+const verificarOrganizacion = conAdminEnNombreDe('organizacion.verificar', async (req, res, ctx, idOrg) => {
   const c = await leerCuerpo(req);
-  if (!db.marcarVerificada(idOrg, !!c.verificada)) {
-    return fallo(res, 404, 'Esa empresa no existe');
+  const verificada = !!c.verificada;
+  const motivo = texto(c.motivo, 300);
+  try {
+    ctx.enNombreDe(idOrg, { objetoTipo: 'organizacion', objetoId: idOrg, motivo }, (org) => {
+      db.marcarVerificada(idOrg, verificada);
+      return { antes: { verificada: !!org.verificada }, despues: { verificada } };
+    });
+  } catch (e) {
+    if (e.codigo === 404) return fallo(res, 404, 'Esa empresa no existe');
+    return fallo(res, e.codigo || 500, e.message);
   }
-  return responder(res, 200, { verificada: !!c.verificada });
+  return responder(res, 200, { verificada });
+});
+
+/* La bitácora se lee por aquí y por ningún otro sitio. No existe, ni
+   debe existir, una ruta que la edite, la borre o le añada filas: las
+   filas solo nacen dentro de db.enNombreDe. */
+const listarBitacora = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  const organizacion = texto(q.get('organizacion'), 64);
+  const pedido = parseInt(q.get('limite'), 10);
+  const limite = Number.isFinite(pedido) ? Math.min(Math.max(pedido, 1), 500) : 200;
+  return responder(res, 200, {
+    entradas: db.bitacora({ organizacion, limite }),
+    organizaciones: db.organizacionesEnBitacora(),
+    acciones: db.ACCIONES_BITACORA,
+    organizacion: organizacion || null,
+  });
 });
 
 /* ── Rutas: la página propia del dealer ─────────────────── */
@@ -1886,47 +1982,11 @@ const misPlanes = conSesion((req, res, ctx) => {
   });
 });
 
-/* Todo cobro emite su comprobante. Una sola función, y las dos rutas
- * que cobran la llaman.
- *
- * Estaba escrito dos veces y solo existía en una: comprar cupos emitía
- * comprobante y AMPLIARLOS no. El cliente pagaba la ampliación, el pago
- * quedaba aprobado, y no había documento. Ninguna tarea lo recuperaba
- * después —la diaria solo reintenta el envío de facturas ya creadas—,
- * así que era ingreso cobrado y no declarado, invisible hasta una
- * inspección. Con una sola función no pueden volver a separarse.
- *
- * Nunca lanza: que no se pueda emitir NO revierte un cobro que ya
- * entró. El comprobante se puede emitir después desde administración,
- * y el pago sin factura sale en la lista de pendientes. */
-function emitirComprobanteDeCobro({ cobro, concepto, detalle, cliente, correoCliente }) {
-  /* Una cuenta exenta no paga nada, así que no hay nada que comprobar. */
-  if (!cobro || cobro.total <= 0) return null;
-
-  const pago = db.pagoPorReferencia(cobro.referencia);
-  if (!pago) {
-    console.error(`facturas: no se encontró el pago ${cobro.referencia} para emitir su comprobante`);
-    return null;
-  }
-
-  try {
-    const comprobante = facturas.emitirPorPago(pago, { concepto, detalle, cliente });
-
-    /* El envío va aparte y sin esperarlo: emitir y notificar fallan por
-       motivos distintos, y una caída del proveedor de correo no puede
-       dejar sin comprobante un pago que ya entró. Lo que no salga lo
-       reintenta la tarea diaria. Con catch, porque una promesa suelta
-       que se rechace sin manejador tumba el proceso. */
-    facturas.enviar(comprobante, { correoCliente })
-      .catch((e) => console.error(
-        `facturas: no se pudo enviar el comprobante ${comprobante.numero} · ${e.message}`));
-
-    return comprobante;
-  } catch (e) {
-    console.error(`facturas: no se pudo emitir el comprobante del pago ${pago.id} · ${e.message}`);
-    return null;
-  }
-}
+/* El comprobante de un cobro se emite en UN solo sitio:
+ * `pagos.confirmarPago`, la transición de pendiente a aprobado. Estuvo
+ * escrito dos veces y comprar emitía mientras ampliar no, que era
+ * ingreso cobrado y no declarado. Aquí no se emite nada: las rutas
+ * anotan el cobro y se lo pasan a `pagos.cobrar`. */
 
 /* A nombre de quién sale el comprobante de un cobro que no pregunta.
  *
@@ -1943,22 +2003,18 @@ function datosFiscalesDe(ctx) {
   return { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo };
 }
 
-/* Lo que se imprime como línea de detalle.
+/* Lo que responde una ruta de cobro cuando el procesador no aprobó.
  *
- * La multiplicación tiene que cuadrar: cantidad × precio unitario =
- * importe. Con cupos gratis por cantidad el subtotal deja de ser
- * divisible, así que en ese caso va una sola línea por el total y el
- * reparto se explica en el texto. Una factura donde la multiplicación
- * no da es una factura que el cliente reclama. */
-function lineaDeCupos({ cupo, subtotal, inicio, fin }) {
-  const divisible = cupo > 0 && subtotal % cupo === 0;
-  return {
-    cantidad: divisible ? cupo : 1,
-    precio_unitario: divisible ? subtotal / cupo : subtotal,
-    periodo: [inicio, fin]
-      .map((f) => String(f).slice(0, 10).split('-').reverse().join('/')).join(' al '),
-  };
-}
+ * Rechazado: 402 con un texto que diga lo que NO pasó, que es lo que
+ * el anunciante necesita saber. Pendiente: 202, sin cupos ni
+ * comprobante todavía; aparecerán cuando el pago se confirme. El
+ * navegador de hoy nunca ve un 202 porque `demo` aprueba siempre. */
+const NO_APROBADO = 'El pago no fue aprobado. No se le cobró nada, no se añadió ningún cupo '
+  + 'y no se emitió comprobante.';
+const EN_PROCESO = 'Su pago está en proceso. Los cupos y el comprobante aparecerán cuando se confirme.';
+
+const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
+const comprobantePublico = (c) => c && { numero: c.numero, tipo: c.tipo, ncf: c.ncf };
 
 const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
@@ -2005,27 +2061,49 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     };
   }
 
-  const membresia = db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias, cobro });
+  /* Sin importe no hay nada que esperar ni que declarar: se otorga al
+     instante, como siempre, y no se emite comprobante. */
+  if (!(cobro.total > 0)) {
+    const membresia = db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias, cobro });
+    return responder(res, 201, {
+      membresia,
+      cobro,
+      comprobante: null,
+      sesion: sesionPublica(ctx.usuario.id),
+      pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
+    });
+  }
 
-  /* El comprobante se emite SIEMPRE que haya cobro, lo pida el cliente
-     o no. */
-  const comprobante = emitirComprobanteDeCobro({
+  /* Con importe, el cobro nace pendiente y lo comprado espera en el
+     pago. Los cupos y el comprobante los da `pagos.cobrar` solo si el
+     procesador aprueba: el comprobante se emite SIEMPRE que haya cobro
+     aprobado, lo pida el cliente o no, y nunca si no lo hubo. */
+  const pago = db.registrarCobro({
+    idOrg: org.id,
     cobro,
-    concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
-    detalle: lineaDeCupos({
-      cupo, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
-    }),
-    cliente,
-    correoCliente: ctx.usuario.correo,
-  });
-
-  return responder(res, 201, {
-    membresia,
-    cobro,
-    comprobante: comprobante && {
-      numero: comprobante.numero, tipo: comprobante.tipo, ncf: comprobante.ncf,
+    intencion: {
+      tipo: 'compra', idPlan: plan.id, cupo, dias,
+      concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
+      cliente,
+      correoCliente: ctx.usuario.correo,
     },
+  });
+  const r = await pagos.cobrar(pago);
+
+  if (r.estado === 'rechazado') {
+    return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
+  }
+  if (r.estado !== 'aprobado') {
+    return responder(res, 202, {
+      membresia: null, cobro, comprobante: null, pago: pagoPublico(r.pago), aviso: EN_PROCESO,
+    });
+  }
+  return responder(res, 201, {
+    membresia: r.membresia,
+    cobro,
+    comprobante: comprobantePublico(r.comprobante),
     sesion: sesionPublica(ctx.usuario.id),
+    pago: pagoPublico(r.pago),
   });
 });
 
@@ -2059,32 +2137,50 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
       procesador: 'demo',
     };
 
-  const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
+  if (!(cobro.total > 0)) {
+    const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
+    return responder(res, 200, {
+      membresia, cobro, comprobante: null, pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
+    });
+  }
 
   /* Ampliar cupos es un cobro como cualquier otro y lleva su
      comprobante. Faltaba: se cobraba la diferencia, el pago quedaba
-     aprobado y no se emitía nada. */
+     aprobado y no se emitía nada. Ahora pasa por la misma transición
+     que la compra, y lo que se guarda son los cupos AÑADIDOS, que es
+     lo que se cobró y lo que se suma al confirmarse. */
   const cuantos = cupoNuevo - s.anuncios_incluidos;
-  const comprobante = emitirComprobanteDeCobro({
+  const pago = db.registrarCobro({
+    idOrg: org.id,
+    idSusc,
     cobro,
-    concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
-      + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
-    detalle: lineaDeCupos({
-      cupo: cuantos, subtotal: cobro.subtotal, inicio: membresia.inicio, fin: membresia.fin,
-    }),
-    /* Los mismos datos fiscales de la compra original: quien facturó
-       con RNC espera que la ampliación de esa misma membresía salga
-       igual, no a nombre de otro. */
-    cliente: datosFiscalesDe(ctx),
-    correoCliente: ctx.usuario.correo,
-  });
-
-  return responder(res, 200, {
-    membresia,
-    cobro,
-    comprobante: comprobante && {
-      numero: comprobante.numero, tipo: comprobante.tipo, ncf: comprobante.ncf,
+    intencion: {
+      tipo: 'ampliacion', idSusc, cupoAnterior: s.anuncios_incluidos, cupoNuevo, anadidos: cuantos,
+      concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
+        + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
+      /* Los mismos datos fiscales de la compra original: quien facturó
+         con RNC espera que la ampliación de esa misma membresía salga
+         igual, no a nombre de otro. */
+      cliente: datosFiscalesDe(ctx),
+      correoCliente: ctx.usuario.correo,
     },
+  });
+  const r = await pagos.cobrar(pago);
+
+  if (r.estado === 'rechazado') {
+    return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
+  }
+  if (r.estado !== 'aprobado') {
+    return responder(res, 202, {
+      membresia: db.suscripcion(idSusc, org.id), cobro, comprobante: null,
+      pago: pagoPublico(r.pago), aviso: EN_PROCESO,
+    });
+  }
+  return responder(res, 200, {
+    membresia: r.membresia,
+    cobro,
+    comprobante: comprobantePublico(r.comprobante),
+    pago: pagoPublico(r.pago),
   });
 });
 
@@ -2550,6 +2646,28 @@ async function evento(req, res, ctx) {
 
 /* ── Enrutador ──────────────────────────────────────────── */
 
+/* Escrituras de administrador que NO son en nombre de otra organización
+   y por eso no van a la bitácora. Cada una lleva su porqué: la guarda de
+   tools/probar-bitacora.js exige que toda ruta de escritura bajo
+   /api/admin/ esté aquí o pase por conAdminEnNombreDe, nunca las dos.
+   Añadir una escritura de admin sin decidir dónde va rompe la barrera. */
+const ESCRITURAS_ADMIN_PROPIAS = new Set([
+  editarPortada,          // la portada es de la plataforma
+  crearPublicidad,        // los espacios de publicidad son de la plataforma
+  editarPublicidad,       // ídem
+  eliminarPublicidad,     // ídem
+  crearFlota,             // la flota propia es de MercaMaquinarias
+  editarFlota,            // ídem
+  eliminarFlota,          // ídem
+  cargarSecuencia,        // las secuencias NCF son de la plataforma ante la DGII
+  reenviarFactura,        // reenviar un comprobante no cambia datos de nadie
+  /* La nota de crédito la emite la plataforma sobre su propio documento
+     fiscal, y meterla en enNombreDe exige anidar la transacción de NCF
+     de tools/facturas.js. Pregunta abierta para Victor (D-01 de 04-01). */
+  anularFactura,
+  marcarSolicitudServicio, // la manda un visitante, no una organización; guarda atendida_por
+]);
+
 const RUTAS = [
   ['POST', /^\/api\/cuenta\/registro$/,     registro],
   ['POST', /^\/api\/cuenta\/entrar$/,       entrar],
@@ -2586,6 +2704,7 @@ const RUTAS = [
   ['DELETE', /^\/api\/mi-pagina\/galeria\/([\w-]+)$/,       quitarDeMiGaleria],
   ['PUT',    /^\/api\/mi-pagina\/enlaces$/,                 guardarMisEnlaces],
   ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
+  ['GET',    /^\/api\/admin\/bitacora$/,                     listarBitacora],
   ['GET',  /^\/api\/planes$/,            listarPlanes],
   ['GET',  /^\/api\/estadisticas$/,      estadisticas],
   ['POST', /^\/api\/anuncios$/,          publicar],
@@ -2674,4 +2793,4 @@ async function manejar(req, res, ruta) {
   return fallo(res, 404, 'Ruta inexistente');
 }
 
-module.exports = { manejar, ITBIS };
+module.exports = { manejar, ITBIS, RUTAS, ESCRITURAS_ADMIN_PROPIAS };

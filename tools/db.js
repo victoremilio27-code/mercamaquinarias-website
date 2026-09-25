@@ -831,6 +831,83 @@ const MIGRACIONES = [
         AND estado_revision = 'aprobada'
         AND estado_pagina = 'borrador'`,
   ]],
+
+  /* Un pago deja de darse por cobrado antes de tiempo.
+   *
+   * `anotarPago` escribía 'aprobado' a mano en el SQL y la compra
+   * otorgaba los cupos en la misma transacción. Con un procesador de
+   * verdad, una tarjeta rechazada habría dejado cupos regalados y un
+   * NCF consumido por dinero que no entró, y un comprobante emitido no
+   * se borra: solo se corrige con una B04. Ahora un cobro con importe
+   * nace 'pendiente' y la transición a 'aprobado' es la que otorga.
+   *
+   *   · intencion   — JSON con lo que se compró (plan, cupo, días o los
+   *                   cupos añadidos) y los datos fiscales validados al
+   *                   comprar, para poder ejecutarlo cuando el dinero se
+   *                   confirme, aunque sea en otra petición o a mano.
+   *   · confirmado  — cuándo entró el dinero. Es la fecha que lleva el
+   *                   comprobante y la que cuenta en el informe.
+   *   · actualizado — cuándo cambió de estado por última vez.
+   *
+   * Los pagos que ya hay en producción están todos 'aprobado' y se
+   * cobraron de verdad: se quedan como están, con estas columnas en
+   * NULL, y quien las lee cae en `creado`. Por eso aquí no hay UPDATE. */
+  ['2026-09-pagos-pendientes', [
+    'ALTER TABLE pagos ADD COLUMN intencion TEXT',
+    'ALTER TABLE pagos ADD COLUMN confirmado TEXT',
+    'ALTER TABLE pagos ADD COLUMN actualizado TEXT',
+    'CREATE INDEX IF NOT EXISTS ix_pagos_estado ON pagos (estado, creado)',
+  ]],
+
+  /* Bitácora de administración. Decisión de Victor del 2026-09-25
+     (ADMIN-05): toda escritura que un administrador haga sobre otra
+     organización queda registrada con quién, cuándo, desde qué IP y qué
+     cambió. Sirve para contestar con prueba el reclamo de un cliente
+     empresa y para que el robo de la cuenta de administrador deje rastro.
+
+     Sin REFERENCES hacia usuarios ni organizaciones, a propósito: una
+     clave foránea con cascada borraría la prueba al borrar la cuenta, y
+     una sin cascada impediría borrarla. Por eso el correo, el nombre y la
+     organización se COPIAN en la fila en el momento de escribir.
+
+     Los dos disparadores hacen la tabla de solo añadir en la propia base:
+     aunque alguien escriba SQL a mano desde el sitio, un UPDATE o un
+     DELETE abortan. Quien tenga shell en el VPS puede hacer DROP; esa es
+     otra frontera.
+
+     De paso, las solicitudes de servicio guardan quién las atendió, no
+     solo cuándo: antes la columna `atendida` decía la hora y nadie sabía
+     a quién preguntar. */
+  ['2026-09-bitacora-admin', [
+    `CREATE TABLE IF NOT EXISTS bitacora_admin (
+       id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+       creada               TEXT NOT NULL,
+       admin_id             TEXT NOT NULL,
+       admin_correo         TEXT NOT NULL,
+       admin_nombre         TEXT,
+       organizacion_id      TEXT NOT NULL,
+       organizacion_nombre  TEXT NOT NULL,
+       accion               TEXT NOT NULL,
+       objeto_tipo          TEXT,
+       objeto_id            TEXT,
+       antes                TEXT,
+       despues              TEXT NOT NULL,
+       motivo               TEXT,
+       ip                   TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_bitacora_admin_org ON bitacora_admin (organizacion_id, id)',
+    `CREATE TRIGGER IF NOT EXISTS tr_bitacora_admin_sin_cambios
+       BEFORE UPDATE ON bitacora_admin
+     BEGIN
+       SELECT RAISE(ABORT, 'La bitácora de administración no se modifica');
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_bitacora_admin_sin_borrado
+       BEFORE DELETE ON bitacora_admin
+     BEGIN
+       SELECT RAISE(ABORT, 'La bitácora de administración no se borra');
+     END`,
+    'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
+  ]],
 ];
 
 function migrar() {
@@ -1353,12 +1430,16 @@ function solicitudServicio(idSol) {
 const solicitudesServicio = ({ servicio, estado } = {}) => {
   const donde = [];
   const args = {};
-  if (servicio) { donde.push('servicio = :servicio'); args.servicio = servicio; }
-  if (estado) { donde.push('estado = :estado'); args.estado = estado; }
+  if (servicio) { donde.push('s.servicio = :servicio'); args.servicio = servicio; }
+  if (estado) { donde.push('s.estado = :estado'); args.estado = estado; }
 
-  return abrir().prepare(`SELECT * FROM solicitudes_servicio
+  /* El LEFT JOIN trae el nombre de quien la atendió para la consola; si
+     la cuenta ya no existe, la solicitud sale igual, con el nombre nulo. */
+  return abrir().prepare(`SELECT s.*, u.nombre AS atendida_por_nombre, u.correo AS atendida_por_correo
+      FROM solicitudes_servicio s
+      LEFT JOIN usuarios u ON u.id = s.atendida_por
       ${donde.length ? `WHERE ${donde.join(' AND ')}` : ''}
-      ORDER BY creada DESC LIMIT 200`).all(args)
+      ORDER BY s.creada DESC LIMIT 200`).all(args)
     .map((s) => {
       let detalle = {};
       try { detalle = JSON.parse(s.detalle); } catch (_) { /* guardado a mano */ }
@@ -1366,11 +1447,19 @@ const solicitudesServicio = ({ servicio, estado } = {}) => {
     });
 };
 
-const marcarSolicitudServicio = (idSol, estado, nota) =>
-  abrir().prepare(`UPDATE solicitudes_servicio
-       SET estado = ?, nota = COALESCE(?, nota), atendida = ?
+/* Guarda quién la atendió además de cuándo, y lo borra si vuelve a
+   `nueva`: una reabierta no la está atendiendo nadie. Devuelve si la
+   fila existía; antes no devolvía nada útil y la API contestaba «ok»
+   a un id inventado. */
+const marcarSolicitudServicio = (idSol, estado, nota, idAdmin) => {
+  const reabierta = estado === 'nueva';
+  const info = abrir().prepare(`UPDATE solicitudes_servicio
+       SET estado = ?, nota = COALESCE(?, nota), atendida = ?, atendida_por = ?
      WHERE id = ?`)
-    .run(estado, nota || null, estado === 'nueva' ? null : ahora(), idSol);
+    .run(estado, nota || null, reabierta ? null : ahora(),
+      reabierta ? null : (idAdmin || null), idSol);
+  return info.changes > 0;
+};
 
 /* ── Flota propia (alquiler y transporte) ───────────────── */
 
@@ -1684,7 +1773,10 @@ const contarPendientes = () =>
 
 /* Aprueba o rechaza. Mueve la solicitud y la organización a la vez:
    dejar una aprobada y la otra pendiente es justo el estado que haría
-   invisible a un dealer ya admitido. */
+   invisible a un dealer ya admitido.
+   Va con SAVEPOINT y no con BEGIN porque tiene que poder ir dentro de
+   `enNombreDe` (que ya abrió el suyo): un BEGIN anidado lanza en SQLite.
+   Suelta, fuera de transacción, un SAVEPOINT se comporta como un BEGIN. */
 function resolverSolicitud(idSolicitud, { aprobar, idRevisor, motivo }) {
   const d = abrir();
   const s = d.prepare('SELECT * FROM solicitudes_dealer WHERE id = ?').get(idSolicitud);
@@ -1696,7 +1788,7 @@ function resolverSolicitud(idSolicitud, { aprobar, idRevisor, motivo }) {
   const estado = aprobar ? 'aprobada' : 'rechazada';
   const t = ahora();
 
-  d.prepare('BEGIN').run();
+  d.prepare('SAVEPOINT resolver_solicitud').run();
   try {
     d.prepare(`UPDATE solicitudes_dealer
                SET estado = ?, revisada = ?, revisada_por = ?, motivo = ?
@@ -1706,9 +1798,10 @@ function resolverSolicitud(idSolicitud, { aprobar, idRevisor, motivo }) {
     d.prepare('UPDATE organizaciones SET estado_revision = ?, actualizada = ? WHERE id = ?')
       .run(estado, t, s.organizacion_id);
 
-    d.prepare('COMMIT').run();
+    d.prepare('RELEASE resolver_solicitud').run();
   } catch (e) {
-    d.prepare('ROLLBACK').run();
+    d.prepare('ROLLBACK TO resolver_solicitud').run();
+    d.prepare('RELEASE resolver_solicitud').run();
     throw e;
   }
 
@@ -1722,6 +1815,119 @@ function marcarAdmin(correo, esAdmin = true) {
     .run(esAdmin ? 1 : 0, String(correo).trim().toLowerCase());
   return info.changes > 0;
 }
+
+/* ── Bitácora de administración ───────────────────────────── */
+
+/* Catálogo cerrado de acciones: nombre → rótulo que enseña la consola.
+   Una acción que no esté aquí se rechaza. Las fases 5 y 7 (transferencia
+   recibida, número de serie, página del dealer) añaden la suya aquí en el
+   MISMO cambio que la usa; si no, su escritura no arranca. */
+const ACCIONES_BITACORA = Object.freeze({
+  'organizacion.verificar': 'Sello de verificada',
+  'dealer.resolver': 'Alta de dealer aprobada o rechazada',
+});
+
+const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { codigo });
+
+/* La única puerta. Toda escritura de un administrador sobre otra
+   organización pasa por aquí o no se hace.
+
+   La escritura va DENTRO, como callback, en la misma transacción que la
+   anotación: si existiera un «anotar después», bastaría con olvidar la
+   segunda llamada para que una escritura quedara sin rastro. Sin
+   anotación no hay escritura, y una escritura que falla no deja anotación.
+
+   `escribir(org)` recibe la fila de la organización leída ANTES de
+   escribir (para construir `antes` sin otra consulta), tiene que ser
+   síncrono y devolver `{ antes, despues, resultado }`.
+
+   SAVEPOINT y no BEGIN: las funciones que ya tienen su propia transacción
+   (resolverSolicitud) tienen que poder ir dentro, y un BEGIN anidado lanza.
+
+   Este es el ÚNICO INSERT sobre la tabla bitacora_admin del
+   repositorio; tools/probar-bitacora.js cuenta la sentencia literal. */
+function enNombreDe({ idAdmin, idOrganizacion, accion, objetoTipo, objetoId, motivo, ip }, escribir) {
+  if (!Object.prototype.hasOwnProperty.call(ACCIONES_BITACORA, accion)) {
+    throw errorCodigo(`Acción de bitácora desconocida: «${accion}»`, 500);
+  }
+
+  // 404 y no 403, con el mismo criterio que conAdmin: no revelar nada.
+  const admin = usuarioPorId(idAdmin);
+  if (!admin || !admin.es_admin) throw errorCodigo('No encontrado', 404);
+
+  const d = abrir();
+  const org = d.prepare('SELECT * FROM organizaciones WHERE id = ?').get(idOrganizacion);
+  if (!org) throw errorCodigo('Esa empresa no existe', 404);
+
+  d.prepare('SAVEPOINT bitacora_escritura').run();
+  try {
+    const hecho = escribir(org);
+
+    // Una escritura asíncrona terminaría después de la anotación, cuando
+    // la transacción ya no la cubre. Se rechaza entera.
+    if (hecho && typeof hecho.then === 'function') {
+      hecho.then(() => {}, () => {});
+      throw errorCodigo('La escritura en nombre de otro tiene que ser síncrona', 500);
+    }
+    // Sin «qué cambió», la fila no contesta un reclamo.
+    if (!hecho || typeof hecho !== 'object' || hecho.despues === undefined) {
+      throw errorCodigo('La escritura en nombre de otro tiene que decir qué cambió', 500);
+    }
+
+    d.prepare(`INSERT INTO bitacora_admin
+        (creada, admin_id, admin_correo, admin_nombre, organizacion_id, organizacion_nombre,
+         accion, objeto_tipo, objeto_id, antes, despues, motivo, ip)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(ahora(), admin.id, admin.correo, admin.nombre || null, org.id, org.nombre,
+        accion, objetoTipo || null, objetoId || null,
+        hecho.antes === undefined ? null : JSON.stringify(hecho.antes),
+        JSON.stringify(hecho.despues),
+        motivo ? String(motivo).slice(0, 500) : null,
+        ip ? String(ip).slice(0, 64) : null);
+
+    d.prepare('RELEASE bitacora_escritura').run();
+    return hecho.resultado;
+  } catch (e) {
+    d.prepare('ROLLBACK TO bitacora_escritura').run();
+    d.prepare('RELEASE bitacora_escritura').run();
+    throw e;
+  }
+}
+
+const leerJSON = (texto) => {
+  if (texto == null) return null;
+  try { return JSON.parse(texto); } catch (_) { return null; /* guardado a mano */ }
+};
+
+/* Lo que enseña la consola, lo más reciente primero. El `id`
+   autoincremental ordena sin ambigüedad aunque dos filas compartan
+   segundo. */
+function bitacora({ organizacion, limite = 200 } = {}) {
+  const tope = Math.min(Math.max(parseInt(limite, 10) || 200, 1), 500);
+  const filas = organizacion
+    ? abrir().prepare('SELECT * FROM bitacora_admin WHERE organizacion_id = ? ORDER BY id DESC LIMIT ?')
+      .all(organizacion, tope)
+    : abrir().prepare('SELECT * FROM bitacora_admin ORDER BY id DESC LIMIT ?').all(tope);
+
+  return filas.map((f) => ({
+    ...f,
+    antes: leerJSON(f.antes),
+    despues: leerJSON(f.despues),
+    rotulo: ACCIONES_BITACORA[f.accion] || f.accion,
+  }));
+}
+
+/* Alimenta el filtro de la consola: cada organización una vez, con el
+   nombre de su anotación más reciente (si se renombró, sale el último). */
+const organizacionesEnBitacora = () =>
+  abrir().prepare(`
+    SELECT b.organizacion_id AS id,
+           (SELECT organizacion_nombre FROM bitacora_admin x
+             WHERE x.organizacion_id = b.organizacion_id ORDER BY x.id DESC LIMIT 1) AS nombre,
+           COUNT(*) AS entradas
+      FROM bitacora_admin b
+     GROUP BY b.organizacion_id
+     ORDER BY nombre COLLATE NOCASE`).all();
 
 /* Directorio público. Un dealer sale publicado cuando se cumplen las
    dos condiciones, que son independientes entre sí: el administrador
@@ -2141,10 +2347,25 @@ function suscripcionActiva(idOrg) {
   return suscripcionesDe(idOrg)[0] || null;
 }
 
-/* Anota un pago. Uno de importe cero se anota igual y como aprobado:
-   no hay nada que cobrar, y dejarlo 'pendiente' llenaría el historial
-   del anunciante de facturas que nadie va a pagar. */
+/* Anota un pago de importe CERO. Se anota igual y como aprobado: no hay
+   nada que cobrar, y dejarlo 'pendiente' llenaría el historial del
+   anunciante de facturas que nadie va a pagar.
+
+   Antes anotaba también los cobros con importe, con el mismo
+   'aprobado' escrito a mano, y los cupos salían en la misma
+   transacción: una tarjeta rechazada habría dejado cupos y un NCF de
+   dinero que no entró. Ahora un cobro con importe nace pendiente en
+   `registrarCobro` y solo `pagos.confirmarPago` lo aprueba; esta
+   guarda impide que alguien vuelva a colarlo por aquí. */
+const soloCero = (cobro) => {
+  if (cobro && cobro.total > 0) {
+    throw Object.assign(new Error('Un cobro con importe nace pendiente: pasa por registrarCobro '
+      + 'y pagos.confirmarPago, no por este camino'), { codigo: 500 });
+  }
+};
+
 function anotarPago(d, { idOrg, idSusc, cobro, t }) {
+  soloCero(cobro);
   d.prepare(`INSERT INTO pagos
     (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
     VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?)`)
@@ -2170,25 +2391,18 @@ function encenderPerfilSiProcede(d, idOrg, plan, t) {
    El precio pactado queda congelado en la suscripción, así que subir
    la tarifa mañana no afecta a lo ya vendido. */
 function comprarCupos({ idOrg, idPlan, cupo, dias, cobro }) {
+  soloCero(cobro);
   const d = abrir();
   const plan = planPorId(idPlan);
   if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
 
-  const idSusc = id();
   const t = ahora();
-  const duracion = Number(dias) === 60 ? 60 : 30;
+  let idSusc;
 
   d.prepare('BEGIN').run();
   try {
-    d.prepare(`INSERT INTO suscripciones
-      (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
-       anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
-      VALUES (?, ?, ?, 'vigencia', NULL, 'activa', ?, ?, ?, ?, ?, NULL, ?)`)
-      .run(idSusc, idOrg, idPlan, cobro.subtotal, Math.max(1, Math.trunc(cupo)),
-        duracion, t, sumarDias(duracion), t);
-
+    idSusc = otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado: cobro.subtotal, t });
     anotarPago(d, { idOrg, idSusc, cobro, t });
-    encenderPerfilSiProcede(d, idOrg, plan, t);
     d.prepare('COMMIT').run();
   } catch (e) {
     d.prepare('ROLLBACK').run();
@@ -2196,6 +2410,132 @@ function comprarCupos({ idOrg, idPlan, cupo, dias, cobro }) {
   }
 
   return suscripcion(idSusc, idOrg);
+}
+
+/* Escribe la membresía comprada. Es el ÚNICO sitio que lo hace: lo
+   usan la compra de importe cero, que se otorga al instante, y la
+   aprobación de un cobro pendiente. Con dos copias, el día que una
+   cambiara la duración o el redondeo del cupo, la misma compra daría
+   membresías distintas según cómo se hubiera pagado. Va dentro de la
+   transacción de quien llama. */
+function otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado, t }) {
+  const idSusc = id();
+  const duracion = Number(dias) === 60 ? 60 : 30;
+
+  d.prepare(`INSERT INTO suscripciones
+    (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
+     anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+    VALUES (?, ?, ?, 'vigencia', NULL, 'activa', ?, ?, ?, ?, ?, NULL, ?)`)
+    .run(idSusc, idOrg, plan.id, precioPactado, Math.max(1, Math.trunc(cupo)),
+      duracion, t, sumarDias(duracion), t);
+
+  encenderPerfilSiProcede(d, idOrg, plan, t);
+  return idSusc;
+}
+
+/* ── Cobros con importe: pendiente → aprobado | rechazado ────
+   Un cobro con importe no se da por cobrado al anotarlo. Nace
+   'pendiente' con lo que se compró guardado en `intencion`, y solo la
+   transición a 'aprobado' otorga los cupos. Antes se aprobaba a mano
+   en el SQL y un rechazo de tarjeta habría dejado cupos regalados y un
+   NCF de dinero que no entró.
+
+   El importe cero no pasa por aquí: sigue aprobado al instante por
+   `comprarCupos`/`ampliarCupos`, porque no hay nada que esperar. */
+function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
+  if (!(cobro && cobro.total > 0)) {
+    throw Object.assign(
+      new Error('registrarCobro es para cobros con importe; el importe cero se aprueba al instante por su propio camino'),
+      { codigo: 500 });
+  }
+  const d = abrir();
+  const idPago = id();
+  const t = ahora();
+  d.prepare(`INSERT INTO pagos
+    (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador,
+     creado, intencion, confirmado, actualizado)
+    VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?)`)
+    .run(idPago, idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
+      cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t);
+  return pagoPorId(idPago);
+}
+
+/* La transición pendiente → aprobado en la base: otorga lo comprado y
+   marca el pago en UNA transacción. Si algo falla a mitad, el ROLLBACK
+   deshace los cupos y el pago sigue pendiente; nunca quedan cupos sin
+   pago aprobado ni un pago aprobado sin sus cupos.
+
+   Repetirla no hace nada: si el pago ya no está pendiente se devuelve
+   tal cual con `yaEstaba: true`. Eso cubre la confirmación que llega
+   dos veces y el intento de aprobar un pago ya rechazado.
+
+   No emite comprobante: eso lo hace `tools/pagos.js`, que es quien
+   conoce `facturas` y quien la llama. Las rutas no la llaman directo. */
+function aprobarPago(idPago) {
+  const d = abrir();
+  const t = ahora();
+  let membresia = null;
+
+  d.prepare('BEGIN').run();
+  try {
+    const pago = pagoPorId(idPago);
+    if (!pago) throw Object.assign(new Error('Ese pago no existe'), { codigo: 404 });
+
+    if (pago.estado !== 'pendiente') {
+      d.prepare('COMMIT').run();
+      return {
+        pago,
+        membresia: pago.suscripcion_id ? suscripcion(pago.suscripcion_id, pago.organizacion_id) : null,
+        yaEstaba: true,
+      };
+    }
+
+    let intencion = null;
+    try { intencion = JSON.parse(pago.intencion); } catch (_) { /* se trata abajo */ }
+    if (!intencion) throw Object.assign(new Error(`El pago ${idPago} no guarda qué se compró`), { codigo: 500 });
+
+    let idSusc;
+    if (intencion.tipo === 'compra') {
+      const plan = planPorId(intencion.idPlan);
+      if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
+      idSusc = otorgarCompra(d, {
+        idOrg: pago.organizacion_id, plan, cupo: intencion.cupo, dias: intencion.dias,
+        precioPactado: pago.subtotal, t,
+      });
+      d.prepare('UPDATE pagos SET suscripcion_id = ? WHERE id = ?').run(idSusc, idPago);
+    } else if (intencion.tipo === 'ampliacion') {
+      /* Se SUMA lo pagado en vez de fijar el cupo nuevo: si entre la
+         compra y la confirmación el cupo cambió, fijar el absoluto
+         regalaría o quitaría cupos. `anadidos` es justo lo cobrado. */
+      idSusc = intencion.idSusc;
+      const r = d.prepare(`UPDATE suscripciones SET anuncios_incluidos = anuncios_incluidos + ?
+                            WHERE id = ? AND organizacion_id = ?`)
+        .run(Math.trunc(intencion.anadidos), idSusc, pago.organizacion_id);
+      if (r.changes === 0) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
+    } else {
+      throw Object.assign(new Error(`Tipo de compra desconocido: ${intencion.tipo}`), { codigo: 500 });
+    }
+
+    const r = d.prepare(`UPDATE pagos SET estado = 'aprobado', confirmado = ?, actualizado = ?
+                          WHERE id = ? AND estado = 'pendiente'`).run(t, t, idPago);
+    if (r.changes !== 1) throw Object.assign(new Error(`El pago ${idPago} cambió mientras se aprobaba`), { codigo: 409 });
+
+    membresia = suscripcion(idSusc, pago.organizacion_id);
+    d.prepare('COMMIT').run();
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+
+  return { pago: pagoPorId(idPago), membresia, yaEstaba: false };
+}
+
+/* Solo un pendiente se rechaza. Un aprobado no: si el dinero entró, lo
+   que procede es una devolución con su nota de crédito, que ya existe. */
+function rechazarPago(idPago) {
+  const r = abrir().prepare(`UPDATE pagos SET estado = 'rechazado', actualizado = ?
+                              WHERE id = ? AND estado = 'pendiente'`).run(ahora(), idPago);
+  return { pago: pagoPorId(idPago), cambiado: r.changes === 1 };
 }
 
 /* ── Membresía de las cuentas internas ──────────────────────
@@ -2234,6 +2574,7 @@ function membresiaInterna(idOrg) {
    guarda y se anota el cobro contra la misma suscripción, para que la
    factura del anunciante cuente la historia completa. */
 function ampliarCupos({ idSusc, idOrg, cupoNuevo, cobro }) {
+  soloCero(cobro);
   const d = abrir();
   const s = suscripcion(idSusc, idOrg);
   if (!s) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
@@ -2902,9 +3243,12 @@ function informe({ desde, hasta }) {
 
     dinero: {
       /* Solo los aprobados: un pago rechazado no es ingreso, y
-         mezclarlos daría una cifra que no cuadra con el banco. */
+         mezclarlos daría una cifra que no cuadra con el banco.
+         Cuenta el día que entró el dinero; los pagos viejos no lo
+         tienen anotado y caen en `creado`. */
       cobros: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
-                     FROM pagos WHERE estado = 'aprobado' AND creado >= ? AND creado <= ?`,
+                     FROM pagos WHERE estado = 'aprobado'
+                      AND COALESCE(confirmado, creado) >= ? AND COALESCE(confirmado, creado) <= ?`,
         desde, `${hasta}T23:59:59Z`),
       devueltos: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
                         FROM pagos WHERE estado = 'devuelto' AND creado >= ? AND creado <= ?`,
@@ -3336,6 +3680,8 @@ module.exports = {
   /* Tráfico e informes. */
   anotarVisita, trafico, informe,
   solicitudes, solicitudCompleta, resolverSolicitud, contarPendientes, marcarAdmin,
+  /* Bitácora: toda escritura de admin sobre otra organización, por una sola puerta. */
+  ACCIONES_BITACORA, enNombreDe, bitacora, organizacionesEnBitacora,
   flotaPublica, flotaCompleta, flotaPorId, crearFlota, actualizarFlota, borrarFlota,
   AJUSTES, ajustes, guardarAjuste, fotosPorCategoria, heroePortada,
   crearSolicitudServicio, solicitudServicio, solicitudesServicio, marcarSolicitudServicio,
@@ -3345,6 +3691,7 @@ module.exports = {
   sucursalesDe, sucursal, crearSucursal, actualizarSucursal, desactivarSucursal, marcarPrincipal,
   planes, planPorId, suscripcionActiva, suscripcionesDe, suscripcion,
   suscripcionConHueco, comprarCupos, ampliarCupos, membresiaInterna,
+  registrarCobro, aprobarPago, rechazarPago,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
