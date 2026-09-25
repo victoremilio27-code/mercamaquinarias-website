@@ -30,6 +30,7 @@
 
 const db = require('./db');
 const facturas = require('./facturas');
+const { transferenciaActiva } = require('./transferencia');
 
 /* Lo que se imprime como línea de detalle.
  *
@@ -116,9 +117,20 @@ function emitir(pago, intencion, membresia) {
  * pago ya tiene factura no se emite otra ni se reenvía el correo. Y
  * sirve de recuperación: un pago aprobado cuya emisión falló se
  * completa confirmándolo otra vez, que es lo que hará la
- * reconciliación. */
-function confirmarPago(idPago) {
-  const { pago, membresia, yaEstaba } = db.aprobarPago(idPago);
+ * reconciliación.
+ *
+ * `envolver` deja que la consola corra la parte de base dentro de
+ * `db.enNombreDe`: recibe la función que aprueba y devuelve lo que ella
+ * devuelva. NO es un segundo camino de aprobación: es la misma
+ * transición, con la anotación de quién la hizo en la misma
+ * transacción que los cupos. Si la anotación falla, los cupos no quedan.
+ *
+ * La emisión queda FUERA del envoltorio a propósito. Un NCF consumido o
+ * un PDF escrito dentro de un SAVEPOINT que luego se deshace sería un
+ * documento fiscal de algo que no ocurrió, y ese no se borra. Solo se
+ * emite cuando la aprobación ya quedó escrita. */
+function confirmarPago(idPago, { envolver } = {}) {
+  const { pago, membresia, yaEstaba } = (envolver || ((f) => f()))(() => db.aprobarPago(idPago));
 
   // Rechazado o devuelto: no hay nada que otorgar ni que emitir.
   if (pago.estado !== 'aprobado') {
@@ -144,15 +156,40 @@ function rechazarPago(idPago, { motivo } = {}) {
  * transición que recorrerá un cobro de verdad en lugar de saltársela.
  * La pasarela real se registra aquí como una entrada más, sin tocar
  * `cobrar`. Cada uno recibe la fila del pago y devuelve
- * `{ resultado: 'aprobado' | 'rechazado' | 'pendiente', motivo? }`. */
+ * `{ resultado: 'aprobado' | 'rechazado' | 'pendiente', motivo? }`.
+ *
+ * `transferencia` responde SIEMPRE pendiente y no aprueba nunca por sí
+ * sola: el dinero llega al banco, no al sitio. La aprobación la hace
+ * una persona desde la consola, y pasa por `confirmarPago`, la misma
+ * transición de todos los cobros, no por una copia. */
 const PROCESADORES = {
   demo: async () => ({ resultado: 'aprobado' }),
+  transferencia: async () => ({ resultado: 'pendiente' }),
 };
+
+/* Los métodos con los que un comprador puede pagar HOY, en orden de
+   preferencia. Los decide el servidor, en cada llamada.
+
+   Con la transferencia encendida, `demo` desaparece de la lista: demo
+   aprueba siempre, y dejarlo al alcance de un comprador real sería
+   regalar cupos a quien lo pidiera en la petición. Apagada, todo sigue
+   como antes. La fase 6 añade `cardnet` aquí. */
+function metodosDeCobro() {
+  return transferenciaActiva() ? ['transferencia'] : ['demo'];
+}
+
+/* El procesador de un cobro nuevo. Lo que pida el navegador se valida
+   contra la lista del servidor; sin pedido, el primero. */
+function procesadorDeCobro(pedido) {
+  const metodos = metodosDeCobro();
+  if (pedido === undefined || pedido === null || pedido === '') return metodos[0];
+  if (typeof pedido === 'string' && metodos.includes(pedido)) return pedido;
+  throw Object.assign(new Error('Ese método de pago no está disponible.'), { codigo: 400 });
+}
 
 /* Pregunta al procesador del pago y resuelve la transición.
  *
- * Por defecto NUNCA se aprueba: un procesador sin entrada (una
- * transferencia, que esperará a que una persona la marque), uno que
+ * Por defecto NUNCA se aprueba: un procesador sin entrada, uno que
  * lanza (no sabemos si se cobró; lo resolverá la reconciliación) o una
  * respuesta que no se entiende dejan el pago 'pendiente'. Solo un
  * 'aprobado' explícito otorga cupos y consume NCF. La tabla se consulta
@@ -191,4 +228,7 @@ async function cobrar(pago) {
   return pendiente();
 }
 
-module.exports = { confirmarPago, rechazarPago, cobrar, PROCESADORES, lineaDeCupos };
+module.exports = {
+  confirmarPago, rechazarPago, cobrar, PROCESADORES, lineaDeCupos,
+  metodosDeCobro, procesadorDeCobro,
+};

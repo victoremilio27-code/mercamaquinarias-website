@@ -2444,6 +2444,67 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .pedido__legal a { font-weight: 600; color: var(--ambar-texto); }
 .pedido__legal a:hover { text-decoration: underline; }
 
+/* ── Pago por transferencia (fase 5) ─────────────────────────
+   Cómo se paga, dentro del resumen del pedido, y los datos para
+   transferir tras pedirlos. El mismo bloque sirve en planes.html y en
+   el panel, así que va con los tokens que giran con el tema y ningún
+   color suelto: en oscuro la tarjeta es casi negra y la letra crema
+   sin tocar nada aquí. La línea del pedido usa los mismos tokens que
+   el resto del resumen, que vive sobre --hueso. */
+.pedido__metodo {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--linea-suave);
+  font-size: 12px; line-height: 1.5; color: var(--gris-acero);
+}
+.pedido__metodo b { color: var(--azul); }
+
+.transferencia {
+  margin-top: 16px;
+  padding: 15px 16px;
+  background: var(--app-card);
+  border: 1px solid var(--app-line);
+  border-left: 3px solid var(--app-accent);
+  border-radius: var(--r-tarjeta);
+  color: var(--app-text);
+  font-size: 13px; line-height: 1.55;
+}
+.transferencia__titulo { margin: 0 0 10px; font-family: var(--display); font-weight: 700; font-size: 15px; }
+.transferencia__ref {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  margin: 0 0 12px; padding: 10px 12px;
+  background: var(--app-soft); border-radius: var(--r);
+}
+.transferencia__rotulo { font-size: 11.5px; font-weight: 600; color: var(--app-muted); }
+/* Grande y con aire entre letras: se copia a mano en la app del banco,
+   y una referencia mal tecleada es un ingreso que nadie sabe de quién es. */
+.transferencia__codigo {
+  font-family: var(--display); font-size: 20px; font-weight: 800;
+  letter-spacing: .06em; overflow-wrap: anywhere;
+}
+.transferencia__cuenta { display: grid; margin: 0 0 12px; }
+.transferencia__cuenta > div {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 14px;
+  padding: 5px 0; border-bottom: 1px solid var(--app-line);
+}
+.transferencia__cuenta > div:last-child { border-bottom: 0; }
+.transferencia__cuenta dt { color: var(--app-muted); }
+.transferencia__cuenta dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.transferencia__pasos { margin: 0 0 10px; padding-left: 18px; list-style: disc; }
+.transferencia__pasos li + li { margin-top: 4px; }
+.transferencia__nota { margin: 0; font-size: 12.5px; color: var(--app-muted); }
+.transferencia__aviso { margin: 0 0 10px; color: var(--app-text); }
+.transferencia a:not(.btn) { font-weight: 600; color: var(--ambar-texto); overflow-wrap: anywhere; }
+.transferencia a:not(.btn):hover { text-decoration: underline; }
+.transferencia__volver {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  margin: 12px 0 0; font-size: 12.5px; color: var(--app-muted);
+}
+/* La sección del panel iba sin regla propia y su título quedaba pegado
+   al párrafo de encima, sin separarse de lo que no es un pago. */
+.pagos-espera { margin: 18px 0; }
+.realce--espera a { font-weight: 600; color: var(--ambar-texto); }
+.realce--espera a:hover { text-decoration: underline; }
+
 /* Tabla de aceptaciones, en administración.
    Va dentro de un contenedor con scroll propio: cinco columnas no caben
    en un teléfono, y lo que NO debe pasar es que la página entera se

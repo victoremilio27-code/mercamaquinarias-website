@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: "Fases 2, 3 y 4 publicadas en producción (PR #23 y #25). Fase 5 planificada, sin ejecutar."
-last_updated: "2026-09-25T23:00:00.000Z"
-last_activity: "2026-09-25 — Fusionados y desplegados el PR #23 (fase 2 + planes) y el #25 (fases 3 y 4). CI verde y sitio comprobado en vivo."
+status: phase_complete
+stopped_at: "Fase 5 completa (05-05, verificación y revisión hechas). Lista para PR."
+last_updated: "2026-09-25T21:20:00.000Z"
+last_activity: "2026-09-25 — 05-05: criterio 5 de extremo a extremo en el arnés (196/0), verificación 5/5 por máquina, revisión con cuatro hallazgos bajos corregidos, batería completa en verde."
 progress:
   total_phases: 16
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 21
-  completed_plans: 14
-  percent: 19
+  completed_plans: 19
+  percent: 25
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 
 **Core value:** Ser el punto de referencia de República Dominicana para quien tenga, necesite o trabaje con maquinaria pesada — el vacío que hoy no ocupa nadie.
-**Current focus:** Phase 5 — Cobro por transferencia bancaria (planificada, 5 planes)
+**Current focus:** Phase 5 — Cobro por transferencia bancaria (completa, lista para PR)
 
 ## Current Position
 
-Phase: 5 de 16 (Cobro por transferencia bancaria) — planificada, sin ejecutar
-Plan: 0 de 5
-Status: Esperando luz verde de Victor para ejecutar la fase 5
+Phase: 5 de 16 (Cobro por transferencia bancaria) — completa en la rama `claude/dazzling-bardeen-gq9csi`
+Plan: 5 de 5 (05-01 a 05-05 hechos)
+Status: Lista para PR. Verificación `human_needed` (5/5 por máquina; queda la mirada de Victor), revisión en `05-REVIEW.md`
 
 Hecho y en producción:
 - Fase 1: plan 01-01 (CI con `pruebas` y `navegador` antes de `desplegar`). Quedan 01-02, paso manual
@@ -36,12 +36,17 @@ Hecho y en producción:
 - Fases 3 y 4 completas (PR #25): pagos `pendiente → aprobado` por `pagos.confirmarPago`;
   bandeja de solicitudes y bitácora de administración de solo añadir.
 
-Pendiente de Victor, sin bloquear la fase 5:
+Pendiente de Victor, sin bloquear el PR de la fase 5:
+- **Los cinco datos bancarios** (`MERCA_TRANSFERENCIA_BANCO`, `_TITULAR`, `_RNC`, `_TIPO`, `_CUENTA`)
+  en `/etc/mercamaquinarias.env`, cuenta en pesos, según `deploy/README.md` §10b. Hasta entonces la
+  transferencia está apagada y el sitio cobra como antes.
+- **Revisión visual de la fase 5** en claro y oscuro, móvil y escritorio: los pasos 1-8 de
+  05-05-PLAN (lista y cómo levantarlo en local en 05-05-SUMMARY). Lo automatizable ya pasó
+  (prueba de humo en los dos temas y contraste 0). Falta además probar «Copiar» con HTTPS.
 - Verificación visual de las fases 2 y 4 en claro y oscuro (listas en los SUMMARY 02-06 y 04-04).
 - Si anular un comprobante debe ir a la bitácora (hoy es escritura propia; pregunta D-01 de la fase 4).
-- Los cinco datos bancarios de la fase 5: los dará al final, a propósito.
 
-Progress: [██░░░░░░░░] 19%
+Progress: [███░░░░░░░] 25%
 
 ## Performance Metrics
 
@@ -69,6 +74,11 @@ Progress: [██░░░░░░░░] 19%
 |---|---|---|---|
 | Phase 02 P03 | 30 | 3 tasks | 2 files |
 | Phase 02 P04 | 75 | 2 tasks | 1 files |
+| Phase 05 P01 | 30 | 3 tasks | 8 files |
+| Phase 05 P02 | 7 | 2 tasks | 4 files |
+| Phase 05 P03 | 35 | 2 tasks | 3 files |
+| Phase 05 P04 | 35 | 2 tasks | 2 files |
+| Phase 05 P05 | 45 | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -77,7 +87,16 @@ Progress: [██░░░░░░░░] 19%
 Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
 
+- **Regla de Victor, 2026-09-25 (modelos y ritmo):** fases 5 y 6 con perfil GSD «quality» (Opus en todo) y revisión completa al cerrar cada una. En cuanto se publique la fase 6: `model_profile` a «balanced» en `.planning/config.json` (Opus planifica, revisa y verifica; Sonnet ejecuta), commit, y avisar a Victor en una línea para que baje el chat principal de High a Medium. De la fase 7 en adelante, «balanced»; una fase que toque cobros, facturación o NCF vuelve a «quality» solo mientras dure. Nunca Haiku. Para ahorrar crédito: no releer ni reexplorar `.planning/` ya escrito, la revisión al cerrar una fase cubre solo lo que cambió esa fase, y nada de agentes para lo que se resuelve con unas pocas búsquedas.
+- **Regla de Victor, 2026-09-25 (paralelismo):** ejecución automática sin luz verde entre tareas, planes ni fases. Se planifica por adelantado todo lo que se pueda contra las interfaces de las fases previas; dos fases independientes se ejecutan a la vez, cada una en su git worktree y su rama; nunca dos agentes ejecutores en la misma copia de trabajo. Se fusiona en orden del ROADMAP. Cada fase, antes de su PR: verificación GSD, revisión de código de lo que cambió, correcciones y todas las pruebas. Un PR por fase, fusión a `main` solo con CI en verde y comprobación del sitio en vivo.
 - **Regla de Victor, 2026-09-25:** el 14 de octubre todo lo que depende de nosotros está terminado. Si algo retrasa el lanzamiento, que sea la afiliación de CardNet, nunca nuestro trabajo. Consecuencia: el código de CardNet se escribe, prueba y certifica dentro de v1 (Fase 6), aunque la afiliación no esté aprobada.
+- **[05-01]** Con la transferencia encendida, `pagos.metodosDeCobro()` retira `demo`: toda compra con importe queda pendiente hasta que el personal la marque recibida. `db.aprobarPago` va con SAVEPOINT para poder ir dentro de `enNombreDe`; la emisión del comprobante queda fuera del envoltorio.
+- **[05-02]** La ampliación cuya membresía ya no está viva responde 409 al marcarla recibida y solo se anula (D-07); la comprobación solo aplica a pagos pendientes, para no bloquear la re-emisión de un comprobante fallido. El importe cero no pasa por `procesadorDeCobro`. El aviso de arranque de la transferencia solo cuenta variables no vacías.
+- **[05-03]** Un 202 (`pago.estado === 'pendiente'`) nunca se presenta como compra hecha: ni «Listo», ni vuelta al borrador, ni cupos repintados. `metodo` solo viaja si `/api/planes` lo ofrece; un pedido a RD$0 o una cuenta exenta siguen saliendo al instante. `destinoPropio()` impide pintar un `destino=javascript:`.
+- **[05-04]** La consola confirma el importe y la referencia en la propia fila, nunca con `prompt()`. En Recibidos, un aprobado sin factura enseña «Emitir el comprobante» (la recuperación que pide el aviso de 05-02). Un recibo sin NCF se nombra como recibo, no como comprobante que falta.
+- **[05-05]** El criterio 5 se prueba en CI con una organización nueva, para contar una factura y una fila de bitácora limpias. En las pruebas, los correos de la bandeja compartida se buscan por la referencia de la pasada (el NCF se repite en cada base nueva), y la búsqueda de teléfonos quita antes los NCF. La verificación humana ya no bloquea el cierre: lo automatizable se hace con puppeteer y lo visual pasa a la lista de Victor.
+- **[05-REVIEW]** Revisión de la fase 5: 0 críticos, 4 bajos, todos corregidos («RD4,130» sin `$` en los recibos pendientes de Facturas, separación de «Pagos en espera» en el panel, dos comentarios fuera de sitio). Se cumplen todas las reglas fiscales y de CLAUDE.md.
+- **Nube, Chrome como root:** las auditorías de puppeteer se corren con un envoltorio de Chrome en el scratchpad (`--no-sandbox`, y `--ignore-certificate-errors` para que la hoja de Google Fonts cruce el proxy TLS de la nube) vía `PUPPETEER_EXECUTABLE_PATH`, sin tocar `tools/`. Sin el segundo indicador, `auditar-publico` y `check` salen en rojo solo por Google Fonts.
 - **Orden de fases fijado por Victor:** lanzamiento → transporte/financiamiento → lote del contador → deuda técnica. El roadmap lo respeta: fases 1-10 son v1, 11 es transporte/financiamiento, 12 el lote, 13 la deuda. Las fases 14-16 (inspección con informe, especificaciones e implementos filtrables, alertas) son v2 que no entraba en esos cuatro grupos y va detrás; su orden relativo puede cambiar cuando llegue el momento.
 - **`auto_advance` en `false`:** Victor da luz verde a cada fase por separado, así que cada fase se cortó para entregar valor sin esperar a la siguiente.
 - **Roadmap, Fase 1 primero:** hoy fusionar a `main` despliega a producción sin barrera de pruebas y hay una segunda persona empujando cambios. Cada día sin la barrera es un despliegue a ciegas.
@@ -95,6 +114,11 @@ Decisiones que afectan al trabajo actual:
 
 - Borrar `proximamente.html` y `vercel.json` (restos de Vercel; necesita el visto bueno de Victor).
 - Retirar los worktrees locales ya fusionados (`TuEquipoRD-fase03`, `mercamaquinarias-fase04`).
+- Desborde horizontal de `panel.html` a 390 px con un anuncio publicado (anterior a la fase 5): el
+  `span.visualmente-oculto` de `.tabla-anuncios` escapa de `.tabla-envoltura`, que no tiene
+  `position: relative`. Propuesto como tarea aparte; si no se hace antes, va a la fase de deuda técnica.
+- `destino` sin validar en `assets/planes.js` (`atajo.href` y `location.href`), anterior a la fase 5:
+  pasarlo por `destinoPropio()` en la fase de deuda técnica (hoy lo frena la CSP).
 
 ### Blockers/Concerns
 
@@ -116,5 +140,5 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 ## Session Continuity
 
 Last session: 2026-09-25
-Stopped at: Fases 2, 3 y 4 publicadas. Fase 5 planificada; se ejecuta cuando Victor lo diga.
+Stopped at: Fase 5 completa y empujada en `claude/dazzling-bardeen-gq9csi`; el PR lo abre el orquestador
 Resume file: None

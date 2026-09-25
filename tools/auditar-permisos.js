@@ -168,6 +168,39 @@ async function entrar(correo, clave) {
   comprobar('dar el sello de verificada bloqueado sin permiso',
     rVer.estado === 404, `devolvió ${rVer.estado}`);
 
+  /* Fase 7: el directorio de empresas, las series y la página de un
+     dealer en su nombre. El directorio no lleva el RNC, pero sí qué
+     empresas están pendientes o rechazadas; la serie es un dato que el
+     vendedor confió solo al personal. */
+  for (const [ruta, metodo, cuerpo, que] of [
+    ['/admin/organizaciones', 'GET', null, 'directorio de empresas oculto'],
+    ['/admin/series', 'GET', null, 'lista de números de serie oculta'],
+    ['/admin/anuncios/cualquiera/serie', 'POST', { resultado: 'conforme' }, 'revisar una serie bloqueado'],
+    ['/admin/organizaciones/cualquiera/pagina', 'GET', null, 'la página de otro dealer oculta'],
+    ['/admin/organizaciones/cualquiera/pagina', 'PATCH', { lema: 'x' }, 'editar la página de otro dealer bloqueado'],
+  ]) {
+    const rr = await pedir(ruta, { metodo, cuerpo: cuerpo || undefined, cookie: cibao });
+    comprobar(`${que} a cuenta sin permiso`, rr.estado === 404, `devolvió ${rr.estado}`);
+  }
+  /* Las transferencias de la consola: marcar una como recibida otorga
+     cupos y consume un NCF en nombre de otra empresa, y el listado
+     lleva el correo de cada cliente. 404, como el resto de la consola. */
+  const rPag = await pedir('/admin/pagos', { cookie: cibao });
+  comprobar('listado de transferencias oculto a cuenta sin permiso',
+    rPag.estado === 404, `devolvió ${rPag.estado}`);
+
+  const rRec = await pedir('/admin/pagos/cualquiera/recibido', {
+    metodo: 'POST', cuerpo: { motivo: 'Ref. banco inventada' }, cookie: cibao,
+  });
+  comprobar('marcar una transferencia como recibida bloqueado sin permiso',
+    rRec.estado === 404, `devolvió ${rRec.estado}`);
+
+  const rAnu = await pedir('/admin/pagos/cualquiera/anular', {
+    metodo: 'POST', cuerpo: { motivo: 'Anulación sin permiso' }, cookie: cibao,
+  });
+  comprobar('anular una transferencia bloqueado sin permiso',
+    rAnu.estado === 404, `devolvió ${rAnu.estado}`);
+
   // 5. Sin sesión ninguna
   for (const [ruta, metodo] of [['/mis-anuncios', 'GET'], ['/sucursales', 'GET'], ['/admin/solicitudes', 'GET'], ['/admin/bitacora', 'GET']]) {
     const rr = await pedir(ruta, { metodo });
