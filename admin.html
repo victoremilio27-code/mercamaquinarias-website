@@ -91,6 +91,31 @@
       <p class="revision__vacio" id="colaVacia" hidden></p>
     </section>
 
+    <!-- Solicitudes de servicio: alquiler, importación y contacto.
+         Entraban en la base y la API las servía, pero ninguna pantalla
+         las enseñaba: solo se enteraba quien leyera el correo. Los
+         filtros de servicio los pinta admin.js desde servicios.js, para
+         que encender un servicio lo haga aparecer aquí sin tocar esto. -->
+    <section class="panel" aria-labelledby="t-bandeja">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-bandeja"><em>Solicitudes</em> de servicio</h2>
+        <p class="panel__meta" id="metaBandeja"></p>
+      </div>
+
+      <div class="revision__filtros" id="filtrosBandejaEstado" role="tablist" aria-label="Estado de las solicitudes de servicio">
+        <button type="button" class="btn btn--ambar btn--chico" data-bandeja-estado="nueva" role="tab" aria-selected="true">Nuevas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-bandeja-estado="atendida" role="tab" aria-selected="false">Atendidas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-bandeja-estado="cerrada" role="tab" aria-selected="false">Cerradas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-bandeja-estado="" role="tab" aria-selected="false">Todas</button>
+      </div>
+      <div class="revision__filtros" id="filtrosBandejaServicio" role="tablist" aria-label="Servicio"></div>
+
+      <p class="acceso__aviso" id="avisoBandeja" role="alert" hidden></p>
+
+      <ul class="solicitudes" id="listaBandeja"></ul>
+      <p class="revision__vacio" id="bandejaVacia" hidden></p>
+    </section>
+
     <!-- Comprobantes emitidos, con el estado de las secuencias de NCF.
          El aviso de secuencia baja va arriba del todo porque quedarse
          sin NCF significa no poder facturar, y B01 arranca con quince. -->
@@ -193,6 +218,35 @@
         </table>
       </div>
       <p class="revision__vacio" id="legalesVacio" hidden>Todavía nadie ha aceptado nada.</p>
+    </section>
+
+    <!-- Bitácora de administración. Decisión de Victor del 2026-09-25:
+         toda escritura hecha en nombre de otra organización queda
+         registrada, para contestar un reclamo de un cliente empresa con
+         prueba y para que un robo de la cuenta de administrador deje
+         rastro. Solo se lee: no hay ningún control para editar ni borrar,
+         y la base tampoco lo permitiría. -->
+    <section class="panel" aria-labelledby="t-bitacora">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-bitacora"><em>Bitácora</em> de administración</h2>
+        <p class="panel__meta">Toda escritura hecha en nombre de otra organización. No se edita ni se borra.</p>
+      </div>
+
+      <div class="revision__filtros">
+        <label class="campo-v campo-v--chico"><span>Organización</span>
+          <select id="bitacoraOrg"><option value="">Todas</option></select>
+        </label>
+      </div>
+
+      <div class="tabla-envoltura">
+        <table class="tabla-legales">
+          <thead>
+            <tr><th>Cuándo</th><th>Quién</th><th>Organización</th><th>Acción</th><th>Cambio</th><th>Motivo / IP</th></tr>
+          </thead>
+          <tbody id="listaBitacora"></tbody>
+        </table>
+      </div>
+      <p class="revision__vacio" id="bitacoraVacia" hidden>Todavía no hay ninguna escritura en nombre de otra organización.</p>
     </section>
 
     <!-- Flota propia: los equipos que alquila MercaMaquinarias y las camas

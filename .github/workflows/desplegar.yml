@@ -80,6 +80,8 @@ jobs:
         run: npm run seguridad:probar
       - name: Pagina del dealer
         run: npm run dealer:probar
+      - name: Bitacora
+        run: npm run bitacora:probar
       - name: Facturas y NCF
         run: npm run facturas:probar
       - name: Pagos

@@ -199,6 +199,8 @@ async function alternarVerificada(fila) {
       metodo: 'POST', cuerpo: { verificada: dar },
     });
     cargar();
+    // Quien acaba de dar el sello lo ve anotado en el momento.
+    cargarBitacora();
   } catch (e) {
     avisar(e.message || 'No se pudo cambiar el sello.');
   }
@@ -216,12 +218,242 @@ async function resolver(id, decision, motivo) {
     // Recargar primero: `cargar` limpia el aviso al empezar, y hacerlo
     // al revés borraba la confirmación en cuanto se pintaba.
     await cargar();
+    cargarBitacora();
     avisar(decision === 'aprobar'
       ? `${datos.solicitud.razon_social} quedó aprobada. Le avisamos por correo.`
       : `${datos.solicitud.razon_social} quedó rechazada. Le enviamos el motivo por correo.`, true);
   } catch (e) {
     avisar(e.message);
   }
+}
+
+/* ═══ Solicitudes de servicio ════════════════════════════
+   Alquiler, importación y contacto. Las rutas de la API existían desde
+   hacía tiempo y ninguna pantalla las usaba: cada cotización entraba en
+   la base y solo se enteraba quien leyera el correo.
+
+   Los filtros de servicio salen de assets/servicios.js (o de lo que
+   mande el servidor), no de una lista escrita aquí: encender transporte
+   mañana lo hace aparecer solo, y un servicio apagado no se ofrece como
+   filtro aunque sus solicitudes antiguas se sigan viendo en «Todos».
+
+   Los atributos son `data-bandeja-*` y no `data-estado`/`data-servicio`:
+   esos ya los enganchan la cola y la flota.
+   ═══════════════════════════════════════════════════════ */
+
+let BANDEJA_ESTADO = 'nueva';
+let BANDEJA_SERVICIO = '';
+let BANDEJA_SERVICIOS = null;   // los que admiten solicitud, según el servidor
+
+const BANDEJA_VACIO = {
+  nueva: 'No hay solicitudes nuevas.',
+  atendida: 'No hay solicitudes atendidas.',
+  cerrada: 'No hay solicitudes cerradas.',
+  '': 'Todavía no ha entrado ninguna solicitud.',
+};
+
+const BANDEJA_HECHO = {
+  atendida: 'Marcada como atendida.',
+  cerrada: 'Solicitud cerrada.',
+  nueva: 'Solicitud reabierta: vuelve a las nuevas.',
+};
+
+function avisarBandeja(mensaje, bien = false) {
+  const aviso = $('#avisoBandeja');
+  aviso.hidden = !mensaje;
+  aviso.className = `acceso__aviso${bien ? ' acceso__aviso--bien' : ''}`;
+  aviso.textContent = mensaje || '';
+}
+
+function rotuloServicio(s) {
+  if (s === 'contacto') return 'Contacto';
+  return (SERVICIOS[s] && SERVICIOS[s].nombre) || s;
+}
+
+const serviciosBandeja = () => BANDEJA_SERVICIOS || serviciosQueAdmitenSolicitud();
+
+const fechaHora = (iso) => {
+  if (!iso) return '—';
+  const f = new Date(iso);
+  return `${f.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}, ${f.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}`;
+};
+
+function bandejaHTML(s) {
+  const apagado = !serviciosBandeja().includes(s.servicio);
+  const clase = { atendida: 'sol--aprobada' }[s.estado] || '';
+  const detalle = Object.entries(s.detalle || {})
+    .filter(([, v]) => v != null && v !== '')
+    .map(([r, v]) => `<div><dt>${esc(r)}</dt><dd>${esc(v)}</dd></div>`).join('');
+
+  /* El teléfono que se pinta es el que dejó el visitante para que le
+     llamen, en una pantalla que solo ve el personal. No se añade ningún
+     teléfono de la empresa ni enlace tel:. */
+  return `<li class="sol ${clase}" data-id="${esc(s.id)}" data-estado-sol="${esc(s.estado)}">
+    <div class="sol__cabeza">
+      <b class="sol__nombre">${esc(s.nombre)}</b>
+      ${s.empresa ? `<span class="sol__meta">${esc(s.empresa)}</span>` : ''}
+      <span class="sol__fecha">${fechaHora(s.creada)}</span>
+    </div>
+    <p class="sol__meta">
+      ${esc(rotuloServicio(s.servicio))} · <span class="num">${esc(s.referencia)}</span>
+      ${apagado ? ' <span class="pastilla pastilla--ambar">servicio apagado</span>' : ''}
+    </p>
+    <p class="sol__meta">
+      <span class="num">${esc(s.telefono)}</span>${s.correo ? ` · <a href="mailto:${esc(s.correo)}">${esc(s.correo)}</a>` : ''}
+    </p>
+    ${detalle ? `<dl class="sol__datos">${detalle}</dl>` : ''}
+    ${s.nota ? `<p class="sol__meta"><b>Nota:</b> ${esc(s.nota)}</p>` : ''}
+    ${s.estado !== 'nueva' && s.atendida ? `<p class="sol__meta">${s.estado === 'cerrada' ? 'Cerrada' : 'Atendida'} el ${fechaHora(s.atendida)}${s.atendida_por_nombre ? ` por ${esc(s.atendida_por_nombre)}` : ''}</p>` : ''}
+
+    <div class="sol__acciones">
+      ${s.estado === 'nueva' ? `
+        <button type="button" class="btn btn--ambar btn--chico" data-accion="atendida">Marcar atendida</button>
+        <button type="button" class="btn btn--linea btn--chico" data-accion="cerrada">Cerrar</button>` : ''}
+      ${s.estado === 'atendida' ? `
+        <button type="button" class="btn btn--linea btn--chico" data-accion="cerrada">Cerrar</button>` : ''}
+      ${s.estado !== 'nueva' ? `
+        <button type="button" class="btn btn--linea btn--chico" data-accion="reabrir">Reabrir</button>` : ''}
+      <button type="button" class="btn btn--linea btn--chico" data-accion="nota">Añadir nota</button>
+    </div>
+  </li>`;
+}
+
+const consultaBandeja = (estado) => {
+  const q = [];
+  if (estado) q.push(`estado=${encodeURIComponent(estado)}`);
+  if (BANDEJA_SERVICIO) q.push(`servicio=${encodeURIComponent(BANDEJA_SERVICIO)}`);
+  return `/admin/solicitudes-servicio${q.length ? `?${q.join('&')}` : ''}`;
+};
+
+function pintarFiltrosServicio() {
+  const caja = $('#filtrosBandejaServicio');
+  const opciones = [['', 'Todos'], ...serviciosBandeja().map((s) => [s, rotuloServicio(s)])];
+  // Si el servicio elegido dejó de admitir solicitudes, se vuelve a «Todos».
+  if (!opciones.some(([v]) => v === BANDEJA_SERVICIO)) BANDEJA_SERVICIO = '';
+  caja.innerHTML = opciones.map(([v, r]) => {
+    const activo = v === BANDEJA_SERVICIO;
+    return `<button type="button" class="btn ${activo ? 'btn--ambar' : 'btn--linea'} btn--chico" data-bandeja-servicio="${esc(v)}" role="tab" aria-selected="${activo}">${esc(r)}</button>`;
+  }).join('');
+}
+
+async function cargarBandeja() {
+  avisarBandeja('');
+  const datos = await api(consultaBandeja(BANDEJA_ESTADO), { silencioso: true });
+  if (!datos) return avisarBandeja('No se pudieron cargar las solicitudes de servicio.');
+
+  // El servidor manda: si trae la lista de servicios, esa es la buena.
+  if (datos.servicios && Array.isArray(datos.servicios.activos)) {
+    const antes = JSON.stringify(BANDEJA_SERVICIOS);
+    BANDEJA_SERVICIOS = datos.servicios.activos;
+    if (antes !== JSON.stringify(BANDEJA_SERVICIOS)) pintarFiltrosServicio();
+  }
+
+  const lista = datos.solicitudes || [];
+  $('#listaBandeja').innerHTML = lista.map(bandejaHTML).join('');
+  const vacio = $('#bandejaVacia');
+  vacio.hidden = lista.length > 0;
+  vacio.textContent = BANDEJA_VACIO[BANDEJA_ESTADO] || BANDEJA_VACIO[''];
+
+  const nuevas = BANDEJA_ESTADO === 'nueva'
+    ? lista
+    : ((await api(consultaBandeja('nueva'), { silencioso: true })) || {}).solicitudes;
+  const n = Array.isArray(nuevas) ? nuevas.length : null;
+  $('#metaBandeja').textContent = n == null ? ''
+    : n === 0 ? 'Ninguna nueva' : `${n} ${n === 1 ? 'nueva' : 'nuevas'}`;
+}
+
+async function marcarBandeja(id, estado, nota) {
+  try {
+    await api(`/admin/solicitudes-servicio/${encodeURIComponent(id)}`, {
+      metodo: 'PATCH', cuerpo: { estado, nota },
+    });
+    // Recargar antes de avisar: cargarBandeja limpia el aviso al empezar.
+    await cargarBandeja();
+    avisarBandeja(nota ? 'Nota guardada.' : BANDEJA_HECHO[estado], true);
+  } catch (e) {
+    avisarBandeja(e.message || 'No se pudo cambiar la solicitud.');
+  }
+}
+
+/* La nota se escribe en la propia tarjeta, como el motivo de rechazo de
+   la cola. Se guarda con el estado que ya tiene: añadir una nota no
+   debe mover la solicitud de bandeja. */
+function pedirNota(fila) {
+  if (fila.querySelector('.sol__motivo')) return;
+
+  const caja = document.createElement('div');
+  caja.className = 'sol__motivo';
+  caja.innerHTML = `
+    <textarea maxlength="500" placeholder="Qué se habló o qué queda pendiente. Solo la ve el personal." aria-label="Nota sobre la solicitud"></textarea>
+    <div class="sol__acciones">
+      <button type="button" class="btn btn--ambar btn--chico" data-nota="guardar">Guardar nota</button>
+      <button type="button" class="btn btn--linea btn--chico" data-nota="cancelar">Cancelar</button>
+    </div>`;
+  fila.appendChild(caja);
+  caja.querySelector('textarea').focus();
+
+  caja.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-nota]');
+    if (!btn) return;
+    ev.stopPropagation();
+    if (btn.dataset.nota === 'cancelar') return caja.remove();
+
+    const nota = caja.querySelector('textarea').value.trim();
+    if (!nota) return avisarBandeja('Escriba la nota antes de guardarla.');
+    marcarBandeja(fila.dataset.id, fila.dataset.estadoSol, nota);
+  });
+}
+
+/* Marca como elegido el botón pulsado entre SUS hermanos, y solo entre
+   ellos: las otras filas de filtros de la página no se tocan. */
+function elegirFiltro(boton) {
+  [...boton.parentElement.children].forEach((b) => {
+    b.setAttribute('aria-selected', String(b === boton));
+    b.classList.toggle('btn--ambar', b === boton);
+    b.classList.toggle('btn--linea', b !== boton);
+  });
+}
+
+function montarBandeja() {
+  if (!$('#listaBandeja')) return;
+
+  pintarFiltrosServicio();
+
+  $('#filtrosBandejaEstado').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-bandeja-estado]');
+    if (!boton) return;
+    BANDEJA_ESTADO = boton.dataset.bandejaEstado;
+    elegirFiltro(boton);
+    cargarBandeja();
+  });
+
+  $('#filtrosBandejaServicio').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-bandeja-servicio]');
+    if (!boton) return;
+    BANDEJA_SERVICIO = boton.dataset.bandejaServicio;
+    elegirFiltro(boton);
+    cargarBandeja();
+  });
+
+  $('#listaBandeja').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-accion]');
+    if (!boton) return;
+    const fila = boton.closest('.sol');
+    if (!fila) return;
+
+    switch (boton.dataset.accion) {
+      case 'atendida':
+      case 'cerrada':
+        return marcarBandeja(fila.dataset.id, boton.dataset.accion);
+      case 'reabrir':
+        return marcarBandeja(fila.dataset.id, 'nueva');
+      case 'nota':
+        return pedirNota(fila);
+      default:
+    }
+  });
+
+  cargarBandeja();
 }
 
 /* ═══ Flota propia ═══════════════════════════════════════
@@ -655,7 +887,9 @@ async function montarAdmin() {
     boton.addEventListener('click', () => {
       ESTADO = boton.dataset.estado;
       ABIERTA = null;
-      $$('.revision__filtros button').forEach((b) => {
+      // Solo los hermanos: recorrer todos los `.revision__filtros button`
+      // cambiaba el aspecto de los filtros de flota, aceptaciones y bandeja.
+      [...boton.parentElement.children].forEach((b) => {
         b.setAttribute('aria-selected', String(b === boton));
         b.classList.toggle('btn--ambar', b === boton);
         b.classList.toggle('btn--linea', b !== boton);
@@ -686,6 +920,8 @@ async function montarAdmin() {
   });
 
   await cargar();
+  montarBandeja();
+  montarBitacora();
   montarFlota();
   montarPub();
   montarHeroe();
@@ -1043,6 +1279,80 @@ async function montarLegales() {
     });
     cargarLegales();
   });
+}
+
+/* ── Bitácora de administración ─────────────────────────────
+   Toda escritura hecha en nombre de otra organización (sello, alta de
+   dealer y lo que traigan las fases 5 y 7). Solo se lee: la API no
+   tiene otra ruta que el GET y la base aborta cualquier UPDATE o DELETE.
+
+   A diferencia de las aceptaciones legales, aquí la IP es del personal,
+   y es justo lo que delata un acceso robado. */
+
+let BITACORA_ORG = null;
+
+/* Rótulos de las claves de `antes`/`despues`. Una clave que no esté
+   aquí sale con su propio nombre: una acción nueva se ve sin tocar la
+   consola. */
+const CLAVES_BITACORA = {
+  verificada: 'Sello',
+  solicitud: 'Solicitud',
+  estado_revision: 'Revisión de alta',
+};
+
+function valorBitacora(v) {
+  if (v === true) return 'sí';
+  if (v === false) return 'no';
+  if (v == null || v === '') return '—';
+  return typeof v === 'object' ? JSON.stringify(v) : String(v);
+}
+
+function cambioBitacora(antes, despues) {
+  const a = antes || {};
+  return Object.keys(despues || {}).map((k) =>
+    `<span class="tabla-legales__sub">${esc(CLAVES_BITACORA[k] || k)}: ${esc(valorBitacora(a[k]))} → ${esc(valorBitacora(despues[k]))}</span>`)
+    .join('');
+}
+
+function pintarBitacora(datos) {
+  const lista = datos.entradas || [];
+
+  // El selector conserva la organización elegida al repintar.
+  const sel = $('#bitacoraOrg');
+  sel.innerHTML = `<option value="">Todas</option>${(datos.organizaciones || []).map((o) =>
+    `<option value="${esc(o.id)}"${o.id === BITACORA_ORG ? ' selected' : ''}>${esc(o.nombre)} · ${Number(o.entradas) || 0}</option>`).join('')}`;
+
+  $('#bitacoraVacia').hidden = lista.length > 0;
+  $('#listaBitacora').innerHTML = lista.map((f) => {
+    const cuando = new Date(f.creada);
+    return `<tr>
+      <td class="num">${cuando.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}
+        <span class="tabla-legales__hora">${cuando.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span></td>
+      <td>${esc(f.admin_nombre || '')}<span class="tabla-legales__sub">${esc(f.admin_correo)}</span></td>
+      <td>${esc(f.organizacion_nombre)}</td>
+      <td>${esc(f.rotulo || f.accion)}</td>
+      <td>${cambioBitacora(f.antes, f.despues)}</td>
+      <td>${esc(f.motivo || '—')}<span class="tabla-legales__sub num">${esc(f.ip || '—')}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+async function cargarBitacora() {
+  if (!$('#listaBitacora')) return null;
+  const datos = await api(`/admin/bitacora${BITACORA_ORG ? `?organizacion=${encodeURIComponent(BITACORA_ORG)}` : ''}`,
+    { silencioso: true });
+  if (!datos) return null;
+  pintarBitacora(datos);
+  return datos;
+}
+
+function montarBitacora() {
+  if (!$('#listaBitacora')) return;
+  $('#bitacoraOrg').addEventListener('change', (ev) => {
+    BITACORA_ORG = ev.target.value || null;
+    cargarBitacora();
+  });
+  cargarBitacora();
 }
 
 document.addEventListener('DOMContentLoaded', montarAdmin);

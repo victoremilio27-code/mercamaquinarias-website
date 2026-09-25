@@ -114,7 +114,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Una solicitud marcada como atendida sale de la bandeja pendiente y conserva quién la atendió y cuándo.
   3. Toda escritura hecha en nombre de otra organización queda anotada con quién la hizo, cuándo y sobre qué organización.
   4. Esa bitácora se puede consultar desde la consola filtrando por organización, y un reclamo de un cliente empresa se puede contestar con ella delante.
-**Plans**: TBD
+**Plans**: 4 planes en 3 olas
+- [ ] 04-01-PLAN.md — Bitacora de solo anadir en la base, enNombreDe como unica puerta transaccional, atendida_por y bitacora:probar en CI
+- [ ] 04-02-PLAN.md — Sello y alta de dealer pasan por la bitacora, GET /api/admin/bitacora y guarda sobre RUTAS
+- [ ] 04-03-PLAN.md — Bandeja de solicitudes de servicio en admin.html sin filtros de servicios apagados
+- [ ] 04-04-PLAN.md — La bitacora en la consola filtrable por organizacion, bateria completa y verificacion humana en los dos temas
 **UI hint**: yes
 **Notas**: `listarSolicitudesServicio` y `marcarSolicitudServicio` ya existen en la API y ninguna pantalla las usa. La bitácora (ADMIN-05) va en esta fase, antes que cualquier acción en nombre de otro (fases 5 y 7), para no tener que retro-instrumentar escrituras que ya estarían sueltas. Toda ruta nueva bajo `/api/admin/*` se envuelve en `conAdmin` y se comprueba con `npm run auditar:permisos`; `conAdmin` responde 404, no 403, a propósito. No se publica ningún teléfono en las pantallas de soporte.
 
