@@ -177,6 +177,10 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   comprobar(cotejada.serie_cotejada === true && cotejada.serie === undefined
     && cotejada.serie_revisada_por === undefined,
     'cotejada: la ficha dice serie_cotejada y sigue sin la serie ni el nombre del empleado');
+  const suyaCotejada = ((await pedir({ url: `/api/anuncios/${idAnuncio}`,
+    cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}` } })).datos || {}).anuncio || {};
+  comprobar(suyaCotejada.serie_cotejada === true && suyaCotejada.serie_revisada_por === undefined,
+    'ni siquiera al dueno le llega el nombre del empleado que la reviso');
 
   /* ── 2 · un aviso de contacto por persona y dia ──────────── */
   console.log('\nEl aviso de contacto al vendedor');

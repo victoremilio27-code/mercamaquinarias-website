@@ -2305,9 +2305,16 @@ function seriesParaRevisar({ estado } = {}) {
      WHERE TRIM(COALESCE(a.serie, '')) <> '' AND a.estado <> 'borrador'`).all();
 
   const veces = new Map();
+  /* Una «serie» hecha solo de separadores («--», «/») normaliza a vacío:
+     no es una placa, y contarla dejaría «repetidas» a todas las demás
+     que alguien rellenó igual de mal. */
+  const repetidosDe = (serie) => {
+    const k = normalizarSerie(serie);
+    return k ? veces.get(k) - 1 : 0;
+  };
   todas.forEach((a) => {
     const k = normalizarSerie(a.serie);
-    veces.set(k, (veces.get(k) || 0) + 1);
+    if (k) veces.set(k, (veces.get(k) || 0) + 1);
   });
 
   const quiere = estado === 'pendiente' ? (a) => !a.serie_revision
@@ -2324,7 +2331,7 @@ function seriesParaRevisar({ estado } = {}) {
     .map((a) => conNombres({
       ...a,
       // Cuántos OTROS anuncios llevan la misma placa.
-      repetidos: veces.get(normalizarSerie(a.serie)) - 1,
+      repetidos: repetidosDe(a.serie),
       fotos: fotos.all(a.id),
     }));
 }

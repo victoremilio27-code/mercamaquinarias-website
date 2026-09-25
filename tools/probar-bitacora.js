@@ -464,6 +464,12 @@ async function bloqueSeries() {
     'la misma placa escrita distinto cuenta como repetida en el otro anuncio');
   comprobar(!!s1 && s1.serie === 'CAT-0320 X' && s1.empresa === dealerA.org.nombre
     && Array.isArray(s1.fotos) && s1.fotos.length === 1, 'con la serie, la empresa y las fotos para leer la placa');
+  const id4 = anuncio(dealerA.org, dealerA.idUsuario, '--', '305');
+  const id5 = anuncio(dealerA.org, dealerA.idUsuario, ' / ', '306');
+  r = await pedir({ url: '/api/admin/series?estado=pendiente', cabeceras: comoAdmin });
+  const basura = (r.datos.series || []).filter((s) => s.id === id4 || s.id === id5);
+  comprobar(basura.length === 2 && basura.every((s) => s.repetidos === 0),
+    'una «serie» hecha solo de separadores no cuenta como placa repetida');
   r = await pedir({ url: '/api/admin/series', cabeceras: comoNormal });
   comprobar(r.codigo === 404, 'como usuario normal da 404');
 

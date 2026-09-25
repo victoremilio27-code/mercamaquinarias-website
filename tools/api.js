@@ -2812,6 +2812,11 @@ function verAnuncio(req, res, ctx, idAnuncio) {
   if (!a) return fallo(res, 404, 'Ese anuncio no existe');
   // Antes de borrar los privados: es lo único de la revisión que es público.
   a.serie_cotejada = a.serie_revision === 'conforme';
+  /* Quién de dentro revisó la serie no sale ni hacia el dueño: es el
+     mismo criterio que la página editada en su nombre (el dealer sabe
+     que el personal actuó, el nombre del empleado está en la bitácora).
+     Su panel no lo usa. */
+  delete a.serie_revisada_por;
   /* `ctx` es null cuando no hay sesión, que es el caso normal aquí:
      esta ruta la llama cualquier visitante del catálogo. */
   const esSuyo = !!ctx && !!ctx.organizacion && a.organizacion_id === ctx.organizacion.id;
