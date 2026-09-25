@@ -2122,11 +2122,15 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* ── Vista previa ───────────────────────────────────────── */
 
 .panel--previa { background: var(--azul); border-color: var(--azul-2); color: var(--blanco); }
+/* El panel es oscuro en los dos temas, así que el rótulo y la nota van
+   con el token de sobre-oscuro y no con --texto-claro. Este último pasó
+   a ser gris de texto apagado para superficie clara; dejarlo aquí
+   hundía el rótulo a 3.47 sobre el panel, cuando antes iba a 8.51. */
 .vista-previa__rotulo {
   display: flex; align-items: center; gap: 7px;
   margin-bottom: 11px;
   font-size: 10.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase;
-  color: var(--texto-claro);
+  color: var(--sobre-oscuro-2);
 }
 .vista-previa__rotulo .ico { width: 14px; height: 14px; color: var(--ambar); }
 .aviso--previa { background: var(--blanco); border-radius: var(--r); overflow: hidden; padding-bottom: 10px; }
@@ -2137,7 +2141,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .aviso--previa .aviso__specs { display: block; padding: 2px 11px 0; font-size: 11.5px; color: var(--gris-acero); }
 .aviso--previa .aviso__precio { display: block; padding: 5px 11px 0; font-family: var(--display); font-weight: 800; font-size: 16px; color: var(--azul); }
 .aviso--previa .pastilla { margin: 7px 0 0 11px; }
-.vista-previa__nota { margin-top: 9px; font-size: 11.5px; color: var(--texto-claro); }
+.vista-previa__nota { margin-top: 9px; font-size: 11.5px; color: var(--sobre-oscuro-2); }
 
 .pastilla--ambar { background: rgba(242, 169, 0, .16); color: var(--ambar-hondo); }
 
@@ -2676,9 +2680,12 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .perfil__sello .ico { width: 30px; height: 30px; }
 .perfil__nombre { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -.022em; }
+/* La cabecera del perfil es oscura en los dos temas, como el panel de la
+   vista previa. El hermano de abajo, .perfil__texto, ya llevaba el
+   #D5DEE5 a mano: es el mismo color que ahora tiene nombre. */
 .perfil__meta {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  margin-top: 8px; font-size: 12.5px; color: var(--texto-claro);
+  margin-top: 8px; font-size: 12.5px; color: var(--sobre-oscuro-2);
 }
 .perfil__meta b { color: var(--blanco); }
 .perfil__texto { margin-top: 11px; font-size: 13.5px; line-height: 1.62; color: #D5DEE5; max-width: 70ch; }
@@ -3449,7 +3456,7 @@ main { position: relative; }
 .heroe-ajuste__vacia {
   display: grid; place-items: center; aspect-ratio: 16 / 9;
   background: var(--azul); border-radius: 7px;
-  font-size: 12.5px; font-weight: 600; color: var(--texto-claro);
+  font-size: 12.5px; font-weight: 600; color: var(--sobre-oscuro-2);
 }
 .heroe-ajuste__estado { font-size: 11.5px; color: var(--gris-acero); }
 
@@ -3905,14 +3912,18 @@ body.sin-scroll { overflow: hidden; }
   font-size: 15px; font-weight: 800; letter-spacing: -.01em;
   color: var(--blanco);
 }
-.chat__sub { margin: 3px 0 0; font-size: 11.5px; color: var(--texto-claro); }
+/* La cabecera del chat va sobre azul en los dos temas y el chat sale en
+   TODAS las páginas: es el sitio donde un token equivocado se nota más.
+   Con --texto-claro convertido en gris para superficie clara, este
+   subtítulo caía a 3.47 sobre el fondo de la cabecera. */
+.chat__sub { margin: 3px 0 0; font-size: 11.5px; color: var(--sobre-oscuro-2); }
 
 .chat__cerrar {
   flex: none;
   display: grid; place-items: center;
   width: 28px; height: 28px;
   background: none; border: 0; border-radius: 4px;
-  color: var(--texto-claro);
+  color: var(--sobre-oscuro-2);
   cursor: pointer;
 }
 .chat__cerrar:hover { background: rgba(255, 255, 255, .1); color: var(--blanco); }
@@ -4104,6 +4115,16 @@ body.sin-scroll { overflow: hidden; }
   --linea-suave: #ECECE7;
   --gris-acero:  #5F6364;
 
+  /* Los cuatro de la guía de marca que el bloque oscuro ya redefinía y
+     este no. Repiten el valor del :root general a propósito: mientras
+     solo existieran en el oscuro parecía que al claro se le habían
+     olvidado, y no había forma de saberlo sin leer los dos bloques
+     seguidos. Escritos en los dos, la simetría está a la vista. */
+  --blanco:      #FFFFFF;
+  --gris-neutro: #E7E6E0;
+  --ambar-hondo: #C98A00;
+  --verde:       #157A4B;
+
   --app-bg:      #F4F4F1;
   --app-card:    #FFFFFF;
   --app-soft:    #EEEEEA;
@@ -4111,10 +4132,55 @@ body.sin-scroll { overflow: hidden; }
   --app-text:    #141616;
   --app-muted:   #5F6364;
   --app-accent:  #F2A900;
-  --app-accent-texto: #9A6800;   /* ámbar legible sobre claro */
+
+  /* El ámbar de texto y su alias se mueven SIEMPRE en bloque; separarlos
+     es el error que esto viene a cerrar. El #9A6800 de antes se midió
+     solo contra la tarjeta blanca (4.82) y ahí cumplía, pero sobre el
+     hueso del fondo caía a 4.38 y sobre la superficie suave a 4.15, que
+     es justo donde viven los chips y los filtros. Estos dan 5.42 sobre
+     tarjeta, 4.91 sobre fondo y 4.66 sobre suave. */
+  --app-accent-texto: #8F6100;
+  --ambar-texto:      #8F6100;
+
   --app-sombra:  0 10px 30px rgba(20, 22, 22, .07);
   --app-vidrio:  rgba(255, 255, 255, .88);
   --texto-2:     #3D4345;
+
+  /* Borde de los controles, token nuevo y aparte de --app-line. El
+     filete decorativo entre bloques de contenido sigue siendo aquel, a
+     1.30, y está bien así porque no delimita nada pulsable. Este es
+     para lo que se puede tocar: 3.58 sobre tarjeta, 3.25 sobre fondo y
+     3.08 sobre superficie suave. */
+  --app-borde-control: #848889;
+
+  /* Texto apagado sobre superficie clara. Antes solo estaba en el :root
+     general, con el azul pálido #A2B4C1 que en realidad es para ir
+     SOBRE panel oscuro; en el tema claro eso dejaba la ayuda de los
+     campos y la fecha de las solicitudes casi invisibles. Cuatro sitios
+     llevaban escrito #60717D como color de reserva, o sea que su autor
+     creía que pintaba gris: nunca se aplicó, porque el token sí estaba
+     definido. 5.24 sobre tarjeta, 4.75 sobre fondo, 4.50 sobre suave. */
+  --texto-claro: #686D70;
+
+  /* Superficies y textos semánticos. Vivían solo en el bloque oscuro,
+     así que en claro los pintaba el color de reserva de cada var() y
+     bastaba con olvidar uno para que un aviso saliera en negro. */
+  --sup-calida:  #FFFDF7;
+  --sup-error:   #FDF3F3;
+  --sup-ok:      #F2FAF6;
+  --texto-error: #7A1B15;    /* 10.53 sobre tarjeta, 9.67 sobre la superficie de error */
+  --texto-ok:    #14532D;    /* 9.11 sobre tarjeta, 8.58 sobre la de ok. Antes convivían tres verdes distintos para este mismo papel, los tres como color de reserva; se unifican en el de más contraste */
+  --texto-peligro: #B3261E;  /* 6.54 sobre tarjeta, 6.00 sobre la superficie de error */
+  --borde-error: #E8C4C4;
+  --borde-ok:    #B9D7C8;
+
+  /* Texto sobre superficies que son oscuras en los DOS temas: el
+     mosaico, la banda del vídeo, el sello de la foto, la vista previa de
+     publicar, la cabecera del chat y la del perfil del dealer. Valen lo
+     mismo en los dos bloques a propósito; escribirlo en ambos es lo que
+     deja constancia de que es deliberado y no un olvido. */
+  --sobre-oscuro:   #FFFFFF;
+  --sobre-oscuro-2: #D5DEE5;
   color-scheme: light;
 }
 
@@ -4138,7 +4204,11 @@ body.sin-scroll { overflow: hidden; }
   --app-text:    #F7F5EF;
   --app-muted:   #A8AAA9;
   --app-accent:  #F2A900;
+
+  /* Igual que en claro: los dos juntos, nunca uno solo. */
   --app-accent-texto: #F2A900;
+  --ambar-texto:      #F2A900;
+
   --app-sombra:  0 14px 40px rgba(0, 0, 0, .35);
   --app-vidrio:  rgba(25, 26, 26, .9);
   --texto-2:     #C9CBCA;
@@ -4147,6 +4217,21 @@ body.sin-scroll { overflow: hidden; }
   --texto-error: #F3A29C;
   --sup-ok:      #10201A;
   --texto-ok:    #8FD9B4;
+
+  /* El oscuro también sube a 3, por decisión expresa: hoy está en 1.66 y
+     incumple igual que el claro. Que «se lea mejor» no lo hace correcto,
+     y lo que se persigue en esta fase es que los dos temas se comporten
+     idéntico. 4.27 sobre tarjeta, 3.80 sobre fondo, 3.30 sobre suave. */
+  --app-borde-control: #727677;
+
+  --texto-peligro: #F3A29C;  /* el #B3261E del claro se queda en 2.66 aquí */
+  --borde-error:   #5A2A26;  /* 1.49 sobre la superficie de error, a la par del claro. El #E8C4C4 del claro daría 10.87 aquí: un contorno chillón alrededor de un aviso */
+  --borde-ok:      #1A4530;  /* 1.56 sobre la de ok, a la par del claro */
+
+  /* Mismos valores que en el bloque claro, y es a propósito: van sobre
+     superficies que son oscuras en los dos temas. */
+  --sobre-oscuro:   #FFFFFF;
+  --sobre-oscuro-2: #D5DEE5;
   color-scheme: dark;
 }
 
