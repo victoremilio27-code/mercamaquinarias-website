@@ -136,7 +136,8 @@ function pintarMetricas(resumen) {
     tarjetaMetrica('i-ojo', miles(t.vistas || 0), 'Visualizaciones', 'Últimos 30 días'),
     tarjetaMetrica('i-telefono', miles(contactos), 'Contactos', tasa),
     tarjetaMetrica('i-grafico', miles(activos), 'Anuncios activos', `${inactivos} inactivo${inactivos === 1 ? '' : 's'}`),
-    tarjetaMetrica('i-estrella', miles(t.favoritos || 0), 'Guardados', 'Compradores que lo marcaron'),
+    tarjetaMetrica('i-estrella', miles(t.favoritos || 0), 'Guardados',
+      `Compradores que lo guardaron · ${miles(t.compartidos || 0)} ${t.compartidos === 1 ? 'compartido' : 'compartidos'}`),
   ].join('');
 }
 
@@ -676,6 +677,7 @@ async function montarPanel() {
      tienen por qué retrasar lo que el anunciante viene a ver, que son
      sus anuncios. */
   montarFacturas();
+  montarContactos();
 
   const org = SESION.organizacion || {};
   $('#panelTitulo').innerHTML = `<em>${esc((org.nombre || SESION.usuario.nombre).split(/[\s,]+/)[0])}</em> ${esc((org.nombre || '').replace(/^\S+\s*/, ''))}`;
@@ -995,6 +997,60 @@ async function montarFacturas() {
     : ''}</td>
     </tr>`;
   }).join('');
+}
+
+/* ── Contactos recibidos (MET-03) ───────────────────────── */
+
+/* Qué anuncio y cuándo, para cada contacto. El total de la tarjeta
+   «Contactos» dice cuántos; sin esta lista el dealer no puede atribuirle
+   una venta al sitio, y es lo primero que pregunta al renovar.
+
+   La hora va en la de Santo Domingo aunque el navegador esté en otra
+   zona: el dealer la compara con la de su libreta de llamadas. */
+const FECHA_CONTACTO = { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' };
+
+async function montarContactos() {
+  const cuerpo = $('#filasContactos');
+  if (!cuerpo || !haySesion()) return;
+  const selAnuncio = $('#filtroContactoAnuncio');
+  const selCanal = $('#filtroContactoCanal');
+  const vacio = $('#contactosVacio');
+
+  ANUNCIOS.forEach((a) => selAnuncio.add(new Option(`${a.anio} ${a.marca_nombre || a.marca} ${a.modelo}`, a.id)));
+
+  async function pintar() {
+    const consulta = new URLSearchParams({ limite: '100' });
+    if (selAnuncio.value) consulta.set('anuncio', selAnuncio.value);
+    if (selCanal.value) consulta.set('canal', selCanal.value);
+
+    let contactos = [];
+    try {
+      const datos = await api(`/mis-contactos?${consulta}`);
+      contactos = (datos && datos.contactos) || [];
+    } catch (_) {
+      cuerpo.innerHTML = '';
+      vacio.hidden = false;
+      vacio.textContent = 'No se pudieron cargar los contactos. Recargue la página para intentarlo de nuevo.';
+      return;
+    }
+
+    cuerpo.innerHTML = contactos.map((c) => `<tr>
+      <td class="num">${esc(new Date(c.creado).toLocaleString('es-DO', FECHA_CONTACTO))}</td>
+      <td><a href="equipo.html?id=${encodeURIComponent(c.anuncio_id)}">${esc(`${c.anio} ${c.marca_nombre || c.marca} ${c.modelo}`)}</a></td>
+      <td>${c.canal === 'whatsapp'
+    ? '<span class="pastilla pastilla--verde">WhatsApp</span>'
+    : '<span class="pastilla">Llamada</span>'}</td>
+    </tr>`).join('');
+
+    vacio.hidden = contactos.length > 0;
+    vacio.textContent = selAnuncio.value || selCanal.value
+      ? 'Ningún contacto con estos filtros.'
+      : 'Todavía no ha recibido contactos por el sitio.';
+  }
+
+  selAnuncio.addEventListener('change', pintar);
+  selCanal.addEventListener('change', pintar);
+  await pintar();
 }
 
 document.addEventListener('DOMContentLoaded', montarPanel);

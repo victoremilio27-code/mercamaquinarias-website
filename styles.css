@@ -1436,6 +1436,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
    vecino, que no lo tiene, queda descolgado unos píxeles. */
 .campo-v { display: grid; gap: 5px; align-content: start; }
 .campo-v--ancho { grid-column: 1 / -1; }
+
+/* Filtros de «Contactos recibidos» en el panel (fase 10). */
+.contactos-filtros { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.contactos-filtros .campo-v { min-width: 200px; }
 /* `.campo-v__rotulo` es un <label for> y hace de rótulo cuando el campo
    no puede ir envuelto en la etiqueta: un <label> dentro de otro
    <label> no es HTML válido, y el campo con casilla de «No aplica»
