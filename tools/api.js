@@ -1645,6 +1645,47 @@ const listarOrganizacionesAdmin = conAdmin((req, res, ctx, consulta) => {
   });
 });
 
+/* ── Revisión del número de serie (ADMIN-03) ─────────────── */
+
+const listarSeries = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  return responder(res, 200, { series: db.seriesParaRevisar({ estado: texto(q.get('estado'), 20) }) });
+});
+
+/* El resultado va por la bitácora sobre la organización dueña del
+   anuncio: «yo no tengo ninguna observación en mi serie» se contesta
+   con la fila. La fila guarda el resultado y la nota, NO la serie: la
+   bitácora la lee todo el personal y la serie no le hace falta. */
+const revisarSerie = conAdminEnNombreDe('anuncio.serie', async (req, res, ctx, idAnuncio) => {
+  const c = await leerCuerpo(req);
+  const resultado = String(c.resultado || '');
+  if (!['conforme', 'observada', 'pendiente'].includes(resultado)) {
+    return fallo(res, 400, 'El resultado es «conforme», «observada» o «pendiente»');
+  }
+  const nota = resultado === 'pendiente' ? null : texto(c.nota, 500);
+  if (resultado === 'observada' && !nota) {
+    return fallo(res, 400, 'Escriba qué no cuadra: es lo que lee el vendedor');
+  }
+
+  const a = db.anuncioSerie(idAnuncio);
+  if (!a || !String(a.serie || '').trim()) return fallo(res, 404, 'Ese anuncio no existe o no declaró serie');
+
+  try {
+    ctx.enNombreDe(a.organizacion_id, { objetoTipo: 'anuncio', objetoId: idAnuncio, motivo: nota }, () => {
+      db.anotarRevisionSerie(idAnuncio, {
+        resultado, nota, nombreAdmin: ctx.usuario.nombre || ctx.usuario.correo,
+      });
+      return {
+        antes: { revision: a.serie_revision || 'pendiente', nota: a.serie_nota || null },
+        despues: { revision: resultado, nota },
+      };
+    });
+  } catch (e) {
+    return fallo(res, e.codigo || 500, e.message);
+  }
+  return responder(res, 200, { ok: true, resultado });
+});
+
 /* La bitácora se lee por aquí y por ningún otro sitio. No existe, ni
    debe existir, una ruta que la edite, la borre o le añada filas: las
    filas solo nacen dentro de db.enNombreDe. */
@@ -2615,11 +2656,20 @@ const estadisticas = (req, res) => {
    todos los anunciantes sin posición. Los otros cuatro no filtran
    nada grave, pero tampoco pintan nada en una ficha pública. */
 const PRIVADOS_DEL_ANUNCIO = ['precio_minimo', 'usuario_id', 'suscripcion_id',
-  'aviso_por_vencer', 'aviso_vencido'];
+  'aviso_por_vencer', 'aviso_vencido',
+  /* El número de serie. publicar.html le promete al vendedor que solo lo
+     ve el personal, y esta ruta lo entregaba a cualquiera (la consulta
+     es un SELECT a.*). Es además el dato con el que se «legalizan»
+     papeles de una máquina ajena. Con él se van los datos de su
+     revisión: la nota de lo que no cuadró es para el vendedor, y quién
+     la revisó, para la consola. Al público le llega `serie_cotejada`. */
+  'serie', 'serie_revision', 'serie_revisada', 'serie_revisada_por', 'serie_nota'];
 
 function verAnuncio(req, res, ctx, idAnuncio) {
   const a = db.anuncio(idAnuncio);
   if (!a) return fallo(res, 404, 'Ese anuncio no existe');
+  // Antes de borrar los privados: es lo único de la revisión que es público.
+  a.serie_cotejada = a.serie_revision === 'conforme';
   /* `ctx` es null cuando no hay sesión, que es el caso normal aquí:
      esta ruta la llama cualquier visitante del catálogo. */
   const esSuyo = !!ctx && !!ctx.organizacion && a.organizacion_id === ctx.organizacion.id;
@@ -2734,6 +2784,8 @@ const RUTAS = [
   ['GET',    /^\/api\/admin\/organizaciones$/,               listarOrganizacionesAdmin],
   ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
   ['GET',    /^\/api\/admin\/bitacora$/,                     listarBitacora],
+  ['GET',    /^\/api\/admin\/series$/,                       listarSeries],
+  ['POST',   /^\/api\/admin\/anuncios\/([\w-]+)\/serie$/,    revisarSerie],
   ['GET',  /^\/api\/planes$/,            listarPlanes],
   ['GET',  /^\/api\/estadisticas$/,      estadisticas],
   ['POST', /^\/api\/anuncios$/,          publicar],
