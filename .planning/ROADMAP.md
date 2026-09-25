@@ -132,7 +132,12 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. El personal marca el pago como recibido desde la consola y, en ese mismo momento, el comprador gana los cupos y recibe su comprobante con NCF.
   4. Ese marcado aparece en la bitácora de la Fase 4 con quién lo hizo y cuándo.
   5. Con CardNet apagado, este camino cubre de principio a fin comprar cupos y publicar un anuncio.
-**Plans**: TBD
+**Plans**: 5 planes en 4 olas
+- [ ] 05-01-PLAN.md — Núcleo: la cuenta configurada fuera del repo, el procesador transferencia, confirmarPago dentro de la bitácora y transferencia:probar en CI
+- [ ] 05-02-PLAN.md — Rutas: compra y ampliación por transferencia con datos y referencia, correos, y /api/admin/pagos para marcar recibido o anular
+- [ ] 05-03-PLAN.md — Planes y panel: elegir transferencia, ver datos y referencia, pagos en espera; un 202 deja de anunciarse como compra hecha
+- [ ] 05-04-PLAN.md — Consola: sección de pagos por transferencia con marcado, anulación y la bitácora al día
+- [ ] 05-05-PLAN.md — Criterio 5 de extremo a extremo en el arnés, batería completa y verificación humana en los dos temas
 **UI hint**: yes
 **Notas**: Es la contingencia de lanzamiento y es barata: quita la dependencia externa de la fecha firme, así que va bien antes de CardNet, no después. Usa exactamente la transición `pendiente → aprobado` de la Fase 3 — la misma función, no una copia. `planes.perfil_publico` se usa tal como está; no se proponen planes ni precios nuevos.
 
