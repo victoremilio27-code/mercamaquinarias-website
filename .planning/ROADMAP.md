@@ -82,7 +82,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **Plans**: 6 planes en 4 olas
 - [x] 02-01-PLAN.md — La capa de tokens completa en los dos bloques y sin colores de reserva en linea
 - [x] 02-02-PLAN.md — La barra del navegador del movil sigue al tema en las 19 paginas
-- [ ] 02-03-PLAN.md — tools/check-contraste.js y su enganche a la cadena npm run auditar
+- [x] 02-03-PLAN.md — tools/check-contraste.js y su enganche a la cadena npm run auditar
 - [ ] 02-04-PLAN.md — El borde de control a 3:1 y el ambar separado en texto y superficie
 - [ ] 02-05-PLAN.md — Los colores literales convertidos y la cabecera del dealer fijada oscura
 - [ ] 02-06-PLAN.md — Cierre: residuos, bateria en verde, verificacion humana y Pull Request
@@ -284,7 +284,7 @@ entrega valor sin esperar a la siguiente.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Barrera de pruebas en la fusión | 1/3 | In Progress | - |
-| 2. Tema claro y oscuro coherentes | 2/6 | In Progress|  |
+| 2. Tema claro y oscuro coherentes | 3/6 | In Progress|  |
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
 | 5. Cobro por transferencia bancaria | 0/TBD | Not started | - |
