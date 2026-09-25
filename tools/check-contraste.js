@@ -22,6 +22,22 @@
    0 si todo pasa. Va colgado del final de `npm run auditar`, que encadena
    con `&&`: si una auditoría anterior falla, ésta no llega a correr. No
    se puede confundir «el contraste pasó» con «el contraste no corrió».
+
+   ── Lo que esta orden NO ve ─────────────────────────────────────────
+   Va escrito aquí porque un comprobador del que se cree que lo ve todo
+   es peor que no tenerlo: lo de abajo lo cubre la verificación humana.
+
+   · Los estados `:hover`, `:focus` y `:active`. El estilo calculado que
+     devuelve puppeteer es el del reposo. El caso de `#FCFBF7` en
+     `.tabla-anuncios tbody tr:hover` —la fila que deslumbra en oscuro—
+     NO lo caza este recorrido; lo caza leer la hoja y lo confirma un
+     humano.
+   · Lo que hay detrás de una sesión. `panel.html`, `admin.html` y
+     `mi-pagina.html` se visitan sin sesión, así que se mide su muro de
+     acceso, no su contenido. Sembrar una sesión aquí sería repetir lo
+     que ya hace `auditar-flujos.js`.
+   · Los avisos de error de formulario, que solo aparecen al provocar el
+     error.
 */
 
 const puppeteer = require('puppeteer');
@@ -67,6 +83,49 @@ const TEMAS = [
    se escribe, y por tanto tiene que tener un contorno visible. */
 const SEL_CONTROL = 'button, .btn, input, select, textarea, [role="button"]';
 
+/* ── Lo que es fijo A PROPÓSITO ───────────────────────────────────────
+   Ninguna excepción sin su razón escrita al lado. La comprobación se
+   hace con `el.closest(selector)` dentro de la página, para que valga
+   también para los hijos sin tener que enumerarlos.
+
+   Esta lista no crece para poner el comprobador en verde: un caso nuevo
+   que parezca legítimo se anota en el SUMMARY y lo decide quien tenga
+   la hoja ya convertida delante. Una lista de excepciones que engorda
+   sola es exactamente el fallo que esto existe para impedir. */
+const EXCEPCIONES = [
+  // El mosaico del héroe son fotos sobre una superficie oscura a
+  // propósito en los dos temas: si girara con el tema, las fotos
+  // quedarían flotando sobre crema. Su texto va siempre en blanco, así
+  // que la regla 1 sí lo mide y tiene que seguir pasándola.
+  { selector: '.mosaico__pieza', reglas: [3] },
+
+  // La banda del vídeo es `#000` fijo —«la banda del video, no del
+  // tema», dice la propia hoja—: un vídeo vertical se recorta contra
+  // negro en los dos temas, que es la convención de cualquier
+  // reproductor.
+  { selector: '.videos__pieza', reglas: [3] },
+
+  // El sello va sobre la fotografía, no sobre la página: su fondo
+  // oscuro es justo lo que lo hace legible sea cual sea la foto.
+  { selector: '.foto__sello', reglas: [3] },
+
+  // Cabecera de marca fijada oscura en los dos temas, igual que el
+  // mosaico. Exenta de la regla 3 y NO de la 1: su texto sigue teniendo
+  // que leerse, y hoy no se lee.
+  { selector: '.perfil', reglas: [3] },
+
+  // `ajustarContraste`, en `assets/app.js`, le elige el color midiendo
+  // el fondo real que tiene debajo, porque el recuadro cae tanto sobre
+  // un panel blanco como sobre el fondo oscuro del teléfono. Está
+  // resuelto por otro camino, y mejor que con un token.
+  { selector: '.pub-muestra', reglas: [3] },
+
+  // Texto `#151515` fijo sobre ámbar, que es correcto en los dos temas:
+  // el ámbar es color de marca y no se invierte, así que su texto
+  // tampoco tiene por qué hacerlo.
+  { selector: '.btn--ambar, .cab__nav-cta', reglas: [3] },
+];
+
 /* ── Aritmética WCAG, escrita a mano ──────────────────────────────────
    Quince líneas de cuentas no justifican una dependencia: el proyecto
    tiene cero en tiempo de ejecución y solo puppeteer en desarrollo, y
@@ -105,7 +164,9 @@ function leerValor(argv, nombre, porDefecto) {
    colores compuestos se hace aquí, donde está el DOM; las razones de
    contraste se calculan fuera, en Node, para poder leerlas y probarlas
    sin navegador. */
-function medirEnPagina(selControl) {
+function medirEnPagina(datos) {
+  const selControl = datos.selControl;
+  const excepciones = datos.excepciones;
   const BLANCO = [255, 255, 255, 1];
 
   /* `getComputedStyle` devuelve 'rgb(r, g, b)' o 'rgba(r, g, b, a)', y
@@ -173,6 +234,22 @@ function medirEnPagina(selControl) {
     return c.trim().split(/\s+/).filter(Boolean);
   }
 
+  /* La regla 3 compara el MISMO elemento en dos pasadas distintas, así
+     que hace falta una clave estable: la ruta de índices desde `body`,
+     el `tagName` y las clases. Si una clave aparece en una pasada y en
+     la otra no, se ignora en vez de reportarla: significa que la página
+     pintó algo distinto —un anuncio se elige al azar—, no que haya un
+     color congelado. */
+  function clave(el) {
+    const partes = [];
+    let n = el;
+    while (n && n !== document.body && n.parentElement) {
+      partes.unshift(Array.prototype.indexOf.call(n.parentElement.children, n));
+      n = n.parentElement;
+    }
+    return 'body>' + partes.join('>') + '|' + el.tagName + '|' + clases(el).join('.');
+  }
+
   /* Un hallazgo que obligue a abrir las herramientas de desarrollo para
      saber de qué habla no se va a arreglar. */
   function legible(el) {
@@ -221,7 +298,18 @@ function medirEnPagina(selControl) {
     const borde = bordeVisible(el, est);
     const relleno = canales(est.backgroundColor);
 
+    /* `closest` y no `matches`: así `.perfil` exime también a
+       `.perfil__texto` sin tener que enumerar a sus hijos. */
+    const exentas = [];
+    for (const ex of excepciones) {
+      if (el.closest(ex.selector)) {
+        for (const r of ex.reglas) if (!exentas.includes(r)) exentas.push(r);
+      }
+    }
+
     medidas.push({
+      clave: clave(el),
+      exentas,
       sel: legible(el),
       texto: textoPropio(el).replace(/\s+/g, ' ').slice(0, 48),
       tam: parseFloat(est.fontSize) || 16,
@@ -233,6 +321,16 @@ function medirEnPagina(selControl) {
       fondoDetras,
       borde: borde ? sobre(borde.color, fondoDetras) : null,
       relleno: relleno && relleno[3] > 0 ? sobre(relleno, fondoDetras) : null,
+      /* Sin componer y tal cual los declara la hoja: la regla 3 compara
+         lo que el autor escribió, no lo que se acabó viendo. Un color
+         que se ve distinto solo porque el fondo de debajo cambió sigue
+         siendo un color congelado. */
+      crudo: {
+        color: est.color,
+        fondo: est.backgroundColor,
+        borde: est.borderTopColor + ' ' + est.borderRightColor + ' ' + est.borderBottomColor + ' ' + est.borderLeftColor,
+      },
+      tieneRelleno: !!(relleno && relleno[3] > 0),
     });
   }
 
@@ -302,6 +400,10 @@ async function main() {
   console.log('── Contraste y dinamismo · ' + rutas.length + ' rutas × ' + temas.length + ' tema(s) ──');
 
   for (const [ruta, nombre] of rutas) {
+    // Las medidas de cada tema en esta misma ruta, para cruzarlas al
+    // terminar las dos pasadas. Es lo que hace posible la regla 3.
+    const porTema = {};
+
     for (const [tema, valor] of temas) {
       const p = await abrirConTema(nav, valor);
       let medidas = null;
@@ -309,7 +411,7 @@ async function main() {
         const resp = await p.goto(base + ruta, { waitUntil: 'networkidle0', timeout: 45000 });
         if (resp && resp.status() >= 400) throw new Error('HTTP ' + resp.status());
         await new Promise((r) => setTimeout(r, 600));
-        medidas = await p.evaluate(medirEnPagina, SEL_CONTROL);
+        medidas = await p.evaluate(medirEnPagina, { selControl: SEL_CONTROL, excepciones: EXCEPCIONES });
       } catch (e) {
         // Un fallo de navegación no se traga: es un hallazgo de su
         // propio tipo. Si no, un sitio caído sale en verde.
@@ -319,13 +421,17 @@ async function main() {
       }
       if (!medidas) continue;
 
+      const mapa = new Map();
+      medidas.forEach((m) => { if (!mapa.has(m.clave)) mapa.set(m.clave, m); });
+      porTema[tema] = mapa;
+
       let delTema = 0;
 
       for (const m of medidas) {
         /* Regla 1 · texto contra su fondo efectivo.
            4.5:1, o 3:1 en fuente grande, que el plan aprobado fija en
            ≥ 18.66 px o ≥ 14 px en negrita. */
-        if (m.texto) {
+        if (m.texto && !m.exentas.includes(1)) {
           const grande = m.tam >= 18.66 || (m.tam >= 14 && m.peso >= 700);
           const minimo = grande ? 3 : 4.5;
           const r = contraste(m.color, m.fondo);
@@ -340,7 +446,7 @@ async function main() {
            Un control sin borde y sin relleno propio se identifica por su
            texto, que ya mide la regla 1; marcarlo aquí sería contar dos
            veces el mismo elemento. */
-        if (m.esControl) {
+        if (m.esControl && !m.exentas.includes(2)) {
           const capa = m.borde || m.relleno;
           const prop = m.borde ? 'border-color' : 'background-color';
           if (capa) {
@@ -359,6 +465,43 @@ async function main() {
       } else if (delTema) {
         console.log('  ' + nombre.padEnd(22) + tema.padEnd(8) + delTema + ' hallazgo(s)');
       }
+    }
+
+    /* Regla 3 · dinamismo. Ésta es la que dice literalmente lo que pidió
+       Victor: que todos los elementos sean dinámicos entre sí al cambiar
+       de modo. Falla el elemento cuyo fondo efectivo SÍ cambió entre los
+       dos temas mientras ninguno de sus tres colores se movió. Es la
+       comprobación que habría cazado `#FCFBF7` y `#D5DEE5` el día que se
+       escribieron.
+
+       Necesita las dos pasadas: con `--tema` no se puede cruzar nada. */
+    const claro = porTema.claro;
+    const oscuro = porTema.oscuro;
+    if (!claro || !oscuro) continue;
+
+    let quietos = 0;
+    for (const [clave, a] of claro) {
+      const b = oscuro.get(clave);
+      // Clave que solo sale en una pasada: la página pintó algo
+      // distinto, no hay color congelado que reportar.
+      if (!b) continue;
+      if (a.exentas.includes(3) || b.exentas.includes(3)) continue;
+      if (rgb(a.fondo) === rgb(b.fondo)) continue;
+
+      const igual = (k) => a.crudo[k] === b.crudo[k];
+      if (!(igual('color') && igual('fondo') && igual('borde'))) continue;
+
+      // Se nombra la propiedad que sostiene el color: si el elemento
+      // pinta su propio relleno, es el relleno; si no, es el texto.
+      const prop = a.tieneRelleno ? 'background-color' : 'color';
+      const valor = a.tieneRelleno ? a.crudo.fondo : a.crudo.color;
+      anota('dinamismo', nombre, 'ambos', a.sel,
+        prop + ' se queda en ' + valor + ' mientras su fondo pasa de ' + rgb(a.fondo) + ' (claro) a ' + rgb(b.fondo) + ' (oscuro)'
+        + (a.texto ? ' · "' + a.texto + '"' : ''));
+      quietos++;
+    }
+    if (verboso || quietos) {
+      console.log('  ' + nombre.padEnd(22) + 'dinamismo'.padEnd(8) + ' ' + quietos + ' elemento(s) congelado(s)');
     }
   }
 
