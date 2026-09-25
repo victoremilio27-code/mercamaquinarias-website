@@ -99,7 +99,10 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. Repetir la confirmación del mismo pago deja los mismos cupos y el mismo NCF: no hay cupo doble ni segundo comprobante.
   4. Un cobro rechazado deja el pago en `rechazado`, sin cupos otorgados y sin ningún NCF consumido.
   5. Una compra de importe cero sigue quedando aprobada al instante y sin emitir nada, como hoy.
-**Plans**: TBD
+**Plans**: 3 planes en 3 olas
+- [ ] 03-01-PLAN.md — Migracion de pagos y transicion pendiente/aprobado/rechazado en la base, con su arnes de pruebas
+- [ ] 03-02-PLAN.md — tools/pagos.js: confirmarPago como unico punto que otorga cupos y emite comprobante
+- [ ] 03-03-PLAN.md — Compra y ampliacion pasan por la transicion, guardas de solo-cero y pagos:probar en la barrera de CI
 **Notas**: Es el prerrequisito de todo PAGO y vale por sí solo: hoy `anotarPago` escribe `'aprobado'` a mano en el SQL (`tools/db.js:2147`) y `comprarMembresia` compone el cobro con `procesador: 'demo'` (`tools/api.js:1983`), de modo que un rechazo otorgaría cupos y emitiría un NCF de dinero que nunca entró. El `CHECK` de `pagos.estado` ya admite `pendiente`. Columnas nuevas solo por migración añadida al final de `MIGRACIONES`. `facturas.emitirPorPago` ya es idempotente — no se reescribe.
 
 ### Phase 4: Bandeja de solicitudes y bitácora de la consola
