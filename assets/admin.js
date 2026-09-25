@@ -161,29 +161,46 @@ async function alternarDetalle(id, caja, boton) {
 
 /* Rechazar exige un motivo escrito: es lo que se le manda a la empresa
    por correo, y sin él la negativa genera una respuesta preguntando
-   qué pasó que hay que contestar igual. */
-function pedirMotivo(fila, alConfirmar) {
+   qué pasó que hay que contestar igual.
+
+   La anulación de una transferencia usa la misma caja con sus propios
+   textos y su mínimo de caracteres (el servidor pide cinco); sin
+   opciones se comporta como siempre en la cola. Mientras dura la
+   petición el botón queda deshabilitado: un doble clic no rompe nada
+   en el servidor, pero tampoco hace falta provocarlo. */
+function pedirMotivo(fila, alConfirmar, opciones = {}) {
   if (fila.querySelector('.sol__motivo')) return;
+  const {
+    placeholder = 'Por qué no se aprueba. Se le envía a la empresa tal cual.',
+    etiqueta = 'Motivo del rechazo',
+    confirmar = 'Confirmar rechazo',
+    falta = 'Escriba el motivo del rechazo.',
+    minimo = 1,
+    maximo = null,
+    avisarCon = avisar,
+  } = opciones;
 
   const caja = document.createElement('div');
   caja.className = 'sol__motivo';
   caja.innerHTML = `
-    <textarea placeholder="Por qué no se aprueba. Se le envía a la empresa tal cual." aria-label="Motivo del rechazo"></textarea>
+    <textarea${maximo ? ` maxlength="${Number(maximo)}"` : ''} placeholder="${esc(placeholder)}" aria-label="${esc(etiqueta)}"></textarea>
     <div class="sol__acciones">
-      <button type="button" class="btn btn--ambar btn--chico" data-accion="confirmar-rechazo">Confirmar rechazo</button>
+      <button type="button" class="btn btn--ambar btn--chico" data-accion="confirmar-rechazo">${esc(confirmar)}</button>
       <button type="button" class="btn btn--linea btn--chico" data-accion="cancelar-rechazo">Cancelar</button>
     </div>`;
   fila.appendChild(caja);
   caja.querySelector('textarea').focus();
 
-  caja.addEventListener('click', (ev) => {
+  caja.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('button');
     if (!btn) return;
     if (btn.dataset.accion === 'cancelar-rechazo') return caja.remove();
+    if (btn.disabled) return;
 
     const motivo = caja.querySelector('textarea').value.trim();
-    if (!motivo) return avisar('Escriba el motivo del rechazo.');
-    alConfirmar(motivo);
+    if (motivo.length < minimo) return avisarCon(falta);
+    btn.disabled = true;
+    try { await alConfirmar(motivo); } finally { btn.disabled = false; }
   });
 }
 
@@ -506,16 +523,16 @@ function pagoHTML(p) {
     <p class="sol__meta">${esc(p.concepto || 'Membresía')} · <b class="num">${esc(importePago(p.total))}</b></p>
     ${p.correoCliente ? `<p class="sol__meta">Comprador: ${esc(p.correoCliente)}</p>` : ''}
     ${huerfana ? `<p class="sol__meta sol__meta--aviso">La membresía que ampliaba este pago ya no existe: anúlelo y devuelva la transferencia.</p>` : ''}
-    ${p.estado === 'aprobado' ? `<p class="sol__meta">Recibido${p.confirmado ? ` el ${fechaHora(p.confirmado)}` : ''} · ${f && f.ncf
-      ? `comprobante <span class="num">${esc(f.ncf)}</span>`
+    ${p.estado === 'aprobado' ? `<p class="sol__meta">Recibido${p.confirmado ? ` el ${fechaHora(p.confirmado)}` : ''} · ${f
+      ? `${f.ncf ? 'comprobante' : 'recibo'} <span class="num">${esc(f.ncf || f.numero)}</span>`
       : 'sin comprobante emitido: vuelva a marcarlo como recibido para emitirlo'}</p>` : ''}
-    ${p.estado === 'rechazado' ? `<p class="sol__meta">Anulado${p.actualizado ? ` el ${fechaHora(p.actualizado)}` : ''}. No se otorgó nada ni se emitió comprobante.</p>` : ''}
+    ${p.estado === 'rechazado' ? `<p class="sol__meta">Anulado${p.actualizado ? ` el ${fechaHora(p.actualizado)}` : ''} · no se otorgó nada ni se emitió comprobante</p>` : ''}
     ${p.estado === 'pendiente' ? `
     <div class="sol__acciones">
       ${huerfana ? '' : '<button type="button" class="btn btn--ambar btn--chico" data-pago-accion="recibido">Marcar recibido</button>'}
       <button type="button" class="btn btn--linea btn--chico" data-pago-accion="anular">Anular</button>
     </div>` : ''}
-    ${p.estado === 'aprobado' && !(f && f.ncf) ? `
+    ${p.estado === 'aprobado' && !f ? `
     <div class="sol__acciones">
       <button type="button" class="btn btn--ambar btn--chico" data-pago-accion="recibido">Emitir el comprobante</button>
     </div>` : ''}
@@ -541,6 +558,98 @@ async function cargarPagos() {
     : n === 0 ? 'Ninguna en espera' : `${n} en espera`;
 }
 
+/* Lo que cambia al resolver un pago: la propia lista, la bitácora (la
+   acción tiene que verse ya, sin recargar la página) y los comprobantes
+   emitidos, si esa sección está montada, porque acaba de entrar uno. */
+async function refrescarTrasPago() {
+  await cargarPagos();
+  cargarBitacora();
+  if ($('#listaFacturasAdmin')) cargarFacturasAdmin();
+}
+
+/* Un 409 significa que la fila ya no es lo que el personal tiene en
+   pantalla (otra persona la resolvió, o la membresía desapareció entre
+   medias): se recarga para que vea el estado real. El mensaje del
+   servidor se deja tal cual, porque dice qué hacer. */
+async function falloPago(e, porDefecto) {
+  if (e && e.codigo === 409) await cargarPagos();
+  avisarPagos((e && e.message) || porDefecto);
+}
+
+async function marcarRecibido(id, motivo) {
+  try {
+    const datos = await api(`/admin/pagos/${encodeURIComponent(id)}/recibido`, {
+      metodo: 'POST', cuerpo: motivo ? { motivo } : {},
+    });
+    if (!datos) throw new Error('No hay conexión con el servidor.');
+
+    // Recargar antes de avisar, como en la bandeja: así el aviso no se
+    // pinta sobre una lista que todavía enseña el pago como pendiente.
+    await refrescarTrasPago();
+    /* Sin secuencia B02, a un cliente sin RNC le toca un recibo no
+       fiscal: sale con su número y sin NCF. No es un fallo, pero hay
+       que decir lo que se emitió de verdad. */
+    const c = datos.comprobante;
+    if (datos.aviso) return avisarPagos(datos.aviso);
+    let texto = 'Recibido. Se otorgaron los cupos.';
+    if (c && c.ncf) texto = `Recibido. Se otorgaron los cupos y se emitió el comprobante ${c.ncf}.`;
+    else if (c && c.numero) texto = `Recibido. Se otorgaron los cupos y se emitió el recibo ${c.numero} (sin NCF).`;
+    avisarPagos(texto, true);
+  } catch (e) {
+    await falloPago(e, 'No se pudo marcar el pago como recibido.');
+  }
+}
+
+async function anularPago(id, motivo) {
+  try {
+    const datos = await api(`/admin/pagos/${encodeURIComponent(id)}/anular`, {
+      metodo: 'POST', cuerpo: { motivo },
+    });
+    if (!datos) throw new Error('No hay conexión con el servidor.');
+    await refrescarTrasPago();
+    avisarPagos('Anulado. No se otorgó nada ni se emitió comprobante.', true);
+  } catch (e) {
+    await falloPago(e, 'No se pudo anular el pago.');
+  }
+}
+
+/* La confirmación se abre en la propia fila, como el motivo de rechazo
+   de la cola, y repite el importe y la referencia: son las dos cifras
+   que hay que cotejar contra el extracto antes de pulsar. La referencia
+   del banco es opcional y viaja como `motivo`, que es lo que la
+   bitácora guarda junto a la acción. */
+function pedirRecibido(fila) {
+  if (fila.querySelector('.sol__motivo')) return;
+
+  const caja = document.createElement('div');
+  caja.className = 'sol__motivo';
+  caja.innerHTML = `
+    <p class="sol__meta">Confirmar que recibió <b class="num">${esc(importePago(fila.dataset.total))}</b>
+      con la referencia <b class="num">${esc(fila.dataset.referencia)}</b>.</p>
+    <label class="campo-v"><span>Referencia del banco (opcional)</span>
+      <input type="text" maxlength="300" autocomplete="off"></label>
+    <div class="sol__acciones">
+      <button type="button" class="btn btn--ambar btn--chico" data-recibido="confirmar">Confirmar recibido</button>
+      <button type="button" class="btn btn--linea btn--chico" data-recibido="cancelar">Cancelar</button>
+    </div>`;
+  fila.appendChild(caja);
+  caja.querySelector('input').focus();
+
+  caja.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button[data-recibido]');
+    if (!btn) return;
+    if (btn.dataset.recibido === 'cancelar') return caja.remove();
+    if (btn.disabled) return;
+
+    btn.disabled = true;
+    try {
+      await marcarRecibido(fila.dataset.id, caja.querySelector('input').value.trim());
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 function montarPagos() {
   if (!$('#listaPagos')) return;
 
@@ -551,6 +660,35 @@ function montarPagos() {
     elegirFiltro(boton);
     avisarPagos('');
     cargarPagos();
+  });
+
+  $('#listaPagos').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-pago-accion]');
+    if (!boton) return;
+    const fila = boton.closest('.sol');
+    if (!fila) return;
+    const accion = boton.dataset.pagoAccion;
+
+    // Las dos cajas comparten sitio en la fila: pulsar la otra acción
+    // cambia de caja en vez de quedarse sin respuesta.
+    const abierta = fila.querySelector('.sol__motivo');
+    if (abierta && abierta.dataset.pago !== accion) abierta.remove();
+
+    if (accion === 'recibido') {
+      pedirRecibido(fila);
+    } else if (accion === 'anular') {
+      pedirMotivo(fila, (motivo) => anularPago(fila.dataset.id, motivo), {
+        placeholder: 'Por qué se anula. Se le envía al cliente tal cual.',
+        etiqueta: 'Motivo de la anulación',
+        confirmar: 'Confirmar anulación',
+        falta: 'Escriba por qué se anula, con al menos cinco caracteres.',
+        minimo: 5,
+        maximo: 300,
+        avisarCon: avisarPagos,
+      });
+    }
+    const caja = fila.querySelector('.sol__motivo');
+    if (caja) caja.dataset.pago = accion;
   });
 
   cargarPagos();
@@ -1399,6 +1537,12 @@ const CLAVES_BITACORA = {
   verificada: 'Sello',
   solicitud: 'Solicitud',
   estado_revision: 'Revisión de alta',
+  // Las transferencias (fase 5) anotan estas.
+  estado: 'Estado',
+  referencia: 'Referencia',
+  total: 'Importe',
+  yaEstaba: 'Ya estaba recibido',
+  idSusc: 'Membresía',
 };
 
 function valorBitacora(v) {
