@@ -217,8 +217,17 @@ function sembrar() {
       // deja 'pendiente', que es lo correcto en el sitio real, pero una
       // demostración con el directorio vacío no enseña nada: aquí se
       // simula que ya pasaron la revisión.
+      //
+      // Y nacen con la página PUBLICADA. Aprobar ya no basta desde que
+      // `dealerPorSlug` exige además `estado_pagina = 'publicada'`: la
+      // página se compra con el plan y solo se ve cuando su dueño pulsa
+      // publicar. El dealer sembrado se quedaba en 'borrador' —el valor
+      // por defecto— y su perfil respondía 404, así que `auditar-publico`
+      // reportaba un hallazgo en cada ejecución por un dealer que la
+      // propia demostración anunciaba en el directorio.
       d.prepare(`UPDATE organizaciones
-                 SET web = ?, descripcion = ?, verificada = ?, estado_revision = 'aprobada'
+                 SET web = ?, descripcion = ?, verificada = ?, estado_revision = 'aprobada',
+                     estado_pagina = 'publicada', publicada_en = COALESCE(publicada_en, creada)
                  WHERE id = ?`)
         .run(a.web || null, a.descripcion || null, a.verificada ? 1 : 0, org.id);
       (a.sucursales || []).forEach((s) => db.crearSucursal(org.id, s));

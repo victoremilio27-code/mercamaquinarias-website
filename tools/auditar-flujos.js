@@ -312,4 +312,15 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
 
   console.log(`\n══════ ${fallos.length} hallazgo(s) en flujos autenticados ══════`);
   fallos.forEach((f) => console.log(`  [${f.tipo}] ${f.donde}: ${f.detalle}`));
+
+  /* Salir con 1 cuando hay hallazgos. Ver la nota de `auditar-publico.js`:
+     las dos salían 0 pasara lo que pasara, lo que las volvía decorativas
+     dentro de la barrera del CI.
+
+     Ojo al ejecutarla a mano: esta auditoría crea su propio administrador
+     escribiendo DIRECTO en la base, así que el servidor y ella tienen que
+     apuntar a la MISMA. Si se lanza el servidor con `MERCA_DB=...` y la
+     auditoría sin esa variable, cada uno mira una base distinta y salen
+     dos hallazgos fantasma sobre la cola de revisión. */
+  process.exit(fallos.length ? 1 : 0);
 })();

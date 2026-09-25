@@ -185,4 +185,16 @@ async function vigilar(p, pagina) {
     lista.slice(0, 12).forEach((f) => console.log(`  ${f.pagina}: ${f.detalle}`));
     if (lista.length > 12) console.log(`  … y ${lista.length - 12} más`);
   });
+
+  /* Salir con 1 cuando hay hallazgos.
+     Hasta ahora esta auditoría imprimía lo que encontraba y salía 0
+     SIEMPRE, igual que `auditar-flujos`. Mientras se leía a mano daba
+     igual —el número está en pantalla—, pero al colgarla de la barrera
+     de pruebas del CI convertía la comprobación en un adorno: un Pull
+     Request con hallazgos se habría fusionado en verde, y justo en las
+     dos auditorías más caras de ejecutar.
+     Aviso: `npm run auditar` encadena con `&&`, así que el primero que
+     falle corta la cadena y no se verán los siguientes. Es deliberado
+     —fallar pronto— pero conviene saberlo al leer el registro. */
+  process.exit(fallos.length ? 1 : 0);
 })();
