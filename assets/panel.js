@@ -372,6 +372,18 @@ function selectorPlan(a) {
   </label>`;
 }
 
+/* En el país o bajo pedido, cambiado sin republicar: la máquina que se
+   vendía bajo pedido llega un día al país y el anuncio no debe perder
+   sus visitas por eso. El botón dice lo que hará, no lo que hay. */
+function botonDisponibilidad(a) {
+  const nombre = esc(`${a.anio} ${a.marca} ${a.modelo}`);
+  return a.disponibilidad === 'bajo-pedido'
+    ? `<button type="button" class="btn-tabla btn-tabla--avisa" data-disponibilidad="en-pais"
+         aria-label="Marcar que ${nombre} ya está en el país">Ya llegó al país</button>`
+    : `<button type="button" class="btn-tabla" data-disponibilidad="bajo-pedido"
+         aria-label="Marcar ${nombre} como bajo pedido">Es bajo pedido</button>`;
+}
+
 /* Fase 7 (CONF-01): lo que publicar.html le promete al vendedor sobre
    su número de serie, aquí a la vista. Antes esa diligencia no existía
    y el campo era decorativo; ahora sí se revisa, y el vendedor tiene
@@ -397,7 +409,7 @@ function filaAnuncio(a) {
         : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
       <span>
         <a class="celda-equipo__nombre" href="equipo.html?id=${encodeURIComponent(a.id)}">${esc(`${a.anio} ${a.marca} ${a.modelo}`)}</a>
-        <span class="celda-equipo__meta num">${esc(precio)}${a.provincia ? ` · ${esc(a.provincia)}` : ''}</span>
+        <span class="celda-equipo__meta num">${esc(precio)}${a.provincia ? ` · ${esc(a.provincia)}` : ''}${a.disponibilidad === 'bajo-pedido' ? ' · Bajo pedido' : ''}</span>
         ${estadoSerieHTML(a)}
       </span>
     </th>
@@ -420,6 +432,7 @@ function filaAnuncio(a) {
              ${a.motor_marca ? 'Motor' : 'Falta el motor'}
            </button>`
         : ''}
+      ${a.estado !== 'vendido' ? botonDisponibilidad(a) : ''}
       <button type="button" class="btn-tabla btn-tabla--borrar" data-borrar="${esc(a.id)}"
         aria-label="Eliminar ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}">Eliminar</button>
     </td>
@@ -1079,6 +1092,31 @@ async function montarPanel() {
     pintarFiltros();
     pintarMetricas(datos.resumen || {});
     await refrescarCupos();
+  });
+
+  // En el país o bajo pedido. Se refleja en memoria y se repinta la
+  // tabla: el botón pasa a ofrecer lo contrario.
+  $('#filasAnuncios').addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-disponibilidad]');
+    if (!btn) return;
+    const idAnuncio = btn.closest('tr').dataset.id;
+
+    btn.disabled = true;
+    try {
+      const r = await api(`/anuncios/${encodeURIComponent(idAnuncio)}/disponibilidad`, {
+        metodo: 'PATCH', cuerpo: { disponibilidad: btn.dataset.disponibilidad },
+      });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      const anuncio = ANUNCIOS.find((a) => a.id === idAnuncio);
+      if (anuncio) anuncio.disponibilidad = r.anuncio.disponibilidad;
+      pintarTabla();
+      avisoPlan(r.anuncio.disponibilidad === 'bajo-pedido'
+        ? 'Marcado como bajo pedido. La ficha ya lo dice.'
+        : 'Marcado como en el país. La ficha ya lo dice.', false);
+    } catch (e) {
+      btn.disabled = false;
+      avisoPlan(`No se pudo cambiar: ${e.message}`);
+    }
   });
 
   $('#btnSalir').addEventListener('click', async () => {

@@ -286,6 +286,11 @@ main { padding-block: 16px 40px; }
 
 .campo { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 10px; }
 .campo > label { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); }
+/* Rótulo de un grupo de casillas (no es un <label> de un solo control)
+   y ayuda bajo el control: los dos respetan las columnas de la rejilla,
+   o la ayuda caería en la columna estrecha del rótulo. */
+.campo > .campo__rotulo { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); align-self: start; }
+.campo > .campo-v__ayuda { grid-column: 2; margin-top: -4px; }
 
 .rango { display: flex; align-items: center; gap: 7px; }
 .rango span { font-size: 12px; color: var(--gris-acero); flex: none; }
@@ -753,6 +758,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.01em;
 }
 .aviso__ofertas { font-size: 11px; color: var(--verde); font-weight: 600; }
+/* «Bajo pedido» en la tarjeta (fase 8). El tinte ámbar al 16 % sobre el
+   fondo gris de la tarjeta dejaba la letra a 4.45:1 en claro; al 10 %,
+   como la pastilla verde, pasa de 4.5 y en oscuro el contraste sube. */
+.aviso__pie .pastilla--ambar { background: rgba(242, 169, 0, .1); }
 
 .aviso__vendedor {
   display: flex; align-items: center; gap: 4px;
@@ -2303,6 +2312,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   margin-top: 4px; font-size: 12.5px; color: var(--gris-acero);
 }
 .detalle__sitio .ico { width: 14px; height: 14px; }
+
+/* En el país o bajo pedido, justo bajo la ubicación: es lo primero que
+   pregunta el comprador y cambia plazo y costo. */
+.detalle__disponibilidad { margin-top: 5px; font-size: 12.5px; line-height: 1.5; color: var(--azul); }
+.detalle__disponibilidad b { font-weight: 700; }
 
 /* Condiciones comerciales: permuta, ofertas, financiamiento. */
 .detalle__condiciones { display: grid; gap: 5px; margin: 9px 0 4px; }

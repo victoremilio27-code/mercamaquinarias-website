@@ -131,6 +131,9 @@ function estadoInicial() {
       categoria: '', subcategoria: '', marca: '', modelo: '', anio: '',
       condicion: '', uso: '', unidad: 'h', serie: '', potencia: '', peso: '',
       provincia: '', ciudad: '', implementos: '', descripcion: '',
+      // En el país o bajo pedido. Un borrador guardado antes de que
+      // existiera el campo lo recibe de estadoInicial al fusionarse.
+      disponibilidad: 'en-pais',
     },
     fotos: [],
     videos: [],
@@ -1426,6 +1429,7 @@ function anuncioParaApi() {
     descripcion: e.descripcion,
     provincia: e.provincia,
     municipio: e.ciudad,
+    disponibilidad: e.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
 
     precio: Number(soloDigitos(estado.precio.monto)) || null,
     moneda: estado.precio.moneda,
@@ -1578,6 +1582,7 @@ function pintarVistaPrevia() {
       <span class="aviso__specs num">${esc(uso)}${e.provincia ? ` · ${esc(e.provincia)}` : ''}</span>
       <span class="aviso__precio num">${esc(textoPrecioPreview())}</span>
       ${estado.precio.modalidad === 'ofertas' ? '<span class="pastilla pastilla--ambar">Acepta ofertas</span>' : ''}
+      ${e.disponibilidad === 'bajo-pedido' ? '<span class="pastilla pastilla--ambar">Bajo pedido</span>' : ''}
     </div>
     ${e.subcategoria ? `<p class="vista-previa__nota">${esc(nombreCategoria(e.categoria))} · ${esc(e.subcategoria)}</p>` : ''}`;
 }
@@ -1676,6 +1681,7 @@ function leerPaso(id) {
       peso: $('#e-peso').value.trim(),
       provincia: $('#e-provincia').value,
       ciudad: $('#e-ciudad').value.trim(),
+      disponibilidad: $('#e-disponibilidad').value,
       implementos: $('#e-implementos').value.trim(),
       descripcion: $('#e-descripcion').value.trim(),
     });
@@ -1713,6 +1719,7 @@ function volcarEstadoAlFormulario() {
   $('#e-potencia').value = e.potencia;
   $('#e-peso').value = e.peso;
   $('#e-ciudad').value = e.ciudad;
+  $('#e-disponibilidad').value = e.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais';
   $('#e-implementos').value = e.implementos;
   $('#e-descripcion').value = e.descripcion;
   // marca, provincia y condición se llenan por script: se asignan

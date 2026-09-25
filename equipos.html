@@ -132,10 +132,30 @@
             <span>hasta</span>
             <select name="precioMax" aria-label="Precio hasta"><option value="">Hasta</option><option value="3000000">3,000,000</option><option value="6000000">6,000,000</option><option value="12000000">12,000,000</option><option value="25000000">25,000,000</option></select>
           </div>
+          <!-- Con qué cambio se comparan los anuncios en dólares. La
+               cifra la manda el catálogo junto con los resultados. -->
+          <small class="campo-v__ayuda" id="notaTasa" hidden></small>
         </div>
         <div class="campo">
           <label for="f-lugar">Provincia</label>
           <select id="f-lugar" name="provincia" data-provincias><option value="">Todas las provincias</option></select>
+        </div>
+        <!-- Si la máquina ya está aquí o hay que importarla. -->
+        <div class="campo">
+          <label for="f-disp">Dónde está</label>
+          <select id="f-disp" name="disponibilidad">
+            <option value="">En el país o bajo pedido</option>
+            <option value="en-pais">Ya en el país</option>
+            <option value="bajo-pedido">Bajo pedido</option>
+          </select>
+        </div>
+        <!-- Permuta e ITBIS incluido: antes solo se leían en la ficha. -->
+        <div class="campo" role="group" aria-labelledby="f-venta">
+          <span class="campo__rotulo" id="f-venta">Venta</span>
+          <div class="casillas">
+            <label class="casilla"><input type="checkbox" name="permuta" value="1"><span>Acepta permuta</span></label>
+            <label class="casilla"><input type="checkbox" name="itbis" value="1"><span>Precio con ITBIS incluido</span></label>
+          </div>
         </div>
 
         <div class="form__pie">
