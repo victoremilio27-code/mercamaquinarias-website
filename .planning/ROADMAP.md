@@ -166,10 +166,10 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   4. El personal abre la página de un dealer, la edita en su nombre, y el dealer ve el cambio en su propia pantalla con su estado borrador/publicada respetado.
   5. Cada una de esas escrituras aparece en la bitácora con quién la hizo, cuándo y sobre qué organización.
 **Plans**: 6 plans
-- [ ] 07-01-PLAN.md — Directorio de empresas y sello con motivo al retirarlo (ADMIN-02)
-- [ ] 07-02-PLAN.md — Revisión del número de serie por la bitácora y la serie deja de ser pública (ADMIN-03, CONF-01)
-- [ ] 07-03-PLAN.md — API para editar la página de un dealer en su nombre, sin publicar ni despublicar (ADMIN-04)
-- [ ] 07-04-PLAN.md — Consola: secciones «Empresas» y «Números de serie»
+- [x] 07-01-PLAN.md — Directorio de empresas y sello con motivo al retirarlo (ADMIN-02)
+- [x] 07-02-PLAN.md — Revisión del número de serie por la bitácora y la serie deja de ser pública (ADMIN-03, CONF-01)
+- [x] 07-03-PLAN.md — API para editar la página de un dealer en su nombre, sin publicar ni despublicar (ADMIN-04)
+- [x] 07-04-PLAN.md — Consola: secciones «Empresas» y «Números de serie»
 - [ ] 07-05-PLAN.md — Editor de página en modo soporte y aviso al dealer
 - [ ] 07-06-PLAN.md — Texto de publicar, estado de la serie en el panel y en la ficha (CONF-01)
 **UI hint**: yes
@@ -307,7 +307,7 @@ entrega valor sin esperar a la siguiente.
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
 | 5. Cobro por transferencia bancaria | 0/TBD | Not started | - |
 | 6. CardNet construido y apagado | 0/TBD | Not started | - |
-| 7. Verificación y soporte al dealer | 0/TBD | Not started | - |
+| 7. Verificación y soporte al dealer | 4/6 | In Progress|  |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |
 | 9. Contactos verificados y estafas | 0/TBD | Not started | - |
 | 10. Alcance y métricas del vendedor | 0/TBD | Not started | - |
