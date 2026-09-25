@@ -151,7 +151,7 @@ huérfanos y sin duplicados.
 | UI-01 | Phase 2 — Tema claro y oscuro coherentes | Pendiente | Encargo de Victor; plan medido y aprobado (`majestic-dancing-firefly.md`) |
 | UI-02 | Phase 2 — Tema claro y oscuro coherentes | Pendiente | Medición del contraste en `styles.css` |
 | UI-03 | Phase 2 — Tema claro y oscuro coherentes | Pendiente | `tools/check-contraste.js` del plan aprobado |
-| CI-01 | Phase 1 — Barrera de pruebas en la fusión | Pendiente | `codebase/CONCERNS.md` y la segunda persona en el repositorio |
+| CI-01 | Phase 1 — Barrera de pruebas en la fusión | En curso — 01-01 hecho 2026-09-25 | El despliegue ya lleva `needs: [pruebas, navegador]` y no puede correr en rojo; falta el `01-02` (protección de rama) para que tampoco se pueda **fusionar** en rojo |
 | CI-02 | Phase 1 — Barrera de pruebas en la fusión | Hecho 2026-09-25 | Reglas que no se pueden olvidar; se verifica en la Fase 1 |
 
 ### v2 — Después del lanzamiento
