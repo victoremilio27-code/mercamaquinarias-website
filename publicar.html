@@ -145,8 +145,14 @@
               </div>
             </div>
 
+            <!-- Fase 7 (CONF-01): la promesa anterior («solo visible para el equipo de
+                 verificación») no tenía diligencia detrás y, encima, la serie salía por la
+                 API a cualquier visitante (cerrado en 07-02). Ahora dice lo que de verdad se
+                 hace: se coteja con la placa de las fotos y contra los demás anuncios, no se
+                 publica, y no se consulta ningún registro de robo. -->
             <label class="campo-v"><span>Número de serie o VIN</span>
-              <input type="text" id="e-serie" placeholder="Opcional, solo visible para el equipo de verificación" autocomplete="off">
+              <input type="text" id="e-serie" placeholder="Opcional. No se publica: solo lo ve el personal de MercaMaquinarias" autocomplete="off">
+              <small class="campo-v__ayuda">Si lo indica, lo cotejamos con la placa que se vea en sus fotos y con los demás anuncios. Si cuadra, la ficha dirá «Serie cotejada». No consultamos registros de robo.</small>
             </label>
             <label class="campo-v"><span>Potencia</span>
               <input type="text" id="e-potencia" placeholder="Ej. 148 hp">
