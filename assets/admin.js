@@ -199,6 +199,8 @@ async function alternarVerificada(fila) {
       metodo: 'POST', cuerpo: { verificada: dar },
     });
     cargar();
+    // Quien acaba de dar el sello lo ve anotado en el momento.
+    cargarBitacora();
   } catch (e) {
     avisar(e.message || 'No se pudo cambiar el sello.');
   }
@@ -216,6 +218,7 @@ async function resolver(id, decision, motivo) {
     // Recargar primero: `cargar` limpia el aviso al empezar, y hacerlo
     // al revés borraba la confirmación en cuanto se pintaba.
     await cargar();
+    cargarBitacora();
     avisar(decision === 'aprobar'
       ? `${datos.solicitud.razon_social} quedó aprobada. Le avisamos por correo.`
       : `${datos.solicitud.razon_social} quedó rechazada. Le enviamos el motivo por correo.`, true);
@@ -918,6 +921,7 @@ async function montarAdmin() {
 
   await cargar();
   montarBandeja();
+  montarBitacora();
   montarFlota();
   montarPub();
   montarHeroe();
@@ -1275,6 +1279,80 @@ async function montarLegales() {
     });
     cargarLegales();
   });
+}
+
+/* ── Bitácora de administración ─────────────────────────────
+   Toda escritura hecha en nombre de otra organización (sello, alta de
+   dealer y lo que traigan las fases 5 y 7). Solo se lee: la API no
+   tiene otra ruta que el GET y la base aborta cualquier UPDATE o DELETE.
+
+   A diferencia de las aceptaciones legales, aquí la IP es del personal,
+   y es justo lo que delata un acceso robado. */
+
+let BITACORA_ORG = null;
+
+/* Rótulos de las claves de `antes`/`despues`. Una clave que no esté
+   aquí sale con su propio nombre: una acción nueva se ve sin tocar la
+   consola. */
+const CLAVES_BITACORA = {
+  verificada: 'Sello',
+  solicitud: 'Solicitud',
+  estado_revision: 'Revisión de alta',
+};
+
+function valorBitacora(v) {
+  if (v === true) return 'sí';
+  if (v === false) return 'no';
+  if (v == null || v === '') return '—';
+  return typeof v === 'object' ? JSON.stringify(v) : String(v);
+}
+
+function cambioBitacora(antes, despues) {
+  const a = antes || {};
+  return Object.keys(despues || {}).map((k) =>
+    `<span class="tabla-legales__sub">${esc(CLAVES_BITACORA[k] || k)}: ${esc(valorBitacora(a[k]))} → ${esc(valorBitacora(despues[k]))}</span>`)
+    .join('');
+}
+
+function pintarBitacora(datos) {
+  const lista = datos.entradas || [];
+
+  // El selector conserva la organización elegida al repintar.
+  const sel = $('#bitacoraOrg');
+  sel.innerHTML = `<option value="">Todas</option>${(datos.organizaciones || []).map((o) =>
+    `<option value="${esc(o.id)}"${o.id === BITACORA_ORG ? ' selected' : ''}>${esc(o.nombre)} · ${Number(o.entradas) || 0}</option>`).join('')}`;
+
+  $('#bitacoraVacia').hidden = lista.length > 0;
+  $('#listaBitacora').innerHTML = lista.map((f) => {
+    const cuando = new Date(f.creada);
+    return `<tr>
+      <td class="num">${cuando.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}
+        <span class="tabla-legales__hora">${cuando.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span></td>
+      <td>${esc(f.admin_nombre || '')}<span class="tabla-legales__sub">${esc(f.admin_correo)}</span></td>
+      <td>${esc(f.organizacion_nombre)}</td>
+      <td>${esc(f.rotulo || f.accion)}</td>
+      <td>${cambioBitacora(f.antes, f.despues)}</td>
+      <td>${esc(f.motivo || '—')}<span class="tabla-legales__sub num">${esc(f.ip || '—')}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+async function cargarBitacora() {
+  if (!$('#listaBitacora')) return null;
+  const datos = await api(`/admin/bitacora${BITACORA_ORG ? `?organizacion=${encodeURIComponent(BITACORA_ORG)}` : ''}`,
+    { silencioso: true });
+  if (!datos) return null;
+  pintarBitacora(datos);
+  return datos;
+}
+
+function montarBitacora() {
+  if (!$('#listaBitacora')) return;
+  $('#bitacoraOrg').addEventListener('change', (ev) => {
+    BITACORA_ORG = ev.target.value || null;
+    cargarBitacora();
+  });
+  cargarBitacora();
 }
 
 document.addEventListener('DOMContentLoaded', montarAdmin);

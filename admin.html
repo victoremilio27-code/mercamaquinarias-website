@@ -220,6 +220,35 @@
       <p class="revision__vacio" id="legalesVacio" hidden>Todavía nadie ha aceptado nada.</p>
     </section>
 
+    <!-- Bitácora de administración. Decisión de Victor del 2026-09-25:
+         toda escritura hecha en nombre de otra organización queda
+         registrada, para contestar un reclamo de un cliente empresa con
+         prueba y para que un robo de la cuenta de administrador deje
+         rastro. Solo se lee: no hay ningún control para editar ni borrar,
+         y la base tampoco lo permitiría. -->
+    <section class="panel" aria-labelledby="t-bitacora">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-bitacora"><em>Bitácora</em> de administración</h2>
+        <p class="panel__meta">Toda escritura hecha en nombre de otra organización. No se edita ni se borra.</p>
+      </div>
+
+      <div class="revision__filtros">
+        <label class="campo-v campo-v--chico"><span>Organización</span>
+          <select id="bitacoraOrg"><option value="">Todas</option></select>
+        </label>
+      </div>
+
+      <div class="tabla-envoltura">
+        <table class="tabla-legales">
+          <thead>
+            <tr><th>Cuándo</th><th>Quién</th><th>Organización</th><th>Acción</th><th>Cambio</th><th>Motivo / IP</th></tr>
+          </thead>
+          <tbody id="listaBitacora"></tbody>
+        </table>
+      </div>
+      <p class="revision__vacio" id="bitacoraVacia" hidden>Todavía no hay ninguna escritura en nombre de otra organización.</p>
+    </section>
+
     <!-- Flota propia: los equipos que alquila MercaMaquinarias y las camas
          con las que transporta. Antes vivían escritos en el código. -->
     <section class="panel" aria-labelledby="t-flota">
