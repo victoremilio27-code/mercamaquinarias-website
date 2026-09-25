@@ -1825,6 +1825,8 @@ function marcarAdmin(correo, esAdmin = true) {
 const ACCIONES_BITACORA = Object.freeze({
   'organizacion.verificar': 'Sello de verificada',
   'dealer.resolver': 'Alta de dealer aprobada o rechazada',
+  'pago.transferencia_recibida': 'Transferencia marcada como recibida',
+  'pago.transferencia_anulada': 'Transferencia anulada sin cobro',
 });
 
 const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { codigo });
@@ -2470,19 +2472,26 @@ function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
    dos veces y el intento de aprobar un pago ya rechazado.
 
    No emite comprobante: eso lo hace `tools/pagos.js`, que es quien
-   conoce `facturas` y quien la llama. Las rutas no la llaman directo. */
+   conoce `facturas` y quien la llama. Las rutas no la llaman directo.
+
+   Va con SAVEPOINT y no con BEGIN porque tiene que poder ir dentro de
+   `enNombreDe` (que ya abrió el suyo): marcar una transferencia como
+   recibida desde la consola deja cupos y anotación en la misma
+   transacción, y con BEGIN fallaba siempre, porque un BEGIN anidado
+   lanza en SQLite. Suelta, fuera de transacción, un SAVEPOINT se
+   comporta como un BEGIN. Mismo criterio que `resolverSolicitud`. */
 function aprobarPago(idPago) {
   const d = abrir();
   const t = ahora();
   let membresia = null;
 
-  d.prepare('BEGIN').run();
+  d.prepare('SAVEPOINT aprobar_pago').run();
   try {
     const pago = pagoPorId(idPago);
     if (!pago) throw Object.assign(new Error('Ese pago no existe'), { codigo: 404 });
 
     if (pago.estado !== 'pendiente') {
-      d.prepare('COMMIT').run();
+      d.prepare('RELEASE aprobar_pago').run();
       return {
         pago,
         membresia: pago.suscripcion_id ? suscripcion(pago.suscripcion_id, pago.organizacion_id) : null,
@@ -2521,13 +2530,77 @@ function aprobarPago(idPago) {
     if (r.changes !== 1) throw Object.assign(new Error(`El pago ${idPago} cambió mientras se aprobaba`), { codigo: 409 });
 
     membresia = suscripcion(idSusc, pago.organizacion_id);
-    d.prepare('COMMIT').run();
+    d.prepare('RELEASE aprobar_pago').run();
   } catch (e) {
-    d.prepare('ROLLBACK').run();
+    d.prepare('ROLLBACK TO aprobar_pago').run();
+    d.prepare('RELEASE aprobar_pago').run();
     throw e;
   }
 
   return { pago: pagoPorId(idPago), membresia, yaEstaba: false };
+}
+
+/* ── Pagos pendientes: lo que ve el comprador y lo que ve la consola ── */
+
+/* Lo que se compró, sacado de la intención guardada. Una intención rota
+   o de antes de la fase 3 no rompe el listado: sale como «Membresía»,
+   igual que INTENCION_VACIA en pagos.js. */
+function intencionDe(pago) {
+  let i = null;
+  try { i = JSON.parse(pago.intencion); } catch (_) { /* se trata abajo */ }
+  return i && typeof i === 'object' ? i : { concepto: 'Membresía' };
+}
+
+/* Los pagos que una organización tiene por confirmar, lo más reciente
+   primero. Va al navegador del propio cliente, así que sin la intención
+   entera: sus datos fiscales no le hacen falta para ver qué debe. */
+function pagosPendientesDe(idOrg) {
+  return abrir().prepare(`SELECT id, referencia, total, subtotal, itbis, creado, procesador, intencion
+                           FROM pagos WHERE organizacion_id = ? AND estado = 'pendiente'
+                           ORDER BY creado DESC, rowid DESC`).all(idOrg)
+    .map(({ intencion, ...p }) => {
+      const i = intencionDe({ intencion });
+      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null };
+    });
+}
+
+const ESTADOS_CONSOLA = ['pendiente', 'aprobado', 'rechazado'];
+
+/* Las transferencias para la consola. Solo `procesador = 'transferencia'`:
+   un cobro de pasarela lo resuelve la pasarela o su reconciliación,
+   nunca una persona.
+
+   `membresiaViva`: una ampliación cuya membresía ya venció no se puede
+   confirmar (no hay a qué sumarle los cupos), y la consola tiene que
+   decirlo ANTES de que alguien pulse, para que la anule y devuelva el
+   dinero en el banco. Una compra crea su membresía al confirmarse, así
+   que para ella siempre es true. */
+function pagosParaConsola({ estado = 'pendiente', limite = 200 } = {}) {
+  const e = ESTADOS_CONSOLA.includes(estado) ? estado : 'pendiente';
+  const tope = Math.min(Math.max(parseInt(limite, 10) || 200, 1), 500);
+  return abrir().prepare(`SELECT p.id, p.organizacion_id, o.nombre AS organizacion, p.referencia,
+                                 p.subtotal, p.itbis, p.total, p.estado, p.procesador, p.creado,
+                                 p.confirmado, p.actualizado, p.intencion
+                            FROM pagos p JOIN organizaciones o ON o.id = p.organizacion_id
+                           WHERE p.procesador = 'transferencia' AND p.estado = ?
+                           ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(e, tope)
+    .map(({ intencion, ...p }) => {
+      const i = intencionDe({ intencion });
+      const idSusc = i.tipo === 'ampliacion' ? (i.idSusc || null) : null;
+      const fila = {
+        ...p,
+        concepto: i.concepto || 'Membresía',
+        tipo: i.tipo || null,
+        idSusc,
+        correoCliente: i.correoCliente || null,
+        membresiaViva: i.tipo === 'ampliacion' ? !!(idSusc && suscripcion(idSusc, p.organizacion_id)) : true,
+      };
+      if (p.estado === 'aprobado') {
+        const f = facturaDePago(p.id);
+        fila.factura = f ? { numero: f.numero, ncf: f.ncf } : null;
+      }
+      return fila;
+    });
 }
 
 /* Solo un pendiente se rechaza. Un aprobado no: si el dinero entró, lo
@@ -3691,7 +3764,7 @@ module.exports = {
   sucursalesDe, sucursal, crearSucursal, actualizarSucursal, desactivarSucursal, marcarPrincipal,
   planes, planPorId, suscripcionActiva, suscripcionesDe, suscripcion,
   suscripcionConHueco, comprarCupos, ampliarCupos, membresiaInterna,
-  registrarCobro, aprobarPago, rechazarPago,
+  registrarCobro, aprobarPago, rechazarPago, pagosPendientesDe, pagosParaConsola,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,

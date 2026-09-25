@@ -117,9 +117,20 @@ function emitir(pago, intencion, membresia) {
  * pago ya tiene factura no se emite otra ni se reenvía el correo. Y
  * sirve de recuperación: un pago aprobado cuya emisión falló se
  * completa confirmándolo otra vez, que es lo que hará la
- * reconciliación. */
-function confirmarPago(idPago) {
-  const { pago, membresia, yaEstaba } = db.aprobarPago(idPago);
+ * reconciliación.
+ *
+ * `envolver` deja que la consola corra la parte de base dentro de
+ * `db.enNombreDe`: recibe la función que aprueba y devuelve lo que ella
+ * devuelva. NO es un segundo camino de aprobación: es la misma
+ * transición, con la anotación de quién la hizo en la misma
+ * transacción que los cupos. Si la anotación falla, los cupos no quedan.
+ *
+ * La emisión queda FUERA del envoltorio a propósito. Un NCF consumido o
+ * un PDF escrito dentro de un SAVEPOINT que luego se deshace sería un
+ * documento fiscal de algo que no ocurrió, y ese no se borra. Solo se
+ * emite cuando la aprobación ya quedó escrita. */
+function confirmarPago(idPago, { envolver } = {}) {
+  const { pago, membresia, yaEstaba } = (envolver || ((f) => f()))(() => db.aprobarPago(idPago));
 
   // Rechazado o devuelto: no hay nada que otorgar ni que emitir.
   if (pago.estado !== 'aprobado') {
