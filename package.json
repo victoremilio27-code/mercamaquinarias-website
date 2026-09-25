@@ -29,6 +29,7 @@
     "facturas:probar": "node tools/probar-facturas.js",
     "pagos:probar": "node tools/probar-pagos.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
+    "cardnet:probar": "node tools/probar-cardnet.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
