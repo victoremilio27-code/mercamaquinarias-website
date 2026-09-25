@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Plan 02-04 terminado: cero hallazgos de tipo control (eran 271) y el ambar separado en sus dos papeles. El comprobador baja de 621 a 317; lo que queda es de 02-05."
-last_updated: "2026-09-25T19:06:49.193Z"
+stopped_at: "Plan 02-06 terminado: check-contraste en 0 y npm run auditar en verde. Falta la verificación humana de la fase 2 y abrir su PR."
+last_updated: "2026-09-25T19:26:07.903Z"
 last_activity: "2026-09-25 — Plan 01-01 ejecutado. El flujo `Verificar y desplegar` corre en cada Pull Request y el despliegue lleva `needs: [pruebas, navegador]`. Comprobado en la pasada real del PR #23: `pruebas` verde en 15 s, `navegador` verde en 1 m 49 s, `desplegar` omitido."
 progress:
   total_phases: 16
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 21
-  completed_plans: 6
-  percent: 0
+  completed_plans: 7
+  percent: 6
 ---
 
 # Project State
@@ -78,6 +78,7 @@ Decisiones que afectan al trabajo actual:
 - **Ejecución 01-01: el sandbox de Chrome se habilita en el runner con `sysctl`,** no metiendo `--no-sandbox` en las herramientas de `tools/`. Esas herramientas también se corren en la máquina de casa, donde el sandbox tiene que seguir puesto.
 - **Ejecución 01-01: la sintaxis de un flujo solo la valida GitHub.** No hay analizador de YAML en la máquina y no se puede añadir uno. Una revisión estructural hecha a mano dio «sin fallos» sobre un archivo que GitHub rechazó: para dar por bueno un cambio en `.github/workflows/` hay que empujar y mirar la pasada.
 - **Ejecución 02-03: el comprobador de contraste nace en rojo a propósito.** Sale 1 sobre el CSS de hoy y lista los mismos números que midió el diagnóstico. Uno que sale verde sobre un código que sabemos roto no comprueba nada, así que ése es su criterio de aceptación; lo dejan en verde los planes 02-04 y 02-05.
+- [Phase 02]: .aviso__fotos entra en EXCEPCIONES de check-contraste (va sobre la foto, 9.01:1 a 18.91:1); .foto__sello sale por razón falsa
 
 ### Pending Todos
 
@@ -103,6 +104,6 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 
 ## Session Continuity
 
-Last session: 2026-09-25T19:06:49.186Z
+Last session: 2026-09-25T19:26:02.456Z
 Stopped at: Plan 02-04 terminado: cero hallazgos de tipo control (eran 271) y el ambar separado en sus dos papeles. El comprobador baja de 621 a 317; lo que queda es de 02-05.
 Resume file: None

@@ -34,7 +34,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **v1 — Lanzamiento (2026-10-14, fecha firme)**
 
 - [ ] **Phase 1: Barrera de pruebas en la fusión** - Ninguna fusión a `main` llega a producción sin que pasen las pruebas que ya existen
-- [ ] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper
+- [x] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper (completed 2026-09-25)
 - [ ] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma
 - [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
 - [ ] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet
@@ -85,7 +85,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 02-03-PLAN.md — tools/check-contraste.js y su enganche a la cadena npm run auditar
 - [x] 02-04-PLAN.md — El borde de control a 3:1 y el ambar separado en texto y superficie
 - [x] 02-05-PLAN.md — Los colores literales convertidos y la cabecera del dealer fijada oscura
-- [ ] 02-06-PLAN.md — Cierre: residuos, bateria en verde, verificacion humana y Pull Request
+- [x] 02-06-PLAN.md — Cierre: residuos, bateria en verde, verificacion humana y Pull Request
 **UI hint**: yes
 **Notas**: Hay un plan aprobado y medido en `C:\Users\Victor\.claude\plans\majestic-dancing-firefly.md` — se ejecuta, no se vuelve a planificar. Incluye el comprobador `tools/check-contraste.js` colgado de `npm run auditar`. Va antes que las pantallas nuevas de las fases 4-10 a propósito: así el comprobador las vigila desde el primer día en vez de tener que retocarlas después. `styles.css` es LF aunque el repositorio sea CRLF.
 
@@ -296,7 +296,7 @@ entrega valor sin esperar a la siguiente.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Barrera de pruebas en la fusión | 1/3 | In Progress | - |
-| 2. Tema claro y oscuro coherentes | 5/6 | In Progress|  |
+| 2. Tema claro y oscuro coherentes | 6/6 | Complete   | 2026-09-25 |
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
 | 5. Cobro por transferencia bancaria | 0/TBD | Not started | - |

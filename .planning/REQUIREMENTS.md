@@ -148,9 +148,9 @@ huérfanos y sin duplicados.
 | MET-02 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`; metadatos ya en `tools/meta.js` |
 | MET-03 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`, huecos priorizados |
 | MET-04 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`, huecos priorizados |
-| UI-01 | Phase 2 — Tema claro y oscuro coherentes | En curso — 02-04 hecho 2026-09-25 | El ámbar ya no se queda congelado: sus 64 usos de texto pasaron a `--ambar-texto`, que sí se redefine en los dos bloques. Quedan los 216 hallazgos de `dinamismo`, que son literales y los convierte el `02-05` |
+| UI-01 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-05` y `02-06`: los literales congelados pasan a sus tokens y la única pieza fija deliberada que quedaba, la cuenta de fotos sobre la imagen, entra en las excepciones con su razón. `check-contraste` en 0 en las 17 rutas y los dos temas |
 | UI-02 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-04`: los dieciséis controles de D-01 más seis que el inventario no tenía usan `--app-borde-control`. El comprobador pasa de 271 hallazgos de tipo `control` a **cero**, en las 17 rutas y en los dos temas |
-| UI-03 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `tools/check-contraste.js` recorre 17 rutas en los dos temas, mide texto, controles y dinamismo, y sale 1 con hallazgos; colgado del final de `npm run auditar`. Hoy sale 1 a proposito: mide el CSS que arreglan 02-04 y 02-05 |
+| UI-03 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `tools/check-contraste.js` recorre 17 rutas en los dos temas, mide texto, controles y dinamismo, y sale 1 con hallazgos; colgado del final de `npm run auditar`. Desde el `02-06` sale 0 y `npm run auditar` pasa entero con él dentro |
 | CI-01 | Phase 1 — Barrera de pruebas en la fusión | En curso — 01-01 hecho 2026-09-25 | El despliegue ya lleva `needs: [pruebas, navegador]` y no puede correr en rojo; falta el `01-02` (protección de rama) para que tampoco se pueda **fusionar** en rojo |
 | CI-02 | Phase 1 — Barrera de pruebas en la fusión | Hecho 2026-09-25 | Reglas que no se pueden olvidar; se verifica en la Fase 1 |
 
