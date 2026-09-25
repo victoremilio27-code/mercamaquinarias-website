@@ -249,6 +249,167 @@ db.cargarSecuencia({
     ok(siguienteB02() === antesB02, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 0)`);
   }
 
+  /* ── 05-01, tarea 2: la transición dentro de la bitácora ──── */
+
+  const { idUsuario: idAdmin } = db.crearCuenta({
+    correo: 'admin-transferencia@ejemplo.test', clave: 'UnaClaveLargaYSegura9',
+    nombre: 'Administradora de Prueba', telefono: '8095550000', tipo: 'particular',
+  });
+  db.marcarAdmin('admin-transferencia@ejemplo.test', true);
+
+  /* Lo que hará la ruta de la consola en 05-02: la misma transición de
+     la fase 3, envuelta en la anotación. `falla` simula un error
+     DESPUÉS de haber otorgado los cupos, que es el caso que importa:
+     si la anotación no se puede escribir, los cupos no pueden quedar. */
+  const enBitacora = (pago, { falla = false } = {}) => (aprobar) => db.enNombreDe({
+    idAdmin, idOrganizacion: pago.organizacion_id, accion: 'pago.transferencia_recibida',
+    objetoTipo: 'pago', objetoId: pago.id, motivo: 'REF-BANCO-PRUEBA', ip: '127.0.0.1',
+  }, () => {
+    const antes = { estado: db.pagoPorId(pago.id).estado };
+    const r = aprobar();
+    if (falla) throw new Error('fallo simulado después de aprobar');
+    return { antes, despues: { estado: r.pago.estado, yaEstaba: r.yaEstaba }, resultado: r };
+  });
+
+  console.log('\n7. Confirmar una transferencia dentro de la bitácora: cupos, anotación y comprobante, una vez');
+  const pRecibida = pendiente('RECIBIDA', { cupo: 2 });
+  let r1 = null;
+  {
+    const antesB02 = siguienteB02();
+    const antesMemb = membresiasDe(ID_ORG);
+    const antesFilas = filasBitacora('pago.transferencia_recibida');
+    const e = lanza(() => { r1 = pagos.confirmarPago(pRecibida.id, { envolver: enBitacora(pRecibida) }); });
+    ok(!e && !!r1, e ? `lanzó: ${e.message}` : 'confirmarPago devolvió resultado');
+    ok(db.pagoPorId(pRecibida.id).estado === 'aprobado', `pago ${db.pagoPorId(pRecibida.id).estado}`);
+    ok(!!r1 && !!r1.membresia && r1.membresia.anuncios_incluidos === 2,
+      `membresía con ${r1 && r1.membresia && r1.membresia.anuncios_incluidos} cupo(s)`);
+    ok(membresiasDe(ID_ORG) === antesMemb + 1, `membresías: ${membresiasDe(ID_ORG)} (se esperaban ${antesMemb + 1})`);
+    ok(filasBitacora('pago.transferencia_recibida') === antesFilas + 1, 'una fila de bitácora con la acción');
+    ok(!!r1 && !!r1.comprobante && !!r1.comprobante.ncf, `comprobante ${r1 && r1.comprobante && r1.comprobante.ncf}`);
+    ok(facturasDelPago(pRecibida.id) === 1, `facturas del pago: ${facturasDelPago(pRecibida.id)}`);
+    ok(siguienteB02() === antesB02 + 1, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 1)`);
+    const fila = consulta("SELECT * FROM bitacora_admin WHERE accion = 'pago.transferencia_recibida' ORDER BY id DESC LIMIT 1");
+    ok(!!fila && fila.objeto_id === pRecibida.id && fila.motivo === 'REF-BANCO-PRUEBA' && fila.admin_id === idAdmin,
+      'la fila dice qué pago, qué referencia de banco y quién');
+  }
+
+  console.log('\n8. Pulsar otra vez: misma factura, B02 quieto, pero otra fila (alguien pulsó)');
+  {
+    const antesB02 = siguienteB02();
+    const antesFilas = filasBitacora('pago.transferencia_recibida');
+    let r2 = null;
+    const e = lanza(() => { r2 = pagos.confirmarPago(pRecibida.id, { envolver: enBitacora(pRecibida) }); });
+    ok(!e && !!r2 && r2.yaEstaba === true, e ? `lanzó: ${e.message}` : `yaEstaba=${r2 && r2.yaEstaba}`);
+    ok(!!r1 && !!r2 && !!r2.comprobante && r2.comprobante.id === r1.comprobante.id, 'la misma factura');
+    ok(siguienteB02() === antesB02, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 0)`);
+    ok(facturasDelPago(pRecibida.id) === 1, `facturas del pago: ${facturasDelPago(pRecibida.id)}`);
+    ok(filasBitacora('pago.transferencia_recibida') === antesFilas + 1, 'una segunda fila de bitácora');
+    const fila = consulta("SELECT despues FROM bitacora_admin WHERE accion = 'pago.transferencia_recibida' ORDER BY id DESC LIMIT 1");
+    let despues = null;
+    try { despues = JSON.parse(fila.despues); } catch (_) { /* se informa abajo */ }
+    ok(!!despues && despues.yaEstaba === true, `despues=${fila && fila.despues}`);
+  }
+
+  console.log('\n9. Si falla después de aprobar, no queda nada: ni cupos, ni fila, ni factura, ni NCF');
+  {
+    const p = pendiente('FALLA');
+    const antesB02 = siguienteB02();
+    const antesMemb = membresiasDe(ID_ORG);
+    const antesFilas = filasBitacora('pago.transferencia_recibida');
+    const e = lanza(() => pagos.confirmarPago(p.id, { envolver: enBitacora(p, { falla: true }) }));
+    ok(!!e && /fallo simulado/.test(e.message), e ? `lanzó: ${e.message}` : 'NO lanzó');
+    ok(db.pagoPorId(p.id).estado === 'pendiente', `pago ${db.pagoPorId(p.id).estado} (se esperaba pendiente)`);
+    ok(db.pagoPorId(p.id).suscripcion_id === null, 'el pago no quedó enlazado a ninguna membresía');
+    ok(membresiasDe(ID_ORG) === antesMemb, `membresías: ${membresiasDe(ID_ORG)} (se esperaban ${antesMemb})`);
+    ok(filasBitacora('pago.transferencia_recibida') === antesFilas, 'sin fila de bitácora');
+    ok(facturasDelPago(p.id) === 0, `facturas del pago: ${facturasDelPago(p.id)}`);
+    ok(siguienteB02() === antesB02, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 0)`);
+    // Y la base no quedó con una transacción abierta: se puede seguir.
+    let r = null;
+    const e2 = lanza(() => { r = pagos.confirmarPago(p.id, { envolver: enBitacora(p) }); });
+    ok(!e2 && !!r && r.pago.estado === 'aprobado', e2 ? `el reintento lanzó: ${e2.message}` : 'el reintento aprueba');
+  }
+
+  console.log('\n10. confirmarPago sin opciones sigue como en la fase 3');
+  {
+    const p = pendiente('SUELTA');
+    const antesFilas = consulta('SELECT COUNT(*) AS n FROM bitacora_admin').n;
+    let r = null;
+    const e = lanza(() => { r = pagos.confirmarPago(p.id); });
+    ok(!e && !!r && r.pago.estado === 'aprobado' && !!r.membresia && !!r.comprobante,
+      e ? `lanzó: ${e.message}` : `estado=${r && r.pago.estado}`);
+    ok(consulta('SELECT COUNT(*) AS n FROM bitacora_admin').n === antesFilas, 'sin fila de bitácora');
+    const e404 = lanza(() => pagos.confirmarPago('no-existe'));
+    ok(!!e404 && e404.codigo === 404, `pago inexistente: ${e404 ? e404.codigo : 'no lanzó'}`);
+  }
+
+  console.log('\n11. Las acciones de la fase 5 están en el catálogo cerrado');
+  ok(db.ACCIONES_BITACORA['pago.transferencia_recibida'] === 'Transferencia marcada como recibida',
+    'pago.transferencia_recibida');
+  ok(db.ACCIONES_BITACORA['pago.transferencia_anulada'] === 'Transferencia anulada sin cobro',
+    'pago.transferencia_anulada');
+
+  console.log('\n12. pagosPendientesDe: solo los pendientes de esa organización');
+  const pOtra = pendiente('OTRA', { idOrg: ID_ORG_OTRA });
+  {
+    const lista = db.pagosPendientesDe(ID_ORG);
+    ok(Array.isArray(lista) && lista.length > 0 && lista.every((x) => x.id !== pOtra.id),
+      `no trae pagos de otra organización (${lista.length} pendientes)`);
+    ok(lista.every((x) => db.pagoPorId(x.id).estado === 'pendiente'), 'todos pendientes');
+    ok(!lista.some((x) => x.id === pRecibida.id), 'el aprobado no sale');
+    const f = lista[0];
+    ok(!!f && ['id', 'referencia', 'total', 'subtotal', 'itbis', 'creado', 'procesador', 'concepto', 'tipo']
+      .every((k) => k in f), `campos: ${f && Object.keys(f).join(', ')}`);
+    ok(!!f && !('cliente' in f) && !('intencion' in f), 'sin los datos del cliente ni la intención entera');
+    ok(lista.every((x, i) => i === 0 || lista[i - 1].creado >= x.creado), 'más recientes primero');
+    const deOtra = db.pagosPendientesDe(ID_ORG_OTRA);
+    ok(deOtra.length === 1 && deOtra[0].id === pOtra.id && deOtra[0].tipo === 'compra', 'la otra ve solo el suyo');
+    // Una intención rota no rompe la lista.
+    const roto = pendiente('ROTO', { idOrg: ID_ORG_OTRA });
+    ejecuta("UPDATE pagos SET intencion = '{roto' WHERE id = ?", roto.id);
+    const conRoto = db.pagosPendientesDe(ID_ORG_OTRA).find((x) => x.id === roto.id);
+    ok(!!conRoto && conRoto.concepto === 'Membresía', `intención rota → concepto ${conRoto && conRoto.concepto}`);
+  }
+
+  console.log('\n13. pagosParaConsola: solo transferencias, con empresa, concepto y membresía viva');
+  {
+    const pDemo = pendiente('DEMO', { procesador: 'demo' });
+    const lista = db.pagosParaConsola({ estado: 'pendiente' });
+    ok(lista.length > 0 && lista.every((x) => x.procesador === 'transferencia'), 'solo procesador transferencia');
+    ok(!lista.some((x) => x.id === pDemo.id), 'un pendiente de demo no sale');
+    const f = lista.find((x) => x.id === pOtra.id);
+    ok(!!f && f.organizacion === 'Otra empresa' && f.concepto.startsWith('Destacado') && f.tipo === 'compra'
+      && f.correoCliente === CLIENTE.correo && 'idSusc' in f && f.membresiaViva === true,
+    `fila=${JSON.stringify(f)}`);
+    const aprobados = db.pagosParaConsola({ estado: 'aprobado' });
+    const a = aprobados.find((x) => x.id === pRecibida.id);
+    ok(!!a && !!a.factura && a.factura.ncf === r1.comprobante.ncf && !!a.factura.numero,
+      `aprobado con su factura: ${a && JSON.stringify(a.factura)}`);
+    const raro = db.pagosParaConsola({ estado: 'DROP TABLE' });
+    ok(raro.every((x) => db.pagoPorId(x.id).estado === 'pendiente'), 'un estado desconocido se trata como pendiente');
+  }
+
+  console.log('\n14. Una ampliación cuya membresía ya no está viva: membresiaViva false');
+  {
+    const base = db.comprarCupos({
+      idOrg: ID_ORG, idPlan: 'destacado', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('BASE') },
+    });
+    const pAmplia = db.registrarCobro({
+      idOrg: ID_ORG, idSusc: base.id, cobro: cobroDe(2000, 'AMPLIA'),
+      intencion: {
+        tipo: 'ampliacion', idSusc: base.id, cupoAnterior: 1, cupoNuevo: 2, anadidos: 1,
+        concepto: 'Ampliación de Destacado · 1 cupo(s) más · hasta 2', cliente: CLIENTE, correoCliente: CLIENTE.correo,
+      },
+    });
+    const viva = db.pagosParaConsola({ estado: 'pendiente' }).find((x) => x.id === pAmplia.id);
+    ok(!!viva && viva.tipo === 'ampliacion' && viva.idSusc === base.id && viva.membresiaViva === true,
+      `con la membresía activa: ${viva && viva.membresiaViva}`);
+    ejecuta("UPDATE suscripciones SET estado = 'vencida' WHERE id = ?", base.id);
+    const muerta = db.pagosParaConsola({ estado: 'pendiente' }).find((x) => x.id === pAmplia.id);
+    ok(!!muerta && muerta.membresiaViva === false, `vencida: membresiaViva=${muerta && muerta.membresiaViva}`);
+  }
+
   apagar();
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);
