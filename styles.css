@@ -2304,6 +2304,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .detalle__sitio .ico { width: 14px; height: 14px; }
 
+/* En el país o bajo pedido, justo bajo la ubicación: es lo primero que
+   pregunta el comprador y cambia plazo y costo. */
+.detalle__disponibilidad { margin-top: 5px; font-size: 12.5px; line-height: 1.5; color: var(--azul); }
+.detalle__disponibilidad b { font-weight: 700; }
+
 /* Condiciones comerciales: permuta, ofertas, financiamiento. */
 .detalle__condiciones { display: grid; gap: 5px; margin: 9px 0 4px; }
 .detalle__condiciones li {

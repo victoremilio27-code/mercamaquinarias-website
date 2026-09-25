@@ -208,6 +208,7 @@ function avisoHTML(e) {
     <span class="aviso__pie">
       <span class="aviso__precio num">${precioTexto(e)}</span>
       ${e.ofertas ? '<span class="aviso__ofertas">Acepta ofertas</span>' : ''}
+      ${e.disponibilidad === 'bajo-pedido' ? '<span class="pastilla pastilla--ambar">Bajo pedido</span>' : ''}
     </span>
     ${e.dealer && e.esEmpresa
       ? `<span class="aviso__vendedor">${esc(e.dealer)}${e.verificado ? ` ${icono('i-check', 'ico ico--sello')}` : ''}</span>`
@@ -918,11 +919,22 @@ function fichaTecnicaHTML(e) {
     ['Potencia', e.potencia, 'num'],
     ['Peso operativo', e.peso, 'num'],
     ['Ubicación', [e.municipio, e.provincia].filter(Boolean).join(', ')],
+    ['Disponibilidad', e.disponibilidad === 'bajo-pedido' ? 'Bajo pedido' : 'En el país'],
   ];
   return `<dl class="ficha-tecnica">
     ${filas.filter(([, valor]) => valor).map(([rotulo, valor, clase, crudo]) =>
       `<div><dt>${esc(rotulo)}</dt><dd class="${clase || ''}">${crudo ? valor : esc(valor)}</dd></div>`).join('')}
   </dl>`;
+}
+
+/* Si la máquina ya está en el país o hay que traerla. Bajo pedido cambia
+   el plazo y, según lo pactado, el costo: se avisa de preguntar las dos
+   cosas en vez de dejar que el comprador lo descubra al cerrar. Los
+   textos son fijos, no salen del anuncio. */
+function disponibilidadHTML(e) {
+  return e.disponibilidad === 'bajo-pedido'
+    ? `<p class="detalle__disponibilidad"><b>Bajo pedido:</b> se importa tras la venta. Confirme con el vendedor el plazo de entrega y si el precio incluye flete y aduana.</p>`
+    : '<p class="detalle__disponibilidad"><b>En el país:</b> el equipo ya está en República Dominicana.</p>';
 }
 
 /* Condiciones comerciales que el anunciante marcó al publicar. Son las
@@ -986,6 +998,7 @@ async function montarDetalle() {
         <p class="detalle__cat">${esc(nombreCategoria(e.categoria))}${e.subcategoria ? ` · ${esc(e.subcategoria_nombre || e.subcategoria)}` : ''}</p>
         <h1 class="detalle__titulo">${esc(nombreEquipo(e))}</h1>
         <p class="detalle__sitio">${icono('i-pin')} ${esc([e.municipio, e.provincia].filter(Boolean).join(', ') || 'República Dominicana')}</p>
+        ${disponibilidadHTML(e)}
 
         <p class="etiqueta">Precio</p>
         <p class="detalle__precio num">${precioTexto(e)}</p>
@@ -2141,6 +2154,9 @@ function anuncioDeApi(a) {
     verificado: !!a.verificada,
     ofertas: a.modalidad_precio === 'ofertas',
     permuta: !!a.permuta,
+    // Un anuncio sin el campo (una respuesta antigua en caché) está en
+    // el país, que es lo que afirmaba antes de existir.
+    disponibilidad: a.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
     financiamiento: !!a.financiamiento,
     itbisIncluido: !!a.itbis_incluido,
     esEmpresa: a.org_tipo === 'dealer',

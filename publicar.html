@@ -160,6 +160,15 @@
             <label class="campo-v"><span>Municipio o sector</span>
               <input type="text" id="e-ciudad" placeholder="Ej. Villa Mella">
             </label>
+            <!-- Lo primero que pregunta el comprador: si la máquina ya
+                 está aquí o hay que traerla. Se ve en la ficha, marca la
+                 tarjeta del catálogo y se puede filtrar. -->
+            <label class="campo-v"><span>¿Dónde está el equipo? *</span>
+              <select id="e-disponibilidad">
+                <option value="en-pais">Ya está en República Dominicana</option>
+                <option value="bajo-pedido">Bajo pedido: se importa tras la venta</option>
+              </select>
+            </label>
 
             <label class="campo-v campo-v--ancho"><span>Implementos y accesorios incluidos</span>
               <input type="text" id="e-implementos" placeholder="Ej. Cucharón de 1.2 m³, martillo hidráulico, zapatas nuevas">
