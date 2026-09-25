@@ -79,7 +79,13 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. En los dos temas, el borde de todo control interactivo se distingue de la superficie de atrás con al menos 3:1 medidos.
   3. Los enlaces ámbar y los metadatos del panel de administración se leen en modo claro con al menos 4.5:1 medidos.
   4. `npm run auditar` falla si alguien introduce un color literal que incumpla, y ese fallo bloquea la fusión gracias a la Fase 1.
-**Plans**: TBD
+**Plans**: 6 planes en 4 olas
+- [ ] 02-01-PLAN.md — La capa de tokens completa en los dos bloques y sin colores de reserva en linea
+- [ ] 02-02-PLAN.md — La barra del navegador del movil sigue al tema en las 19 paginas
+- [ ] 02-03-PLAN.md — tools/check-contraste.js y su enganche a la cadena npm run auditar
+- [ ] 02-04-PLAN.md — El borde de control a 3:1 y el ambar separado en texto y superficie
+- [ ] 02-05-PLAN.md — Los colores literales convertidos y la cabecera del dealer fijada oscura
+- [ ] 02-06-PLAN.md — Cierre: residuos, bateria en verde, verificacion humana y Pull Request
 **UI hint**: yes
 **Notas**: Hay un plan aprobado y medido en `C:\Users\Victor\.claude\plans\majestic-dancing-firefly.md` — se ejecuta, no se vuelve a planificar. Incluye el comprobador `tools/check-contraste.js` colgado de `npm run auditar`. Va antes que las pantallas nuevas de las fases 4-10 a propósito: así el comprobador las vigila desde el primer día en vez de tener que retocarlas después. `styles.css` es LF aunque el repositorio sea CRLF.
 
