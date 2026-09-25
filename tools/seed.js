@@ -296,6 +296,15 @@ function sembrar() {
     // hereda su fecha de fin: la vigencia es de la membresía.
     const susc = db.suscripcionActiva(org.id);
 
+    const telefonoDemo = sucursal && sucursal.telefono ? sucursal.telefono : '8090000000';
+
+    /* Desde la fase 9 la ficha no enseña teléfonos sin verificar. La
+       demostración es dato de prueba y las auditorías del navegador
+       esperan un «tel:» en la ficha, así que sus números nacen
+       verificados. Solo la semilla hace esto: la API no tiene forma de
+       dar un número por verificado sin código. */
+    db.marcarContactoVerificado(org.id, telefonoDemo, 'correo', null);
+
     db.crearAnuncio({
       idOrg: org.id,
       idSucursal: sucursal && sucursal.id,
@@ -322,7 +331,7 @@ function sembrar() {
       destacadoHasta: e.destacado ? db.sumarDias(30) : null,
       fotos: [0, 1, 2, 3].map((i) => fotoDemo(e.categoria, titulo, i)),
       telefonos: [
-        { numero: sucursal && sucursal.telefono ? sucursal.telefono : '8090000000', tipo: 'ambos', nota: sucursal ? sucursal.nombre : null },
+        { numero: telefonoDemo, tipo: 'ambos', nota: sucursal ? sucursal.nombre : null },
       ],
     });
     creados++;
