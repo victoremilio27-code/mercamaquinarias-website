@@ -178,7 +178,10 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Ordenar por precio coloca esa máquina de US$120.000 por encima de una de RD$500.000.
   3. La ficha dice si el equipo está ya en el país o es bajo pedido, y el catálogo se puede filtrar por eso.
   4. Permuta e ITBIS incluido se pueden usar como filtro, no solo leer como etiqueta.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 08-01-PLAN.md — Comparar y ordenar el precio en pesos con una tasa de referencia configurable, y el arnés del catálogo
+- [ ] 08-02-PLAN.md — Disponibilidad «en el país / bajo pedido»: migración, publicar, ficha, tarjeta y panel
+- [ ] 08-03-PLAN.md — Permuta, ITBIS y disponibilidad como filtros del catálogo, con auditoría del navegador
 **UI hint**: yes
 **Notas**: Es un defecto funcional, no una mejora: hoy `tools/db.js` compara `a.precio` en crudo (líneas ~2414 y ~2460) aunque `MONEDAS` admite DOP y USD. Es lo único de la lista que puede hacer que un dealer diga «su buscador no funciona» el primer día. Las reglas de precio viven en `assets/precios.js`, cargado por el navegador y por Node: cualquier cambio tiene que seguir funcionando en los dos lados y conservar el `module.exports` del final.
 
