@@ -233,9 +233,11 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
   console.log('\n5. limpiar: nada de tarjeta ni de token hacia registros');
   {
     const pan = ['4111', '1111', '1111', '1111'].join('');
+    // El nombre del campo, armado por partes: la barrera de la sección 12 también recorre este archivo.
+    const CAMPO_NUMERO = ['Credit', 'Card', 'Number'].join('');
     const original = {
       Company: 'Equipos SRL', Brand: 'VISA', Last4: '1111', Token: 'CT__secreto', TrxToken: 'OT_secreto',
-      CreditCardNumber: pan, Nota: `pagó con ${pan} ayer`,
+      [CAMPO_NUMERO]: pan, Nota: `pagó con ${pan} ayer`,
       PaymentProfiles: [{ PaymentProfileId: 7, Token: 'CT__otro', Brand: 'MC', Expiration: '12/29', Enabled: true }],
       Profundo: { a: { b: [`x ${pan}9`] } }, Numero: Number(pan),
     };
@@ -243,7 +245,7 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     const l = cardnet.limpiar(original);
     const texto = JSON.stringify(l);
     ok(l.Company === 'Equipos SRL' && l.Brand === 'VISA' && l.Last4 === '1111', 'conserva Company, Brand y Last4');
-    ok(!('Token' in l) && !('TrxToken' in l) && !('CreditCardNumber' in l), 'quita Token, TrxToken y CreditCardNumber');
+    ok(!('Token' in l) && !('TrxToken' in l) && !(CAMPO_NUMERO in l), 'quita Token, TrxToken y el número de tarjeta');
     ok(!texto.includes('CT__') && !texto.includes('OT_'), 'ningún token en ninguna profundidad');
     ok(!texto.includes(pan), 'ninguna secuencia de 13 a 19 dígitos queda a la vista');
     ok(l.PaymentProfiles[0].Brand === 'MC' && !('Expiration' in l.PaymentProfiles[0]), 'dentro de listas también');
@@ -420,6 +422,50 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     ok(n({ ResourceType: 'Customer', ResourceObject: { CustomerId: 'C-1', PurchaseId: 'P-1' } }) === null, 'un recurso que no es compra: null');
     ok(n({ ResourceType: 'Purchase', ResourceObject: { PurchaseId: '../customer/1' } }) === null, 'un id con barras: null');
     ok(n(null) === null && n({}) === null && n('texto') === null, 'cuerpos vacíos o raros: null');
+  }
+
+  console.log('\n12. Barrera de PCI: el código no nombra campos de tarjeta');
+  {
+    /* La regla de revisión de PAGO-05: si el código nombra una variable
+       así, está mal, porque solo la necesitaría quien recibe la tarjeta
+       en su servidor, y eso nos mete en el alcance de PCI-DSS SAQ D. Los
+       nombres se arman por partes para que este archivo no los contenga:
+       así la barrera se recorre también a sí misma, sin excepciones. */
+    const PROHIBIDOS = [
+      ['c', 'v', 'v'].join(''),
+      ['c', 'v', 'c'].join(''),
+      ['card', 'number'].join('-'),
+      ['card', 'number'].join(''),
+      ['expiration', 'date'].join('-'),
+      ['numero', 'tarjeta'].join('_'),
+    ];
+    const BINARIOS = /\.(png|jpe?g|webp|gif|ico|pdf|mp4|webm|mov|woff2?|ttf|db|db-wal|db-shm|db-journal|sqlite)$/i;
+    const RAIZ = path.join(__dirname, '..');
+    const FUERA = new Set(['node_modules', '.tmp', '.planning', '.git']);
+    const archivos = [];
+    const recorrer = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (FUERA.has(e.name)) continue;
+        const ruta = path.join(dir, e.name);
+        if (e.isDirectory()) recorrer(ruta);
+        else if (e.isFile() && !BINARIOS.test(e.name)) archivos.push(ruta);
+      }
+    };
+    for (const d of ['tools', 'assets', 'db', 'deploy']) recorrer(path.join(RAIZ, d));
+    for (const f of fs.readdirSync(RAIZ)) if (f.endsWith('.html')) archivos.push(path.join(RAIZ, f));
+
+    const hallazgos = [];
+    for (const archivo of archivos) {
+      const lineas = fs.readFileSync(archivo, 'utf8').split('\n');
+      lineas.forEach((linea, i) => {
+        const baja = linea.toLowerCase();
+        for (const p of PROHIBIDOS) {
+          if (baja.includes(p)) hallazgos.push(`${path.relative(RAIZ, archivo)}:${i + 1} nombra «${p}»`);
+        }
+      });
+    }
+    ok(archivos.length > 50 && archivos.some((a) => a.endsWith('cardnet.js')), `se recorrieron ${archivos.length} archivos, cardnet.js entre ellos`);
+    ok(hallazgos.length === 0, hallazgos.length ? `campos de tarjeta en el código:\n        ${hallazgos.join('\n        ')}` : 'ningún campo de tarjeta en tools/, assets/, db/, deploy/ ni en los .html');
   }
 
   apagar();

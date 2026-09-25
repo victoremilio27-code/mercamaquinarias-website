@@ -88,6 +88,8 @@ jobs:
         run: npm run pagos:probar
       - name: Transferencia
         run: npm run transferencia:probar
+      - name: CardNet
+        run: npm run cardnet:probar
       - name: Asistente
         run: npm run chat:probar
 
