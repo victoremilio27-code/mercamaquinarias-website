@@ -115,17 +115,62 @@ Criterio de corte para v1, en este orden:
 
 ## Traceability
 
-| Requisito | Origen |
-|---|---|
-| PAGO-01 … PAGO-08 | `.planning/research/cardnet.md`, verificado contra `tools/db.js` y `db/schema.sql:549` |
-| PAGO-09, ADMIN-06 | Contingencia propuesta en `cardnet.md` para no depender de la afiliación |
-| ADMIN-01, ADMIN-02 | `.planning/codebase/CONCERNS.md` — rutas sin pantalla |
-| ADMIN-04, ADMIN-05 | Petición de Victor del 2026-09-25 y su decisión sobre el registro |
-| CAT-01 | `.planning/research/mercado.md`, verificado en `tools/db.js` |
-| CONF-01, MET-01 … MET-04, CAT-02 | `.planning/research/mercado.md`, huecos priorizados |
-| UI-01 … UI-03 | Encargo directo de Victor y medición del contraste en `styles.css` |
-| CI-01 | `.planning/codebase/CONCERNS.md` y la confirmación de que hay otra persona subiendo cambios |
-| DEUDA-01 … DEUDA-05 | `.planning/codebase/CONCERNS.md` |
+Cada requisito de v1 está asignado a **exactamente una fase** de `.planning/ROADMAP.md`.
+Cobertura verificada el 2026-09-25: **30 de 30 requisitos de v1** y **13 de 13 de v2**, sin
+huérfanos y sin duplicados.
+
+### v1 — Lanzamiento (2026-10-14)
+
+| Requisito | Fase | Estado | Origen |
+|---|---|---|---|
+| PAGO-01 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, verificado contra `tools/db.js` y `db/schema.sql:549` |
+| PAGO-02 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, verificado contra `tools/db.js` |
+| PAGO-03 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, comportamiento actual que se conserva |
+| PAGO-04 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md` |
+| PAGO-05 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`, implicaciones de PCI-DSS |
+| PAGO-06 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`, unidades del importe |
+| PAGO-07 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`; `facturas.emitirPorPago` ya es idempotente |
+| PAGO-08 | Phase 6 — CardNet construido y apagado | Pendiente | Patrón ya validado con Brevo y Anthropic |
+| PAGO-09 | Phase 5 — Cobro por transferencia bancaria | Pendiente | Contingencia propuesta en `cardnet.md` para no depender de la afiliación |
+| ADMIN-01 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | `codebase/CONCERNS.md` — rutas sin pantalla |
+| ADMIN-02 | Phase 7 — Verificación y soporte al dealer | Pendiente | `codebase/CONCERNS.md` — solo por línea de comandos hoy |
+| ADMIN-03 | Phase 7 — Verificación y soporte al dealer | Pendiente | `research/mercado.md`, huecos priorizados; cumple CONF-01 |
+| ADMIN-04 | Phase 7 — Verificación y soporte al dealer | Pendiente | Petición de Victor del 2026-09-25 |
+| ADMIN-05 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | Decisión de Victor del 2026-09-25 sobre el registro |
+| ADMIN-06 | Phase 5 — Cobro por transferencia bancaria | Pendiente | Contingencia propuesta en `cardnet.md`; soporta PAGO-09 |
+| CAT-01 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, verificado en `tools/db.js` |
+| CAT-02 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, huecos priorizados |
+| CAT-03 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, huecos priorizados |
+| CONF-01 | Phase 7 — Verificación y soporte al dealer | Pendiente | `research/mercado.md`; se cumple vía ADMIN-03 o se retira el texto |
+| CONF-02 | Phase 9 — Contactos verificados y estafas | Pendiente | `research/mercado.md`, huecos priorizados |
+| CONF-03 | Phase 9 — Contactos verificados y estafas | Pendiente | `PROJECT.md` Fase 1; créditos SMS pendientes |
+| MET-01 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`; columna y evento ya en `tools/db.js` |
+| MET-02 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`; metadatos ya en `tools/meta.js` |
+| MET-03 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`, huecos priorizados |
+| MET-04 | Phase 10 — Alcance y métricas del vendedor | Pendiente | `research/mercado.md`, huecos priorizados |
+| UI-01 | Phase 2 — Tema claro y oscuro coherentes | Pendiente | Encargo de Victor; plan medido y aprobado (`majestic-dancing-firefly.md`) |
+| UI-02 | Phase 2 — Tema claro y oscuro coherentes | Pendiente | Medición del contraste en `styles.css` |
+| UI-03 | Phase 2 — Tema claro y oscuro coherentes | Pendiente | `tools/check-contraste.js` del plan aprobado |
+| CI-01 | Phase 1 — Barrera de pruebas en la fusión | Pendiente | `codebase/CONCERNS.md` y la segunda persona en el repositorio |
+| CI-02 | Phase 1 — Barrera de pruebas en la fusión | Hecho 2026-09-25 | Reglas que no se pueden olvidar; se verifica en la Fase 1 |
+
+### v2 — Después del lanzamiento
+
+| Requisito | Fase | Estado | Origen |
+|---|---|---|---|
+| SERV-01 | Phase 11 — Transporte y financiamiento | Pendiente | `assets/mapa.js` escrito y sin cargar; interruptor de `assets/servicios.js` |
+| SERV-02 | Phase 11 — Transporte y financiamiento | Pendiente | `research/mercado.md`, patrón validado en RD |
+| CONTAB-01 | Phase 12 — Lote mensual de comprobantes | Pendiente | Regla de Victor: los acumula y los manda él |
+| DEUDA-01 | Phase 13 — Deuda técnica | Pendiente | `codebase/CONCERNS.md` |
+| DEUDA-02 | Phase 13 — Deuda técnica | Pendiente | `codebase/CONCERNS.md` |
+| DEUDA-03 | Phase 13 — Deuda técnica | Pendiente | `codebase/CONCERNS.md` |
+| DEUDA-04 | Phase 13 — Deuda técnica | Pendiente | `codebase/CONCERNS.md` |
+| DEUDA-05 | Phase 13 — Deuda técnica | Pendiente | `codebase/CONCERNS.md` |
+| FICHA-01 | Phase 14 — Inspección con informe publicado | Pendiente | `research/mercado.md`; hoy un anuncio solo admite fotos y video |
+| FICHA-02 | Phase 14 — Inspección con informe publicado | Pendiente | `research/mercado.md`, modelo IronClad acotado a describir lo observado |
+| FICHA-03 | Phase 15 — Especificaciones e implementos filtrables | Pendiente | `research/mercado.md`; cuelga de la jerarquía de `assets/taxonomia.js` |
+| FICHA-04 | Phase 15 — Especificaciones e implementos filtrables | Pendiente | `research/mercado.md`; hoy es la línea de texto de `publicar.html:164` |
+| ALERT-01 | Phase 16 — Búsquedas guardadas y alertas | Pendiente | `research/mercado.md`; depende de los créditos SMS y del correo |
 
 ---
-*Last updated: 2026-09-25*
+*Last updated: 2026-09-25 — trazabilidad completada con la fase de cada requisito*
