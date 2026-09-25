@@ -112,6 +112,18 @@
       <p class="tabla-vacia" id="tablaVacia" hidden></p>
     </section>
 
+    <!-- Teléfonos de contacto (fase 9). Un número sin verificar no sale
+         en ningún anuncio, así que esta sección va justo debajo de la
+         tabla: es donde el anunciante ve lo que le está costando
+         contactos. Se esconde si la organización no tiene ninguno. -->
+    <section class="panel" id="panelContactos" aria-labelledby="t-contactos" hidden>
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-contactos"><em>Teléfonos</em> de contacto</h2>
+      </div>
+      <p class="panel__texto">Sus anuncios solo muestran teléfonos verificados. Verifique cada número una vez y aparecerá en todos los anuncios que lo lleven.</p>
+      <ul class="contactos-panel" id="listaContactos"></ul>
+    </section>
+
     <!-- Comprobantes del cliente. Se pinta desde JavaScript y se
          esconde si no hay ninguno: una sección vacía que dice «aún no
          tiene facturas» es ruido en el panel de quien nunca ha pagado. -->
@@ -224,6 +236,7 @@
 <script src="assets/data.js"></script>
 <script src="assets/legales.js"></script>
 <script src="assets/app.js"></script>
+<script src="assets/contactos.js"></script>
 <script src="assets/panel.js"></script>
 <script src="assets/chat.js" defer></script>
 </body>
