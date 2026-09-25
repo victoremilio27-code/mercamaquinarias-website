@@ -82,6 +82,8 @@ jobs:
         run: npm run dealer:probar
       - name: Bitacora
         run: npm run bitacora:probar
+      - name: Contactos verificados
+        run: npm run contactos:probar
       - name: Facturas y NCF
         run: npm run facturas:probar
       - name: Pagos
