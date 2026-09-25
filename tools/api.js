@@ -209,9 +209,11 @@ const conAdmin = (manejador) => conSesion((req, res, ctx, ...resto) => {
    La función devuelta lleva `bitacora = accion`: es lo que lee la guarda
    de tools/probar-bitacora.js al recorrer RUTAS, que falla si una ruta de
    escritura de /api/admin/ ni pasa por aquí ni está declarada en
-   ESCRITURAS_ADMIN_PROPIAS. Nota para la fase 7: si la edición asistida
-   de la página del dealer se monta sobre rutas que NO cuelgan de
-   /api/admin/, esa fase tiene que ensanchar la guarda en el mismo cambio. */
+   ESCRITURAS_ADMIN_PROPIAS. La fase 7 montó la edición de la página del
+   dealer, la revisión de la serie y el directorio bajo /api/admin/, así
+   que la guarda las cubre sin ensancharla; una ruta futura en nombre de
+   otro que NO cuelgue de /api/admin/ tiene que ensanchar la guarda en el
+   mismo cambio. */
 function conAdminEnNombreDe(accion, manejador) {
   // Falla al arrancar, no en la primera petición de un administrador.
   if (!Object.prototype.hasOwnProperty.call(db.ACCIONES_BITACORA, accion)) {
@@ -1804,41 +1806,74 @@ const conPagina = (manejador) => conSesion((req, res, ctx, ...resto) => {
   return manejador(req, res, ctx, ...resto);
 });
 
-const verMiPagina = conPagina((req, res, ctx) => {
-  const pagina = db.paginaDe(ctx.organizacion.id);
-  return responder(res, 200, {
+/* ── Núcleo de la página, compartido por el dealer y el personal ──
+ *
+ * Fase 7 (ADMIN-04): el personal edita la página de un dealer en su
+ * nombre. En vez de copiar los manejadores, cada escritura vive aquí UNA
+ * vez —validación incluida— y la llaman dos envoltorios: el del dueño
+ * (conPagina) y el del personal (conAdminEnNombreDe). Así la página que
+ * arregla soporte pasa exactamente por las mismas comprobaciones que la
+ * que arma el dealer, y un arreglo en una no se olvida en la otra.
+ *
+ * Cada núcleo recibe la fila de la organización, lo que mandó el
+ * navegador y, si la ruta lo lleva, el id del bloque o de la foto.
+ * Escribe y devuelve `{ codigo, respuesta, antes, despues }`: `respuesta`
+ * es lo que ve el navegador (idéntica en los dos caminos) y `antes` /
+ * `despues`, lo que anota la bitácora.
+ *
+ * Los errores se LANZAN con `codigo`. Dentro de enNombreDe eso deshace el
+ * SAVEPOINT y no deja fila; fuera, `manejar` los convierte en la misma
+ * respuesta que daba fallo() antes de partir los manejadores. */
+
+const errorPagina = (codigo, mensaje) => Object.assign(new Error(mensaje), { codigo });
+
+function vistaDePagina(org) {
+  const pagina = db.paginaDe(org.id);
+  return {
     pagina,
-    ...reglasDePagina(ctx.organizacion, pagina),
+    ...reglasDePagina(org, pagina),
     /* La dirección donde se verá, para que pueda copiarla y
        comprobarla antes de publicar. */
     direccion: pagina.slug ? `/dealer.html?d=${pagina.slug}` : null,
-  });
-});
+  };
+}
 
-const editarMiPagina = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+/* Campos básicos: la clave que manda el navegador → la columna. Sirve
+   para leer el «antes» de la fila sin otra consulta. */
+const COLUMNAS_PAGINA = {
+  nombre: 'nombre',
+  descripcion: 'descripcion',
+  lema: 'lema',
+  web: 'web',
+  correoPublico: 'correo_publico',
+  telefonoPublico: 'telefono_publico',
+  logo: 'logo',
+  banner: 'banner',
+};
+
+function nucleoEditarPagina(org, c) {
   const datos = {};
 
   if (c.nombre !== undefined) {
     const n = texto(c.nombre, 160);
-    if (!n) return fallo(res, 400, 'El nombre de la empresa no puede quedar vacío');
+    if (!n) throw errorPagina(400, 'El nombre de la empresa no puede quedar vacío');
     datos.nombre = n;
   }
   if (c.descripcion !== undefined) datos.descripcion = texto(c.descripcion, 2000) || '';
   if (c.lema !== undefined) datos.lema = texto(c.lema, 120) || '';
   if (c.web !== undefined) {
     const w = texto(c.web, 200) || '';
-    if (w && !/^https?:\/\//i.test(w)) return fallo(res, 400, 'La web debe empezar por http:// o https://');
+    if (w && !/^https?:\/\//i.test(w)) throw errorPagina(400, 'La web debe empezar por http:// o https://');
     datos.web = w;
   }
   if (c.correoPublico !== undefined) {
     const correoPub = texto(c.correoPublico, 160) || '';
-    if (correoPub && !correoValido(correoPub)) return fallo(res, 400, 'Escriba un correo válido');
+    if (correoPub && !correoValido(correoPub)) throw errorPagina(400, 'Escriba un correo válido');
     datos.correoPublico = correoPub;
   }
   if (c.telefonoPublico !== undefined) {
     const tel = texto(c.telefonoPublico, 20) || '';
-    if (tel && !telefonoValido(tel)) return fallo(res, 400, 'El teléfono debe tener 10 dígitos');
+    if (tel && !telefonoValido(tel)) throw errorPagina(400, 'El teléfono debe tener 10 dígitos');
     datos.telefonoPublico = tel;
   }
 
@@ -1850,38 +1885,23 @@ const editarMiPagina = conPagina(async (req, res, ctx) => {
     if (c[clave] === undefined) continue;
     const ruta = String(c[clave] || '');
     if (ruta && !esRutaDeFoto(ruta)) {
-      return fallo(res, 400, `${rotulo} tiene que ser una imagen subida al sitio`);
+      throw errorPagina(400, `${rotulo} tiene que ser una imagen subida al sitio`);
     }
     datos[clave] = ruta;
   }
 
-  const pagina = db.guardarPagina(ctx.organizacion.id, datos);
-  return responder(res, 200, { pagina, ...reglasDePagina(ctx.organizacion, pagina) });
-});
-
-const publicarMiPagina = conPagina((req, res, ctx) => {
-  const pagina = db.paginaDe(ctx.organizacion.id);
-  const estado = reglasDePagina(ctx.organizacion, pagina);
-
-  /* Se comprueba aquí y no solo en pantalla: la lista de la pantalla
-     es para que el dealer sepa qué le falta, no la que decide. */
-  if (!estado.puedePublicar) {
-    const pendientes = estado.reglas.filter((r) => !r.cumple);
-    return fallo(res, 400, `Falta ${pendientes.length === 1 ? 'una cosa' : `${pendientes.length} cosas`} por resolver`,
-      { pendientes: pendientes.map((r) => ({ id: r.id, titulo: r.titulo, falta: r.falta })) });
-  }
-
-  db.publicarPagina(ctx.organizacion.id);
-  return responder(res, 200, {
-    pagina: db.paginaDe(ctx.organizacion.id),
-    direccion: `/dealer.html?d=${pagina.slug}`,
+  const antes = {};
+  const despues = {};
+  Object.keys(datos).forEach((clave) => {
+    const previo = org[COLUMNAS_PAGINA[clave]];
+    antes[clave] = previo == null ? null : previo;
+    // Cadena vacía es «quitar»; en la bitácora se lee mejor como nada.
+    despues[clave] = datos[clave] === '' ? null : datos[clave];
   });
-});
 
-const despublicarMiPagina = conPagina((req, res, ctx) => {
-  db.despublicarPagina(ctx.organizacion.id);
-  return responder(res, 200, { pagina: db.paginaDe(ctx.organizacion.id) });
-});
+  const pagina = db.guardarPagina(org.id, datos);
+  return { respuesta: { pagina, ...reglasDePagina(org, pagina) }, antes, despues };
+}
 
 /* ── Secciones de la página ─────────────────────────────── */
 
@@ -1909,78 +1929,100 @@ function cuerpoDeSeccion(tipo, crudo) {
   return {};
 }
 
-const crearMiSeccion = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoCrearSeccion(org, c) {
   const tipo = String(c.tipo || '');
-  if (!TIPOS_SECCION.includes(tipo)) return fallo(res, 400, 'Ese tipo de bloque no existe');
+  if (!TIPOS_SECCION.includes(tipo)) throw errorPagina(400, 'Ese tipo de bloque no existe');
 
   /* Un tope, porque una página con cincuenta bloques no es una página.
      Con siete tipos disponibles, veinte da margen de sobra para
      repetir los de texto y destacados varias veces. */
-  if (db.seccionesDe(ctx.organizacion.id).length >= 20) {
-    return fallo(res, 400, 'Su página ya tiene veinte bloques');
+  if (db.seccionesDe(org.id).length >= 20) {
+    throw errorPagina(400, 'Su página ya tiene veinte bloques');
   }
 
-  const idSeccion = db.crearSeccion(ctx.organizacion.id, {
-    tipo,
-    titulo: texto(c.titulo, 120),
-    cuerpo: cuerpoDeSeccion(tipo, c.cuerpo),
-  });
-  return responder(res, 201, { id: idSeccion, secciones: db.seccionesDe(ctx.organizacion.id) });
-});
+  const titulo = texto(c.titulo, 120);
+  const idSeccion = db.crearSeccion(org.id, { tipo, titulo, cuerpo: cuerpoDeSeccion(tipo, c.cuerpo) });
+  return {
+    codigo: 201,
+    respuesta: { id: idSeccion, secciones: db.seccionesDe(org.id) },
+    antes: null,
+    despues: { bloque: tipo, titulo },
+  };
+}
 
-const editarMiSeccion = conPagina(async (req, res, ctx, idSeccion) => {
-  const c = await leerCuerpo(req);
-  const actual = db.seccionesDe(ctx.organizacion.id).find((s) => s.id === idSeccion);
-  if (!actual) return fallo(res, 404, 'Ese bloque no existe');
+function seccionDe(org, idSeccion) {
+  const actual = db.seccionesDe(org.id).find((s) => s.id === idSeccion);
+  if (!actual) throw errorPagina(404, 'Ese bloque no existe');
+  return actual;
+}
+
+function nucleoEditarSeccion(org, c, idSeccion) {
+  const actual = seccionDe(org, idSeccion);
 
   const cambios = {};
   if (c.titulo !== undefined) cambios.titulo = texto(c.titulo, 120);
   if (c.visible !== undefined) cambios.visible = !!c.visible;
   if (c.cuerpo !== undefined) cambios.cuerpo = cuerpoDeSeccion(actual.tipo, c.cuerpo);
 
-  db.editarSeccion(idSeccion, ctx.organizacion.id, cambios);
-  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
-});
+  db.editarSeccion(idSeccion, org.id, cambios);
 
-const borrarMiSeccion = conPagina((req, res, ctx, idSeccion) => {
-  if (!db.borrarSeccion(idSeccion, ctx.organizacion.id)) {
-    return fallo(res, 404, 'Ese bloque no existe');
-  }
-  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
-});
+  const antes = { bloque: actual.tipo };
+  Object.keys(cambios).forEach((k) => { antes[k] = actual[k] === undefined ? null : actual[k]; });
+  return {
+    respuesta: { secciones: db.seccionesDe(org.id) },
+    antes,
+    despues: { bloque: actual.tipo, ...cambios },
+  };
+}
 
-const ordenarMisSecciones = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoBorrarSeccion(org, c, idSeccion) {
+  const actual = seccionDe(org, idSeccion);
+  if (!db.borrarSeccion(idSeccion, org.id)) throw errorPagina(404, 'Ese bloque no existe');
+  return {
+    respuesta: { secciones: db.seccionesDe(org.id) },
+    antes: { bloque: actual.tipo, titulo: actual.titulo },
+    despues: { bloque: null },
+  };
+}
+
+function nucleoOrdenarSecciones(org, c) {
   const ids = (Array.isArray(c.ids) ? c.ids : []).map((x) => String(x));
-  if (!ids.length) return fallo(res, 400, 'Indique el orden de los bloques');
-  return responder(res, 200, { secciones: db.ordenarSecciones(ctx.organizacion.id, ids) });
-});
+  if (!ids.length) throw errorPagina(400, 'Indique el orden de los bloques');
+  // El orden se anota por tipo de bloque: los ids no le dicen nada a nadie.
+  const antes = db.seccionesDe(org.id).map((s) => s.tipo);
+  const secciones = db.ordenarSecciones(org.id, ids);
+  return {
+    respuesta: { secciones },
+    antes: { orden: antes },
+    despues: { orden: secciones.map((s) => s.tipo) },
+  };
+}
 
 /* ── Galería y enlaces ──────────────────────────────────── */
 
-const anadirAMiGaleria = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoAnadirFoto(org, c) {
   const url = String(c.url || '');
-  if (!esRutaDeFoto(url)) return fallo(res, 400, 'La fotografía tiene que subirse al sitio');
-  if (db.galeriaDe(ctx.organizacion.id).length >= 24) {
-    return fallo(res, 400, 'Su galería ya tiene veinticuatro fotografías');
+  if (!esRutaDeFoto(url)) throw errorPagina(400, 'La fotografía tiene que subirse al sitio');
+  if (db.galeriaDe(org.id).length >= 24) {
+    throw errorPagina(400, 'Su galería ya tiene veinticuatro fotografías');
   }
-  db.anadirAGaleria(ctx.organizacion.id, { url, alt: texto(c.alt, 160) });
-  return responder(res, 201, { galeria: db.galeriaDe(ctx.organizacion.id) });
-});
+  db.anadirAGaleria(org.id, { url, alt: texto(c.alt, 160) });
+  return { codigo: 201, respuesta: { galeria: db.galeriaDe(org.id) }, antes: null, despues: { foto: url } };
+}
 
-const quitarDeMiGaleria = conPagina((req, res, ctx, idFoto) => {
-  if (!db.quitarDeGaleria(idFoto, ctx.organizacion.id)) {
-    return fallo(res, 404, 'Esa fotografía no existe');
-  }
-  return responder(res, 200, { galeria: db.galeriaDe(ctx.organizacion.id) });
-});
+function nucleoQuitarFoto(org, c, idFoto) {
+  const foto = db.galeriaDe(org.id).find((f) => f.id === idFoto);
+  if (!foto || !db.quitarDeGaleria(idFoto, org.id)) throw errorPagina(404, 'Esa fotografía no existe');
+  return {
+    respuesta: { galeria: db.galeriaDe(org.id) },
+    antes: { foto: foto.url },
+    despues: { foto: null },
+  };
+}
 
 const TIPOS_ENLACE = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'web', 'whatsapp'];
 
-const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoEnlaces(org, c) {
   const lista = [];
 
   for (const e of (Array.isArray(c.enlaces) ? c.enlaces : []).slice(0, 8)) {
@@ -1991,15 +2033,115 @@ const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
     /* El de WhatsApp es un número; los demás, direcciones. Un enlace
        roto en la página de un dealer es peor que no tenerlo. */
     if (tipo === 'whatsapp') {
-      if (!telefonoValido(valor)) return fallo(res, 400, 'El WhatsApp debe tener 10 dígitos');
+      if (!telefonoValido(valor)) throw errorPagina(400, 'El WhatsApp debe tener 10 dígitos');
     } else if (!/^https?:\/\//i.test(valor)) {
-      return fallo(res, 400, `El enlace de ${tipo} debe empezar por http:// o https://`);
+      throw errorPagina(400, `El enlace de ${tipo} debe empezar por http:// o https://`);
     }
     lista.push({ tipo, valor });
   }
 
-  return responder(res, 200, { enlaces: db.guardarEnlaces(ctx.organizacion.id, lista) });
+  const antes = db.enlacesDe(org.id).map((e) => ({ tipo: e.tipo, valor: e.valor }));
+  const enlaces = db.guardarEnlaces(org.id, lista);
+  return { respuesta: { enlaces }, antes: { enlaces: antes }, despues: { enlaces: lista } };
+}
+
+/* ── El dueño: su propia página ─────────────────────────── */
+
+/* Los DELETE no leen cuerpo: no lo llevan, y así siguen como antes. */
+const delDueno = (nucleo, { conCuerpo = true } = {}) => conPagina(async (req, res, ctx, ...resto) => {
+  const c = conCuerpo ? await leerCuerpo(req) : {};
+  // Tras las capturas del patrón llega la consulta (URLSearchParams).
+  const sub = typeof resto[0] === 'string' ? resto[0] : undefined;
+  const r = nucleo(ctx.organizacion, c, sub);
+  return responder(res, r.codigo || 200, r.respuesta);
 });
+
+const verMiPagina = conPagina((req, res, ctx) => responder(res, 200, {
+  ...vistaDePagina(ctx.organizacion),
+  /* Solo la fecha: el dealer tiene derecho a saber que el personal tocó
+     su página, pero no a quién de dentro fue (eso está en la bitácora). */
+  editadaPorSoporte: db.ultimaAnotacion(ctx.organizacion.id, 'pagina.editar'),
+}));
+
+const editarMiPagina = delDueno(nucleoEditarPagina);
+
+const publicarMiPagina = conPagina((req, res, ctx) => {
+  const pagina = db.paginaDe(ctx.organizacion.id);
+  const estado = reglasDePagina(ctx.organizacion, pagina);
+
+  /* Se comprueba aquí y no solo en pantalla: la lista de la pantalla
+     es para que el dealer sepa qué le falta, no la que decide. */
+  if (!estado.puedePublicar) {
+    const pendientes = estado.reglas.filter((r) => !r.cumple);
+    return fallo(res, 400, `Falta ${pendientes.length === 1 ? 'una cosa' : `${pendientes.length} cosas`} por resolver`,
+      { pendientes: pendientes.map((r) => ({ id: r.id, titulo: r.titulo, falta: r.falta })) });
+  }
+
+  db.publicarPagina(ctx.organizacion.id);
+  return responder(res, 200, {
+    pagina: db.paginaDe(ctx.organizacion.id),
+    direccion: `/dealer.html?d=${pagina.slug}`,
+  });
+});
+
+const despublicarMiPagina = conPagina((req, res, ctx) => {
+  db.despublicarPagina(ctx.organizacion.id);
+  return responder(res, 200, { pagina: db.paginaDe(ctx.organizacion.id) });
+});
+
+const crearMiSeccion = delDueno(nucleoCrearSeccion);
+const editarMiSeccion = delDueno(nucleoEditarSeccion);
+const borrarMiSeccion = delDueno(nucleoBorrarSeccion, { conCuerpo: false });
+const ordenarMisSecciones = delDueno(nucleoOrdenarSecciones);
+const anadirAMiGaleria = delDueno(nucleoAnadirFoto);
+const quitarDeMiGaleria = delDueno(nucleoQuitarFoto, { conCuerpo: false });
+const guardarMisEnlaces = delDueno(nucleoEnlaces);
+
+/* ── El personal: la página de un dealer, en su nombre ─────
+ *
+ * ADMIN-04. Mismas escrituras que el dueño, por el mismo núcleo, bajo
+ * /api/admin/organizaciones/:id/pagina… y cada una en la bitácora con el
+ * trozo que cambió. `motivo` (opcional) viaja en el cuerpo.
+ *
+ * NO hay publicar ni despublicar aquí, a propósito: si la página está
+ * publicada, el arreglo se ve al momento, igual que cuando la edita el
+ * dealer; si está en borrador, sigue en borrador. Hacerla pública o
+ * retirarla es decisión de la empresa. */
+
+const verPaginaEnNombre = conAdmin((req, res, ctx, idOrg) => {
+  const org = db.organizacionPorId(idOrg);
+  if (!org || org.tipo !== 'dealer') return fallo(res, 404, 'Esa empresa no tiene página');
+  // Solo id y nombre: la fila entera lleva el RNC.
+  return responder(res, 200, { organizacion: { id: org.id, nombre: org.nombre }, ...vistaDePagina(org) });
+});
+
+const enNombreDelDealer = (objetoTipo, nucleo) =>
+  conAdminEnNombreDe('pagina.editar', async (req, res, ctx, idOrg, ...resto) => {
+    const c = await leerCuerpo(req);
+    const sub = typeof resto[0] === 'string' ? resto[0] : undefined;
+    let hecho;
+    try {
+      hecho = ctx.enNombreDe(idOrg, { objetoTipo, objetoId: sub || idOrg, motivo: texto(c.motivo, 300) }, (org) => {
+        if (org.tipo !== 'dealer') throw errorPagina(404, 'Esa empresa no tiene página');
+        const r = nucleo(org, c, sub);
+        return { antes: r.antes, despues: r.despues, resultado: r };
+      });
+    } catch (e) {
+      const codigo = e.codigo || 500;
+      if (codigo >= 500) console.error('API página en nombre de', idOrg, e);
+      return fallo(res, codigo, codigo >= 500 ? 'Error del servidor' : e.message);
+    }
+    return responder(res, hecho.codigo || 200, hecho.respuesta);
+  });
+
+const editarPaginaEnNombre = enNombreDelDealer('pagina', nucleoEditarPagina);
+const crearSeccionEnNombre = enNombreDelDealer('seccion', nucleoCrearSeccion);
+const editarSeccionEnNombre = enNombreDelDealer('seccion', nucleoEditarSeccion);
+const borrarSeccionEnNombre = enNombreDelDealer('seccion', nucleoBorrarSeccion);
+const ordenarSeccionesEnNombre = enNombreDelDealer('pagina', nucleoOrdenarSecciones);
+const anadirFotoEnNombre = enNombreDelDealer('galeria', nucleoAnadirFoto);
+const quitarFotoEnNombre = enNombreDelDealer('galeria', nucleoQuitarFoto);
+const guardarEnlacesEnNombre = enNombreDelDealer('enlaces', nucleoEnlaces);
 
 /* ── Rutas: planes y cobro ──────────────────────────────── */
 
@@ -2783,6 +2925,19 @@ const RUTAS = [
   ['PUT',    /^\/api\/mi-pagina\/enlaces$/,                 guardarMisEnlaces],
   ['GET',    /^\/api\/admin\/organizaciones$/,               listarOrganizacionesAdmin],
   ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
+
+  /* La página de un dealer, editada por el personal en su nombre
+     (ADMIN-04). Como las del dueño: `/secciones/orden` ANTES que
+     `/secciones/:id`. Sin publicar ni despublicar, a propósito. */
+  ['GET',    /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina$/,                    verPaginaEnNombre],
+  ['PATCH',  /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina$/,                    editarPaginaEnNombre],
+  ['PATCH',  /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones\/orden$/,  ordenarSeccionesEnNombre],
+  ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones$/,         crearSeccionEnNombre],
+  ['PATCH',  /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones\/([\w-]+)$/, editarSeccionEnNombre],
+  ['DELETE', /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones\/([\w-]+)$/, borrarSeccionEnNombre],
+  ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/galeria$/,           anadirFotoEnNombre],
+  ['DELETE', /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/galeria\/([\w-]+)$/, quitarFotoEnNombre],
+  ['PUT',    /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/enlaces$/,           guardarEnlacesEnNombre],
   ['GET',    /^\/api\/admin\/bitacora$/,                     listarBitacora],
   ['GET',    /^\/api\/admin\/series$/,                       listarSeries],
   ['POST',   /^\/api\/admin\/anuncios\/([\w-]+)\/serie$/,    revisarSerie],

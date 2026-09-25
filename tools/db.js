@@ -2233,6 +2233,11 @@ const marcarVerificada = (idOrg, valor) => abrir()
   .prepare('UPDATE organizaciones SET verificada = ?, actualizada = ? WHERE id = ?')
   .run(valor ? 1 : 0, ahora(), idOrg).changes > 0;
 
+/* La fila entera, para las rutas de administración que actúan sobre una
+   organización concreta. Lleva el RNC: NO se devuelve tal cual a nadie. */
+const organizacionPorId = (idOrg) =>
+  abrir().prepare('SELECT * FROM organizaciones WHERE id = ?').get(idOrg);
+
 /* El directorio de empresas de la consola (ADMIN-02).
  *
  * Antes el sello solo se podía tocar desde la pestaña «Aprobadas» de la
@@ -3831,7 +3836,7 @@ module.exports = {
   anadirAGaleria, quitarDeGaleria, galeriaDe,
   guardarEnlaces, enlacesDe,
   publicarPagina, despublicarPagina, apagarPerfilesSinPlan, marcarVerificada,
-  organizacionesAdmin,
+  organizacionesAdmin, organizacionPorId,
   /* Revisión del número de serie. */
   seriesParaRevisar, anuncioSerie, anotarRevisionSerie, normalizarSerie,
 
