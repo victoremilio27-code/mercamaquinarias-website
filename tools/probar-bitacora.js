@@ -19,6 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { EventEmitter } = require('events');
 
 /* Antes de cargar db.js: la ruta del archivo se resuelve al importarlo. */
 const BANCO = path.join(__dirname, '..', '.tmp', 'prueba-bitacora');
@@ -29,6 +30,7 @@ process.env.MERCA_CORREO = 'archivo';
 process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 
 const db = require('./db.js');
+const api = require('./api.js');
 
 let bien = 0;
 let mal = 0;
@@ -235,12 +237,161 @@ function bloqueBase() {
     `exactamente un INSERT INTO bitacora_admin en tools/, y en db.js (hay: ${apariciones.join(', ') || 'ninguno'})`);
 }
 
+/* Una petición de verdad contra el enrutador, con req y res fingidos.
+   Copia del arnés de probar-seguridad.js: cada archivo de prueba lleva
+   el suyo, a propósito. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-bitacora', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      setHeader() {},
+      writeHead(c) { res.codigo = c; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
+/* ── Bloque «La API» ─────────────────────────────────────── */
+async function bloqueApi() {
+  const { admin, normal, dealerA } = sembrado;
+  const idA = dealerA.org.id;
+  const IP = '201.4.4.4';
+  const comoAdmin = { cookie: `te_sesion=${db.abrirSesion(admin.idUsuario)}`, 'cf-connecting-ip': IP };
+  const comoNormal = { cookie: `te_sesion=${db.abrirSesion(normal.idUsuario)}`, 'cf-connecting-ip': IP };
+
+  console.log('\nEl sello de verificada pasa por la bitácora');
+  db.marcarVerificada(idA, false);
+  let n = filas();
+  let r = await pedir({ metodo: 'POST', url: `/api/admin/organizaciones/${idA}/verificar`,
+    cuerpo: { verificada: true }, cabeceras: comoAdmin });
+  comprobar(r.codigo === 200 && r.datos.verificada === true, 'como administrador responde 200');
+  const [fila] = db.bitacora({ limite: 1 });
+  comprobar(filas() === n + 1 && fila.accion === 'organizacion.verificar', 'y deja una fila de «organizacion.verificar»');
+  comprobar(fila.ip === IP, 'con la IP de CF-Connecting-IP');
+  comprobar(fila.admin_id === admin.idUsuario, 'con el administrador de la sesión');
+  comprobar(fila.antes.verificada === false && fila.despues.verificada === true, 'y el sello antes y después');
+
+  n = filas();
+  r = await pedir({ metodo: 'POST', url: `/api/admin/organizaciones/${idA}/verificar`,
+    cuerpo: { verificada: false }, cabeceras: comoNormal });
+  comprobar(r.codigo === 404 && filas() === n, 'un usuario normal recibe 404 (no 403) y no deja fila');
+  r = await pedir({ metodo: 'POST', url: `/api/admin/organizaciones/${idA}/verificar`,
+    cuerpo: { verificada: false } });
+  comprobar((r.codigo === 401 || r.codigo === 404) && filas() === n, 'sin sesión se rechaza y no deja fila');
+  r = await pedir({ metodo: 'POST', url: '/api/admin/organizaciones/no-existe/verificar',
+    cuerpo: { verificada: true }, cabeceras: comoAdmin });
+  comprobar(r.codigo === 404 && filas() === n, 'una organización inexistente da 404 sin fila');
+
+  console.log('\nEl alta de dealer pasa por la bitácora');
+  const dealerC = cuenta('dealer-c@ejemplo.test', 'Encargado C', 'Grúas C, S.R.L.');
+  const dealerD = cuenta('dealer-d@ejemplo.test', 'Encargada D', 'Tractores D, S.R.L.');
+  const solC = solicitudDe(dealerC.org.id);
+  n = filas();
+  r = await pedir({ metodo: 'POST', url: `/api/admin/solicitudes/${solC.id}`,
+    cuerpo: { decision: 'aprobar' }, cabeceras: comoAdmin });
+  const [filaC] = db.bitacora({ organizacion: dealerC.org.id });
+  comprobar(r.codigo === 200 && filas() === n + 1, 'aprobar responde 200 y deja una fila');
+  comprobar(!!filaC && filaC.accion === 'dealer.resolver' && filaC.antes.solicitud === 'pendiente'
+    && filaC.despues.solicitud === 'aprobada', 'de «dealer.resolver», de pendiente a aprobada');
+  r = await pedir({ metodo: 'POST', url: `/api/admin/solicitudes/${solC.id}`,
+    cuerpo: { decision: 'aprobar' }, cabeceras: comoAdmin });
+  comprobar(r.codigo === 409 && filas() === n + 1, 'repetirla da 409 y no deja otra fila');
+  const solD = solicitudDe(dealerD.org.id);
+  r = await pedir({ metodo: 'POST', url: `/api/admin/solicitudes/${solD.id}`,
+    cuerpo: { decision: 'rechazar' }, cabeceras: comoAdmin });
+  comprobar(r.codigo === 400 && filas() === n + 1, 'rechazar sin motivo da 400 y no deja fila');
+  r = await pedir({ metodo: 'POST', url: '/api/admin/solicitudes/no-existe',
+    cuerpo: { decision: 'aprobar' }, cabeceras: comoAdmin });
+  comprobar(r.codigo === 404 && filas() === n + 1, 'una solicitud inexistente da 404 sin fila');
+
+  console.log('\nLa bitácora se lee, y solo se lee');
+  r = await pedir({ url: '/api/admin/bitacora', cabeceras: comoAdmin });
+  comprobar(r.codigo === 200 && Array.isArray(r.datos.entradas) && Array.isArray(r.datos.organizaciones)
+    && !!r.datos.acciones, 'GET como administrador trae entradas, organizaciones y acciones');
+  r = await pedir({ url: `/api/admin/bitacora?organizacion=${encodeURIComponent(idA)}`, cabeceras: comoAdmin });
+  comprobar(r.codigo === 200 && r.datos.entradas.length > 0
+    && r.datos.entradas.every((f) => f.organizacion_id === idA), 'con ?organizacion= solo trae las suyas');
+  r = await pedir({ url: '/api/admin/bitacora', cabeceras: comoNormal });
+  comprobar(r.codigo === 404, 'como usuario normal da 404');
+
+  n = filas();
+  let alguna2xx = false;
+  for (const metodo of ['POST', 'PATCH', 'PUT', 'DELETE']) {
+    for (const url of ['/api/admin/bitacora', '/api/admin/bitacora/1']) {
+      const x = await pedir({ metodo, url, cuerpo: { accion: 'x' }, cabeceras: comoAdmin });
+      if (x.codigo >= 200 && x.codigo < 300) alguna2xx = true;
+    }
+  }
+  comprobar(!alguna2xx && filas() === n, 'ningún POST, PATCH, PUT ni DELETE sobre la bitácora responde 2xx');
+
+  console.log('\nSolicitudes de servicio');
+  const sol = db.crearSolicitudServicio({
+    servicio: 'importacion', nombre: 'Cliente API', telefono: '8095559876', detalle: { Marca: 'CAT' },
+  });
+  r = await pedir({ metodo: 'PATCH', url: `/api/admin/solicitudes-servicio/${sol.id}`,
+    cuerpo: { estado: 'atendida', nota: 'llamado' }, cabeceras: comoAdmin });
+  comprobar(r.codigo === 200 && r.datos.solicitud && r.datos.solicitud.atendida_por_nombre === 'Administradora de Prueba',
+    'marcarla atendida devuelve la solicitud con quién la atendió');
+  r = await pedir({ url: '/api/admin/solicitudes-servicio?estado=nueva', cabeceras: comoAdmin });
+  comprobar(r.codigo === 200 && !r.datos.solicitudes.some((s) => s.id === sol.id), 'ya no sale entre las nuevas');
+  r = await pedir({ url: '/api/admin/solicitudes-servicio?estado=atendida', cabeceras: comoAdmin });
+  comprobar(r.datos.solicitudes.some((s) => s.id === sol.id), 'sí entre las atendidas');
+  r = await pedir({ metodo: 'PATCH', url: '/api/admin/solicitudes-servicio/no-existe',
+    cuerpo: { estado: 'cerrada' }, cabeceras: comoAdmin });
+  comprobar(r.codigo === 404, 'un id inexistente da 404');
+  r = await pedir({ metodo: 'PATCH', url: `/api/admin/solicitudes-servicio/${sol.id}`,
+    cuerpo: { estado: 'cerrada' }, cabeceras: comoNormal });
+  comprobar(r.codigo === 404, 'como usuario normal da 404');
+  r = await pedir({ url: '/api/admin/solicitudes-servicio?servicio=transporte', cabeceras: comoAdmin });
+  comprobar(r.codigo === 200, 'lo histórico (transporte) se sigue pudiendo buscar');
+  comprobar(!!r.datos.servicios && Array.isArray(r.datos.servicios.activos)
+    && !r.datos.servicios.activos.includes('transporte') && !r.datos.servicios.activos.includes('financiamiento'),
+    'y servicios.activos no trae los apagados');
+
+  console.log('\nLa guarda sobre RUTAS');
+  const escrituras = api.RUTAS.filter(([metodo, patron]) =>
+    metodo !== 'GET' && patron.source.includes('api\\/admin'));
+  let malas = 0;
+  for (const [metodo, patron, manejador] of escrituras) {
+    const enBitacora = !!manejador.bitacora;
+    const propia = api.ESCRITURAS_ADMIN_PROPIAS.has(manejador);
+    const bien1 = enBitacora !== propia
+      && (!enBitacora || Object.prototype.hasOwnProperty.call(db.ACCIONES_BITACORA, manejador.bitacora));
+    if (!bien1) malas++;
+    comprobar(bien1, `${metodo} ${patron.source} → ${enBitacora ? `bitácora (${manejador.bitacora})` : propia ? 'propia de la plataforma' : 'SIN CLASIFICAR: envuélvala en conAdminEnNombreDe o declárela en ESCRITURAS_ADMIN_PROPIAS con su motivo'}`);
+  }
+  comprobar(escrituras.length > 0 && malas === 0,
+    `las ${escrituras.length} escrituras de /api/admin/ están clasificadas una sola vez`);
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · bitácora de administración\n');
   sembrar();
 
   console.log('La base');
   bloqueBase();
+
+  console.log('\nLa API');
+  await bloqueApi();
 
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);

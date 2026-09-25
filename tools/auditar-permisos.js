@@ -145,8 +145,31 @@ async function entrar(correo, clave) {
   comprobar('aprobar solicitudes bloqueado sin permiso',
     r5.estado === 404, `devolvió ${r5.estado}`);
 
+  /* La bitácora y la bandeja de solicitudes de servicio: 404, no 403,
+     como el resto de la consola. La bitácora lleva la IP y el correo del
+     personal, y la bandeja el teléfono de quien pidió cotización. */
+  const rBit = await pedir('/admin/bitacora', { cookie: cibao });
+  comprobar('bitácora de administración oculta a cuenta sin permiso',
+    rBit.estado === 404, `devolvió ${rBit.estado}`);
+
+  const rBan = await pedir('/admin/solicitudes-servicio', { cookie: cibao });
+  comprobar('bandeja de solicitudes de servicio oculta a cuenta sin permiso',
+    rBan.estado === 404, `devolvió ${rBan.estado}`);
+
+  const rMar = await pedir('/admin/solicitudes-servicio/cualquiera', {
+    metodo: 'PATCH', cuerpo: { estado: 'cerrada' }, cookie: cibao,
+  });
+  comprobar('marcar solicitudes de servicio bloqueado sin permiso',
+    rMar.estado === 404, `devolvió ${rMar.estado}`);
+
+  const rVer = await pedir('/admin/organizaciones/cualquiera/verificar', {
+    metodo: 'POST', cuerpo: { verificada: true }, cookie: cibao,
+  });
+  comprobar('dar el sello de verificada bloqueado sin permiso',
+    rVer.estado === 404, `devolvió ${rVer.estado}`);
+
   // 5. Sin sesión ninguna
-  for (const [ruta, metodo] of [['/mis-anuncios', 'GET'], ['/sucursales', 'GET'], ['/admin/solicitudes', 'GET']]) {
+  for (const [ruta, metodo] of [['/mis-anuncios', 'GET'], ['/sucursales', 'GET'], ['/admin/solicitudes', 'GET'], ['/admin/bitacora', 'GET']]) {
     const rr = await pedir(ruta, { metodo });
     comprobar(`${metodo} ${ruta} sin sesión rechazado`,
       rr.estado === 401 || rr.estado === 404, `devolvió ${rr.estado}`);
