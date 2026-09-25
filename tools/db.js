@@ -908,6 +908,41 @@ const MIGRACIONES = [
      END`,
     'ALTER TABLE solicitudes_servicio ADD COLUMN atendida_por TEXT',
   ]],
+
+  /* Contactos atribuibles (MET-03). El panel sumaba los clics de
+     WhatsApp y de llamada, pero no decía de qué anuncio ni cuándo, y
+     sin eso el dealer no puede atribuirle una venta al sitio: es lo
+     primero que pregunta al renovar.
+
+     Tabla propia y no una consulta sobre `eventos`, porque los eventos
+     crudos se purgan a los noventa días (ver `purgar`) y la renovación
+     puede ser al año. Guarda UNA fila por contacto CONTADO —el primero
+     de cada visitante, canal y día, el mismo criterio del agregado—, así
+     que la lista y el total del panel siempre cuadran.
+
+     Sin la huella del visitante, a propósito: para atribuir basta el
+     anuncio y la hora, y lo que no se guarda no se puede filtrar.
+
+     El INSERT rellena con lo que `eventos` todavía conserva; los
+     eventos sin huella cuentan cada uno por separado, igual que los
+     contó `anotarEvento`. */
+  ['2026-09-contactos-anuncio', [
+    `CREATE TABLE IF NOT EXISTS contactos_anuncio (
+       id               INTEGER PRIMARY KEY AUTOINCREMENT,
+       anuncio_id       TEXT NOT NULL REFERENCES anuncios(id) ON DELETE CASCADE,
+       organizacion_id  TEXT NOT NULL,
+       canal            TEXT NOT NULL CHECK (canal IN ('whatsapp', 'telefono')),
+       dia              TEXT NOT NULL,
+       creado           TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_contactos_anuncio_org ON contactos_anuncio (organizacion_id, creado)',
+    'CREATE INDEX IF NOT EXISTS ix_contactos_anuncio_anuncio ON contactos_anuncio (anuncio_id)',
+    `INSERT INTO contactos_anuncio (anuncio_id, organizacion_id, canal, dia, creado)
+     SELECT e.anuncio_id, a.organizacion_id, e.tipo, e.dia, MIN(e.creado)
+       FROM eventos e JOIN anuncios a ON a.id = e.anuncio_id
+      WHERE e.tipo IN ('whatsapp', 'telefono')
+      GROUP BY e.anuncio_id, e.tipo, e.dia, COALESCE(e.visitante, 'sin-huella-' || e.id)`,
+  ]],
 ];
 
 function migrar() {
@@ -2965,7 +3000,7 @@ function borrarAnuncio(idAnuncio, idOrg) {
 
   d.prepare('BEGIN').run();
   try {
-    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias']) {
+    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio']) {
       try { d.prepare(`DELETE FROM ${t} WHERE anuncio_id = ?`).run(idAnuncio); } catch (_) { /* tabla sin esa columna */ }
     }
     d.prepare('DELETE FROM anuncios WHERE id = ? AND organizacion_id = ?').run(idAnuncio, idOrg);
@@ -3120,7 +3155,51 @@ function anotarEvento(idAnuncio, tipo, visitante) {
              ON CONFLICT (anuncio_id, dia) DO UPDATE SET ${columna} = ${columna} + 1`)
     .run(idAnuncio, dia);
 
+  /* El contacto contado se apunta también en su tabla permanente, con
+     el mismo criterio que el agregado: así la lista del panel y el total
+     de «Contactos» no pueden contar cosas distintas. Va aquí y no en la
+     ruta para que quien llame a la base directamente —las pruebas, una
+     tarea— no se salte el registro. */
+  if (tipo === 'whatsapp' || tipo === 'telefono') registrarContacto(idAnuncio, tipo);
+
   return 'contado';
+}
+
+/* Apunta un contacto atribuible. NUNCA lanza: la métrica ya quedó
+   sumada arriba, y perder la fila de la lista es preferible a
+   devolverle un error a un comprador que acaba de pulsar WhatsApp. */
+function registrarContacto(idAnuncio, canal) {
+  try {
+    const d = abrir();
+    const a = d.prepare('SELECT organizacion_id FROM anuncios WHERE id = ?').get(idAnuncio);
+    if (!a) return;
+    d.prepare(`INSERT INTO contactos_anuncio (anuncio_id, organizacion_id, canal, dia, creado)
+               VALUES (?, ?, ?, ?, ?)`)
+      .run(idAnuncio, a.organizacion_id, canal, hoy(), ahora());
+  } catch (e) {
+    console.error(`contactos: no se pudo apuntar el de ${idAnuncio} · ${e.message}`);
+  }
+}
+
+/* Los contactos de una organización, del más reciente al más viejo.
+   Filtros opcionales por anuncio y por canal, siempre como parámetros:
+   nada de la petición se interpola en el SQL. El tope va de 1 a 200
+   para que un `?limite=` inventado no se lleve la tabla entera. */
+function contactosDeOrganizacion(idOrg, { anuncio, canal, limite = 100 } = {}) {
+  const donde = ['c.organizacion_id = :org'];
+  const p = { org: idOrg };
+  if (anuncio) { donde.push('c.anuncio_id = :anuncio'); p.anuncio = String(anuncio); }
+  if (canal) { donde.push('c.canal = :canal'); p.canal = String(canal); }
+  p.limite = Math.min(Math.max(1, Number(limite) || 100), 200);
+
+  return abrir().prepare(`
+    SELECT c.id, c.anuncio_id, c.canal, c.dia, c.creado,
+           a.marca, a.modelo, a.anio, a.estado
+      FROM contactos_anuncio c
+      JOIN anuncios a ON a.id = c.anuncio_id
+     WHERE ${donde.join(' AND ')}
+     ORDER BY c.creado DESC, c.id DESC
+     LIMIT :limite`).all(p).map(conNombres);
 }
 
 /* ── Tráfico del sitio ──────────────────────────────────── */
@@ -3697,4 +3776,6 @@ module.exports = {
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   anotarEvento, resumenOrganizacion,
+  /* Alcance y métricas del vendedor (fase 10). */
+  registrarContacto, contactosDeOrganizacion,
 };

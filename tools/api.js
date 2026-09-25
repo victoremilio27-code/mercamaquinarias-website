@@ -2467,6 +2467,25 @@ const misAnuncios = conSesion((req, res, ctx) => {
   });
 });
 
+/* Los contactos atribuibles de la organización: qué anuncio y cuándo
+   (MET-03). Solo los suyos, siempre: la organización sale de la sesión
+   y nunca de la petición. Lo que llega por la consulta se valida antes
+   de tocar la base: un canal fuera de la lista o un id raro no filtran
+   nada, se descartan. */
+const CANALES_CONTACTO = ['whatsapp', 'telefono'];
+
+const misContactos = conSesion((req, res, ctx, consulta) => {
+  if (!ctx.organizacion) return responder(res, 200, { contactos: [] });
+  const q = consulta || new URLSearchParams();
+  const canal = CANALES_CONTACTO.includes(q.get('canal')) ? q.get('canal') : null;
+  const anuncio = /^[\w-]{1,64}$/.test(q.get('anuncio') || '') ? q.get('anuncio') : null;
+  const limite = Number(q.get('limite')) || 100;
+
+  return responder(res, 200, {
+    contactos: db.contactosDeOrganizacion(ctx.organizacion.id, { anuncio, canal, limite }),
+  });
+});
+
 const cambiarEstado = conSesion(async (req, res, ctx, idAnuncio) => {
   const c = await leerCuerpo(req);
   const permitidos = ['activo', 'pausado', 'vendido', 'retirado'];
@@ -2710,6 +2729,7 @@ const RUTAS = [
   ['POST', /^\/api\/anuncios$/,          publicar],
   ['GET',  /^\/api\/anuncios$/,          catalogo],
   ['GET',  /^\/api\/mis-anuncios$/,      misAnuncios],
+  ['GET',  /^\/api\/mis-contactos$/,     misContactos],
   ['GET',  /^\/api\/anuncios\/([\w-]+)$/, verAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/plan$/, cambiarPlanDeAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
