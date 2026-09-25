@@ -945,6 +945,40 @@ const MIGRACIONES = [
     `ALTER TABLE anuncios ADD COLUMN disponibilidad TEXT NOT NULL DEFAULT 'en-pais'
        CHECK (disponibilidad IN ('en-pais', 'bajo-pedido'))`,
   ]],
+
+  /* Contactos verificados (fase 9, CONF-03). Un teléfono que no se ha
+     verificado no se enseña en ningún anuncio. Hasta ahora la ficha
+     pintaba cualquier número que alguien escribiera al publicar, y un
+     comprador no tenía forma de saber si detrás estaba el anunciante o
+     cualquiera que le hubiera copiado las fotos.
+
+     Va por organización y número, no por anuncio: se verifica una vez y
+     aparece en todos los anuncios de esa organización que lo llevan,
+     también en los que ya estaban publicados.
+
+     El código pendiente vive en la propia fila y no en `codigos`: esa
+     tabla tiene un CHECK cerrado sobre `tipo` que SQLite no deja
+     ampliar sin reconstruirla, y reconstruir una tabla de producción
+     para esto es un riesgo que no hace falta correr.
+
+     `verificado_por` sin clave foránea, a propósito: si la persona deja
+     la organización el número sigue verificado y se sabe quién lo hizo. */
+  ['2026-09-contactos-verificados', [
+    `CREATE TABLE IF NOT EXISTS contactos_verificados (
+       id              TEXT PRIMARY KEY,
+       organizacion_id TEXT NOT NULL REFERENCES organizaciones(id) ON DELETE CASCADE,
+       numero          TEXT NOT NULL,
+       via             TEXT CHECK (via IN ('correo', 'sms')),
+       verificado      TEXT,
+       verificado_por  TEXT,
+       codigo_hash     TEXT,
+       codigo_via      TEXT CHECK (codigo_via IN ('correo', 'sms')),
+       codigo_expira   TEXT,
+       intentos        INTEGER NOT NULL DEFAULT 0,
+       creado          TEXT NOT NULL,
+       UNIQUE (organizacion_id, numero)
+     )`,
+  ]],
 ];
 
 function migrar() {
@@ -1274,6 +1308,165 @@ function verificarCodigo({ correo, tipo, codigo }) {
 const marcarCorreoVerificado = (idUsuario) =>
   abrir().prepare('UPDATE usuarios SET correo_verificado = 1 WHERE id = ?').run(idUsuario);
 
+/* ── Contactos verificados ──────────────────────────────── */
+
+/* Los teléfonos se guardan en los anuncios tal como se escribieron
+   —«(809) 555-1234», «809-555-1234», «18095551234»—, así que la única
+   forma de saber si dos son el mismo es compararlos en dígitos. Diez
+   dígitos, sin el 1 del prefijo internacional. */
+function normalizarNumero(numero) {
+  let d = String(numero == null ? '' : numero).replace(/\D/g, '');
+  if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+  return d.length === 10 ? d : null;
+}
+
+const MINUTOS_CODIGO_CONTACTO = 15;
+
+/* La firma lleva la organización, el número y la vía: un código pedido
+   para un número no sirve para otro, ni el de otra organización, ni
+   uno enviado por correo puede darse por SMS. */
+const firmarContacto = (idOrg, numero, via, codigo) =>
+  crypto.createHmac('sha256', SECRETO)
+    .update(`contacto|${idOrg}|${numero}|${via}|${codigo}`).digest('hex');
+
+/* Emite un código para verificar un número de la organización y anula
+   el anterior. Devuelve { codigo, minutos, numero }, o { yaVerificado }
+   cuando no hace falta.
+
+   Un número ya verificado por correo sí admite un código por SMS: es
+   subir de «el titular de la cuenta lo declara suyo» a «quien publica
+   tiene el teléfono en la mano». Mientras se confirma, sigue verificado
+   por correo; pedir el código no le quita nada. */
+function pedirCodigoContacto({ idOrg, numero, via }) {
+  const n = normalizarNumero(numero);
+  if (!n) return null;
+  const d = abrir();
+  const fila = d.prepare('SELECT * FROM contactos_verificados WHERE organizacion_id = ? AND numero = ?')
+    .get(idOrg, n);
+  if (fila && fila.verificado && (fila.via === 'sms' || fila.via === via)) {
+    return { yaVerificado: true, via: fila.via, numero: n };
+  }
+
+  const codigo = generarCodigo();
+  const expira = new Date(Date.now() + MINUTOS_CODIGO_CONTACTO * 60000).toISOString();
+  const hash = firmarContacto(idOrg, n, via, codigo);
+  if (fila) {
+    d.prepare(`UPDATE contactos_verificados
+               SET codigo_hash = ?, codigo_via = ?, codigo_expira = ?, intentos = 0
+               WHERE id = ?`).run(hash, via, expira, fila.id);
+  } else {
+    d.prepare(`INSERT INTO contactos_verificados
+               (id, organizacion_id, numero, codigo_hash, codigo_via, codigo_expira, creado)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id(), idOrg, n, hash, via, expira, ahora());
+  }
+  return { codigo, minutos: MINUTOS_CODIGO_CONTACTO, numero: n };
+}
+
+/* Comprueba y consume. Devuelve { ok: true, via, numero } o
+   { ok: false, motivo, restantes }.
+
+   El consumo es un UPDATE condicionado al hash que se acaba de
+   comprobar: dos peticiones simultáneas con el código correcto no
+   pueden pasar las dos, que es lo mismo que hace verificarCodigo. */
+function confirmarCodigoContacto({ idOrg, numero, codigo, idUsuario }) {
+  const n = normalizarNumero(numero);
+  if (!n) return { ok: false, motivo: 'inexistente' };
+  const d = abrir();
+  const fila = d.prepare('SELECT * FROM contactos_verificados WHERE organizacion_id = ? AND numero = ?')
+    .get(idOrg, n);
+
+  if (!fila || !fila.codigo_hash) return { ok: false, motivo: 'inexistente' };
+  if (fila.codigo_expira < ahora()) return { ok: false, motivo: 'vencido' };
+  if (fila.intentos >= MAX_INTENTOS_CODIGO) {
+    /* Se anula el código entero, no solo el hash: con la vía y el
+       vencimiento puestos, el panel seguía ofreciendo el campo de un
+       código que ya no existe. */
+    d.prepare(`UPDATE contactos_verificados
+               SET codigo_hash = NULL, codigo_via = NULL, codigo_expira = NULL
+               WHERE id = ?`).run(fila.id);
+    return { ok: false, motivo: 'agotado' };
+  }
+
+  const esperado = Buffer.from(fila.codigo_hash, 'hex');
+  const recibido = Buffer.from(firmarContacto(idOrg, n, fila.codigo_via, String(codigo || '').trim()), 'hex');
+  const coincide = esperado.length === recibido.length && crypto.timingSafeEqual(esperado, recibido);
+  if (!coincide) {
+    d.prepare('UPDATE contactos_verificados SET intentos = intentos + 1 WHERE id = ?').run(fila.id);
+    return { ok: false, motivo: 'incorrecto', restantes: MAX_INTENTOS_CODIGO - fila.intentos - 1 };
+  }
+
+  const r = d.prepare(`UPDATE contactos_verificados
+    SET via = codigo_via, verificado = ?, verificado_por = ?,
+        codigo_hash = NULL, codigo_via = NULL, codigo_expira = NULL, intentos = 0
+    WHERE id = ? AND codigo_hash = ?`).run(ahora(), idUsuario || null, fila.id, fila.codigo_hash);
+  if (!r.changes) return { ok: false, motivo: 'usado' };
+  return { ok: true, via: fila.codigo_via, numero: n };
+}
+
+/* Los números verificados de una organización: Map numero → vía. */
+function numerosVerificados(idOrg) {
+  const filas = abrir().prepare(`SELECT numero, via FROM contactos_verificados
+    WHERE organizacion_id = ? AND verificado IS NOT NULL`).all(idOrg);
+  return new Map(filas.map((f) => [f.numero, f.via]));
+}
+
+/* Lo que ve el anunciante en su panel: cada número que la organización
+   tiene en sus anuncios o ha verificado alguna vez, con su estado y en
+   cuántos anuncios va. Los sin verificar primero, que son los que le
+   cuestan contactos. */
+function contactosDe(idOrg) {
+  const d = abrir();
+  const t = ahora();
+  const porNumero = new Map();
+  const entrada = (n) => {
+    if (!porNumero.has(n)) {
+      porNumero.set(n, { numero: n, verificado: false, via: null, fecha: null, pendiente: null, anuncios: 0 });
+    }
+    return porNumero.get(n);
+  };
+
+  const filas = d.prepare(`SELECT numero, via, verificado, codigo_hash, codigo_via, codigo_expira, intentos
+    FROM contactos_verificados WHERE organizacion_id = ?`).all(idOrg);
+  for (const f of filas) {
+    const e = entrada(f.numero);
+    e.verificado = !!f.verificado;
+    e.via = f.verificado ? f.via : null;
+    e.fecha = f.verificado || null;
+    // Un código pendiente es uno que todavía se puede usar: vigente y
+    // sin los cinco intentos gastados. Si no, el panel no ofrece el campo.
+    e.pendiente = f.codigo_hash && f.codigo_via && f.codigo_expira > t && f.intentos < MAX_INTENTOS_CODIGO
+      ? f.codigo_via : null;
+  }
+
+  const usados = d.prepare(`SELECT c.numero, c.anuncio_id FROM anuncio_contactos c
+    JOIN anuncios a ON a.id = c.anuncio_id WHERE a.organizacion_id = ?`).all(idOrg);
+  const vistos = new Set();
+  for (const u of usados) {
+    const n = normalizarNumero(u.numero);
+    if (!n || vistos.has(`${n}|${u.anuncio_id}`)) continue;
+    vistos.add(`${n}|${u.anuncio_id}`);
+    entrada(n).anuncios++;
+  }
+
+  return [...porNumero.values()]
+    .sort((a, b) => (a.verificado - b.verificado) || b.anuncios - a.anuncios || a.numero.localeCompare(b.numero));
+}
+
+/* Da un número por verificado SIN código. Solo para la semilla de
+   demostración y herramientas de consola: ninguna ruta de la API puede
+   llamarlo, y tools/probar-contactos.js lo vigila. */
+function marcarContactoVerificado(idOrg, numero, via = 'correo', idUsuario = null) {
+  const n = normalizarNumero(numero);
+  if (!n) return false;
+  abrir().prepare(`INSERT INTO contactos_verificados
+      (id, organizacion_id, numero, via, verificado, verificado_por, creado)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (organizacion_id, numero) DO UPDATE
+      SET via = excluded.via, verificado = excluded.verificado, verificado_por = excluded.verificado_por`)
+    .run(id(), idOrg, n, via, ahora(), idUsuario, ahora());
+  return true;
+}
+
 /* ── Equipos de confianza ───────────────────────────────── */
 
 const DIAS_DISPOSITIVO = 60;
@@ -1343,6 +1536,13 @@ function purgar() {
   d.prepare('DELETE FROM dispositivos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM intentos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM codigos WHERE expira < ?').run(new Date(Date.now() - 86400000).toISOString());
+
+  /* Números que alguien empezó a verificar y nunca terminó. Los ya
+     verificados no se tocan nunca: borrarlos escondería el teléfono de
+     anuncios vivos. */
+  d.prepare(`DELETE FROM contactos_verificados
+             WHERE verificado IS NULL AND (codigo_expira IS NULL OR codigo_expira < ?)`)
+    .run(new Date(Date.now() - 86400000).toISOString());
 
   /* Los eventos crudos, a noventa días.
    *
@@ -3019,7 +3219,16 @@ function anuncio(idAnuncio) {
     .all(idAnuncio).map((f) => f.url);
   a.videos = d.prepare('SELECT url, poster, duracion FROM anuncio_videos WHERE anuncio_id = ? ORDER BY orden')
     .all(idAnuncio);
-  a.telefonos = d.prepare('SELECT numero, tipo, nota FROM anuncio_contactos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
+  /* Cada teléfono sale marcado. Quién puede ver los que no están
+     verificados lo decide la API (solo el dueño); aquí solo se dice
+     cuáles son. */
+  const verificados = numerosVerificados(a.organizacion_id);
+  a.telefonos = d.prepare('SELECT numero, tipo, nota FROM anuncio_contactos WHERE anuncio_id = ? ORDER BY orden')
+    .all(idAnuncio)
+    .map((t) => {
+      const via = verificados.get(normalizarNumero(t.numero)) || null;
+      return { ...t, verificado: !!via, via };
+    });
   return conNombres(a);
 }
 
@@ -4012,6 +4221,9 @@ module.exports = {
   usuarioPorCorreo, usuarioPorId, crearCuenta, organizacionDe, sucursalPrincipal,
   abrirSesion, sesion, cerrarSesion, cerrarTodoDe,
   crearCodigo, verificarCodigo, marcarCorreoVerificado,
+  /* Contactos verificados: ningún teléfono sin verificar sale en un anuncio. */
+  normalizarNumero, pedirCodigoContacto, confirmarCodigoContacto,
+  numerosVerificados, contactosDe, marcarContactoVerificado,
   recordarDispositivo, dispositivoDeConfianza,
   permitir, limpiarIntentos,
   registrarDealer, dealersPublicos, dealerPorSlug,

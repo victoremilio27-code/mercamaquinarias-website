@@ -796,6 +796,7 @@ async function montarPanel() {
      tienen por qué retrasar lo que el anunciante viene a ver, que son
      sus anuncios. */
   montarFacturas();
+  montarContactos();
 
   const org = SESION.organizacion || {};
   $('#panelTitulo').innerHTML = `<em>${esc((org.nombre || SESION.usuario.nombre).split(/[\s,]+/)[0])}</em> ${esc((org.nombre || '').replace(/^\S+\s*/, ''))}`;
@@ -1123,6 +1124,36 @@ async function montarPanel() {
     await api('/cuenta/salir', { metodo: 'POST', silencioso: true });
     location.href = 'index.html';
   });
+}
+
+/* ── Teléfonos de contacto ──────────────────────────────── */
+
+/* Fase 9: un teléfono sin verificar no sale en ningún anuncio. Aquí el
+   anunciante ve cada número que usan sus anuncios, si está verificado y
+   por qué vía, y lo verifica sin salir del panel. Al verificar se
+   repinta la lista entera: el número pasa a verificado en todos los
+   anuncios a la vez, y la cuenta de «sin verificar» cambia con él. */
+async function montarContactos() {
+  const seccion = $('#panelContactos');
+  const lista = $('#listaContactos');
+  if (!seccion || !lista || typeof VerificarContacto === 'undefined') return;
+
+  const contactos = await VerificarContacto.cargar();
+  if (!contactos || !contactos.length) {
+    seccion.hidden = true;
+    return;
+  }
+
+  lista.innerHTML = contactos.map((c) => `<li class="contactos-panel__fila">
+      <p class="contactos-panel__num"><b class="num">${esc(VerificarContacto.formato(c.numero))}</b>
+        <span>${c.anuncios
+    ? `En ${c.anuncios} ${c.anuncios === 1 ? 'anuncio' : 'anuncios'}`
+    : 'Sin anuncios ahora mismo'}</span></p>
+      ${VerificarContacto.estadoHTML(c)}
+    </li>`).join('');
+  seccion.hidden = false;
+
+  VerificarContacto.montar(lista, { alVerificar: () => montarContactos() });
 }
 
 /* ── Comprobantes ───────────────────────────────────────── */

@@ -202,7 +202,9 @@ async function entrar(correo, clave) {
     rAnu.estado === 404, `devolvió ${rAnu.estado}`);
 
   // 5. Sin sesión ninguna
-  for (const [ruta, metodo] of [['/mis-anuncios', 'GET'], ['/sucursales', 'GET'], ['/admin/solicitudes', 'GET'], ['/admin/bitacora', 'GET']]) {
+  // Las tres de contactos verificados (fase 9): sin sesión, 401.
+  for (const [ruta, metodo] of [['/mis-anuncios', 'GET'], ['/sucursales', 'GET'], ['/admin/solicitudes', 'GET'], ['/admin/bitacora', 'GET'],
+    ['/contactos', 'GET'], ['/contactos/codigo', 'POST'], ['/contactos/confirmar', 'POST']]) {
     const rr = await pedir(ruta, { metodo });
     comprobar(`${metodo} ${ruta} sin sesión rechazado`,
       rr.estado === 401 || rr.estado === 404, `devolvió ${rr.estado}`);

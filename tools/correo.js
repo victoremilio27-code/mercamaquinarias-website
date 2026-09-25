@@ -487,6 +487,165 @@ const enviarCodigo = ({ para, codigo, tipo, nombre, minutos }) =>
     ...plantillaCodigo({ codigo, tipo, nombre, minutos }),
   });
 
+/* ── Verificación de teléfonos (fase 9) ─────────────────────
+ *
+ * Ningún teléfono sale en un anuncio sin verificar. Hay dos vías y las
+ * dos salen de aquí, que es el único punto de envío del sitio:
+ *
+ *   · correo — el código va al correo YA verificado de la cuenta. Prueba
+ *     que el titular declara el número como suyo. Es la vía de hoy.
+ *   · sms    — el código va al propio teléfono. Prueba que quien publica
+ *     lo tiene en la mano. Depende de los créditos SMS de Brevo, que
+ *     están sin pagar: se entrega construida y APAGADA.
+ */
+
+const formatoNumero = (n) => {
+  const d = String(n || '').replace(/\D/g, '').slice(-10);
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(n || '');
+};
+
+function enviarCodigoContacto({ para, nombre, numero, codigo, minutos }) {
+  const tel = formatoNumero(numero);
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const cuerpo = `Use este código para confirmar que el teléfono ${tel} es suyo y que puede aparecer en sus anuncios de MercaMaquinarias.`;
+  const texto = [
+    saludo, '',
+    cuerpo, '',
+    `Código: ${codigo}`,
+    `Vence en ${minutos} minutos y solo sirve una vez.`, '',
+    'Si no fue usted, ignore este mensaje: el número no se mostrará.',
+    'Nunca le pediremos este código por teléfono ni por WhatsApp.', '',
+    'MercaMaquinarias',
+  ].join('\n');
+
+  const html = envoltura({
+    titulo: 'Confirme su teléfono',
+    saludo,
+    parrafos: [esc(cuerpo)],
+    extra: tarjeta(`
+      <div style="font-family:${TIPO};font-size:38px;font-weight:800;letter-spacing:.3em;color:${AZUL};font-variant-numeric:tabular-nums;line-height:1.1">${esc(codigo)}</div>
+      <div style="margin-top:8px;font-family:${TIPO};font-size:12.5px;color:${GRIS_CLARO}">Vence en ${minutos} minutos · un solo uso</div>`, true),
+    nota: 'Si no fue usted, ignore este mensaje: el número no se mostrará. <b style="color:'
+      + AZUL + '">Nunca le pediremos este código por teléfono ni por WhatsApp.</b>',
+  });
+
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    // El código va en el asunto: se lee en la notificación del teléfono.
+    asunto: `${codigo} es su código para confirmar el ${tel} · MercaMaquinarias`,
+    texto,
+    html,
+  });
+}
+
+/* El texto del SMS va SIN tildes a propósito: con `unicodeEnabled`
+   apagado Brevo las destroza, y encendido cada mensaje pasa de 160 a 70
+   caracteres y cuesta el doble de créditos. */
+const textoSmsContacto = ({ codigo, minutos }) =>
+  `MercaMaquinarias: su codigo para verificar este telefono es ${codigo}. `
+  + `Vence en ${minutos} min. No lo comparta: nunca se lo pediremos.`;
+
+/* EL INTERRUPTOR. `MERCA_SMS` se lee en cada llamada y no al cargar el
+   módulo: encender los SMS es poner MERCA_SMS=brevo en el entorno del
+   VPS y reiniciar, sin tocar código ni el flujo de verificación, y la
+   prueba puede demostrarlo encendiéndolo en mitad de la ejecución.
+
+     apagado (por defecto) — la vía SMS no se ofrece y la API la rechaza.
+     archivo               — escribe en .tmp/sms/ y saca el código por consola.
+     brevo                 — API de SMS transaccional de Brevo. */
+const modoSms = () => String(process.env.MERCA_SMS || 'apagado').trim().toLowerCase();
+const BANDEJA_SMS = path.join(RAIZ, '.tmp', 'sms');
+
+function smsPorArchivo({ numero, texto }) {
+  fs.mkdirSync(BANDEJA_SMS, { recursive: true });
+  const sello = new Date().toISOString().replace(/[:.]/g, '-');
+  const n = String(++secuencia).padStart(3, '0');
+  const archivo = path.join(BANDEJA_SMS, `${sello}-${n}-${String(numero).replace(/\D/g, '')}.txt`);
+  fs.writeFileSync(archivo, `Para: ${numero}\n\n${texto}\n`, 'utf8');
+  const codigo = /(\d{6})/.exec(texto);
+  console.log(`✆  ${numero} · SMS${codigo ? `  → CÓDIGO ${codigo[1]}` : ''}`);
+  return { entregado: true, archivo };
+}
+
+/* Brevo, SMS transaccional. Remitente alfanumérico de hasta once
+   caracteres; el destinatario en formato internacional sin «+». La ruta
+   es configurable porque la documentación de Brevo no se pudo consultar
+   al escribir esto: el día de encender se comprueba y, si cambió, se
+   corrige con MERCA_SMS_RUTA sin tocar código. */
+function smsPorBrevo({ numero, texto }) {
+  const clave = process.env.BREVO_API_KEY;
+  if (!clave) throw new Error('Falta BREVO_API_KEY');
+  const digitos = String(numero).replace(/\D/g, '');
+  const cuerpo = JSON.stringify({
+    type: 'transactional',
+    unicodeEnabled: false,
+    sender: String(process.env.MERCA_SMS_REMITENTE || 'MercaMaq').slice(0, 11),
+    recipient: digitos.length === 10 ? `1${digitos}` : digitos,
+    content: texto,
+  });
+
+  return new Promise((resolver) => {
+    const req = https.request({
+      hostname: 'api.brevo.com',
+      path: process.env.MERCA_SMS_RUTA || '/v3/transactionalSMS/sms',
+      method: 'POST',
+      headers: {
+        'api-key': clave,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(cuerpo),
+      },
+      timeout: 10000,
+    }, (res) => {
+      let datos = '';
+      res.on('data', (c) => { datos += c; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          let idMensaje;
+          try { idMensaje = (JSON.parse(datos || '{}') || {}).messageId; } catch (_) { idMensaje = undefined; }
+          resolver({ entregado: true, id: idMensaje });
+        } else {
+          // Sin créditos Brevo responde con error: se anota y se sigue.
+          console.error(`sms: Brevo devolvió ${res.statusCode} · ${datos.slice(0, 200)}`);
+          resolver({ entregado: false, error: `Brevo ${res.statusCode}` });
+        }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolver({ entregado: false, error: 'tiempo agotado' }); });
+    req.on('error', (e) => resolver({ entregado: false, error: e.message }));
+    req.write(cuerpo);
+    req.end();
+  });
+}
+
+const TRANSPORTES_SMS = { archivo: smsPorArchivo, brevo: smsPorBrevo };
+
+const smsActivo = () => Object.prototype.hasOwnProperty.call(TRANSPORTES_SMS, modoSms());
+
+/* Igual que `enviar`: nunca lanza. Con el interruptor apagado no sale
+   nada y lo dice, para que quien llame no lo dé por enviado. */
+function enviarSms({ numero, texto }) {
+  const modo = modoSms();
+  if (modo === 'apagado') return { entregado: false, error: 'sms apagado' };
+  const transporte = TRANSPORTES_SMS[modo];
+  if (!transporte) {
+    console.error(`sms: modo "${modo}" desconocido; use apagado, archivo o brevo`);
+    return { entregado: false, error: 'modo desconocido' };
+  }
+  try {
+    const r = transporte({ numero, texto });
+    return r && typeof r.catch === 'function'
+      ? r.catch((e) => {
+        console.error('sms: no se pudo enviar a', numero, '·', e.message);
+        return { entregado: false, error: e.message };
+      })
+      : r;
+  } catch (e) {
+    console.error('sms: no se pudo enviar a', numero, '·', e.message);
+    return { entregado: false, error: e.message };
+  }
+}
+
 /* Aviso de que la contraseña cambió. No lleva código ni enlace: su
    único fin es que el dueño se entere si el cambio no fue suyo. */
 function enviarAvisoCambioClave({ para, nombre }) {
@@ -1104,6 +1263,8 @@ module.exports = {
   enviarComprobante, enviarContactoRecibido, enviarBienvenida,
   enviarDatosTransferencia, enviarTransferenciaAnulada,
   avisarInternamente,
+  // Verificación de teléfonos: el SMS va apagado tras MERCA_SMS.
+  enviarCodigoContacto, textoSmsContacto, enviarSms, smsActivo, BANDEJA_SMS,
   BANDEJA, SITIO, BUZONES, EMPRESA, avisarInternamente,
   // Nombres sueltos que ya usaba otro código. BUZONES es lo que hay que
   // usar a partir de ahora.

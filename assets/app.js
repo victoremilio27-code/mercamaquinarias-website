@@ -889,13 +889,27 @@ function videosHTML(e) {
 
 /* Medios de contacto declarados al publicar.
 
-   Cada número se ofrece por los canales que el anunciante habilitó, y
-   WhatsApp va como enlace propio con el mensaje ya redactado: en este
-   mercado la mayoría de los contactos entran por ahí, y obligar a
-   copiar el número a mano pierde la mitad de esas conversaciones. */
+   Solo se pinta un número si `t.verificado` viene en `true`: el
+   servidor (`verAnuncio`, CONF-03) ya se lo quita a quien no es el
+   dueño, pero el dueño ve su propio anuncio con los sin verificar
+   también, y este filtro es el que hace que su ficha se vea igual que
+   la ve el comprador (D-07 de la fase 9). `anuncioDeApi` no toca
+   `telefonos`: la marca de verificado y la vía llegan tal cual del API.
+
+   Cada número verificado se ofrece por los canales que el anunciante
+   habilitó, y WhatsApp va como enlace propio con el mensaje ya
+   redactado: en este mercado la mayoría de los contactos entran por
+   ahí, y obligar a copiar el número a mano pierde la mitad de esas
+   conversaciones. */
 function contactosHTML(e) {
-  const validos = (e.telefonos || []).filter((t) => t && t.numero);
-  if (!validos.length) return '';
+  const validos = (e.telefonos || []).filter((t) => t && t.numero && t.verificado);
+  if (!validos.length) {
+    return `<div class="contactos">
+      <p class="etiqueta etiqueta--bloque">Teléfonos verificados</p>
+      <p class="panel__texto">Este anunciante todavía no ha verificado ningún teléfono, así que aquí
+        no se muestra ninguno. Lea el aviso de abajo antes de tratar con él por otro medio.</p>
+    </div>`;
+  }
 
   // Los números dominicanos viajan a diez dígitos; WhatsApp los quiere
   // en formato internacional.
@@ -906,9 +920,16 @@ function contactosHTML(e) {
   };
   const mensaje = encodeURIComponent(
     `Hola, le escribo por el ${nombreEquipo(e)} publicado en MercaMaquinarias (${precioTexto(e)}).`);
+  // Por qué vía se probó cada número: por SMS prueba que el anunciante
+  // controla el teléfono; por correo prueba que el titular de la
+  // cuenta lo declara suyo (D-03 de la fase 9). No son lo mismo y la
+  // ficha no debe venderlos como si lo fueran.
+  const viaTexto = (t) => (t.via === 'sms'
+    ? 'Verificado por SMS'
+    : 'Confirmado por el anunciante desde su correo verificado');
 
   return `<div class="contactos">
-    <p class="etiqueta etiqueta--bloque">Contacto directo con el anunciante</p>
+    <p class="etiqueta etiqueta--bloque">Teléfonos verificados</p>
     ${validos.map((t) => {
       const tipo = t.tipo || 'ambos';
       const llamada = tipo === 'llamadas' || tipo === 'ambos';
@@ -916,6 +937,7 @@ function contactosHTML(e) {
       return `<div class="contactos__fila">
         <span class="contactos__num">
           <b class="num">${esc(t.numero)}</b>
+          <span class="contactos__nota">${esc(viaTexto(t))}</span>
           ${t.nota ? `<span class="contactos__nota">${esc(t.nota)}</span>` : ''}
         </span>
         <span class="contactos__acciones">
@@ -1050,7 +1072,8 @@ async function montarDetalle() {
 
         <p class="detalle__aviso">MercaMaquinarias publica este anuncio pero no interviene en la transacción
           ni retiene fondos. Verifique el equipo y su documentación antes de pagar.
-          <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a>.</p>
+          <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a> ·
+          <a href="estafas.html">Señales de estafa: qué revisar antes de pagar</a>.</p>
       </aside>
     </div>`;
 
