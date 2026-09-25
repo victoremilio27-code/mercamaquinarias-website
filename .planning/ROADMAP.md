@@ -64,7 +64,10 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Fusionar a `main` con todo en verde despliega a producción igual que hoy, sin paso manual nuevo.
   3. Cualquiera de las dos personas ve, dentro del propio PR, qué script falló y con qué salida, sin entrar al VPS.
   4. `CLAUDE.md` está en la raíz del repositorio con las reglas fiscales, de dependencias y de despliegue que no se pueden olvidar.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 01-01-PLAN.md — Colgar las pruebas de un flujo de Actions y encadenar el despliegue detras de ellas
+- [ ] 01-02-PLAN.md — Proteger main con las comprobaciones obligatorias y demostrar que un PR en rojo no se fusiona
+- [ ] 01-03-PLAN.md — Poner al dia la seccion de despliegue de CLAUDE.md y fusionar en verde para ver el despliegue pasar por la barrera
 **Notas**: Los scripts ya existen (`npm run auditar`, `seguridad:probar`, `dealer:probar`, `facturas:probar`, `facturas:letras`, `chat:probar`); no hay que escribirlos, hay que colgarlos del workflow. Hoy `.github/workflows/desplegar.yml` tiene un único paso que entra por SSH y despliega. Los tres estilos de prueba conviven a propósito y no se unifican. CI-02 quedó hecho el 2026-09-25: la fase lo verifica, no lo reescribe.
 
 ### Phase 2: Tema claro y oscuro coherentes
@@ -274,7 +277,7 @@ entrega valor sin esperar a la siguiente.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Barrera de pruebas en la fusión | 0/TBD | Not started | - |
+| 1. Barrera de pruebas en la fusión | 0/3 | Not started | - |
 | 2. Tema claro y oscuro coherentes | 0/TBD | Not started | - |
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
