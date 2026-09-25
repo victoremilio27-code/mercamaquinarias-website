@@ -947,7 +947,11 @@ function condicionesHTML(e) {
    página esté abierta, que es mejor que un botón muerto. */
 const GUARDADOS = (() => {
   const CLAVE = 'mercamaquinarias:guardados';
-  const TOPE = 100;
+  /* El mismo tope que acepta GET /api/anuncios?ids= (MAXIMO_IDS en
+     tools/api.js). Con 100 aquí, los guardados del 61 en adelante no
+     volvían del servidor, la página los daba por «ya no publicados» y
+     ofrecía borrarlos. */
+  const TOPE = 60;
   const ID_VALIDO = /^[\w-]{1,64}$/;
   let enMemoria = [];
 
