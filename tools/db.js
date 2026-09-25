@@ -2881,6 +2881,13 @@ function filtrosCatalogo(f = {}) {
 
   if (f.soloDestacados) donde.push('a.destacado_hasta IS NOT NULL AND a.destacado_hasta > :ahora');
 
+  // Permuta e ITBIS incluido eran solo etiquetas de la ficha. Son dos
+  // condiciones muy dominicanas que ningún portal extranjero ofrece, y
+  // el comprador que las necesita filtra por ellas (CAT-03). Sin
+  // índice: son 0/1 y el filtro por estado y fecha ya acota.
+  if (f.permuta) donde.push('a.permuta = 1');
+  if (f.itbis) donde.push('a.itbis_incluido = 1');
+
   // Búsqueda por texto sobre los campos que el comprador escribe de
   // memoria: marca, modelo, tipo y dónde está. Cada palabra debe
   // aparecer en alguno, así "komatsu santiago" acota de verdad en vez

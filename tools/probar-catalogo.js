@@ -286,11 +286,52 @@ async function bloqueDisponibilidad() {
   db.guardarDisponibilidad(S.pedido, S.vendedor.org.id, 'bajo-pedido');
 }
 
+/* ── CAT-03 · permuta e ITBIS como filtros ───────────────── */
+async function bloqueCondiciones() {
+  const org = S.vendedor.org;
+  S.permuta = anuncio(org, { modelo: 'PERMUTA', precio: 1500000, permuta: true });
+  S.itbis = anuncio(org, { modelo: 'ITBIS', precio: 3000000, itbisIncluido: true });
+  S.ambas = anuncio(org, { modelo: 'AMBAS', precio: 50000, moneda: 'USD', permuta: true, itbisIncluido: true });
+
+  console.log('\nCriterio 4 · permuta e ITBIS incluido filtran');
+  let r = await catalogo('permuta=1');
+  comprobar(r.total === 2 && ids(r).includes(S.permuta) && ids(r).includes(S.ambas),
+    `«acepta permuta» devuelve los dos que la aceptan (total ${r.total})`);
+  r = await catalogo('itbis=1');
+  comprobar(r.total === 2 && ids(r).includes(S.itbis) && ids(r).includes(S.ambas),
+    `«ITBIS incluido» devuelve los dos que lo incluyen (total ${r.total})`);
+  r = await catalogo('permuta=1&itbis=1');
+  comprobar(r.total === 1 && ids(r)[0] === S.ambas, 'las dos juntas, solo el que cumple ambas');
+
+  console.log('\nCombinados con moneda y disponibilidad');
+  r = await catalogo('permuta=1&precioMin=2000000');
+  comprobar(r.total === 1 && ids(r)[0] === S.ambas,
+    'permuta y «desde RD$2M» encuentra el de US$50,000 (≈ RD$3.15M) y no el de RD$1.5M');
+  r = await catalogo('itbis=1&disponibilidad=bajo-pedido');
+  comprobar(r.total === 0, 'ITBIS incluido y bajo pedido no encuentra ninguno (no hay)');
+  r = await catalogo('itbis=1&orden=precio-desc');
+  comprobar(ids(r)[0] === S.ambas && ids(r)[1] === S.itbis,
+    'ordenado por precio, el de US$50,000 va antes que el de RD$3M');
+
+  console.log('\nValores que no activan el filtro');
+  const todos = (await catalogo('')).total;
+  r = await catalogo('permuta=si&itbis=true');
+  comprobar(r.total === todos, `«permuta=si» o «itbis=true» no filtran (total ${r.total} de ${todos})`);
+  r = await catalogo('permuta=0');
+  comprobar(r.total === todos, '«permuta=0» tampoco');
+
+  console.log('\nLa tarjeta trae las condiciones');
+  r = await catalogo('permuta=1&itbis=1');
+  const t = r.anuncios[0] || {};
+  comprobar(t.permuta === 1 && t.itbis_incluido === 1, 'el listado devuelve permuta e itbis_incluido');
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · comprobaciones del catálogo\n');
   sembrar();
   await bloqueMoneda();
   await bloqueDisponibilidad();
+  await bloqueCondiciones();
 
   console.log(`\n${bien} bien, ${mal} mal`);
   process.exit(mal ? 1 : 0);

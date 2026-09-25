@@ -2616,6 +2616,9 @@ function catalogo(req, res, ctx, consulta) {
     anioMax: v('anioMax'),
     horasMax: v('horasMax'),
     soloDestacados: v('destacados') === '1',
+    // Solo el valor exacto '1' activa: es lo que manda la casilla.
+    permuta: v('permuta') === '1',
+    itbis: v('itbis') === '1',
     orden: v('orden'),
     pagina: v('pagina'),
     porPagina: v('porPagina'),
