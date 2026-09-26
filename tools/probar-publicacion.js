@@ -46,6 +46,8 @@ for (const k of Object.keys(process.env)) {
 }
 
 const db = require('./db');
+const pagos = require('./pagos');
+const precios = require('../assets/precios.js');
 
 const ID_ORG = 'org-publica';
 const ID_OTRA = 'org-ajena';
@@ -103,6 +105,41 @@ const siguienteB02 = () => {
 const filaAnuncio = (idAnuncio) => consulta('SELECT * FROM anuncios WHERE id = ?', idAnuncio);
 const fotosDe = (idAnuncio) =>
   consulta('SELECT COUNT(*) AS n FROM anuncio_fotos WHERE anuncio_id = ?', idAnuncio).n;
+
+const suscripcionesDe = (idOrg) =>
+  consulta('SELECT COUNT(*) AS n FROM suscripciones WHERE organizacion_id = ?', idOrg).n;
+const facturasTotales = () => consulta('SELECT COUNT(*) AS n FROM facturas').n;
+const pagosTotales = () => consulta('SELECT COUNT(*) AS n FROM pagos').n;
+const pagosDelAnuncio = (idAnuncio) =>
+  consulta('SELECT COUNT(*) AS n FROM pagos WHERE anuncio_id = ?', idAnuncio).n;
+
+/* El cobro sale de la fórmula única, como en las rutas: la prueba no
+   puede inventarse el subtotal. El número es el precio vigente del
+   plan, ANTES del ajuste. */
+const cobroDe = (precioUnitario, etiqueta) => ({
+  ...precios.precioCompra({ precioUnitario, cupo: 1, dias: 30 }),
+  referencia: referencia(etiqueta), procesador: 'demo',
+});
+
+const CLIENTE = { razonSocial: 'Cliente de prueba', correo: 'cliente@prueba.invalid' };
+const intencionPublicacion = (idAnuncio, idPlan, dias) => ({
+  tipo: 'publicacion', idAnuncio, idPlan, cupo: 1, dias,
+  concepto: `Publicación ${idPlan} · ${dias} días`,
+  cliente: CLIENTE, correoCliente: CLIENTE.correo,
+});
+
+/* Un borrador listo para pedir el pago: los mismos datos que usa la
+   prueba de transferencia, tres fotos y un teléfono. */
+function borradorCompleto(idPlan, dias) {
+  const idAnuncio = db.crearBorrador({ idOrg: ID_ORG, idPlan, dias });
+  db.guardarBorrador(idAnuncio, ID_ORG, {
+    categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt',
+    modelo: '567', anio: 2019, precio: 2500000, provincia: 'Santo Domingo',
+    fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+    telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+  });
+  return idAnuncio;
+}
 
 /* Abrir la base aplica el esquema y las migraciones. */
 db.secuenciasNcf();
@@ -212,6 +249,150 @@ db.cargarSecuencia({
       && enPanel.plan_elegido_nombre === 'Destacado' && enPanel.pago_pendiente === null
       && enPanel.pendiente_pago === false,
     `panel: ${enPanel ? `${enPanel.plan_elegido_nombre} ${enPanel.dias_elegidos}d pendiente=${enPanel.pendiente_pago}` : 'NO aparece'}`);
+  }
+
+  console.log('\n3. Confirmar el pago de la publicación activa el borrador, una sola vez');
+  let idPublicado = null;
+  {
+    const idAnuncio = borradorCompleto('destacado', 30);
+    const pago = db.registrarCobro({
+      idOrg: ID_ORG, idAnuncio, cobro: cobroDe(3200, 'PUBLICA'),
+      intencion: intencionPublicacion(idAnuncio, 'destacado', 30),
+    });
+    ok(pago.anuncio_id === idAnuncio && pago.estado === 'pendiente',
+      `pago anuncio_id=${pago.anuncio_id === idAnuncio ? 'el del borrador' : pago.anuncio_id} estado=${pago.estado}`);
+    const pp = db.pagoPendienteDeAnuncio(idAnuncio);
+    ok(!!pp && pp.id === pago.id, `pagoPendienteDeAnuncio: ${pp ? (pp.id === pago.id ? 'ese pago' : pp.id) : 'null'}`);
+    const enPanel = db.anunciosDeOrganizacion(ID_ORG).find((x) => x.id === idAnuncio);
+    ok(!!enPanel && enPanel.pendiente_pago === true, `panel pendiente_pago=${enPanel && enPanel.pendiente_pago}`);
+    const cambiar = db.guardarBorrador(idAnuncio, ID_ORG, { modelo: 'OTRO' });
+    ok(cambiar && cambiar.ok === false && cambiar.motivo === 'pago-pendiente',
+      `guardar con pago pendiente: ${JSON.stringify(cambiar)}`);
+
+    const pagosAntes = pagosDelAnuncio(idAnuncio);
+    const e2 = lanza(() => db.registrarCobro({
+      idOrg: ID_ORG, idAnuncio, cobro: cobroDe(3200, 'DOBLE'),
+      intencion: intencionPublicacion(idAnuncio, 'destacado', 30),
+    }));
+    ok(!!e2 && e2.codigo === 409 && pagosDelAnuncio(idAnuncio) === pagosAntes,
+      `segundo pendiente: ${e2 ? `${e2.codigo} ${e2.message}` : 'NO lanzó'} pagos=${pagosDelAnuncio(idAnuncio)}`);
+
+    const suscAntes = suscripcionesDe(ID_ORG);
+    const b02 = siguienteB02();
+    let r = null;
+    const ec = lanza(() => { r = pagos.confirmarPago(pago.id); });
+    ok(!ec && !!r && r.pago.estado === 'aprobado', ec ? `confirmarPago lanzó: ${ec.message}` : `pago ${r && r.pago.estado}`);
+    ok(suscripcionesDe(ID_ORG) === suscAntes + 1, `suscripciones ${suscAntes} → ${suscripcionesDe(ID_ORG)} (se esperaba +1)`);
+    const pagoFila = db.pagoPorId(pago.id);
+    const s = pagoFila.suscripcion_id ? consulta('SELECT * FROM suscripciones WHERE id = ?', pagoFila.suscripcion_id) : null;
+    ok(!!s && s.plan_id === 'destacado' && s.anuncios_incluidos === 1 && s.dias_ciclo === 30 && s.precio_pactado === 3200,
+      `suscripción: ${s ? `${s.plan_id} cupo=${s.anuncios_incluidos} días=${s.dias_ciclo} pactado=${s.precio_pactado}` : 'NO hay'}`);
+    const a = filaAnuncio(idAnuncio);
+    ok(!!s && a.estado === 'activo' && a.suscripcion_id === s.id && a.vence === s.fin
+      && a.destacado_hasta === s.fin && !!a.publicado,
+    `anuncio: ${a.estado} susc=${!!s && a.suscripcion_id === s.id} vence=${!!s && a.vence === s.fin} destacado=${!!s && a.destacado_hasta === s.fin} publicado=${a.publicado}`);
+    const f = consulta("SELECT * FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'", pago.id);
+    ok(!!f && /^B02/.test(f.ncf || '') && f.subtotal + f.itbis === f.total && f.total === pagoFila.total,
+      `factura: ${f ? `${f.ncf} ${f.subtotal}+${f.itbis}=${f.total} (pago ${pagoFila.total})` : 'NO hay'}`);
+    ok(siguienteB02() === b02 + 1, `B02 avanzó ${siguienteB02() - b02} (se esperaba 1)`);
+
+    const suscMedio = suscripcionesDe(ID_ORG);
+    const factMedio = facturasTotales();
+    let r2 = null;
+    const e3 = lanza(() => { r2 = pagos.confirmarPago(pago.id); });
+    const a2 = filaAnuncio(idAnuncio);
+    ok(!e3 && !!r2 && r2.yaEstaba === true && suscripcionesDe(ID_ORG) === suscMedio
+      && facturasTotales() === factMedio && a2.publicado === a.publicado && a2.estado === 'activo',
+    e3 ? `repetir lanzó: ${e3.message}` : `repetir: yaEstaba=${r2 && r2.yaEstaba} susc=${suscripcionesDe(ID_ORG)} facturas=${facturasTotales()}`);
+    idPublicado = idAnuncio;
+  }
+
+  console.log('\n4. Lo que no debe pasar: activar sin borrador, rechazo, importe cero');
+  {
+    // Un anuncio que dejó de ser borrador antes de aprobar: 409 y nada.
+    const idRetirado = borradorCompleto('destacado', 30);
+    const pRet = db.registrarCobro({
+      idOrg: ID_ORG, idAnuncio: idRetirado, cobro: cobroDe(3200, 'RETIRADO'),
+      intencion: intencionPublicacion(idRetirado, 'destacado', 30),
+    });
+    ejecuta("UPDATE anuncios SET estado = 'retirado' WHERE id = ?", idRetirado);
+    const suscAntes = suscripcionesDe(ID_ORG);
+    const e409 = lanza(() => db.aprobarPago(pRet.id));
+    ok(!!e409 && e409.codigo === 409 && db.pagoPorId(pRet.id).estado === 'pendiente'
+      && suscripcionesDe(ID_ORG) === suscAntes,
+    `no borrador: ${e409 ? e409.codigo : 'NO lanzó'} pago=${db.pagoPorId(pRet.id).estado} susc=${suscripcionesDe(ID_ORG) - suscAntes}`);
+
+    // El borrador desapareció: 404 y nada.
+    const idBorrado = borradorCompleto('destacado', 30);
+    const pBor = db.registrarCobro({
+      idOrg: ID_ORG, idAnuncio: idBorrado, cobro: cobroDe(3200, 'BORRADO'),
+      intencion: intencionPublicacion(idBorrado, 'destacado', 30),
+    });
+    ejecuta('DELETE FROM anuncios WHERE id = ?', idBorrado);
+    const e404 = lanza(() => db.aprobarPago(pBor.id));
+    ok(!!e404 && e404.codigo === 404 && db.pagoPorId(pBor.id).estado === 'pendiente'
+      && suscripcionesDe(ID_ORG) === suscAntes,
+    `borrado: ${e404 ? e404.codigo : 'NO lanzó'} pago=${db.pagoPorId(pBor.id).estado} susc=${suscripcionesDe(ID_ORG) - suscAntes}`);
+
+    // Un rechazo deja el borrador recuperable.
+    const idRech = borradorCompleto('destacado', 30);
+    const pRech = db.registrarCobro({
+      idOrg: ID_ORG, idAnuncio: idRech, cobro: cobroDe(3200, 'RECHAZA'),
+      intencion: intencionPublicacion(idRech, 'destacado', 30),
+    });
+    const b02 = siguienteB02();
+    const fact = facturasTotales();
+    const rr = pagos.rechazarPago(pRech.id);
+    const aR = filaAnuncio(idRech);
+    ok(rr.cambiado && aR.estado === 'borrador' && aR.suscripcion_id === null
+      && facturasTotales() === fact && siguienteB02() === b02,
+    `rechazo: pago=${rr.pago.estado} anuncio=${aR.estado} susc=${aR.suscripcion_id} facturas=${facturasTotales() - fact} B02=${siguienteB02() - b02}`);
+    const eOtra = lanza(() => db.registrarCobro({
+      idOrg: ID_ORG, idAnuncio: idRech, cobro: cobroDe(3200, 'OTRA-VEZ'),
+      intencion: intencionPublicacion(idRech, 'destacado', 30),
+    }));
+    ok(!eOtra, eOtra ? `otro pendiente tras el rechazo lanzó: ${eOtra.message}` : 'tras el rechazo se puede pedir otro pago');
+
+    // Importe cero: activa al instante, sin comprobante.
+    const idCero = borradorCompleto('estandar', 30);
+    const suscCero = suscripcionesDe(ID_ORG);
+    const factCero = facturasTotales();
+    let rc = null;
+    const eCero = lanza(() => {
+      rc = db.publicarBorradorSinCosto({
+        idAnuncio: idCero, idOrg: ID_ORG, idPlan: 'estandar', dias: 30,
+        cobro: { ...precios.desglose(0), referencia: referencia('CERO') },
+      });
+    });
+    const aC = filaAnuncio(idCero);
+    const pC = consulta('SELECT * FROM pagos WHERE anuncio_id = ?', idCero);
+    const sC = aC.suscripcion_id ? consulta('SELECT * FROM suscripciones WHERE id = ?', aC.suscripcion_id) : null;
+    ok(!eCero && !!rc && aC.estado === 'activo' && !!sC && sC.plan_id === 'estandar' && sC.anuncios_incluidos === 1
+      && suscripcionesDe(ID_ORG) === suscCero + 1,
+    eCero ? `importe cero lanzó: ${eCero.message}` : `cero: ${aC.estado} ${sC && sC.plan_id} cupo=${sC && sC.anuncios_incluidos}`);
+    ok(!!pC && pC.estado === 'aprobado' && pC.total === 0 && pC.procesador === 'sin-costo'
+      && pC.suscripcion_id === aC.suscripcion_id && facturasTotales() === factCero,
+    `pago cero: ${pC ? `${pC.estado} total=${pC.total} ${pC.procesador}` : 'NO hay'} facturas=${facturasTotales() - factCero}`);
+
+    const idConImporte = borradorCompleto('estandar', 30);
+    const suscImp = suscripcionesDe(ID_ORG);
+    const pagosImp = pagosTotales();
+    const eImp = lanza(() => db.publicarBorradorSinCosto({
+      idAnuncio: idConImporte, idOrg: ID_ORG, idPlan: 'estandar', dias: 30,
+      cobro: { ...precios.desglose(1800), referencia: referencia('COLADO') },
+    }));
+    ok(!!eImp && filaAnuncio(idConImporte).estado === 'borrador'
+      && suscripcionesDe(ID_ORG) === suscImp && pagosTotales() === pagosImp,
+    `importe colado: ${eImp ? 'rechazado' : 'NO lanzó'} anuncio=${filaAnuncio(idConImporte).estado}`);
+
+    const suscYa = suscripcionesDe(ID_ORG);
+    const pagosYa = pagosTotales();
+    const eYa = lanza(() => db.publicarBorradorSinCosto({
+      idAnuncio: idPublicado, idOrg: ID_ORG, idPlan: 'estandar', dias: 30,
+      cobro: { ...precios.desglose(0), referencia: referencia('YA-ACTIVO') },
+    }));
+    ok(!!eYa && eYa.codigo === 409 && suscripcionesDe(ID_ORG) === suscYa && pagosTotales() === pagosYa,
+      `sobre un activo: ${eYa ? eYa.codigo : 'NO lanzó'} susc=${suscripcionesDe(ID_ORG) - suscYa} pagos=${pagosTotales() - pagosYa}`);
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
