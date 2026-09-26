@@ -603,6 +603,156 @@ db.cargarSecuencia({
     ok(copia.codigo === 200 && copia.datos.copia.equipo.serie === '', `copiarAnuncio sin serie: '${copia.datos.copia.equipo.serie}'`);
   }
 
+  console.log('\n7. Nadie más ve un borrador ajeno ni lo activa por otra puerta');
+  {
+    const orgA = cuentaCon({ correo: `orga-${SELLO}@prueba.invalid` });
+    const orgB = cuentaCon({ correo: `orgb-${SELLO}@prueba.invalid` });
+
+    const crear = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'destacado', dias: 30 }, cabeceras: orgA.cabeceras });
+    const idAjeno = crear.datos.borrador.id;
+
+    const verSinSesion = await pedir({ url: `/api/anuncios/${idAjeno}` });
+    ok(verSinSesion.codigo === 404, `GET /api/anuncios sin sesión: ${verSinSesion.codigo}`);
+    const verOtra = await pedir({ url: `/api/anuncios/${idAjeno}`, cabeceras: orgB.cabeceras });
+    ok(verOtra.codigo === 404, `GET /api/anuncios con B: ${verOtra.codigo}`);
+    const verPropia = await pedir({ url: `/api/anuncios/${idAjeno}`, cabeceras: orgA.cabeceras });
+    ok(verPropia.codigo === 200, `GET /api/anuncios con A: ${verPropia.codigo}`);
+
+    const filaAntes = filaAnuncio(idAjeno);
+
+    const getBorradorB = await pedir({ url: `/api/borradores/${idAjeno}`, cabeceras: orgB.cabeceras });
+    ok(getBorradorB.codigo === 404, `GET /api/borradores con B: ${getBorradorB.codigo}`);
+    const putBorradorB = await pedir({ metodo: 'PUT', url: `/api/borradores/${idAjeno}`, cuerpo: { modelo: 'X' }, cabeceras: orgB.cabeceras });
+    ok(putBorradorB.codigo === 404, `PUT /api/borradores con B: ${putBorradorB.codigo}`);
+    const deleteB = await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idAjeno}`, cabeceras: orgB.cabeceras });
+    ok(deleteB.codigo === 404, `DELETE con B: ${deleteB.codigo}`);
+    const patchEstadoB = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idAjeno}`, cuerpo: { estado: 'activo' }, cabeceras: orgB.cabeceras });
+    ok(patchEstadoB.codigo === 404, `PATCH estado con B: ${patchEstadoB.codigo}`);
+    const patchPlanB = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idAjeno}/plan`, cuerpo: { membresia: 'x' }, cabeceras: orgB.cabeceras });
+    ok(patchPlanB.codigo === 404, `PATCH plan con B: ${patchPlanB.codigo}`);
+
+    const filaDespues = filaAnuncio(idAjeno);
+    ok(filaAntes.modelo === filaDespues.modelo && filaAntes.estado === filaDespues.estado
+      && filaAntes.actualizado === filaDespues.actualizado, 'la fila de A no cambió con los intentos de B');
+
+    const catalogo = await pedir({ url: '/api/anuncios' });
+    ok(!(catalogo.datos.anuncios || []).some((x) => x.id === idAjeno), `catálogo sin el borrador: ${catalogo.codigo}`);
+
+    const misA = await pedir({ url: '/api/mis-anuncios', cabeceras: orgA.cabeceras });
+    const enA = (misA.datos.anuncios || []).find((x) => x.id === idAjeno);
+    ok(!!enA && enA.estado === 'borrador' && enA.pendiente_pago === false,
+      `mis-anuncios de A: ${enA && enA.estado} pendiente=${enA && enA.pendiente_pago}`);
+    const misB = await pedir({ url: '/api/mis-anuncios', cabeceras: orgB.cabeceras });
+    ok(!(misB.datos.anuncios || []).some((x) => x.id === idAjeno), 'mis-anuncios de B no lo trae');
+
+    // Sin puerta de atrás (MOD-08): ni el propio dueño activa su borrador por PATCH.
+    for (const estado of ['activo', 'pausado', 'vendido', 'retirado']) {
+      const r = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idAjeno}`, cuerpo: { estado }, cabeceras: orgA.cabeceras });
+      ok(r.codigo === 409, `PATCH estado=${estado} sobre el propio borrador: ${r.codigo}`);
+    }
+    ok(filaAnuncio(idAjeno).estado === 'borrador', 'sigue borrador tras los cuatro intentos');
+
+    const membresiaLibre = db.comprarCupos({
+      idOrg: orgA.org.id, idPlan: 'estandar', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('MEMBRESIA-A') },
+    });
+    const patchPlanPropio = await pedir({
+      metodo: 'PATCH', url: `/api/anuncios/${idAjeno}/plan`, cuerpo: { membresia: membresiaLibre.id }, cabeceras: orgA.cabeceras,
+    });
+    ok(patchPlanPropio.codigo === 409, `PATCH plan sobre el propio borrador: ${patchPlanPropio.codigo}`);
+    ok(filaAnuncio(idAjeno).suscripcion_id === null, 'suscripcion_id sigue NULL');
+
+    const pagoBorrador = db.registrarCobro({
+      idOrg: orgA.org.id, idAnuncio: idAjeno, cobro: cobroDe(3200, 'BORRADOR-A'),
+      intencion: intencionPublicacion(idAjeno, 'destacado', 30),
+    });
+    const putConPago = await pedir({ metodo: 'PUT', url: `/api/borradores/${idAjeno}`, cuerpo: { modelo: 'OTRO' }, cabeceras: orgA.cabeceras });
+    ok(putConPago.codigo === 409, `PUT con pago pendiente: ${putConPago.codigo}`);
+    const deleteConPago = await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idAjeno}`, cabeceras: orgA.cabeceras });
+    ok(deleteConPago.codigo === 409 && (deleteConPago.datos.error || '').includes('facturacion@mercamaquinarias.com'),
+      `DELETE con pago pendiente: ${deleteConPago.codigo} ${deleteConPago.datos && deleteConPago.datos.error}`);
+
+    pagos.rechazarPago(pagoBorrador.id);
+    const fotoAntesDeBorrar = await subirFoto(orgA.cabeceras);
+    await pedir({
+      metodo: 'PUT', url: `/api/borradores/${idAjeno}`,
+      cuerpo: { fotos: [{ url: fotoAntesDeBorrar, miniatura: null }] }, cabeceras: orgA.cabeceras,
+    });
+    const deleteOk = await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idAjeno}`, cabeceras: orgA.cabeceras });
+    ok(deleteOk.codigo === 200, `DELETE tras rechazar el pago: ${deleteOk.codigo}`);
+    ok(filaAnuncio(idAjeno) === undefined, 'la fila ya no existe');
+    ok(!fotosModulo.rutaExiste(fotoAntesDeBorrar), 'el archivo de la foto ya no está en disco');
+  }
+
+  console.log('\n8. Límites de creación, el camino de hoy para quien ya tiene cupo, y capacidadLibre al vender');
+  {
+    const orgLimites = cuentaCon({ correo: `limites-${SELLO}@prueba.invalid` });
+    let ultimoCodigo = 0;
+    for (let i = 0; i < 10; i++) {
+      const r = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'estandar', dias: 30 }, cabeceras: orgLimites.cabeceras });
+      ultimoCodigo = r.codigo;
+    }
+    ok(ultimoCodigo === 201, `los primeros 10 borradores se crean: último código ${ultimoCodigo}`);
+    const r11 = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'estandar', dias: 30 }, cabeceras: orgLimites.cabeceras });
+    ok(r11.codigo === 409, `el 11.º borrador: ${r11.codigo}`);
+
+    // Llenar el contador compartido publicar:<usuario>.
+    const orgTope = cuentaCon({ correo: `tope-${SELLO}@prueba.invalid` });
+    for (let i = 0; i < 20; i++) db.permitir(`publicar:${orgTope.idUsuario}`, 20, 60);
+    const rBorradorTope = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'estandar', dias: 30 }, cabeceras: orgTope.cabeceras });
+    ok(rBorradorTope.codigo === 429, `POST /api/borradores con el tope lleno: ${rBorradorTope.codigo}`);
+    const rAnuncioTope = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: {}, cabeceras: orgTope.cabeceras });
+    ok(rAnuncioTope.codigo === 429, `POST /api/anuncios con el mismo contador: ${rAnuncioTope.codigo}`);
+
+    const ANUNCIO_COMPLETO = (fotosUrls) => ({
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567',
+      anio: 2019, condicion: 'usado', usoValor: 1000, usoUnidad: 'km',
+      descripcion: 'Prueba de publicar sin membresía.',
+      provincia: 'santo-domingo', precio: 1000000, moneda: 'DOP',
+      fotos: fotosUrls, telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+    });
+
+    // D-02: el camino de hoy sigue intacto para quien ya tiene un cupo libre.
+    const sinMembresia = cuentaCon({ correo: `sinmembresia-${SELLO}@prueba.invalid` });
+    const f1 = await subirFoto(sinMembresia.cabeceras);
+    const r402 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f1, f1, f1]), cabeceras: sinMembresia.cabeceras });
+    ok(r402.codigo === 402 && !/cupo/i.test((r402.datos || {}).error || ''),
+      `particular sin membresía, sin «cupo»: ${r402.codigo} «${r402.datos && r402.datos.error}»`);
+
+    const conMembresia = cuentaCon({ correo: `conmembresia-${SELLO}@prueba.invalid` });
+    db.comprarCupos({
+      idOrg: conMembresia.org.id, idPlan: 'destacado', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('CUPO-LIBRE') },
+    });
+    const f2 = await subirFoto(conMembresia.cabeceras);
+    const r201 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f2, f2, f2]), cabeceras: conMembresia.cabeceras });
+    ok(r201.codigo === 201, `particular con cupo libre publica igual que hoy: ${r201.codigo}`);
+    const idPublicadoLibre = ((r201.datos || {}).anuncio || {}).id;
+
+    const dealerSinMembresia = cuentaCon({ correo: `dealersin-${SELLO}@prueba.invalid`, tipo: 'dealer' });
+    const f3 = await subirFoto(dealerSinMembresia.cabeceras);
+    const rDealer402 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f3, f3, f3]), cabeceras: dealerSinMembresia.cabeceras });
+    ok(rDealer402.codigo === 402 && /cupo/i.test((rDealer402.datos || {}).error || ''),
+      `dealer sin membresía sigue con el 402 de siempre: ${rDealer402.codigo} «${rDealer402.datos && rDealer402.datos.error}»`);
+
+    // MOD-07: capacidadLibre al marcar vendido.
+    const rVendido = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idPublicadoLibre}`, cuerpo: { estado: 'vendido' }, cabeceras: conMembresia.cabeceras });
+    ok(rVendido.codigo === 200 && rVendido.datos.capacidadLibre === true,
+      `vender libera el cupo: capacidadLibre=${rVendido.datos && rVendido.datos.capacidadLibre}`);
+
+    const soloUnCupo = cuentaCon({ correo: `uncupo-${SELLO}@prueba.invalid` });
+    db.comprarCupos({
+      idOrg: soloUnCupo.org.id, idPlan: 'estandar', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('UN-CUPO') },
+    });
+    const f4 = await subirFoto(soloUnCupo.cabeceras);
+    const rPub2 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f4, f4, f4]), cabeceras: soloUnCupo.cabeceras });
+    const idUnico = ((rPub2.datos || {}).anuncio || {}).id;
+    const rVendido2 = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idUnico}`, cuerpo: { estado: 'vendido' }, cabeceras: soloUnCupo.cabeceras });
+    ok(rVendido2.codigo === 200 && rVendido2.datos.capacidadLibre === false,
+      `sin capacidad libre tras vender el único: capacidadLibre=${rVendido2.datos && rVendido2.datos.capacidadLibre}`);
+  }
+
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exitCode = fallos ? 1 : 0;
 })().catch((e) => {
