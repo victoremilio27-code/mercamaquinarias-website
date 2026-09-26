@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Completado 05.2-03-PLAN.md (pedir el pago del borrador y activarlo solo al confirmarse; huérfana en la consola)."
+stopped_at: "05.1 en producción (PR #35). 05.2: planes 01-02 en producción (PR #36, #37); 03 y 04 hechos en la rama sin desplegar; 05 sin empezar (cortado por el límite). 05.3: contexto escrito, planes sin escribir."
 last_updated: "2026-09-26T05:59:42.000Z"
 last_activity: "2026-09-26 — 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
@@ -15,6 +15,17 @@ progress:
 ---
 
 # Project State
+
+## Para retomar (2026-09-26, cortado por el límite de uso)
+
+- Rama `claude/fase-05.2-publicar-equipo`: 05.2-01 y 05.2-02 **ya en producción**; 05.2-03 (pagar el
+  borrador) y 05.2-04 (panel y planes sin «cupo») commiteados y empujados **sin desplegar a propósito**:
+  las tarjetas nuevas de `planes.html` llevan a `publicar.html?plan=…`, que solo entiende el 05.2-05.
+  Desplegar 03+04+05 juntos.
+- Siguiente: ejecutar el 05.2-05 (Sonnet) desde cero; el intento anterior no llegó a commitear nada.
+  Luego verificación de cierre de la 05.2 (Opus) y PR.
+- 05.3: `05.3-CONTEXT.md` escrito; relanzar el planificador (Opus).
+- Deploy por plan autorizado por Victor (ver Decisions).
 
 ## Project Reference
 
