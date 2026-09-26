@@ -26,6 +26,26 @@ Criterio de corte para v1, en este orden:
 - **PAGO-08**: Todo lo de CardNet se entrega **construido, probado y apagado** tras un interruptor de entorno, para encenderlo el día que la afiliación esté lista.
 - **PAGO-09**: **Contingencia de lanzamiento**: cobro por transferencia bancaria, con el pago marcado como recibido desde la consola de administración. Permite abrir el 14 de octubre aunque CardNet no haya llegado.
 
+### Modelo comercial (MOD)
+
+Autorizado por Victor el 2026-09-25 (`research/modelo-comercial.md`); auditado en `research/auditoria-modelo-comercial.md`.
+
+- **MOD-01**: Una sola fórmula de precio en `assets/precios.js`, compartida por navegador y servidor: subtotal gravado = base × 1,03; ITBIS = subtotal × 0,18; final = subtotal + ITBIS. La tasa del ajuste se configura en un solo sitio y el servidor recalcula siempre el importe.
+- **MOD-02**: El comprador ve solo el precio final con «ITBIS incluido». El 3 % no aparece nunca como comisión, cargo ni línea aparte, tampoco en el comprobante: va dentro del subtotal gravado. Solo la consola ve el ajuste.
+- **MOD-03**: Cada pago guarda base, tasa e importe del ajuste, subtotal gravado, tasa e importe de ITBIS y total, y el comprobante cuadra ante la DGII (subtotal + ITBIS = total cobrado).
+- **MOD-04**: Precios base Estándar RD$1.800 y Destacado RD$3.200; los demás planes conservan su base. Lo ya vendido conserva su precio pactado.
+- **MOD-05**: El particular publica en el orden plan → borrador → formulario → resumen → pago → activación. El anuncio vive en el servidor como `borrador` y `pendiente_pago`, y solo `pagos.confirmarPago` lo activa.
+- **MOD-06**: Un borrador o pendiente no es visible para nadie más que su dueño y se puede recuperar desde el panel.
+- **MOD-07**: En el flujo del particular no aparece «cupo»; tras una venta se le ofrece publicar otro equipo con la capacidad que queda.
+- **MOD-08**: El servidor impide activar sin pago, cobrar dos veces, aceptar dos veces un aviso de pago, publicar dos anuncios con un pago, superar la capacidad y reutilizar un cupo a la vez.
+- **MOD-09**: «Renovar anuncio» existe antes y después de vencer, extiende el mismo anuncio con una transacción nueva al precio vigente y nunca lo duplica.
+- **MOD-10**: Una suscripción cuya fecha pasó queda `vencida` y deja de sostener anuncios y la página pública del dealer.
+- **MOD-11**: Avisos de vencimiento a 7 días, 3 días y 24 horas, registrados por anuncio y tipo, idempotentes y anulados si el anuncio se vendió, venció o se renovó.
+- **MOD-12**: Renovación automática opt-in, nunca marcada por defecto y desactivable desde el panel; el cobro automático se construye en la Fase 6 y queda apagado hasta CardNet.
+- **MOD-13**: El dealer ve «publicaciones activas permitidas», «publicaciones activas» y «capacidad disponible»; «Agregar publicaciones activas» cobra el prorrateo sin doble cobro y conserva la regla de uno gratis por cada cinco.
+- **MOD-14**: La consola lista publicaciones por estado, pagos con su desglose, renovaciones y dealers con su capacidad; toda escritura en nombre de otro pasa por la bitácora.
+- **MOD-15**: Si cambian las condiciones de pago o renovación de `legal.html`, su versión sube por el mecanismo que ya existe.
+
 ### Consola de administración (ADMIN)
 
 - **ADMIN-01**: Pantalla para las solicitudes de servicio (alquiler, importación, contacto). Las rutas `listarSolicitudesServicio` y `marcarSolicitudServicio` ya existen y ninguna pantalla las usa.
@@ -116,7 +136,7 @@ Criterio de corte para v1, en este orden:
 ## Traceability
 
 Cada requisito de v1 está asignado a **exactamente una fase** de `.planning/ROADMAP.md`.
-Cobertura verificada el 2026-09-25: **30 de 30 requisitos de v1** y **13 de 13 de v2**, sin
+Cobertura verificada el 2026-09-25: **30 de 30 requisitos de v1** (más los 15 MOD del modelo comercial, añadidos el 2026-09-26) y **13 de 13 de v2**, sin
 huérfanos y sin duplicados.
 
 ### v1 — Lanzamiento (2026-10-14)
@@ -132,6 +152,21 @@ huérfanos y sin duplicados.
 | PAGO-07 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`; `facturas.emitirPorPago` ya es idempotente |
 | PAGO-08 | Phase 6 — CardNet construido y apagado | Pendiente | Patrón ya validado con Brevo y Anthropic |
 | PAGO-09 | Phase 5 — Cobro por transferencia bancaria | Completo (2026-09-25) | Contingencia propuesta en `cardnet.md` para no depender de la afiliación |
+| MOD-01 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
+| MOD-02 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
+| MOD-03 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
+| MOD-04 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
+| MOD-05 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
+| MOD-06 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
+| MOD-07 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
+| MOD-08 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
+| MOD-09 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
+| MOD-10 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
+| MOD-11 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
+| MOD-12 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
+| MOD-13 | Phase 05.4 — Dealer con capacidad | Pendiente | `research/modelo-comercial.md` |
+| MOD-14 | Phase 05.4 — Dealer con capacidad | Pendiente | `research/modelo-comercial.md` |
+| MOD-15 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
 | ADMIN-01 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | `codebase/CONCERNS.md` — rutas sin pantalla |
 | ADMIN-02 | Phase 7 — Verificación y soporte al dealer | Pendiente | `codebase/CONCERNS.md` — solo por línea de comandos hoy |
 | ADMIN-03 | Phase 7 — Verificación y soporte al dealer | Pendiente | `research/mercado.md`, huecos priorizados; cumple CONF-01 |
