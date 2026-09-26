@@ -2863,15 +2863,16 @@ const soloCero = (cobro) => {
   }
 };
 
-function anotarPago(d, { idOrg, idSusc, cobro, t }) {
+function anotarPago(d, { idOrg, idSusc, idAnuncio = null, cobro, t }) {
   soloCero(cobro);
   d.prepare(`INSERT INTO pagos
     (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador, creado,
-     base, ajuste, ajuste_tasa, itbis_tasa)
-    VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?, ?, ?, ?, ?)`)
+     base, ajuste, ajuste_tasa, itbis_tasa, anuncio_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id(), idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
       cobro.referencia, cobro.total > 0 ? (cobro.procesador || 'demo') : 'sin-costo', t,
-      cobro.base ?? 0, cobro.ajuste ?? 0, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null);
+      cobro.base ?? 0, cobro.ajuste ?? 0, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null,
+      idAnuncio || null);
 }
 
 /* La página pública de la empresa la trae el nivel Premium, pero solo
@@ -2935,6 +2936,51 @@ function otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado, t }) {
   return idSusc;
 }
 
+/* Pasa un borrador a activo sostenido por la suscripción de su pago.
+   Es el ÚNICO sitio que publica un borrador: lo llaman la aprobación
+   de un pago (`aprobarPago`, desde `pagos.confirmarPago`) y el importe
+   cero (`publicarBorradorSinCosto`), nunca una ruta. Exige que siga
+   siendo borrador en el mismo UPDATE: un segundo intento no reactiva
+   un anuncio vendido o retirado. Va dentro de la transacción de quien
+   llama. `destacado_hasta` con el mismo criterio que `publicar` en la
+   API: solo si el plan destaca. */
+function activarBorrador(d, { idAnuncio, idOrg, idSusc, t }) {
+  const s = suscripcion(idSusc, idOrg);
+  if (!s) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
+  const r = d.prepare(`UPDATE anuncios SET estado = 'activo', suscripcion_id = ?, vence = ?,
+                              destacado_hasta = ?, publicado = ?, actualizado = ?
+                        WHERE id = ? AND organizacion_id = ? AND estado = 'borrador'`)
+    .run(idSusc, s.fin, s.destacado ? s.fin : null, t, t, idAnuncio, idOrg);
+  if (r.changes !== 1) {
+    throw Object.assign(new Error('Ese anuncio ya no es un borrador: no se publica otra vez'), { codigo: 409 });
+  }
+}
+
+/* El importe cero del particular (promoción del Estándar, D-11): el
+   mismo camino que `comprarCupos` para el importe cero —suscripción de
+   un cupo, pago aprobado 'sin-costo' sin NCF y activación— en una sola
+   transacción. `soloCero` impide colar un importe por aquí. */
+function publicarBorradorSinCosto({ idAnuncio, idOrg, idPlan, dias, cobro }) {
+  soloCero(cobro);
+  const d = abrir();
+  const plan = planPorId(idPlan);
+  if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
+
+  const t = ahora();
+  let idSusc;
+  d.prepare('BEGIN').run();
+  try {
+    idSusc = otorgarCompra(d, { idOrg, plan, cupo: 1, dias, precioPactado: cobro.base ?? cobro.subtotal, t });
+    anotarPago(d, { idOrg, idSusc, idAnuncio, cobro, t });
+    activarBorrador(d, { idAnuncio, idOrg, idSusc, t });
+    d.prepare('COMMIT').run();
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+  return { membresia: suscripcion(idSusc, idOrg), anuncio: anuncio(idAnuncio) };
+}
+
 /* ── Cobros con importe: pendiente → aprobado | rechazado ────
    Un cobro con importe no se da por cobrado al anotarlo. Nace
    'pendiente' con lo que se compró guardado en `intencion`, y solo la
@@ -2944,7 +2990,7 @@ function otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado, t }) {
 
    El importe cero no pasa por aquí: sigue aprobado al instante por
    `comprarCupos`/`ampliarCupos`, porque no hay nada que esperar. */
-function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
+function registrarCobro({ idOrg, idSusc = null, idAnuncio = null, cobro, intencion }) {
   if (!(cobro && cobro.total > 0)) {
     throw Object.assign(
       new Error('registrarCobro es para cobros con importe; el importe cero se aprueba al instante por su propio camino'),
@@ -2964,13 +3010,23 @@ function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
   const d = abrir();
   const idPago = id();
   const t = ahora();
-  d.prepare(`INSERT INTO pagos
-    (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador,
-     creado, intencion, confirmado, actualizado, base, ajuste, ajuste_tasa, itbis_tasa)
-    VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`)
-    .run(idPago, idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
-      cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t,
-      cobro.base, cobro.ajuste, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null);
+  /* El índice único parcial `ux_pagos_anuncio_pendiente` frena un
+     segundo pendiente para el mismo anuncio aunque dos peticiones
+     lleguen a la vez; aquí solo se traduce su error a un 409 legible. */
+  try {
+    d.prepare(`INSERT INTO pagos
+      (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador,
+       creado, intencion, confirmado, actualizado, base, ajuste, ajuste_tasa, itbis_tasa, anuncio_id)
+      VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`)
+      .run(idPago, idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
+        cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t,
+        cobro.base, cobro.ajuste, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null, idAnuncio || null);
+  } catch (e) {
+    if (idAnuncio && /UNIQUE constraint failed/i.test(e.message)) {
+      throw Object.assign(new Error('Ese anuncio ya tiene un pago en espera'), { codigo: 409 });
+    }
+    throw e;
+  }
   return pagoPorId(idPago);
 }
 
@@ -3037,6 +3093,28 @@ function aprobarPago(idPago) {
                             WHERE id = ? AND organizacion_id = ?`)
         .run(Math.trunc(intencion.anadidos), idSusc, pago.organizacion_id);
       if (r.changes === 0) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
+    } else if (intencion.tipo === 'publicacion') {
+      /* Cada publicación del particular es una suscripción de UN cupo
+         nacida con su pago (cadena Plan → Suscripción → Anuncio de la
+         auditoría §3). El `cupo` de la intención se ignora a propósito
+         y siempre es 1: un pago nunca sostiene dos anuncios. Todo va en
+         este SAVEPOINT, así que si la activación falla tampoco queda la
+         suscripción y el pago sigue pendiente. */
+      const plan = planPorId(intencion.idPlan);
+      if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
+      const a = d.prepare('SELECT estado, organizacion_id FROM anuncios WHERE id = ?').get(intencion.idAnuncio);
+      if (!a || a.organizacion_id !== pago.organizacion_id) {
+        throw Object.assign(new Error('El borrador de este pago ya no existe'), { codigo: 404 });
+      }
+      if (a.estado !== 'borrador') {
+        throw Object.assign(new Error('Ese anuncio ya no es un borrador: no se publica otra vez'), { codigo: 409 });
+      }
+      idSusc = otorgarCompra(d, {
+        idOrg: pago.organizacion_id, plan, cupo: 1, dias: intencion.dias,
+        precioPactado: pago.base ?? pago.subtotal, t,
+      });
+      d.prepare('UPDATE pagos SET suscripcion_id = ? WHERE id = ?').run(idSusc, idPago);
+      activarBorrador(d, { idAnuncio: intencion.idAnuncio, idOrg: pago.organizacion_id, idSusc, t });
     } else {
       throw Object.assign(new Error(`Tipo de compra desconocido: ${intencion.tipo}`), { codigo: 500 });
     }
@@ -4643,4 +4721,5 @@ module.exports = {
   tasaUsd, DISPONIBILIDADES, guardarDisponibilidad,
   /* Fase 05.2: el borrador del particular vive en el servidor. */
   ANIO_SIN_DEFINIR, crearBorrador, guardarBorrador, borradorDe, contarBorradores, pagoPendienteDeAnuncio,
+  publicarBorradorSinCosto,
 };
