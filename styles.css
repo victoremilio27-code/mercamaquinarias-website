@@ -4014,6 +4014,41 @@ body.sin-scroll { overflow: hidden; }
   .alq__galeria img, .alq__galeria .alq__ico { height: 56px; }
 }
 
+/* Con el render de su categoría la ficha se parece a la tarjeta de
+   categorias.html: la máquina arriba a lo ancho, en 16:9, y la casilla
+   con el nombre debajo. En el teléfono vuelve a ir en fila, con el
+   render en miniatura, para que seis fichas no ocupen seis pantallas. */
+.alq--render {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "foto foto" "casilla cuerpo";
+  align-items: start;
+  padding: 0;
+  overflow: hidden;
+}
+.alq--render .alq__galeria { grid-area: foto; width: 100%; border-radius: 0; }
+.alq--render .alq__galeria img { height: auto; aspect-ratio: 16 / 9; }
+.alq--render input { grid-area: casilla; margin: 13px 0 12px 12px; }
+.alq--render .alq__cuerpo { grid-area: cuerpo; padding: 10px 12px 12px 0; }
+
+/* A dos columnas cada render medía 600 px de ancho y las seis fichas
+   empujaban el formulario una pantalla y media hacia abajo. */
+@media (min-width: 1000px) {
+  .alquiler-lista:has(.alq--render) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .alq--render {
+    grid-template-columns: auto 112px minmax(0, 1fr);
+    grid-template-areas: "casilla foto cuerpo";
+    align-items: center;
+    padding: 10px 12px;
+  }
+  .alq--render .alq__galeria { width: 112px; border-radius: var(--r); }
+  .alq--render .alq__galeria img { height: auto; }
+  .alq--render input { margin: 0; }
+  .alq--render .alq__cuerpo { padding: 0; }
+}
+
 /* Resultado de una solicitud enviada. */
 .resumen__texto { margin: 0 0 12px; font-size: 14px; color: var(--gris-acero); }
 .resumen__error {
