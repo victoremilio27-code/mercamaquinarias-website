@@ -30,6 +30,7 @@
     "facturas:probar": "node tools/probar-facturas.js",
     "pagos:probar": "node tools/probar-pagos.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
+    "publicacion:probar": "node tools/probar-publicacion.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
     "precios:probar": "node --test tools/precios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",

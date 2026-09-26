@@ -172,7 +172,12 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Un borrador abandonado se recupera desde el panel; un borrador o pendiente no sale en el catálogo ni en `GET /api/anuncios/:id` para nadie que no sea su dueño.
   3. En el flujo del particular no aparece la palabra «cupo»; al marcar vendido ve «Este equipo fue vendido. Ahora puedes publicar otro equipo…».
   4. El arnés prueba: precio manipulado desde el navegador, activar sin pago, doble pago y doble aviso, publicar dos veces con un pago y reactivar un vendido sin capacidad (este último ya cerrado en el PR #33).
-**Plans**: sin planificar
+**Plans**: 5 plans
+- [x] 05.2-01-PLAN.md — Migración 2026-09-borradores, borrador en la base, pago con `anuncio_id` y activación dentro de `aprobarPago`; arnés `publicacion:probar`
+- [ ] 05.2-02-PLAN.md — Rutas del borrador y guardas: un borrador no se ve ni se activa por otro camino
+- [ ] 05.2-03-PLAN.md — Pedir el pago de un borrador y activarlo solo al confirmarse
+- [ ] 05.2-04-PLAN.md — Panel del particular: borradores recuperables y pagos en espera, sin «cupo»
+- [ ] 05.2-05-PLAN.md — Asistente de publicación en el orden nuevo: plan → borrador → resumen → pago
 **UI hint**: yes
 **Notas**: Por dentro sigue la cadena Plan → Suscripción → Anuncio: cada publicación del particular es una suscripción de un cupo nacida con el pago (P6/P7 por defecto: el particular puede tener varias publicaciones pagadas, cada una con su pago; los cupos ya comprados se conservan hasta que venzan). El dealer no cambia en esta fase.
 

@@ -96,6 +96,8 @@ jobs:
         run: npm run metricas:probar
       - name: Transferencia
         run: npm run transferencia:probar
+      - name: Pruebas de publicación del particular
+        run: npm run publicacion:probar
       - name: Asistente
         run: npm run chat:probar
 

@@ -1045,6 +1045,38 @@ const MIGRACIONES = [
     "UPDATE planes SET precio = 1800 WHERE id = 'estandar'",
     "UPDATE planes SET precio = 3200 WHERE id = 'destacado'",
   ]],
+
+  /* Publicar este equipo (fase 05.2): el anuncio del particular nace
+     como BORRADOR en el servidor con el plan y los días que eligió, y
+     el pago sabe a qué anuncio pertenece.
+
+     «Pendiente de pago» no es un estado nuevo: se deriva (borrador +
+     un pago 'pendiente' con ese `anuncio_id`). Ampliar el CHECK de
+     `estado` obligaría a reconstruir `anuncios` con fotos, videos,
+     contactos y métricas colgando de ella (auditoría §1.9).
+
+     `pagos.anuncio_id` va SIN clave foránea a propósito: borrar un
+     anuncio no puede borrar ni dejar en NULL el rastro de un pago, que
+     es historial fiscal y no se toca.
+
+     El índice único parcial es la garantía EN LA BASE de «un solo pago
+     pendiente por anuncio» (D-12): dos pestañas o un doble clic no
+     pueden dejar dos cobros esperando para el mismo equipo. Solo mira
+     los pendientes, así que deja libres las renovaciones de la 05.3,
+     que tendrán varios aprobados por anuncio.
+
+     Los índices NO van en db/schema.sql: abrir() lo ejecuta ANTES de
+     migrar(), y en la base de producción las columnas todavía no
+     existen en ese momento; el arranque fallaría. */
+  ['2026-09-borradores', [
+    'ALTER TABLE anuncios ADD COLUMN plan_elegido TEXT',
+    'ALTER TABLE anuncios ADD COLUMN dias_elegidos INTEGER',
+    'ALTER TABLE pagos ADD COLUMN anuncio_id TEXT',
+    'CREATE INDEX IF NOT EXISTS ix_pagos_anuncio ON pagos (anuncio_id) WHERE anuncio_id IS NOT NULL',
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_anuncio_pendiente ON pagos (anuncio_id)
+       WHERE anuncio_id IS NOT NULL AND estado = 'pendiente'`,
+    "CREATE INDEX IF NOT EXISTS ix_anuncios_borrador ON anuncios (creado) WHERE estado = 'borrador'",
+  ]],
 ];
 
 function migrar() {
@@ -2831,15 +2863,16 @@ const soloCero = (cobro) => {
   }
 };
 
-function anotarPago(d, { idOrg, idSusc, cobro, t }) {
+function anotarPago(d, { idOrg, idSusc, idAnuncio = null, cobro, t }) {
   soloCero(cobro);
   d.prepare(`INSERT INTO pagos
     (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador, creado,
-     base, ajuste, ajuste_tasa, itbis_tasa)
-    VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?, ?, ?, ?, ?)`)
+     base, ajuste, ajuste_tasa, itbis_tasa, anuncio_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id(), idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
       cobro.referencia, cobro.total > 0 ? (cobro.procesador || 'demo') : 'sin-costo', t,
-      cobro.base ?? 0, cobro.ajuste ?? 0, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null);
+      cobro.base ?? 0, cobro.ajuste ?? 0, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null,
+      idAnuncio || null);
 }
 
 /* La página pública de la empresa la trae el nivel Premium, pero solo
@@ -2903,6 +2936,51 @@ function otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado, t }) {
   return idSusc;
 }
 
+/* Pasa un borrador a activo sostenido por la suscripción de su pago.
+   Es el ÚNICO sitio que publica un borrador: lo llaman la aprobación
+   de un pago (`aprobarPago`, desde `pagos.confirmarPago`) y el importe
+   cero (`publicarBorradorSinCosto`), nunca una ruta. Exige que siga
+   siendo borrador en el mismo UPDATE: un segundo intento no reactiva
+   un anuncio vendido o retirado. Va dentro de la transacción de quien
+   llama. `destacado_hasta` con el mismo criterio que `publicar` en la
+   API: solo si el plan destaca. */
+function activarBorrador(d, { idAnuncio, idOrg, idSusc, t }) {
+  const s = suscripcion(idSusc, idOrg);
+  if (!s) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
+  const r = d.prepare(`UPDATE anuncios SET estado = 'activo', suscripcion_id = ?, vence = ?,
+                              destacado_hasta = ?, publicado = ?, actualizado = ?
+                        WHERE id = ? AND organizacion_id = ? AND estado = 'borrador'`)
+    .run(idSusc, s.fin, s.destacado ? s.fin : null, t, t, idAnuncio, idOrg);
+  if (r.changes !== 1) {
+    throw Object.assign(new Error('Ese anuncio ya no es un borrador: no se publica otra vez'), { codigo: 409 });
+  }
+}
+
+/* El importe cero del particular (promoción del Estándar, D-11): el
+   mismo camino que `comprarCupos` para el importe cero —suscripción de
+   un cupo, pago aprobado 'sin-costo' sin NCF y activación— en una sola
+   transacción. `soloCero` impide colar un importe por aquí. */
+function publicarBorradorSinCosto({ idAnuncio, idOrg, idPlan, dias, cobro }) {
+  soloCero(cobro);
+  const d = abrir();
+  const plan = planPorId(idPlan);
+  if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
+
+  const t = ahora();
+  let idSusc;
+  d.prepare('BEGIN').run();
+  try {
+    idSusc = otorgarCompra(d, { idOrg, plan, cupo: 1, dias, precioPactado: cobro.base ?? cobro.subtotal, t });
+    anotarPago(d, { idOrg, idSusc, idAnuncio, cobro, t });
+    activarBorrador(d, { idAnuncio, idOrg, idSusc, t });
+    d.prepare('COMMIT').run();
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+  return { membresia: suscripcion(idSusc, idOrg), anuncio: anuncio(idAnuncio) };
+}
+
 /* ── Cobros con importe: pendiente → aprobado | rechazado ────
    Un cobro con importe no se da por cobrado al anotarlo. Nace
    'pendiente' con lo que se compró guardado en `intencion`, y solo la
@@ -2912,7 +2990,7 @@ function otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado, t }) {
 
    El importe cero no pasa por aquí: sigue aprobado al instante por
    `comprarCupos`/`ampliarCupos`, porque no hay nada que esperar. */
-function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
+function registrarCobro({ idOrg, idSusc = null, idAnuncio = null, cobro, intencion }) {
   if (!(cobro && cobro.total > 0)) {
     throw Object.assign(
       new Error('registrarCobro es para cobros con importe; el importe cero se aprueba al instante por su propio camino'),
@@ -2932,13 +3010,23 @@ function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
   const d = abrir();
   const idPago = id();
   const t = ahora();
-  d.prepare(`INSERT INTO pagos
-    (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador,
-     creado, intencion, confirmado, actualizado, base, ajuste, ajuste_tasa, itbis_tasa)
-    VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`)
-    .run(idPago, idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
-      cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t,
-      cobro.base, cobro.ajuste, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null);
+  /* El índice único parcial `ux_pagos_anuncio_pendiente` frena un
+     segundo pendiente para el mismo anuncio aunque dos peticiones
+     lleguen a la vez; aquí solo se traduce su error a un 409 legible. */
+  try {
+    d.prepare(`INSERT INTO pagos
+      (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador,
+       creado, intencion, confirmado, actualizado, base, ajuste, ajuste_tasa, itbis_tasa, anuncio_id)
+      VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`)
+      .run(idPago, idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
+        cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t,
+        cobro.base, cobro.ajuste, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null, idAnuncio || null);
+  } catch (e) {
+    if (idAnuncio && /UNIQUE constraint failed/i.test(e.message)) {
+      throw Object.assign(new Error('Ese anuncio ya tiene un pago en espera'), { codigo: 409 });
+    }
+    throw e;
+  }
   return pagoPorId(idPago);
 }
 
@@ -3005,6 +3093,28 @@ function aprobarPago(idPago) {
                             WHERE id = ? AND organizacion_id = ?`)
         .run(Math.trunc(intencion.anadidos), idSusc, pago.organizacion_id);
       if (r.changes === 0) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
+    } else if (intencion.tipo === 'publicacion') {
+      /* Cada publicación del particular es una suscripción de UN cupo
+         nacida con su pago (cadena Plan → Suscripción → Anuncio de la
+         auditoría §3). El `cupo` de la intención se ignora a propósito
+         y siempre es 1: un pago nunca sostiene dos anuncios. Todo va en
+         este SAVEPOINT, así que si la activación falla tampoco queda la
+         suscripción y el pago sigue pendiente. */
+      const plan = planPorId(intencion.idPlan);
+      if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
+      const a = d.prepare('SELECT estado, organizacion_id FROM anuncios WHERE id = ?').get(intencion.idAnuncio);
+      if (!a || a.organizacion_id !== pago.organizacion_id) {
+        throw Object.assign(new Error('El borrador de este pago ya no existe'), { codigo: 404 });
+      }
+      if (a.estado !== 'borrador') {
+        throw Object.assign(new Error('Ese anuncio ya no es un borrador: no se publica otra vez'), { codigo: 409 });
+      }
+      idSusc = otorgarCompra(d, {
+        idOrg: pago.organizacion_id, plan, cupo: 1, dias: intencion.dias,
+        precioPactado: pago.base ?? pago.subtotal, t,
+      });
+      d.prepare('UPDATE pagos SET suscripcion_id = ? WHERE id = ?').run(idSusc, idPago);
+      activarBorrador(d, { idAnuncio: intencion.idAnuncio, idOrg: pago.organizacion_id, idSusc, t });
     } else {
       throw Object.assign(new Error(`Tipo de compra desconocido: ${intencion.tipo}`), { codigo: 500 });
     }
@@ -3572,6 +3682,14 @@ function anunciosDeOrganizacion(idOrg) {
            a.estado, a.precio, a.moneda,
            a.modalidad_precio, a.provincia, a.publicado, a.vence, a.suscripcion_id,
            a.disponibilidad,
+           -- Borradores del particular (fase 05.2): qué eligió y si ya
+           -- tiene un cobro esperando. «Pendiente de pago» se deriva de
+           -- ese pago, no es un estado del anuncio (D-04).
+           a.plan_elegido, a.dias_elegidos, a.creado,
+           (SELECT nombre FROM planes WHERE id = a.plan_elegido) AS plan_elegido_nombre,
+           -- Sin referencia sale el id: un pendiente nunca puede leerse como «no hay».
+           (SELECT COALESCE(p.referencia, p.id) FROM pagos p
+             WHERE p.anuncio_id = a.id AND p.estado = 'pendiente' LIMIT 1) AS pago_pendiente,
            -- El panel avisa cuando un camión no los tiene declarados y
            -- deja rellenarlos ahí mismo.
            a.motor_marca, a.motor_modelo, a.transmision_marca, a.transmision_modelo,
@@ -3592,7 +3710,7 @@ function anunciosDeOrganizacion(idOrg) {
     WHERE a.organizacion_id = ?
     GROUP BY a.id
     ORDER BY CASE a.estado WHEN 'activo' THEN 0 ELSE 1 END, a.publicado DESC`)
-    .all(idOrg).map(conNombres);
+    .all(idOrg).map((a) => ({ ...conNombres(a), pendiente_pago: !!a.pago_pendiente }));
 }
 
 /* Borra un anuncio y todo lo que cuelga de él.
@@ -3663,6 +3781,161 @@ function copiaDeAnuncio(idAnuncio, idOrg) {
   a.telefonos = d.prepare('SELECT numero, tipo, nota FROM anuncio_contactos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
   return conNombres(a);
 }
+
+/* ── Borradores del particular (fase 05.2) ─────────────────
+   Antes el borrador vivía solo en el localStorage del navegador y el
+   anuncio nacía 'activo' ocupando un cupo pagado de antemano. Ahora el
+   particular elige plan, el anuncio nace aquí como 'borrador' y solo
+   `activarBorrador` —desde la aprobación de su pago— lo publica. */
+
+/* `anio` es NOT NULL y el disparador exige ≥ 1900, pero un borrador
+   nace antes de que se sepa el año. 1900 pasa el disparador y la API
+   nunca lo acepta (exige ≥ 1970), así que no se confunde con un año
+   real ni pasa la validación al pedir el pago. */
+const ANIO_SIN_DEFINIR = 1900;
+
+function crearBorrador({ idOrg, idUsuario = null, idSucursal = null, idPlan, dias }) {
+  const idAnuncio = id();
+  const t = ahora();
+  abrir().prepare(`INSERT INTO anuncios (
+      id, organizacion_id, sucursal_id, usuario_id, suscripcion_id, estado,
+      categoria, marca, modelo, anio, plan_elegido, dias_elegidos,
+      publicado, vence, creado, actualizado)
+    VALUES (?, ?, ?, ?, NULL, 'borrador', '', '', '', ?, ?, ?, NULL, NULL, ?, ?)`)
+    .run(idAnuncio, idOrg, idSucursal || (sucursalPrincipal(idOrg) || {}).id || null,
+      idUsuario || null, ANIO_SIN_DEFINIR, idPlan, Number(dias) === 60 ? 60 : 30, t, t);
+  return idAnuncio;
+}
+
+/* Lista blanca fija: clave de `datos` → columna y cómo se guarda. El
+   UPDATE se arma SOLO con estas columnas; ningún nombre de columna
+   viene de fuera. Los NOT NULL (categoría, marca, modelo, año) nunca
+   reciben NULL: un borrador a medias es normal y no puede romper el
+   guardado. */
+const nuloSiVacio = (v) => (v == null || v === '' ? null : v);
+const COLUMNAS_BORRADOR = {
+  idSucursal: ['sucursal_id', nuloSiVacio],
+  categoria: ['categoria', (v) => (v == null ? '' : v)],
+  subcategoria: ['subcategoria', nuloSiVacio],
+  marca: ['marca', (v) => (v == null ? '' : v)],
+  modelo: ['modelo', (v) => (v == null ? '' : v)],
+  anio: ['anio', (v) => (v == null || v === '' ? ANIO_SIN_DEFINIR : v)],
+  condicion: ['condicion', nuloSiVacio],
+  usoValor: ['uso_valor', nuloSiVacio],
+  usoUnidad: ['uso_unidad', (v) => v || 'h'],
+  serie: ['serie', nuloSiVacio],
+  potencia: ['potencia', nuloSiVacio],
+  peso: ['peso', nuloSiVacio],
+  implementos: ['implementos', nuloSiVacio],
+  descripcion: ['descripcion', nuloSiVacio],
+  provincia: ['provincia', nuloSiVacio],
+  municipio: ['municipio', nuloSiVacio],
+  precio: ['precio', (v) => (v == null || v === '' ? null : v)],
+  moneda: ['moneda', (v) => v || 'DOP'],
+  modalidadPrecio: ['modalidad_precio', (v) => v || 'fijo'],
+  precioMinimo: ['precio_minimo', nuloSiVacio],
+  itbisIncluido: ['itbis_incluido', (v) => (v ? 1 : 0)],
+  permuta: ['permuta', (v) => (v ? 1 : 0)],
+  financiamiento: ['financiamiento', (v) => (v ? 1 : 0)],
+  video: ['video', nuloSiVacio],
+  disponibilidad: ['disponibilidad', disponibilidadValida],
+  motorMarca: ['motor_marca', nuloSiVacio],
+  motorModelo: ['motor_modelo', nuloSiVacio],
+  transmisionMarca: ['transmision_marca', nuloSiVacio],
+  transmisionModelo: ['transmision_modelo', nuloSiVacio],
+  planElegido: ['plan_elegido', nuloSiVacio],
+  diasElegidos: ['dias_elegidos', (v) => (Number(v) === 60 ? 60 : 30)],
+};
+
+/* Guarda por partes: solo las claves que llegan (no `undefined`). Solo
+   el dueño, solo un borrador y solo sin pago pendiente: con un cobro
+   esperando, lo que se paga es lo que se vio en el resumen, y cambiarlo
+   por debajo dejaría publicado algo distinto de lo pagado. */
+function guardarBorrador(idAnuncio, idOrg, datos = {}) {
+  const d = abrir();
+  const t = ahora();
+
+  d.prepare('BEGIN').run();
+  try {
+    const suyo = d.prepare(`SELECT id FROM anuncios
+                             WHERE id = ? AND organizacion_id = ? AND estado = 'borrador'`).get(idAnuncio, idOrg);
+    if (!suyo) {
+      d.prepare('ROLLBACK').run();
+      return { ok: false, motivo: 'no-existe' };
+    }
+    const pendiente = d.prepare(`SELECT 1 AS si FROM pagos
+                                  WHERE anuncio_id = ? AND estado = 'pendiente'`).get(idAnuncio);
+    if (pendiente) {
+      d.prepare('ROLLBACK').run();
+      return { ok: false, motivo: 'pago-pendiente' };
+    }
+
+    const sets = [];
+    const valores = [];
+    for (const [clave, [columna, convertir]] of Object.entries(COLUMNAS_BORRADOR)) {
+      if (datos[clave] === undefined) continue;
+      sets.push(`${columna} = ?`);
+      valores.push(convertir(datos[clave]));
+    }
+    sets.push('actualizado = ?');
+    valores.push(t);
+    d.prepare(`UPDATE anuncios SET ${sets.join(', ')} WHERE id = ? AND organizacion_id = ?`)
+      .run(...valores, idAnuncio, idOrg);
+
+    // Las listas se REEMPLAZAN enteras, con el mismo formato que crearAnuncio.
+    if (Array.isArray(datos.fotos)) {
+      d.prepare('DELETE FROM anuncio_fotos WHERE anuncio_id = ?').run(idAnuncio);
+      const foto = d.prepare('INSERT INTO anuncio_fotos (id, anuncio_id, url, miniatura, orden, creada) VALUES (?, ?, ?, ?, ?, ?)');
+      datos.fotos.forEach((f, i) => {
+        const url = typeof f === 'string' ? f : (f && f.url);
+        if (!url) return;
+        foto.run(id(), idAnuncio, url, typeof f === 'string' ? null : (f.miniatura || null), i, t);
+      });
+    }
+    if (Array.isArray(datos.videos)) {
+      d.prepare('DELETE FROM anuncio_videos WHERE anuncio_id = ?').run(idAnuncio);
+      const vid = d.prepare('INSERT INTO anuncio_videos (id, anuncio_id, url, poster, duracion, orden, creada) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      datos.videos.forEach((v, i) => {
+        const url = typeof v === 'string' ? v : (v && v.url);
+        if (!url) return;
+        const poster = typeof v === 'string' ? null : (v.poster || null);
+        const duracion = typeof v === 'string' ? null : (Number(v.duracion) || null);
+        vid.run(id(), idAnuncio, url, poster, duracion, i, t);
+      });
+    }
+    if (Array.isArray(datos.telefonos)) {
+      d.prepare('DELETE FROM anuncio_contactos WHERE anuncio_id = ?').run(idAnuncio);
+      const tel = d.prepare('INSERT INTO anuncio_contactos (id, anuncio_id, numero, tipo, nota, orden) VALUES (?, ?, ?, ?, ?, ?)');
+      datos.telefonos.forEach((c, i) => {
+        if (!c || !c.numero) return;
+        tel.run(id(), idAnuncio, c.numero, c.tipo || 'ambos', c.nota || null, i);
+      });
+    }
+
+    d.prepare('COMMIT').run();
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+  return { ok: true };
+}
+
+const pagoPendienteDeAnuncio = (idAnuncio) =>
+  abrir().prepare(`SELECT * FROM pagos WHERE anuncio_id = ? AND estado = 'pendiente'
+                    ORDER BY creado DESC LIMIT 1`).get(idAnuncio) || null;
+
+/* El borrador entero para seguir rellenándolo. Un id ajeno o un anuncio
+   que ya no es borrador reciben lo mismo que uno que no existe. */
+function borradorDe(idAnuncio, idOrg) {
+  const a = copiaDeAnuncio(idAnuncio, idOrg);
+  if (!a || a.estado !== 'borrador') return null;
+  a.pagoPendiente = pagoPendienteDeAnuncio(idAnuncio);
+  return a;
+}
+
+const contarBorradores = (idOrg) =>
+  abrir().prepare(`SELECT COUNT(*) AS n FROM anuncios
+                    WHERE organizacion_id = ? AND estado = 'borrador'`).get(idOrg).n;
 
 /* Motor y transmisión de un anuncio ya publicado. La API valida las
    marcas y los modelos contra la taxonomía antes de llamar aquí. */
@@ -4474,4 +4747,7 @@ module.exports = {
   registrarContacto, contactosDeOrganizacion, fotoParaCompartir, copiaDeAnuncio,
   /* Fase 8: moneda y disponibilidad en el catálogo. */
   tasaUsd, DISPONIBILIDADES, guardarDisponibilidad,
+  /* Fase 05.2: el borrador del particular vive en el servidor. */
+  ANIO_SIN_DEFINIR, crearBorrador, guardarBorrador, borradorDe, contarBorradores, pagoPendienteDeAnuncio,
+  publicarBorradorSinCosto,
 };
