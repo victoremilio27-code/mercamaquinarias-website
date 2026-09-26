@@ -1504,6 +1504,14 @@ const listarPagosAdmin = conAdmin((req, res, ctx, consulta) => {
 const AMPLIACION_HUERFANA = 'La membresía que ampliaba este pago ya no existe. No se añadió ningún '
   + 'cupo ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
 
+/* Lo mismo para la publicación del particular (05.2-03): mientras la
+   transferencia esperaba, el borrador se eliminó o dejó de serlo. Pasarlo
+   a activo ahora publicaría algo que su dueño ya retiró, y una
+   publicación nueva sería decidir por él qué publica. Como con la
+   ampliación, la salida es anular y devolver el dinero. */
+const PUBLICACION_HUERFANA = 'El borrador de esta publicación ya no existe o ya se publicó. No se '
+  + 'publicó nada ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
+
 const SOLO_TRANSFERENCIAS = 'Este pago no es por transferencia: lo resuelve su pasarela, no la consola.';
 
 /* Lo que se comprueba ANTES de escribir, común a marcar y anular. Un
@@ -1543,6 +1551,13 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
     && !(intencion.idSusc && db.suscripcion(intencion.idSusc, pago.organizacion_id))) {
     return fallo(res, 409, AMPLIACION_HUERFANA);
   }
+  const esPublicacion = intencion.tipo === 'publicacion';
+  if (pago.estado === 'pendiente' && esPublicacion) {
+    const a = intencion.idAnuncio ? db.anuncio(intencion.idAnuncio) : null;
+    if (!a || a.organizacion_id !== pago.organizacion_id || a.estado !== 'borrador') {
+      return fallo(res, 409, PUBLICACION_HUERFANA);
+    }
+  }
 
   let r;
   try {
@@ -1569,6 +1584,15 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
        deshace entero (ni cupos ni fila), y al personal se le dice lo
        mismo que si se hubiera visto antes. */
     if (e.codigo === 404 && esAmpliacion) return fallo(res, 409, AMPLIACION_HUERFANA);
+    /* La misma carrera con la publicación: el borrador se eliminó (404)
+       o se publicó/retiró (409) entre la comprobación y la aprobación.
+       El SAVEPOINT ya deshizo suscripción y activación, y la fila de la
+       bitácora tampoco queda. Un 409 con el borrador todavía en pie es
+       otra carrera (el pago lo resolvió otro a la vez) y se dice tal cual. */
+    if (esPublicacion && (e.codigo === 404
+      || (e.codigo === 409 && (db.anuncio(intencion.idAnuncio) || {}).estado !== 'borrador'))) {
+      return fallo(res, 409, PUBLICACION_HUERFANA);
+    }
     return falloInterno(res, e);
   }
 
