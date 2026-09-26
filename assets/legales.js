@@ -51,8 +51,11 @@ const DOCUMENTOS = [
   {
     id: 'contratacion',
     nombre: 'Condiciones de contratación y pagos',
-    version: '2.0',
-    vigenteDesde: '2026-09-23',
+    version: '2.1',
+    // La 2.0 decía «no incluyen el ITBIS», lo contrario de lo que ahora
+    // se enseña (precio final con ITBIS incluido): subir la versión hace
+    // que se vuelva a aceptar antes de pagar (PARA_PAGAR, más abajo).
+    vigenteDesde: '2026-09-26',
     // Se exige al pagar, no antes.
     obligatorio: false,
   },
