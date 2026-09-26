@@ -155,7 +155,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Las tarjetas de planes y el resumen de pago enseñan un único precio final «ITBIS incluido»; en ninguna pantalla del comprador aparece el 3 % ni un «cargo».
   3. Cada pago guarda base, tasa e importe del ajuste, subtotal gravado, tasa e importe de ITBIS y total; el comprobante con NCF cuadra (subtotal + ITBIS = total cobrado) y un pago rechazado no consume NCF.
   4. Estándar y Destacado pasan a RD$1.800 y RD$3.200 de base con una migración al final; lo ya vendido conserva su `precio_pactado`.
-**Plans**: sin planificar
+**Plans**: 4 plans
+- [ ] 05.1-01-PLAN.md — Fórmula única en `assets/precios.js:desglose` (AJUSTE 0.03), prueba node:test y paso de CI
+- [ ] 05.1-02-PLAN.md — Migraciones del desglose en `pagos` y precios base 1.800/3.200; rutas que guardan el desglose; cuadre fiscal y rechazo sin NCF en el arnés
+- [ ] 05.1-03-PLAN.md — Precio final «ITBIS incluido» en planes, panel, asistente y condiciones (v2.1); base y ajuste en la consola de pagos
+- [ ] 05.1-04-PLAN.md — Precio único por transferencia de punta a punta, batería completa y lista para Victor
 **UI hint**: yes
 **Notas**: Pesos enteros, como hoy (P1 por defecto: no cambia columnas ni el cliente de CardNet). La promoción del Estándar a RD$0 hasta el 2026-11-30 sigue tal cual (P3 por defecto). Los precios base los confirmó Victor el 2026-09-26; `research/precios-mercado.md` es el estudio que pidió antes de operar.
 
