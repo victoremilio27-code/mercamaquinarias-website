@@ -1136,6 +1136,9 @@ db.cargarSecuencia({
       ok(!!f && f.subtotal === 3296 && f.itbis === 593 && f.total === 3889
         && f.subtotal + f.itbis === f.total && !!fila && f.total === fila.total,
       f ? `comprobante ${f.ncf}: ${f.subtotal} + ${f.itbis} = ${f.total} (cobrado ${fila && fila.total})` : 'sin comprobante');
+      /* Deducida, 593 / 3296 daba 0,1799: el comprobante guardaba una
+         tasa que no es la legal y no se podía corregir después. */
+      ok(!!f && f.itbis_tasa === 0.18, `el comprobante guarda la tasa legal: ${f && f.itbis_tasa} (se esperaba 0.18)`);
       const s = consulta(
         'SELECT precio_pactado FROM suscripciones WHERE organizacion_id = ? ORDER BY creada DESC LIMIT 1', nueva.org.id);
       ok(!!s && s.precio_pactado === 3200, `precio_pactado=${s && s.precio_pactado} (se esperaba 3200)`);

@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Fase 05.1 en marcha: planes 05.1-01, 05.1-02, 05.1-03 y 05.1-04 terminados; el cierre de fase (verificación GSD) lo hace el orquestador."
+stopped_at: "Fase 05.1 verificada (passed) y en el PR #35; la 05.2 planificada (5 planes), por ejecutar."
 last_updated: "2026-09-26T03:00:00.000Z"
 last_activity: "2026-09-26 — 05.1-04: sección 33 de tools/probar-transferencia.js demuestra el precio único por transferencia de punta a punta; batería de 14 scripts en verde (rama claude/fase-05.1-precio-unico)."
 progress:
   total_phases: 16
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 45
   completed_plans: 44
   percent: 50

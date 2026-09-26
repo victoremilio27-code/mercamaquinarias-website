@@ -152,10 +152,10 @@ huérfanos y sin duplicados.
 | PAGO-07 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`; `facturas.emitirPorPago` ya es idempotente |
 | PAGO-08 | Phase 6 — CardNet construido y apagado | Pendiente | Patrón ya validado con Brevo y Anthropic |
 | PAGO-09 | Phase 5 — Cobro por transferencia bancaria | Completo (2026-09-25) | Contingencia propuesta en `cardnet.md` para no depender de la afiliación |
-| MOD-01 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
-| MOD-02 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
-| MOD-03 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
-| MOD-04 | Phase 05.1 — Precio único | Pendiente | `research/modelo-comercial.md` |
+| MOD-01 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
+| MOD-02 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
+| MOD-03 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
+| MOD-04 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
 | MOD-05 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
 | MOD-06 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
 | MOD-07 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |

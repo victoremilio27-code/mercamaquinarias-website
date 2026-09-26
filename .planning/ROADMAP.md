@@ -39,7 +39,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma
 - [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
 - [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
-- [ ] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
+- [x] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
 - [ ] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
 - [ ] **Phase 05.3: Renovación, vencimientos y alertas** (INSERTED) - Renovar sin rehacer el anuncio, suscripciones que vencen de verdad y avisos a 7, 3 y 1 día
 - [ ] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo
