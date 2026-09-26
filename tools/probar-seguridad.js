@@ -629,6 +629,64 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   comprobar(facturas.secuenciasBajas().length === 0,
     'con las secuencias recien cargadas no avisa de nada');
 
+  /* ── 9 · un cupo, un anuncio ─────────────────────────────── */
+  /* Marcar vendido libera el cupo; publicar otro lo ocupa; reactivar el
+     primero daba dos anuncios por un cupo, repetible. La API aceptaba
+     cualquier estado de partida y ninguna prueba nombraba 'vendido'. */
+  console.log('\nReactivar un anuncio vendido');
+  const { idUsuario: idListo } = db.crearCuenta({
+    correo: 'listo@ejemplo.test',
+    clave: 'UnaClaveLargaYSegura9',
+    nombre: 'Anunciante con un cupo',
+    telefono: '8095559876',
+    tipo: 'particular',
+  });
+  const orgListo = db.organizacionDe(idListo);
+  const unCupo = db.comprarCupos({
+    idOrg: orgListo.id, idPlan: 'estandar', cupo: 1, dias: 30,
+    cobro: { subtotal: 0, itbis: 0, total: 0, referencia: 'PRUEBA-UN-CUPO' },
+  });
+  const equipo = (modelo) => {
+    const r = db.crearAnuncio({
+      idOrg: orgListo.id, usuarioId: idListo, idSuscripcion: unCupo.id,
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'mack', modelo, anio: 2018,
+      condicion: 'usado', provincia: 'santo-domingo', precio: 3000000, moneda: 'DOP',
+      vence: db.sumarDias(30), fotos: [], telefonos: [],
+    });
+    return r.idAnuncio || r.id || r;
+  };
+  const galletaListo = { cookie: `te_sesion=${db.abrirSesion(idListo)}` };
+  const estado = (id, valor) => pedir({ metodo: 'PATCH', url: `/api/anuncios/${id}`,
+    cuerpo: { estado: valor }, cabeceras: galletaListo });
+
+  const primero = equipo('granite');
+  const vendido = await estado(primero, 'vendido');
+  comprobar(vendido.codigo === 200, `marcar vendido responde 200 (fue ${vendido.codigo})`);
+  const segundo = equipo('anthem');
+  const reactivar = await estado(primero, 'activo');
+  comprobar(reactivar.codigo === 409, `reactivarlo con el cupo ocupado se niega (fue ${reactivar.codigo})`);
+  comprobar(db.anuncio(primero).estado === 'vendido', 'y el anuncio sigue vendido en la base');
+  const aPausa = await estado(primero, 'pausado');
+  comprobar(aPausa.codigo === 409, `pausarlo tampoco cuela: pausado tambien ocupa (fue ${aPausa.codigo})`);
+
+  await estado(segundo, 'retirado');
+  const ahoraSi = await estado(primero, 'activo');
+  comprobar(ahoraSi.codigo === 200 && db.anuncio(primero).estado === 'activo',
+    `con el cupo libre, reactivarlo si se puede (fue ${ahoraSi.codigo})`);
+  const retiradoVuelve = await estado(segundo, 'activo');
+  comprobar(retiradoVuelve.codigo === 409, `un retirado tampoco vuelve sin cupo (fue ${retiradoVuelve.codigo})`);
+
+  const pausa = await estado(primero, 'pausado');
+  const vuelve = await estado(primero, 'activo');
+  comprobar(pausa.codigo === 200 && vuelve.codigo === 200,
+    'pausar y reactivar con el cupo lleno sigue funcionando: no cambia lo ocupado');
+  const ocupados = db.suscripcionesDe(orgListo.id).find((s) => s.id === unCupo.id);
+  comprobar(ocupados && ocupados.ocupados === 1, `al final, un cupo y un anuncio que lo ocupa (${ocupados && ocupados.ocupados})`);
+
+  const ajenaPatch = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${primero}`,
+    cuerpo: { estado: 'vendido' }, cabeceras: { cookie: `te_sesion=${db.abrirSesion(idCurioso)}` } });
+  comprobar(ajenaPatch.codigo === 404, `otra cuenta no puede cambiarle el estado (fue ${ajenaPatch.codigo})`);
+
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
 })();

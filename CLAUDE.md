@@ -109,7 +109,7 @@ Una misma fase no se trabaja a la vez en la nube y en local: cada sesión en su 
 ```bash
 npm run auditar            # taxonomía, público, flujos y permisos
 npm run check              # enlaces
-npm run seguridad:probar   # 71 comprobaciones sobre un arnés falso de req/res
+npm run seguridad:probar   # 87 comprobaciones sobre un arnés falso de req/res
 npm run dealer:probar      # 49 comprobaciones de la página del dealer
 npm run facturas:probar    # facturación y NCF
 npm run chat:probar        # el prompt del asistente

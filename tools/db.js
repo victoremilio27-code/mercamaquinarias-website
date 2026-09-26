@@ -3632,9 +3632,37 @@ const guardarDisponibilidad = (idAnuncio, idOrg, valor) =>
      WHERE id = ? AND organizacion_id = ?`)
     .run(disponibilidadValida(valor), ahora(), idAnuncio, idOrg).changes > 0;
 
-const cambiarEstadoAnuncio = (idAnuncio, idOrg, estado) =>
-  abrir().prepare('UPDATE anuncios SET estado = ?, actualizado = ? WHERE id = ? AND organizacion_id = ?')
+/* Volver a ocupar un cupo exige que quede uno libre en su membresía.
+   Antes era un UPDATE a secas: marcar vendido liberaba el cupo, se
+   publicaba otro equipo en él y después se reactivaba el primero, con
+   dos anuncios por un cupo pagado, repetible sin límite. El panel solo
+   ofrecía «Reactivar» sobre un pausado, pero la API aceptaba cualquier
+   estado de partida.
+
+   Solo se mira al pasar de un estado que no ocupa (vendido, retirado,
+   vencido) a uno que ocupa: pausado ↔ activo no cambia lo ocupado, y
+   frenarlo dejaría sin reactivar a quien pausó con el cupo lleno. Un
+   anuncio sin membresía (modelo viejo) no tiene cupo al que volver:
+   se republica. Comprobar y escribir van en la misma llamada síncrona,
+   sin nada asíncrono en medio que deje colarse otra petición.
+
+   Devuelve `changes` como el UPDATE de antes, y `sinCupo` cuando se
+   negó por capacidad. */
+function cambiarEstadoAnuncio(idAnuncio, idOrg, estado) {
+  const d = abrir();
+  const actual = d.prepare('SELECT estado, suscripcion_id FROM anuncios WHERE id = ? AND organizacion_id = ?')
+    .get(idAnuncio, idOrg);
+  if (!actual) return { changes: 0 };
+
+  const ocupa = (e) => e === 'activo' || e === 'pausado';
+  if (ocupa(estado) && !ocupa(actual.estado)) {
+    const s = actual.suscripcion_id ? suscripcion(actual.suscripcion_id, idOrg) : null;
+    if (!s || (s.libres !== null && s.libres <= 0)) return { changes: 0, sinCupo: true };
+  }
+
+  return d.prepare('UPDATE anuncios SET estado = ?, actualizado = ? WHERE id = ? AND organizacion_id = ?')
     .run(estado, ahora(), idAnuncio, idOrg);
+}
 
 /* Marca como vencidos los anuncios cuya vigencia pasó. Se llama al
    arrancar y en cada consulta del panel: sale barato porque el índice
