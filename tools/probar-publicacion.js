@@ -48,6 +48,10 @@ for (const k of Object.keys(process.env)) {
 const db = require('./db');
 const pagos = require('./pagos');
 const precios = require('../assets/precios.js');
+const api = require('./api');
+const legales = require('../assets/legales.js');
+const fotosModulo = require('./fotos');
+const { EventEmitter } = require('events');
 
 const ID_ORG = 'org-publica';
 const ID_OTRA = 'org-ajena';
@@ -127,6 +131,70 @@ const intencionPublicacion = (idAnuncio, idPlan, dias) => ({
   concepto: `Publicación ${idPlan} · ${dias} días`,
   cliente: CLIENTE, correoCliente: CLIENTE.correo,
 });
+
+/* Una petición de verdad contra el enrutador, con req y res fingidos.
+   Copiada de probar-transferencia.js: lo que importa es lo que ve quien
+   llama, no lo que devuelven las funciones de dentro. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-publicacion', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      setHeader() {},
+      writeHead(c) { res.codigo = c; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
+/* Una cuenta con sesión y, salvo que se pida lo contrario, con todas
+   las condiciones legales aceptadas: es lo que hace falta para llegar a
+   /api/borradores sin que la propia comprobación de legales estorbe la
+   prueba de otra cosa. */
+function cuentaCon({ correo: correoCuenta, tipo = 'particular', exenta = false, sinLegales = false }) {
+  const { idUsuario } = db.crearCuenta({
+    correo: correoCuenta, clave: 'UnaClaveLargaYSegura9', nombre: correoCuenta,
+    telefono: '8095550000', tipo, empresa: tipo === 'dealer' ? correoCuenta : undefined,
+  });
+  if (!sinLegales) {
+    Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+      db.registrarAceptacion({
+        usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba',
+      });
+    });
+  }
+  if (exenta) ejecuta('UPDATE organizaciones SET exenta_pago = 1 WHERE id = ?', db.organizacionDe(idUsuario).id);
+  return {
+    idUsuario,
+    org: db.organizacionDe(idUsuario),
+    cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}`, 'cf-connecting-ip': '201.8.8.8' },
+  };
+}
+
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+  + 'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+async function subirFoto(cabeceras) {
+  const r = await pedir({ metodo: 'POST', url: '/api/fotos', cuerpo: { completa: PNG }, cabeceras });
+  return (r.datos || {}).completa;
+}
 
 /* Un borrador listo para pedir el pago: los mismos datos que usa la
    prueba de transferencia, tres fotos y un teléfono. */
@@ -393,6 +461,302 @@ db.cargarSecuencia({
     }));
     ok(!!eYa && eYa.codigo === 409 && suscripcionesDe(ID_ORG) === suscYa && pagosTotales() === pagosYa,
       `sobre un activo: ${eYa ? eYa.codigo : 'NO lanzó'} susc=${suscripcionesDe(ID_ORG) - suscYa} pagos=${pagosTotales() - pagosYa}`);
+  }
+
+  console.log('\n5. Crear el borrador por la API: mismas validaciones que publicar, sin los mínimos');
+  let idBorradorApi = null;
+  let particular = null;
+  {
+    particular = cuentaCon({ correo: `particular-${SELLO}@prueba.invalid` });
+    const dealer = cuentaCon({ correo: `dealer-${SELLO}@prueba.invalid`, tipo: 'dealer' });
+    const exento = cuentaCon({ correo: `exento-${SELLO}@prueba.invalid`, exenta: true });
+    const sinLegales = cuentaCon({ correo: `sinlegales-${SELLO}@prueba.invalid`, sinLegales: true });
+
+    const crear = (cuerpo, quien) => pedir({ metodo: 'POST', url: '/api/borradores', cuerpo, cabeceras: quien && quien.cabeceras });
+
+    const sinSesion = await crear({ plan: 'destacado', dias: 60 });
+    ok(sinSesion.codigo === 401, `sin sesión: ${sinSesion.codigo}`);
+
+    const rSinLegales = await crear({ plan: 'destacado', dias: 60 }, sinLegales);
+    ok(rSinLegales.codigo === 409 && Array.isArray((rSinLegales.datos || {}).faltan) && rSinLegales.datos.faltan.length > 0,
+      `sin aceptar condiciones: ${rSinLegales.codigo} faltan=${JSON.stringify(rSinLegales.datos && rSinLegales.datos.faltan)}`);
+
+    const rDealer = await crear({ plan: 'destacado', dias: 60 }, dealer);
+    ok(rDealer.codigo === 409, `cuenta dealer: ${rDealer.codigo}`);
+
+    const rExento = await crear({ plan: 'destacado', dias: 60 }, exento);
+    ok(rExento.codigo === 409, `cuenta exenta: ${rExento.codigo}`);
+
+    const rPlanMalo = await crear({ plan: 'no-existe', dias: 30 }, particular);
+    ok(rPlanMalo.codigo === 400, `plan inexistente: ${rPlanMalo.codigo}`);
+
+    const planDestacado = db.planPorId('destacado');
+    const precioUnitarioDestacado = planDestacado.precio_vigente != null ? planDestacado.precio_vigente : planDestacado.precio;
+    const r = await crear({ plan: 'destacado', dias: 60 }, particular);
+    const d = (r.datos || {}).borrador || {};
+    idBorradorApi = d.id;
+    ok(r.codigo === 201 && typeof d.id === 'string', `crear: ${r.codigo} id=${d.id}`);
+    ok(!!d.plan && d.plan.id === 'destacado' && d.dias === 60, `plan=${d.plan && d.plan.id} días=${d.dias}`);
+    ok(d.pendientePago === false, `pendientePago=${d.pendientePago}`);
+    const esperado = precios.precioCompra({ precioUnitario: precioUnitarioDestacado, cupo: 1, dias: 60 }).total;
+    ok(!!d.precio && d.precio.total === esperado, `precio.total=${d.precio && d.precio.total} (se esperaba ${esperado})`);
+    ok(!!d.precio && d.precio.base === undefined && d.precio.ajuste === undefined && d.precio.subtotal === undefined,
+      `precio sin base/ajuste/subtotal: ${JSON.stringify(d.precio)}`);
+    const fila = filaAnuncio(idBorradorApi);
+    ok(!!fila && fila.estado === 'borrador' && fila.plan_elegido === 'destacado',
+      `en la base: estado=${fila && fila.estado} plan=${fila && fila.plan_elegido}`);
+
+    // Lo que manda «Duplicar»: el borrador nace ya con los campos guardados.
+    const fotoDup = await subirFoto(particular.cabeceras);
+    const rDup = await crear({
+      plan: 'estandar', dias: 30, modelo: 'D6', anio: 2015, fotos: [{ url: fotoDup, miniatura: null }],
+    }, particular);
+    const dDup = (rDup.datos || {}).borrador || {};
+    ok(rDup.codigo === 201, `crear con campos (duplicar): ${rDup.codigo}`);
+    const filaDup = filaAnuncio(dDup.id);
+    ok(!!filaDup && filaDup.modelo === 'D6' && filaDup.anio === 2015 && fotosDe(dDup.id) === 1,
+      `campos guardados en la creación: modelo=${filaDup && filaDup.modelo} año=${filaDup && filaDup.anio} fotos=${fotosDe(dDup.id)}`);
+  }
+
+  console.log('\n6. Guardar el borrador por partes y leerlo con la forma del formulario');
+  {
+    const inicial = await pedir({ url: `/api/borradores/${idBorradorApi}`, cabeceras: particular.cabeceras });
+    ok(inicial.codigo === 200 && inicial.datos.borrador.datos.equipo.anio === '',
+      `recién creado: año='${inicial.datos && inicial.datos.borrador && inicial.datos.borrador.datos.equipo.anio}'`);
+    ok(inicial.datos.borrador.completo === false && !!inicial.datos.borrador.falta,
+      `incompleto: completo=${inicial.datos.borrador.completo} falta=${inicial.datos.borrador.falta}`);
+
+    const guardar = (cuerpo) => pedir({ metodo: 'PUT', url: `/api/borradores/${idBorradorApi}`, cuerpo, cabeceras: particular.cabeceras });
+
+    const rAnioMalo = await guardar({ anio: 1965 });
+    ok(rAnioMalo.codigo === 400 && /Año entre 1970/.test((rAnioMalo.datos || {}).error || ''),
+      `año inválido: ${rAnioMalo.codigo} ${rAnioMalo.datos && rAnioMalo.datos.error}`);
+
+    const rPrecioMalo = await guardar({ precio: -5 });
+    ok(rPrecioMalo.codigo === 400, `precio inválido: ${rPrecioMalo.codigo}`);
+
+    const f1 = await subirFoto(particular.cabeceras);
+    const f2 = await subirFoto(particular.cabeceras);
+    const f3 = await subirFoto(particular.cabeceras);
+
+    const rGuardar = await guardar({
+      modelo: '320D', anio: 2018, precio: 4500000,
+      fotos: [f1, f2, f3].map((url) => ({ url, miniatura: null })),
+      telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+    });
+    ok(rGuardar.codigo === 200, `guardar: ${rGuardar.codigo} ${JSON.stringify(rGuardar.datos)}`);
+    const filaGuardada = filaAnuncio(idBorradorApi);
+    ok(filaGuardada.modelo === '320D' && filaGuardada.anio === 2018 && filaGuardada.precio === 4500000
+      && fotosDe(idBorradorApi) === 3,
+    `en la base: modelo=${filaGuardada.modelo} año=${filaGuardada.anio} precio=${filaGuardada.precio} fotos=${fotosDe(idBorradorApi)}`);
+
+    const rFotoAjena = await guardar({
+      fotos: [{ url: 'https://otro-sitio.example/f.jpg', miniatura: null }, { url: f1, miniatura: null }],
+    });
+    ok(rFotoAjena.codigo === 200 && fotosDe(idBorradorApi) === 1,
+      `foto de otro sitio descartada: ${rFotoAjena.codigo} quedan ${fotosDe(idBorradorApi)} (se esperaba 1)`);
+
+    const rDataUri = await guardar({
+      fotos: [{ url: 'data:image/png;base64,AAAA', miniatura: null }, { url: f2, miniatura: null }],
+    });
+    ok(rDataUri.codigo === 200 && fotosDe(idBorradorApi) === 1,
+      `data: descartado: quedan ${fotosDe(idBorradorApi)} (se esperaba 1)`);
+
+    const rPlan = await guardar({ plan: 'estandar', dias: 30 });
+    ok(rPlan.codigo === 200, `cambiar plan: ${rPlan.codigo}`);
+    const filaPlan = filaAnuncio(idBorradorApi);
+    ok(filaPlan.plan_elegido === 'estandar' && filaPlan.dias_elegidos === 30,
+      `plan=${filaPlan.plan_elegido} días=${filaPlan.dias_elegidos}`);
+
+    await guardar({ plan: 'destacado', dias: 30 });
+    const muchasFotos = [];
+    for (let i = 0; i < 25; i++) muchasFotos.push({ url: f1, miniatura: null });
+    const rMuchas = await guardar({ fotos: muchasFotos });
+    const planDestacadoRecorte = db.planPorId('destacado');
+    ok(rMuchas.codigo === 200 && fotosDe(idBorradorApi) === planDestacadoRecorte.fotos_maximas,
+      `recorte al tope del plan: ${fotosDe(idBorradorApi)} (se esperaba ${planDestacadoRecorte.fotos_maximas})`);
+
+    // Ahora con todo: cadena completa, modelo, año, precio, fotos y teléfono.
+    const rCompleto = await guardar({
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt',
+      fotos: [f1, f2, f3].map((url) => ({ url, miniatura: null })),
+      telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+    });
+    ok(rCompleto.codigo === 200, `completar la cadena: ${rCompleto.codigo} ${JSON.stringify(rCompleto.datos)}`);
+
+    const completo = await pedir({ url: `/api/borradores/${idBorradorApi}`, cabeceras: particular.cabeceras });
+    const dc = completo.datos.borrador;
+    ok(dc.completo === true && dc.falta === null, `completo con todo: completo=${dc.completo} falta=${dc.falta}`);
+    ok(dc.datos.equipo.modelo === '320D' && dc.datos.equipo.anio === '2018',
+      `modelo=${dc.datos.equipo.modelo} año=${dc.datos.equipo.anio}`);
+    ok(Array.isArray(dc.datos.fotos) && dc.datos.fotos.length === 3 && dc.datos.fotos.every((f) => f.url && f.miniatura),
+      `fotos con url y miniatura: ${JSON.stringify(dc.datos.fotos[0])}`);
+  }
+
+  console.log('\n6b. copiarAnuncio sigue sin serie; el borrador sí devuelve la suya');
+  {
+    await pedir({ metodo: 'PUT', url: `/api/borradores/${idBorradorApi}`, cuerpo: { serie: 'XK-4410' }, cabeceras: particular.cabeceras });
+    const b = await pedir({ url: `/api/borradores/${idBorradorApi}`, cabeceras: particular.cabeceras });
+    ok(b.datos.borrador.datos.equipo.serie === 'XK-4410', `borrador con su serie: '${b.datos.borrador.datos.equipo.serie}'`);
+
+    const copia = await pedir({ url: `/api/mis-anuncios/${idBorradorApi}/copia`, cabeceras: particular.cabeceras });
+    ok(copia.codigo === 200 && copia.datos.copia.equipo.serie === '', `copiarAnuncio sin serie: '${copia.datos.copia.equipo.serie}'`);
+  }
+
+  console.log('\n7. Nadie más ve un borrador ajeno ni lo activa por otra puerta');
+  {
+    const orgA = cuentaCon({ correo: `orga-${SELLO}@prueba.invalid` });
+    const orgB = cuentaCon({ correo: `orgb-${SELLO}@prueba.invalid` });
+
+    const crear = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'destacado', dias: 30 }, cabeceras: orgA.cabeceras });
+    const idAjeno = crear.datos.borrador.id;
+
+    const verSinSesion = await pedir({ url: `/api/anuncios/${idAjeno}` });
+    ok(verSinSesion.codigo === 404, `GET /api/anuncios sin sesión: ${verSinSesion.codigo}`);
+    const verOtra = await pedir({ url: `/api/anuncios/${idAjeno}`, cabeceras: orgB.cabeceras });
+    ok(verOtra.codigo === 404, `GET /api/anuncios con B: ${verOtra.codigo}`);
+    const verPropia = await pedir({ url: `/api/anuncios/${idAjeno}`, cabeceras: orgA.cabeceras });
+    ok(verPropia.codigo === 200, `GET /api/anuncios con A: ${verPropia.codigo}`);
+
+    const filaAntes = filaAnuncio(idAjeno);
+
+    const getBorradorB = await pedir({ url: `/api/borradores/${idAjeno}`, cabeceras: orgB.cabeceras });
+    ok(getBorradorB.codigo === 404, `GET /api/borradores con B: ${getBorradorB.codigo}`);
+    const putBorradorB = await pedir({ metodo: 'PUT', url: `/api/borradores/${idAjeno}`, cuerpo: { modelo: 'X' }, cabeceras: orgB.cabeceras });
+    ok(putBorradorB.codigo === 404, `PUT /api/borradores con B: ${putBorradorB.codigo}`);
+    const deleteB = await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idAjeno}`, cabeceras: orgB.cabeceras });
+    ok(deleteB.codigo === 404, `DELETE con B: ${deleteB.codigo}`);
+    const patchEstadoB = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idAjeno}`, cuerpo: { estado: 'activo' }, cabeceras: orgB.cabeceras });
+    ok(patchEstadoB.codigo === 404, `PATCH estado con B: ${patchEstadoB.codigo}`);
+    const patchPlanB = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idAjeno}/plan`, cuerpo: { membresia: 'x' }, cabeceras: orgB.cabeceras });
+    ok(patchPlanB.codigo === 404, `PATCH plan con B: ${patchPlanB.codigo}`);
+
+    const filaDespues = filaAnuncio(idAjeno);
+    ok(filaAntes.modelo === filaDespues.modelo && filaAntes.estado === filaDespues.estado
+      && filaAntes.actualizado === filaDespues.actualizado, 'la fila de A no cambió con los intentos de B');
+
+    const catalogo = await pedir({ url: '/api/anuncios' });
+    ok(!(catalogo.datos.anuncios || []).some((x) => x.id === idAjeno), `catálogo sin el borrador: ${catalogo.codigo}`);
+
+    const misA = await pedir({ url: '/api/mis-anuncios', cabeceras: orgA.cabeceras });
+    const enA = (misA.datos.anuncios || []).find((x) => x.id === idAjeno);
+    ok(!!enA && enA.estado === 'borrador' && enA.pendiente_pago === false,
+      `mis-anuncios de A: ${enA && enA.estado} pendiente=${enA && enA.pendiente_pago}`);
+    const misB = await pedir({ url: '/api/mis-anuncios', cabeceras: orgB.cabeceras });
+    ok(!(misB.datos.anuncios || []).some((x) => x.id === idAjeno), 'mis-anuncios de B no lo trae');
+
+    // Sin puerta de atrás (MOD-08): ni el propio dueño activa su borrador por PATCH.
+    for (const estado of ['activo', 'pausado', 'vendido', 'retirado']) {
+      const r = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idAjeno}`, cuerpo: { estado }, cabeceras: orgA.cabeceras });
+      ok(r.codigo === 409, `PATCH estado=${estado} sobre el propio borrador: ${r.codigo}`);
+    }
+    ok(filaAnuncio(idAjeno).estado === 'borrador', 'sigue borrador tras los cuatro intentos');
+
+    const membresiaLibre = db.comprarCupos({
+      idOrg: orgA.org.id, idPlan: 'estandar', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('MEMBRESIA-A') },
+    });
+    const patchPlanPropio = await pedir({
+      metodo: 'PATCH', url: `/api/anuncios/${idAjeno}/plan`, cuerpo: { membresia: membresiaLibre.id }, cabeceras: orgA.cabeceras,
+    });
+    ok(patchPlanPropio.codigo === 409, `PATCH plan sobre el propio borrador: ${patchPlanPropio.codigo}`);
+    ok(filaAnuncio(idAjeno).suscripcion_id === null, 'suscripcion_id sigue NULL');
+
+    const pagoBorrador = db.registrarCobro({
+      idOrg: orgA.org.id, idAnuncio: idAjeno, cobro: cobroDe(3200, 'BORRADOR-A'),
+      intencion: intencionPublicacion(idAjeno, 'destacado', 30),
+    });
+    const putConPago = await pedir({ metodo: 'PUT', url: `/api/borradores/${idAjeno}`, cuerpo: { modelo: 'OTRO' }, cabeceras: orgA.cabeceras });
+    ok(putConPago.codigo === 409, `PUT con pago pendiente: ${putConPago.codigo}`);
+    const deleteConPago = await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idAjeno}`, cabeceras: orgA.cabeceras });
+    ok(deleteConPago.codigo === 409 && (deleteConPago.datos.error || '').includes('facturacion@mercamaquinarias.com'),
+      `DELETE con pago pendiente: ${deleteConPago.codigo} ${deleteConPago.datos && deleteConPago.datos.error}`);
+
+    pagos.rechazarPago(pagoBorrador.id);
+    const fotoAntesDeBorrar = await subirFoto(orgA.cabeceras);
+    await pedir({
+      metodo: 'PUT', url: `/api/borradores/${idAjeno}`,
+      cuerpo: { fotos: [{ url: fotoAntesDeBorrar, miniatura: null }] }, cabeceras: orgA.cabeceras,
+    });
+    const deleteOk = await pedir({ metodo: 'DELETE', url: `/api/anuncios/${idAjeno}`, cabeceras: orgA.cabeceras });
+    ok(deleteOk.codigo === 200, `DELETE tras rechazar el pago: ${deleteOk.codigo}`);
+    ok(filaAnuncio(idAjeno) === undefined, 'la fila ya no existe');
+    ok(!fotosModulo.rutaExiste(fotoAntesDeBorrar), 'el archivo de la foto ya no está en disco');
+  }
+
+  console.log('\n8. Límites de creación, el camino de hoy para quien ya tiene cupo, y capacidadLibre al vender');
+  {
+    const orgLimites = cuentaCon({ correo: `limites-${SELLO}@prueba.invalid` });
+    let ultimoCodigo = 0;
+    for (let i = 0; i < 10; i++) {
+      const r = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'estandar', dias: 30 }, cabeceras: orgLimites.cabeceras });
+      ultimoCodigo = r.codigo;
+    }
+    ok(ultimoCodigo === 201, `los primeros 10 borradores se crean: último código ${ultimoCodigo}`);
+    const r11 = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'estandar', dias: 30 }, cabeceras: orgLimites.cabeceras });
+    ok(r11.codigo === 409, `el 11.º borrador: ${r11.codigo}`);
+
+    // Llenar el contador compartido publicar:<usuario>.
+    const orgTope = cuentaCon({ correo: `tope-${SELLO}@prueba.invalid` });
+    for (let i = 0; i < 20; i++) db.permitir(`publicar:${orgTope.idUsuario}`, 20, 60);
+    const rBorradorTope = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan: 'estandar', dias: 30 }, cabeceras: orgTope.cabeceras });
+    ok(rBorradorTope.codigo === 429, `POST /api/borradores con el tope lleno: ${rBorradorTope.codigo}`);
+    const rAnuncioTope = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: {}, cabeceras: orgTope.cabeceras });
+    ok(rAnuncioTope.codigo === 429, `POST /api/anuncios con el mismo contador: ${rAnuncioTope.codigo}`);
+
+    const ANUNCIO_COMPLETO = (fotosUrls) => ({
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567',
+      anio: 2019, condicion: 'usado', usoValor: 1000, usoUnidad: 'km',
+      descripcion: 'Prueba de publicar sin membresía.',
+      provincia: 'santo-domingo', precio: 1000000, moneda: 'DOP',
+      fotos: fotosUrls, telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+    });
+
+    // D-02: el camino de hoy sigue intacto para quien ya tiene un cupo libre.
+    const sinMembresia = cuentaCon({ correo: `sinmembresia-${SELLO}@prueba.invalid` });
+    const f1 = await subirFoto(sinMembresia.cabeceras);
+    const r402 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f1, f1, f1]), cabeceras: sinMembresia.cabeceras });
+    ok(r402.codigo === 402 && !/cupo/i.test((r402.datos || {}).error || ''),
+      `particular sin membresía, sin «cupo»: ${r402.codigo} «${r402.datos && r402.datos.error}»`);
+
+    const conMembresia = cuentaCon({ correo: `conmembresia-${SELLO}@prueba.invalid` });
+    db.comprarCupos({
+      idOrg: conMembresia.org.id, idPlan: 'destacado', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('CUPO-LIBRE') },
+    });
+    const f2 = await subirFoto(conMembresia.cabeceras);
+    const r201 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f2, f2, f2]), cabeceras: conMembresia.cabeceras });
+    ok(r201.codigo === 201, `particular con cupo libre publica igual que hoy: ${r201.codigo}`);
+    const idPublicadoLibre = ((r201.datos || {}).anuncio || {}).id;
+
+    const dealerSinMembresia = cuentaCon({ correo: `dealersin-${SELLO}@prueba.invalid`, tipo: 'dealer' });
+    const f3 = await subirFoto(dealerSinMembresia.cabeceras);
+    const rDealer402 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f3, f3, f3]), cabeceras: dealerSinMembresia.cabeceras });
+    ok(rDealer402.codigo === 402 && /cupo/i.test((rDealer402.datos || {}).error || ''),
+      `dealer sin membresía sigue con el 402 de siempre: ${rDealer402.codigo} «${rDealer402.datos && rDealer402.datos.error}»`);
+
+    // MOD-07: capacidadLibre al marcar vendido.
+    const rVendido = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idPublicadoLibre}`, cuerpo: { estado: 'vendido' }, cabeceras: conMembresia.cabeceras });
+    ok(rVendido.codigo === 200 && rVendido.datos.capacidadLibre === true,
+      `vender libera el cupo: capacidadLibre=${rVendido.datos && rVendido.datos.capacidadLibre}`);
+
+    // Sin ninguna membresía VIVA con hueco tras vender (la única que
+    // tenía ya venció): capacidadLibre en falso, no en verdad por
+    // descuido. Vender SIEMPRE libera el cupo de su propia membresía;
+    // lo que aquí se prueba es que no hay OTRA membresía viva a la que
+    // acudir.
+    const soloUnCupo = cuentaCon({ correo: `uncupo-${SELLO}@prueba.invalid` });
+    const membresiaUnica = db.comprarCupos({
+      idOrg: soloUnCupo.org.id, idPlan: 'estandar', cupo: 1, dias: 30,
+      cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('UN-CUPO') },
+    });
+    const f4 = await subirFoto(soloUnCupo.cabeceras);
+    const rPub2 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f4, f4, f4]), cabeceras: soloUnCupo.cabeceras });
+    const idUnico = ((rPub2.datos || {}).anuncio || {}).id;
+    ejecuta("UPDATE suscripciones SET estado = 'vencida' WHERE id = ?", membresiaUnica.id);
+    const rVendido2 = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idUnico}`, cuerpo: { estado: 'vendido' }, cabeceras: soloUnCupo.cabeceras });
+    ok(rVendido2.codigo === 200 && rVendido2.datos.capacidadLibre === false,
+      `sin capacidad libre tras vender el único: capacidadLibre=${rVendido2.datos && rVendido2.datos.capacidadLibre}`);
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);

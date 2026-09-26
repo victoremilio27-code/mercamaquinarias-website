@@ -997,8 +997,9 @@ db.cargarSecuencia({
 
       // Mientras el pago espera: no publica, y no hay nada otorgado ni emitido.
       const antesDeTiempo = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO, cabeceras: nueva.cabeceras });
+      // La cuenta de esta prueba es particular, y la fase 05.2 le quitó la palabra «cupo» (D-15).
       ok(antesDeTiempo.codigo === 402
-        && (antesDeTiempo.datos || {}).error === 'Todavía no tiene cupos. Contrate un plan para publicar este equipo.',
+        && (antesDeTiempo.datos || {}).error === 'Para publicar este equipo, elija cómo publicarlo y pague su publicación.',
       `publicar con el pago pendiente: ${antesDeTiempo.codigo} (${(antesDeTiempo.datos || {}).error})`);
       const espera = (await misMembresias(nueva)).datos || {};
       ok(Array.isArray(espera.pagosPendientes) && espera.pagosPendientes.length === 1
