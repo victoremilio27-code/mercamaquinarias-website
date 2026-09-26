@@ -2535,6 +2535,32 @@ function avisarTransferenciaPedida(ctx, { referencia, total, concepto }) {
   }));
 }
 
+/* Datos fiscales de un cobro, si los pidió: `{ cliente }` o `{ error }`.
+ *
+ * Se validan ANTES de cobrar: descubrir que el RNC está mal después
+ * de haber cobrado obliga a emitir una nota de crédito por un error
+ * de tecleo. El RNC se comprueba con la misma función que el alta de
+ * dealer, que es la que sabe cuántos dígitos tiene. La comparten la
+ * compra de capacidad y el pago de la publicación del particular: dos
+ * copias acabarían aceptando en una un RNC que la otra rechaza. */
+function clienteDeCompra(c, ctx) {
+  if (!c.conRnc) return { cliente: { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo } };
+  const rnc = rncValido(c.rnc);
+  if (!rnc) return { error: 'El RNC tiene 9 dígitos' };
+  if (!texto(c.razonSocial, 160)) return { error: 'Escriba la razón social para la factura' };
+  if (!texto(c.direccionFiscal, 200) || String(c.direccionFiscal).trim().length < 8) {
+    return { error: 'Escriba la dirección fiscal para la factura' };
+  }
+  return {
+    cliente: {
+      razonSocial: texto(c.razonSocial, 160),
+      rnc,
+      direccion: texto(c.direccionFiscal, 200),
+      correo: ctx.usuario.correo,
+    },
+  };
+}
+
 const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
 
@@ -2571,27 +2597,9 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     }
   }
 
-  /* Datos fiscales, si los pidió.
-   *
-   * Se validan ANTES de cobrar: descubrir que el RNC está mal después
-   * de haber cobrado obliga a emitir una nota de crédito por un error
-   * de tecleo. El RNC se comprueba con la misma función que el alta de
-   * dealer, que es la que sabe cuántos dígitos tiene. */
-  let cliente = { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo };
-  if (c.conRnc) {
-    const rnc = rncValido(c.rnc);
-    if (!rnc) return fallo(res, 400, 'El RNC tiene 9 dígitos');
-    if (!texto(c.razonSocial, 160)) return fallo(res, 400, 'Escriba la razón social para la factura');
-    if (!texto(c.direccionFiscal, 200) || String(c.direccionFiscal).trim().length < 8) {
-      return fallo(res, 400, 'Escriba la dirección fiscal para la factura');
-    }
-    cliente = {
-      razonSocial: texto(c.razonSocial, 160),
-      rnc,
-      direccion: texto(c.direccionFiscal, 200),
-      correo: ctx.usuario.correo,
-    };
-  }
+  const fiscal = clienteDeCompra(c, ctx);
+  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  const { cliente } = fiscal;
 
   /* Sin importe no hay nada que esperar ni que declarar: se otorga al
      instante, como siempre, y no se emite comprobante. */
@@ -3336,6 +3344,178 @@ const guardarBorradorApi = conSesion(async (req, res, ctx, idAnuncio) => {
   return responder(res, 200, { borrador: borradorPublico(db.borradorDe(idAnuncio, org.id)) });
 });
 
+/* ── Pagar la publicación del borrador (05.2-03) ─────────────
+   Textos propios y no los de la compra de capacidad: aquellos hablan de
+   «cupos», y al particular no se le habla de cupos (D-15). Lo que le
+   importa es qué pasó con SU anuncio. */
+const NO_APROBADO_PUBLICACION = 'El pago no fue aprobado. No se le cobró nada, su anuncio sigue '
+  + 'guardado como borrador y no se emitió comprobante.';
+const EN_PROCESO_PUBLICACION = 'Su pago está en proceso. Su anuncio se publica cuando se confirme.';
+const EN_ESPERA_PUBLICACION = 'Transfiera el importe con la referencia indicada. Su anuncio se publica '
+  + 'y el comprobante fiscal llega cuando confirmemos el ingreso.';
+
+/* Un pago que ya está esperando (D-12): se devuelve ese, sin crear otro
+   ni volver a avisar a facturación. Pulsar «Pagar» dos veces, o volver
+   a la página días después, no puede dejar dos cobros por el mismo
+   anuncio ni dos transferencias por esperar. */
+function responderPagoEnEspera(res, pago) {
+  const porTransferencia = pago.procesador === 'transferencia';
+  const cuenta = porTransferencia ? datosDeCuenta() : null;
+  return responder(res, 202, {
+    anuncio: null,
+    membresia: null,
+    cobro: { total: pago.total, referencia: pago.referencia },
+    comprobante: null,
+    pago: pagoPublico(pago),
+    aviso: porTransferencia ? EN_ESPERA_PUBLICACION : EN_PROCESO_PUBLICACION,
+    ...(cuenta ? { transferencia: cuenta } : {}),
+    ...(porTransferencia && !cuenta ? { avisoTransferencia: SIN_DATOS_TRANSFERENCIA } : {}),
+  });
+}
+
+/* Lo que se pasa de lo que admite el plan elegido, o null. Se mira ANTES
+   de validar: `validarCamposAnuncio` recorta en silencio al tope del
+   plan, y pagar un Estándar con veinticinco fotos guardadas publicaría
+   ocho sin que el particular supiera cuáles se perdieron. */
+function excesoDelPlan(b, plan) {
+  const fotos = (b.fotos || []).length;
+  const videos = (b.videos || []).length;
+  const maxFotos = plan.fotos_maximas;
+  const maxVideos = plan.videos_maximos || 0;
+  if (maxFotos != null && fotos > maxFotos) {
+    return `Este plan admite ${maxFotos} fotografías y su borrador tiene ${fotos}. `
+      + `Quite ${fotos - maxFotos} o elija otro plan.`;
+  }
+  if (videos > maxVideos) {
+    return maxVideos
+      ? `Este plan admite ${maxVideos} ${maxVideos === 1 ? 'video' : 'videos'} y su borrador tiene ${videos}. `
+        + `Quite ${videos - maxVideos} o elija otro plan.`
+      : `Este plan no admite videos y su borrador tiene ${videos}. Quítelos o elija otro plan.`;
+  }
+  return null;
+}
+
+const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
+  /* Pagar una publicación es publicar y pagar a la vez: hacen falta las
+     condiciones de las dos cosas, sin pedir dos veces las comunes. */
+  const condiciones = [...new Set([...legales.PARA_PUBLICAR, ...legales.PARA_PAGAR])];
+  if (exigirAceptacion(res, ctx.usuario.id, condiciones)) return undefined;
+  if (soloParticular(ctx, res)) return undefined;
+  if (!db.permitir(`pedir-pago:${ctx.usuario.id}`, 20, 60)) {
+    return fallo(res, 429, 'Ha pedido muchos pagos seguidos. Inténtelo en un rato.');
+  }
+
+  const c = await leerCuerpo(req);
+  const org = ctx.organizacion;
+
+  const b = db.borradorDe(idAnuncio, org.id);
+  if (!b) return fallo(res, 404, 'Ese borrador no es suyo o no existe');
+  if (b.pagoPendiente) return responderPagoEnEspera(res, b.pagoPendiente);
+
+  const plan = db.planPorId(b.plan_elegido);
+  if (!plan || !plan.activo) {
+    return fallo(res, 409, 'Ese plan ya no se ofrece. Elija otro para publicar este equipo.');
+  }
+  const exceso = excesoDelPlan(b, plan);
+  if (exceso) return fallo(res, 409, exceso);
+
+  const { error } = validarCamposAnuncio(cuerpoDeBorrador(b), plan, { completo: true });
+  if (error) return fallo(res, 400, error);
+
+  /* T-05.2-12: el importe sale del plan y los días GUARDADOS en el
+     borrador, con la fórmula única. Del cuerpo solo se leen el método
+     de pago y los datos fiscales: un `total`, `plan`, `cupo` o `dias`
+     que mande el navegador no se mira, ni siquiera para rechazarlo. */
+  const dias = b.dias_elegidos;
+  const cobro = {
+    ...precios.precioCompra({ precioUnitario: precioUnitario(plan), cupo: 1, dias }),
+    referencia: referenciaCobro(),
+  };
+
+  const fiscal = clienteDeCompra(c, ctx);
+  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  const { cliente } = fiscal;
+
+  /* Importe cero (la promoción del Estándar, D-11): aprobado al
+     instante y sin comprobante, porque no hay ingreso que declarar. No
+     pasa por `confirmarPago`, así que el correo sale desde aquí, con la
+     misma función. */
+  if (!(cobro.total > 0)) {
+    let r;
+    try {
+      r = db.publicarBorradorSinCosto({ idAnuncio, idOrg: org.id, idPlan: plan.id, dias, cobro });
+    } catch (e) {
+      return falloInterno(res, e);
+    }
+    pagos.avisarAnuncioPublicado({
+      idAnuncio, para: ctx.usuario.correo, nombre: cliente.razonSocial, idPlan: plan.id,
+    });
+    return responder(res, 201, {
+      anuncio: r.anuncio,
+      membresia: r.membresia,
+      cobro: cobroPublico(cobro),
+      comprobante: null,
+      pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
+    });
+  }
+
+  // El procesador lo elige el servidor; un método que no vale, 400 antes de anotar nada.
+  try {
+    cobro.procesador = pagos.procesadorDeCobro(c.metodo);
+  } catch (e) {
+    return fallo(res, e.codigo || 400, e.message);
+  }
+
+  const equipo = pagos.nombreDeEquipo(db.anuncio(idAnuncio) || {});
+  let pago;
+  try {
+    pago = db.registrarCobro({
+      idOrg: org.id,
+      idAnuncio,
+      cobro,
+      intencion: {
+        tipo: 'publicacion', idAnuncio, idPlan: plan.id, cupo: 1, dias,
+        concepto: `Publicación ${plan.nombre} · ${equipo} · ${dias} días`,
+        cliente,
+        correoCliente: ctx.usuario.correo,
+      },
+    });
+  } catch (e) {
+    /* La carrera: otra petición anotó el pendiente entre la lectura del
+       borrador y aquí, y el índice único frenó el segundo. Se contesta
+       con el que ganó, igual que si se hubiera visto antes. */
+    const enEspera = e.codigo === 409 && db.pagoPendienteDeAnuncio(idAnuncio);
+    if (enEspera) return responderPagoEnEspera(res, enEspera);
+    return falloInterno(res, e);
+  }
+
+  const r = await pagos.cobrar(pago);
+
+  if (r.estado === 'rechazado') {
+    return fallo(res, 402, NO_APROBADO_PUBLICACION, { pago: pagoPublico(r.pago) });
+  }
+  if (r.estado !== 'aprobado') {
+    if (pago.procesador === 'transferencia') {
+      responder(res, 202, {
+        anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
+        aviso: EN_ESPERA_PUBLICACION, transferencia: datosDeCuenta(),
+      });
+      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
+    }
+    return responder(res, 202, {
+      anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
+      aviso: EN_PROCESO_PUBLICACION,
+    });
+  }
+  return responder(res, 201, {
+    anuncio: db.anuncio(idAnuncio),
+    membresia: r.membresia,
+    cobro: cobroPublico(cobro),
+    comprobante: comprobantePublico(r.comprobante),
+    pago: pagoPublico(r.pago),
+  });
+});
+
 /* Los contactos atribuibles de la organización: qué anuncio y cuándo
    (MET-03). Solo los suyos, siempre: la organización sale de la sesión
    y nunca de la petición. Lo que llega por la consulta se valida antes
@@ -3843,6 +4023,7 @@ const RUTAS = [
      incompleto, y POST /api/anuncios exige estar completo y ocupar un
      cupo (ver el porqué junto a las funciones, más arriba). */
   ['POST', /^\/api\/borradores$/,           crearBorradorApi],
+  ['POST', /^\/api\/borradores\/([\w-]+)\/pago$/, pagarBorrador],
   ['GET',  /^\/api\/borradores\/([\w-]+)$/, verBorrador],
   ['PUT',  /^\/api\/borradores\/([\w-]+)$/, guardarBorradorApi],
 

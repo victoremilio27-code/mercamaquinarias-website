@@ -30,6 +30,7 @@
 
 const db = require('./db');
 const facturas = require('./facturas');
+const correo = require('./correo');
 const { transferenciaActiva } = require('./transferencia');
 
 /* Lo que se imprime como línea de detalle.
@@ -137,9 +138,57 @@ function confirmarPago(idPago, { envolver } = {}) {
     return { pago, membresia: null, comprobante: null, yaEstaba: true };
   }
 
-  const comprobante = emitir(pago, leerIntencion(pago), membresia);
+  const intencion = leerIntencion(pago);
+  const comprobante = emitir(pago, intencion, membresia);
+
+  /* El aviso «ya está publicado» va aquí y no en la ruta que pide el
+     pago: la transferencia se confirma desde la consola y CardNet lo
+     hará desde su aviso, y los tres caminos pasan por esta función.
+     Puesto en la ruta, el anuncio pagado por transferencia se habría
+     publicado en silencio. `yaEstaba` impide un segundo correo cuando
+     la confirmación llega dos veces. */
+  if (!yaEstaba && intencion.tipo === 'publicacion') {
+    avisarAnuncioPublicado({
+      idAnuncio: intencion.idAnuncio,
+      para: intencion.correoCliente,
+      nombre: (intencion.cliente && intencion.cliente.razonSocial) || null,
+      idPlan: intencion.idPlan,
+    });
+  }
   return { pago, membresia, comprobante, yaEstaba };
 }
+
+/* «Su equipo ya está publicado», para el anuncio que acaba de pasar de
+   borrador a activo. La usa también la ruta del importe cero, que no
+   pasa por `confirmarPago`, para que los dos correos sean el mismo.
+
+   Nunca lanza ni se espera: el anuncio ya está activo y el pago
+   aprobado, y una caída del proveedor de correo no puede deshacer
+   nada de eso. `enviar` devuelve una promesa con Brevo y un objeto con
+   el transporte de archivo; las dos cosas se cubren, porque una
+   promesa rechazada sin manejador tumba el proceso. */
+function avisarAnuncioPublicado({ idAnuncio, para, nombre, idPlan }) {
+  try {
+    const a = db.anuncio(idAnuncio);
+    if (!a || !para) return;
+    const plan = idPlan ? db.planPorId(idPlan) : null;
+    Promise.resolve(correo.enviarAnuncioPublicado({
+      para,
+      nombre,
+      equipo: nombreDeEquipo(a),
+      idAnuncio,
+      vence: a.vence,
+      plan: plan ? plan.nombre : null,
+    })).catch((e) => console.error(`correo: anuncio publicado ${idAnuncio} · ${e.message}`));
+  } catch (e) {
+    console.error(`correo: anuncio publicado ${idAnuncio} · ${e.message}`);
+  }
+}
+
+/* «2019 Peterbilt 567»: año, nombre visible de la marca y modelo. La
+   marca se guarda como id (`peterbilt`); el nombre lo añade db.anuncio. */
+const nombreDeEquipo = (a) => [a.anio, a.marca_nombre || a.marca, a.modelo]
+  .filter((x) => x !== null && x !== undefined && x !== '').join(' ');
 
 /* Un rechazo no emite nada ni consume NCF. El motivo solo se devuelve
    para decírselo al anunciante; guardarlo en la base es de la fase 6,
@@ -230,5 +279,5 @@ async function cobrar(pago) {
 
 module.exports = {
   confirmarPago, rechazarPago, cobrar, PROCESADORES, lineaDeCupos,
-  metodosDeCobro, procesadorDeCobro,
+  metodosDeCobro, procesadorDeCobro, avisarAnuncioPublicado, nombreDeEquipo,
 };
