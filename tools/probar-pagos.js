@@ -40,6 +40,7 @@ const db = require('./db');
 const facturas = require('./facturas');
 const pagos = require('./pagos');
 const api = require('./api');
+const precios = require('../assets/precios.js');
 const { EventEmitter } = require('events');
 
 const ID_ORG = 'org-pagos';
@@ -94,10 +95,12 @@ function prepararOrganizacion(idOrg, nombre) {
 let contadorRef = 0;
 const referencia = (etiqueta) => `PRUEBA-${etiqueta}-${SELLO}-${++contadorRef}`;
 
-const cobroDe = (subtotal, etiqueta) => {
-  const itbis = Math.round(subtotal * 0.18);
-  return { subtotal, itbis, total: subtotal + itbis, referencia: referencia(etiqueta), procesador: 'demo' };
-};
+/* El cobro sale de la fórmula única (`precios.desglose`), igual que en
+   las rutas: `registrarCobro` rechaza un cobro armado a mano que no
+   cuadre, así que la prueba no puede inventarse el subtotal. El número
+   que se pasa es la BASE, antes del ajuste. */
+const cobroDe = (base, etiqueta) =>
+  ({ ...precios.desglose(base), referencia: referencia(etiqueta), procesador: 'demo' });
 
 const CLIENTE = { razonSocial: 'Cliente de prueba', correo: 'cliente@prueba.invalid' };
 
@@ -444,7 +447,9 @@ const pendienteDeCompra = (etiqueta, cupo = 1) => db.registrarCobro({
       facturas.emitirPorPago = original;
     }
     const det = visto && visto.detalle;
-    ok(!!det && det.cantidad === 2 && det.cantidad * det.precio_unitario === 3000,
+    // El subtotal facturado es el gravado (base 3000 + ajuste): el ajuste
+    // va dentro de la línea, sin línea aparte.
+    ok(!!det && det.cantidad === 2 && det.cantidad * det.precio_unitario === p.subtotal,
       det ? `detalle: ${det.cantidad} × ${det.precio_unitario} (${det.periodo})` : 'no se emitió');
     ok(!!r && !!r.membresia && r.membresia.anuncios_incluidos === 3 && !!r.comprobante,
       `cupo ${r && r.membresia && r.membresia.anuncios_incluidos} y comprobante ${r && r.comprobante && r.comprobante.numero}`);
@@ -613,6 +618,104 @@ const pendienteDeCompra = (etiqueta, cupo = 1) => db.registrarCobro({
     ok(!!lanza(() => db.ampliarCupos({ idSusc: idSuscApi, idOrg: orgApi.id, cupoNuevo: 9, cobro })),
       'ampliarCupos con importe lanza');
     ok(cupoDe(idSuscApi) === 3, `el cupo sigue en ${cupoDe(idSuscApi)}`);
+  }
+
+  /* ── 05.1-02: precio único ────────────────────────────────
+     `research/modelo-comercial.md` §13 pide guardar el desglose en cada
+     transacción: base, ajuste, subtotal gravado, ITBIS y total. El
+     comprobante lleva el gravado y tiene que cuadrar ante la DGII con
+     lo cobrado; sin la base guardada, nadie podría reconstruir después
+     de dónde salió el precio. */
+
+  console.log('\n23. Precio único: migración y desglose guardado');
+  {
+    const d = conexion();
+    const columnas = d.prepare('PRAGMA table_info(pagos)').all().map((c) => c.name);
+    const migradas = d.prepare(`SELECT id FROM migraciones
+                                 WHERE id IN ('2026-09-pagos-desglose', '2026-09-precios-base')`).all().map((m) => m.id);
+    d.close();
+    for (const c of ['base', 'ajuste', 'ajuste_tasa', 'itbis_tasa']) {
+      ok(columnas.includes(c), `pagos.${c} ${columnas.includes(c) ? 'existe' : 'NO existe'}`);
+    }
+    ok(migradas.length === 2, `migraciones del precio único anotadas: ${migradas.join(', ') || 'ninguna'}`);
+
+    const est = db.planPorId('estandar');
+    const des = db.planPorId('destacado');
+    const pre = db.planPorId('premium');
+    ok(est.precio === 1800 && des.precio === 3200 && pre.precio === 5500,
+      `precios base: estándar ${est.precio}, destacado ${des.precio}, premium ${pre.precio} (se esperaban 1800, 3200, 5500)`);
+    ok(est.precio_promocional === 0 && !!est.promo_hasta,
+      `la promoción del Estándar sigue: ${est.precio_promocional} hasta ${est.promo_hasta}`);
+
+    // Un cobro de la fórmula se guarda entero.
+    let p = null;
+    const e = lanza(() => {
+      p = db.registrarCobro({ idOrg: ID_ORG, cobro: cobroDe(3200, 'DESGLOSE'), intencion: intencionCompra(1, 30) });
+    });
+    ok(!e && !!p && p.base === 3200 && p.ajuste === 96 && p.ajuste_tasa === 0.03 && p.subtotal === 3296
+      && p.itbis === 593 && p.itbis_tasa === 0.18 && p.total === 3889,
+    e ? `lanzó: ${e.message}` : `guardado: base ${p.base} ajuste ${p.ajuste} (${p.ajuste_tasa}) subtotal ${p.subtotal} itbis ${p.itbis} (${p.itbis_tasa}) total ${p.total}`);
+
+    // Un cobro que no sale de la fórmula no entra.
+    const antes = consulta('SELECT COUNT(*) AS n FROM pagos').n;
+    const malos = [
+      { subtotal: 3200, itbis: 576, total: 3776, referencia: referencia('SIN-BASE'), procesador: 'demo' },
+      { ...cobroDe(3200, 'INCOHERENTE-SUB'), subtotal: 3200 },
+      { ...cobroDe(3200, 'INCOHERENTE-TOT'), total: 1 },
+    ];
+    for (const cobro of malos) {
+      const em = lanza(() => db.registrarCobro({ idOrg: ID_ORG, cobro, intencion: intencionCompra(1, 30) }));
+      ok(!!em && em.codigo === 500, em ? `rechaza ${cobro.referencia}: ${em.message}` : `NO lanzó con ${cobro.referencia}`);
+    }
+    ok(consulta('SELECT COUNT(*) AS n FROM pagos').n === antes, 'ningún cobro incoherente dejó fila');
+
+    // El pactado es la base, no el gravado.
+    let r = null;
+    const ea = p ? lanza(() => { r = db.aprobarPago(p.id); }) : new Error('no hay pago');
+    const s = r && r.membresia ? consulta('SELECT precio_pactado FROM suscripciones WHERE id = ?', r.membresia.id) : null;
+    ok(!ea && !!s && s.precio_pactado === 3200, ea ? `lanzó: ${ea.message}` : `precio_pactado=${s && s.precio_pactado} (se esperaba 3200)`);
+
+    // Un pago de antes (base NULL) se lee como sin ajuste: pactado = subtotal.
+    const idViejo = `pago-viejo-pendiente-${SELLO}`;
+    const t = new Date().toISOString();
+    ejecuta(`INSERT INTO pagos (id, organizacion_id, suscripcion_id, subtotal, itbis, total,
+              estado, referencia, procesador, creado, intencion, actualizado)
+             VALUES (?, ?, NULL, 3500, 630, 4130, 'pendiente', ?, 'demo', ?, ?, ?)`,
+    idViejo, ID_ORG, referencia('VIEJO-PEND'), t, JSON.stringify(intencionCompra(1, 30)), t);
+    let rv = null;
+    const ev = lanza(() => { rv = db.aprobarPago(idViejo); });
+    const sv = rv && rv.membresia ? consulta('SELECT precio_pactado FROM suscripciones WHERE id = ?', rv.membresia.id) : null;
+    ok(!ev && !!sv && sv.precio_pactado === 3500, ev ? `lanzó: ${ev.message}` : `pago viejo: precio_pactado=${sv && sv.precio_pactado} (se esperaba 3500)`);
+
+    // El importe cero también guarda su desglose (todo a 0).
+    let m0 = null;
+    const e0 = lanza(() => {
+      m0 = db.comprarCupos({
+        idOrg: ID_ORG_AMPLIA, idPlan: 'estandar', cupo: 1, dias: 30,
+        cobro: { ...precios.desglose(0), referencia: referencia('CERO-DESGLOSE') },
+      });
+    });
+    const f0 = m0 ? consulta('SELECT base, ajuste, total FROM pagos WHERE suscripcion_id = ?', m0.id) : null;
+    ok(!e0 && !!f0 && f0.base === 0 && f0.ajuste === 0 && f0.total === 0,
+      e0 ? `lanzó: ${e0.message}` : `importe cero: base ${f0 && f0.base} ajuste ${f0 && f0.ajuste}`);
+
+    // El comprador no ve la base ni el ajuste; la consola sí.
+    const pt = db.registrarCobro({
+      idOrg: ID_ORG, cobro: { ...cobroDe(3200, 'CONSOLA'), procesador: 'transferencia' }, intencion: intencionCompra(1, 30),
+    });
+    const delComprador = db.pagosPendientesDe(ID_ORG);
+    ok(delComprador.length > 0 && delComprador.every((f) => !('base' in f) && !('ajuste' in f)),
+      `pagosPendientesDe sin base ni ajuste: ${delComprador.length ? Object.keys(delComprador[0]).join(', ') : 'vacío'}`);
+    const deConsola = db.pagosParaConsola({ estado: 'pendiente' }).find((f) => f.id === pt.id);
+    ok(!!deConsola && deConsola.base === 3200 && deConsola.ajuste === 96 && deConsola.ajuste_tasa === 0.03 && deConsola.itbis_tasa === 0.18,
+      deConsola ? `consola: base ${deConsola.base} ajuste ${deConsola.ajuste} (${deConsola.ajuste_tasa}) itbis ${deConsola.itbis_tasa}` : 'la consola no lo lista');
+
+    // Un rechazo no mueve la B02 ni el número de facturas.
+    const b02 = siguienteB02();
+    const fact = facturasTotales();
+    const rr = db.rechazarPago(pt.id);
+    ok(rr.cambiado && rr.pago.estado === 'rechazado' && siguienteB02() === b02 && facturasTotales() === fact,
+      `rechazo: ${rr.pago.estado}, B02 ${b02} → ${siguienteB02()}, facturas ${fact} → ${facturasTotales()}`);
   }
 
   console.log();

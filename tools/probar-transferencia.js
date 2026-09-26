@@ -57,6 +57,7 @@ const db = require('./db');
 const pagos = require('./pagos');
 const transferencia = require('./transferencia');
 const api = require('./api');
+const precios = require('../assets/precios.js');
 const { EventEmitter } = require('events');
 const { spawnSync } = require('child_process');
 
@@ -136,10 +137,10 @@ function prepararOrganizacion(idOrg, nombre) {
            VALUES (?, 'particular', ?, ?, ?)`, idOrg, nombre, t, t);
 }
 
-const cobroDe = (subtotal, etiqueta, procesador = 'transferencia') => {
-  const itbis = Math.round(subtotal * 0.18);
-  return { subtotal, itbis, total: subtotal + itbis, referencia: referencia(etiqueta), procesador };
-};
+/* El cobro sale de la fórmula única, como en las rutas: `registrarCobro`
+   rechaza un cobro armado a mano. El número que se pasa es la base. */
+const cobroDe = (base, etiqueta, procesador = 'transferencia') =>
+  ({ ...precios.desglose(base), referencia: referencia(etiqueta), procesador });
 
 const intencionCompra = (cupo = 1, dias = 30) => ({
   tipo: 'compra', idPlan: 'destacado', cupo, dias,
