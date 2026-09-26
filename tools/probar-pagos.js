@@ -718,6 +718,124 @@ const pendienteDeCompra = (etiqueta, cupo = 1) => db.registrarCobro({
       `rechazo: ${rr.pago.estado}, B02 ${b02} → ${siguienteB02()}, facturas ${fact} → ${facturasTotales()}`);
   }
 
+  /* Por la API: lo que se cobra, lo que se guarda, lo que ve el
+     comprador y lo que dice el comprobante, de punta a punta. */
+  const filaDe = (cobro) => (cobro && cobro.referencia
+    ? consulta('SELECT * FROM pagos WHERE referencia = ?', cobro.referencia) : null);
+  const sinAjusteALaVista = (o) => !!o && !('base' in o) && !('ajuste' in o) && !('ajusteTasa' in o);
+  const NOMBRA_AJUSTE = /ajuste|comisi[oó]n|\+ ?3 ?%/i;
+
+  console.log('\n24. Comprar 1 Destacado 30 días: 3200 + 96 = 3296 gravado, 593 de ITBIS, 3889 cobrado y facturado');
+  let idSusc26 = null;
+  {
+    const b02 = siguienteB02();
+    const r = await comprar({ plan: 'destacado', cupo: 1, dias: 30 });
+    const d = r.datos || {};
+    const p = filaDe(d.cobro);
+    ok(r.codigo === 201 && !!p, `código ${r.codigo}, pago ${p ? p.id : 'no encontrado'}`);
+    ok(!!p && p.base === 3200 && p.ajuste === 96 && p.ajuste_tasa === 0.03 && p.subtotal === 3296
+      && p.itbis === 593 && p.itbis_tasa === 0.18 && p.total === 3889,
+    p ? `guardado: base ${p.base} ajuste ${p.ajuste} (${p.ajuste_tasa}) subtotal ${p.subtotal} itbis ${p.itbis} (${p.itbis_tasa}) total ${p.total}` : 'sin pago');
+    ok(!!d.cobro && d.cobro.total === 3889 && sinAjusteALaVista(d.cobro),
+      `al comprador: ${d.cobro ? Object.keys(d.cobro).join(', ') : 'sin cobro'} · total ${d.cobro && d.cobro.total}`);
+    const s = d.membresia ? consulta('SELECT precio_pactado FROM suscripciones WHERE id = ?', d.membresia.id) : null;
+    ok(!!s && s.precio_pactado === 3200, `precio_pactado=${s && s.precio_pactado} (se esperaba 3200)`);
+
+    const f = p ? db.facturaDePago(p.id) : null;
+    ok(!!f && String(f.ncf || '').startsWith('B02') && f.subtotal === 3296 && f.itbis === 593 && f.total === 3889
+      && f.subtotal + f.itbis === f.total && f.total === p.total,
+    f ? `comprobante ${f.ncf}: ${f.subtotal} + ${f.itbis} = ${f.total} (cobrado ${p.total})` : 'sin comprobante');
+    ok(siguienteB02() === b02 + 1, `B02 avanzó ${siguienteB02() - b02} (se esperaba 1)`);
+    const html = f ? facturas.comoHtml(f) : '';
+    const casa = html.match(NOMBRA_AJUSTE);
+    ok(!!html && !casa, casa ? `el comprobante nombra el ajuste: «${casa[0]}»` : 'el comprobante no nombra el ajuste');
+  }
+
+  console.log('\n25. Un Premium rechazado: 402, pago rechazado con su desglose, y la B02 no se mueve');
+  {
+    const demo = pagos.PROCESADORES.demo;
+    const b02 = siguienteB02();
+    const fact = facturasTotales();
+    let r = null;
+    try {
+      pagos.PROCESADORES.demo = async () => ({ resultado: 'rechazado' });
+      r = await comprar({ plan: 'premium', cupo: 1, dias: 30 });
+    } finally {
+      pagos.PROCESADORES.demo = demo;
+    }
+    const d = r.datos || {};
+    const p = d.pago ? db.pagoPorId(d.pago.id) : null;
+    ok(r.codigo === 402, `código ${r.codigo}`);
+    ok(!!p && p.estado === 'rechazado' && p.base === 5500 && p.ajuste === 165 && p.subtotal === 5665
+      && p.itbis === 1020 && p.total === 6685,
+    p ? `${p.estado}: base ${p.base} ajuste ${p.ajuste} subtotal ${p.subtotal} itbis ${p.itbis} total ${p.total}` : 'sin pago');
+    ok(siguienteB02() === b02 && facturasTotales() === fact,
+      `B02 ${b02} → ${siguienteB02()}, facturas ${fact} → ${facturasTotales()}`);
+  }
+
+  console.log('\n26. El servidor recalcula: lo que mande el navegador como importe se ignora');
+  {
+    const r = await comprar({ plan: 'destacado', cupo: 1, dias: 30, total: 1, subtotal: 1, precio: 1, base: 1, ajuste: 0 });
+    const d = r.datos || {};
+    const p = filaDe(d.cobro);
+    ok(r.codigo === 201 && !!p && p.total === 3889 && p.base === 3200 && d.cobro.total === 3889,
+      `código ${r.codigo}, cobrado ${p && p.total} (se esperaba 3889)`);
+    idSusc26 = d.membresia && d.membresia.id;
+
+    const s = idSusc26 ? db.suscripcion(idSusc26, orgApi.id) : null;
+    const esperado = s ? precios.precioAmpliacion({
+      precioUnitario: s.precio_unitario,
+      cupoActual: s.anuncios_incluidos,
+      cupoNuevo: 2,
+      dias: s.dias_ciclo || 30,
+      diasRestantes: precios.diasRestantes(s.fin) ?? (s.dias_ciclo || 30),
+    }) : null;
+    const ra = idSusc26 ? await ampliar(idSusc26, 2) : { codigo: 0, datos: {} };
+    const da = ra.datos || {};
+    const pa = filaDe(da.cobro);
+    ok(ra.codigo === 200 && !!pa && !!esperado && pa.base === esperado.base && pa.subtotal === pa.base + pa.ajuste
+      && pa.total === esperado.total,
+    pa ? `ampliación: base ${pa.base} (se esperaba ${esperado && esperado.base}) + ajuste ${pa.ajuste} = ${pa.subtotal}, total ${pa.total}` : `código ${ra.codigo}, sin pago`);
+    ok(sinAjusteALaVista(da.cobro), `al comprador: ${da.cobro ? Object.keys(da.cobro).join(', ') : 'sin cobro'}`);
+  }
+
+  console.log('\n27. Estándar: en promoción a RD$0 sin NCF; vencida la promoción, 1800 → 2188 y su comprobante cuadra');
+  {
+    const r = await comprar({ plan: 'estandar', cupo: 1, dias: 30 });
+    const d = r.datos || {};
+    const p = filaDe(d.cobro);
+    ok(r.codigo === 201 && !!p && p.total === 0 && p.base === 0 && p.ajuste === 0 && p.procesador === 'sin-costo'
+      && facturasDelPago(p.id) === 0,
+    p ? `promoción: total ${p.total} base ${p.base} ajuste ${p.ajuste} por ${p.procesador}, facturas ${facturasDelPago(p.id)}` : `código ${r.codigo}`);
+    ok(sinAjusteALaVista(d.cobro), `al comprador: ${d.cobro ? Object.keys(d.cobro).join(', ') : 'sin cobro'}`);
+
+    const promo = consulta("SELECT promo_hasta FROM planes WHERE id = 'estandar'").promo_hasta;
+    let r2 = null;
+    try {
+      ejecuta("UPDATE planes SET promo_hasta = '2020-01-01' WHERE id = 'estandar'");
+      r2 = await comprar({ plan: 'estandar', cupo: 1, dias: 30 });
+    } finally {
+      ejecuta("UPDATE planes SET promo_hasta = ? WHERE id = 'estandar'", promo);
+    }
+    const d2 = r2.datos || {};
+    const p2 = filaDe(d2.cobro);
+    ok(r2.codigo === 201 && !!p2 && p2.base === 1800 && p2.subtotal === 1854 && p2.itbis === 334 && p2.total === 2188,
+      p2 ? `sin promoción: base ${p2.base} subtotal ${p2.subtotal} itbis ${p2.itbis} total ${p2.total}` : `código ${r2.codigo}`);
+    const f2 = p2 ? db.facturaDePago(p2.id) : null;
+    ok(!!f2 && f2.subtotal === 1854 && f2.itbis === 334 && f2.subtotal + f2.itbis === f2.total && f2.total === 2188,
+      f2 ? `comprobante ${f2.ncf}: ${f2.subtotal} + ${f2.itbis} = ${f2.total}` : 'sin comprobante');
+
+    const pendientes = [...db.pagosPendientesDe(ID_ORG), ...db.pagosPendientesDe(orgApi.id)];
+    ok(pendientes.length > 0 && pendientes.every((f) => !('ajuste' in f)),
+      `pagosPendientesDe: ${pendientes.length} fila(s), ninguna con ajuste`);
+
+    const m = await pedir({ url: '/api/membresias', cabeceras: conSesion });
+    const lista = ((m.datos || {}).membresias || []).filter((x) => x.siguiente);
+    ok(m.codigo === 200 && lista.length > 0
+      && lista.every((x) => sinAjusteALaVista(x.siguiente) && typeof x.siguiente.total === 'number'),
+    `GET /api/membresias: ${lista.length} con siguiente · ${lista.length ? Object.keys(lista[0].siguiente).join(', ') : ''}`);
+  }
+
   console.log();
   console.log(fallos ? `${fallos} de ${comprobaciones} comprobación(es) fallidas` : `Todo correcto (${comprobaciones} comprobaciones)`);
   process.exitCode = fallos ? 1 : 0;
