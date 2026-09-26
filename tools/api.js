@@ -2748,6 +2748,10 @@ const cambiarPlanDeAnuncio = conSesion(async (req, res, ctx, idAnuncio) => {
   if (!a || a.organizacion_id !== org.id) {
     return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
   }
+  // T-05.2-08: un borrador todavía no tiene cupo que mover.
+  if (a.estado === 'borrador') {
+    return fallo(res, 409, 'Un borrador cambia de plan desde el asistente de publicación.');
+  }
 
   const destino = db.suscripcion(String(c.membresia || ''), org.id);
   if (!destino) return fallo(res, 404, 'Esa membresía no es suya o no existe');
@@ -3119,14 +3123,26 @@ const publicar = conSesion(async (req, res, ctx) => {
      tenerlo lleno: son dos situaciones distintas y la salida de cada
      una también. Decirle "contrate un plan" a quien ya pagó cinco
      cupos y los tiene ocupados es mandarlo a comprar de nuevo cuando
-     lo que necesita es ampliar o liberar uno. */
+     lo que necesita es ampliar o liberar uno.
+
+     D-15: al particular (no exento) no se le habla de «cupo» —el
+     borrador y el pago son su camino de hoy en adelante—; el dealer
+     sigue leyendo los textos de siempre (la 05.4 los cambia). */
+  const esParticularQuePaga = org.tipo === 'particular' && !exenta;
   if (!membresia) {
+    if (esParticularQuePaga) {
+      return fallo(res, 402, 'Para publicar este equipo, elija cómo publicarlo y pague su publicación.');
+    }
     const tiene = db.suscripcionesDe(org.id).length;
     return fallo(res, 402, tiene
       ? 'Sus cupos están ocupados. Añada cupos desde su panel —solo paga los días que le queden— o libere uno marcando un equipo como vendido.'
       : 'Todavía no tiene cupos. Contrate un plan para publicar este equipo.');
   }
   if (membresia.libres !== null && membresia.libres < 1) {
+    if (esParticularQuePaga) {
+      return fallo(res, 409, 'Su plan no tiene capacidad libre para otro equipo. Elija cómo publicar este equipo y '
+        + 'pague su publicación, o marque como vendido uno de los publicados.');
+    }
     return fallo(res, 409, `Su membresía ${membresia.plan_nombre} no tiene cupos libres. Amplíela o libere uno marcando un equipo como vendido.`);
   }
 
@@ -3344,18 +3360,47 @@ const cambiarEstado = conSesion(async (req, res, ctx, idAnuncio) => {
   const permitidos = ['activo', 'pausado', 'vendido', 'retirado'];
   if (!permitidos.includes(c.estado)) return fallo(res, 400, 'Estado inválido');
 
+  /* T-05.2-08: un borrador no se activa por esta puerta. Va aquí, no
+     solo en `db.cambiarEstadoAnuncio` (que solo vigila la capacidad):
+     sin esta guarda, un PATCH { estado: 'activo' } publicaría gratis un
+     borrador, con independencia de si el PR #33 ya exige cupo al
+     reactivar. */
+  const previo = db.anuncio(idAnuncio);
+  if (previo && previo.organizacion_id === ctx.organizacion.id && previo.estado === 'borrador') {
+    return fallo(res, 409, 'Este anuncio todavía es un borrador: se publica al confirmarse su pago.');
+  }
+
   const r = db.cambiarEstadoAnuncio(idAnuncio, ctx.organizacion.id, c.estado);
   if (r.sinCupo) {
     return fallo(res, 409, 'Su cupo lo ocupa ya otro equipo. Retire o marque vendido uno de los publicados, '
       + 'o amplíe su plan, y vuelva a intentarlo.');
   }
   if (!r.changes) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
-  return responder(res, 200, { ok: true, estado: c.estado });
+
+  const respuesta = { ok: true, estado: c.estado };
+  // MOD-07: para que el panel diga «con la capacidad disponible de su
+  // plan» solo cuando de verdad le queda sitio en alguna membresía viva.
+  if (c.estado === 'vendido') {
+    respuesta.capacidadLibre = !!db.suscripcionConHueco(ctx.organizacion.id);
+  }
+  return responder(res, 200, respuesta);
 });
 
 /* Eliminar un anuncio propio. Libera su cupo, que vuelve a estar
    disponible sin pagar de nuevo. */
 const eliminarAnuncio = conSesion((req, res, ctx, idAnuncio) => {
+  /* Un borrador con un pago en espera no se elimina: quien lo pagó
+     debe poder recuperarlo o pedir que se anule por el canal de
+     soporte (correo, nunca teléfono). */
+  const previo = db.anuncio(idAnuncio);
+  if (previo && previo.organizacion_id === ctx.organizacion.id && previo.estado === 'borrador') {
+    const pendiente = db.pagoPendienteDeAnuncio(idAnuncio);
+    if (pendiente) {
+      return fallo(res, 409, 'Este borrador tiene un pago en espera. Si ya no lo quiere, escríbanos a '
+        + `${correo.BUZONES.facturacion} con la referencia ${pendiente.referencia} para anularlo.`);
+    }
+  }
+
   const rutas = db.borrarAnuncio(idAnuncio, ctx.organizacion.id);
   if (rutas === null) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
 
@@ -3528,6 +3573,10 @@ function verAnuncio(req, res, ctx, idAnuncio) {
   /* `ctx` es null cuando no hay sesión, que es el caso normal aquí:
      esta ruta la llama cualquier visitante del catálogo. */
   const esSuyo = !!ctx && !!ctx.organizacion && a.organizacion_id === ctx.organizacion.id;
+  /* T-05.2-06, hallazgo 4 de la auditoría §1.8 (D-14): un borrador no
+     existe para quien no es su dueño. Mismo texto que un id inexistente,
+     para no confirmar que hay algo ahí. */
+  if (a.estado === 'borrador' && !esSuyo) return fallo(res, 404, 'Ese anuncio no existe');
   if (!esSuyo) {
     PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
     /* CONF-03: a quien no es el dueño, solo los teléfonos verificados.
