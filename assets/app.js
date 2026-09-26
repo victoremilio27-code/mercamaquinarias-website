@@ -1394,27 +1394,32 @@ async function montarDetalle() {
 
 /* ── Categorías (categorias.html) ───────────────────────── */
 
+/* Los renders de estudio de cada categoría, en brand_assets/categorias.
+   Los usan categorias.html y la flota de alquiler: una sola lista para
+   que las dos páginas enseñen la misma máquina para la misma cosa. */
+const RENDERS_CATEGORIA = {
+  camiones: '01-camiones-y-cabezotes.webp',
+  autobuses: '02-autobuses-y-minibuses.webp',
+  bulldozers: '03-bulldozers-y-topadoras.webp',
+  cargadores: '04-cargadores.webp',
+  compactadoras: '05-compactadoras.webp',
+  excavadoras: '06-excavadoras.webp',
+  generadores: '07-generadores-y-compresores.webp',
+  gruas: '08-gruas.webp',
+  agricola: '09-maquinaria-agricola.webp',
+  montacargas: '10-montacargas.webp',
+  motoniveladoras: '11-motoniveladoras.webp',
+  pavimentacion: '12-pavimentacion-y-asfalto.webp',
+  perforacion: '13-perforacion-y-pilotaje.webp',
+  elevacion: '14-plataformas-de-elevacion.webp',
+  remolques: '15-remolques-y-patanas.webp',
+  retroexcavadoras: '16-retroexcavadoras.webp',
+};
+
 function montarCategoriasPagina() {
   const cont = $('#categoriasTodas');
   if (!cont) return;
-  const imagenes = {
-    camiones: '01-camiones-y-cabezotes.webp',
-    autobuses: '02-autobuses-y-minibuses.webp',
-    bulldozers: '03-bulldozers-y-topadoras.webp',
-    cargadores: '04-cargadores.webp',
-    compactadoras: '05-compactadoras.webp',
-    excavadoras: '06-excavadoras.webp',
-    generadores: '07-generadores-y-compresores.webp',
-    gruas: '08-gruas.webp',
-    agricola: '09-maquinaria-agricola.webp',
-    montacargas: '10-montacargas.webp',
-    motoniveladoras: '11-motoniveladoras.webp',
-    pavimentacion: '12-pavimentacion-y-asfalto.webp',
-    perforacion: '13-perforacion-y-pilotaje.webp',
-    elevacion: '14-plataformas-de-elevacion.webp',
-    remolques: '15-remolques-y-patanas.webp',
-    retroexcavadoras: '16-retroexcavadoras.webp',
-  };
+  const imagenes = RENDERS_CATEGORIA;
 
   // El número se cuenta, no se escribe: la página decía 'las ocho'
   // cuando la taxonomía ya tenía dieciséis.
@@ -1879,6 +1884,45 @@ async function montarPublicidad() {
 
 /* ── Alquiler, financiamiento, planes ───────────────────── */
 
+/* Qué render de categoría le toca a una ficha de la flota. Primero por
+   su icono, que es lo que el personal elige; si no casa, por el nombre,
+   para que una máquina añadida desde la consola con otro icono no se
+   quede sin imagen. «Retro» va antes que «excavadora» porque la
+   contiene. */
+const CATEGORIA_POR_ICONO_FLOTA = {
+  'i-excavadora': 'excavadoras',
+  'i-retro': 'retroexcavadoras',
+  'i-cargador': 'cargadores',
+  'i-volteo': 'camiones',
+  'i-rodillo': 'compactadoras',
+  'i-generador': 'generadores',
+};
+const CATEGORIA_POR_NOMBRE_FLOTA = [
+  [/retro/, 'retroexcavadoras'],
+  [/excavadora/, 'excavadoras'],
+  [/cargador|minicargador|pala/, 'cargadores'],
+  [/cami[oó]n|volteo|cabezote/, 'camiones'],
+  [/rodillo|compactador/, 'compactadoras'],
+  [/planta|generador|compresor/, 'generadores'],
+  [/bulldozer|topadora/, 'bulldozers'],
+  [/motoniveladora|niveladora/, 'motoniveladoras'],
+  [/gr[uú]a/, 'gruas'],
+  [/montacarga/, 'montacargas'],
+  [/plataforma|elevaci[oó]n|manlift/, 'elevacion'],
+  [/asfalt|pavimentadora|fresadora/, 'pavimentacion'],
+  [/perforadora|pilotaje/, 'perforacion'],
+  [/remolque|patana|lowboy/, 'remolques'],
+  [/tractor agr|cosechadora/, 'agricola'],
+];
+function renderDeFlota(ficha) {
+  let categoria = CATEGORIA_POR_ICONO_FLOTA[ficha.icono];
+  if (!categoria) {
+    const nombre = String(ficha.nombre || '').toLowerCase();
+    categoria = (CATEGORIA_POR_NOMBRE_FLOTA.find(([patron]) => patron.test(nombre)) || [])[1];
+  }
+  return categoria ? RENDERS_CATEGORIA[categoria] : null;
+}
+
 /* La flota de alquiler viene de la base, no del código: el equipo la
    administra desde /admin.html sin tocar un archivo ni desplegar.
    EQUIPOS_ALQUILER queda como reserva por si la API no responde, para
@@ -1906,14 +1950,23 @@ async function montarAlquiler() {
   cont.innerHTML = flota.map((a) => {
     const fotos = (a.fotos || []).slice(0, 4);
 
+    /* Sin fotos subidas, el render de su categoría y no un icono suelto:
+       la flota recién sembrada no trae fotos, y la página enseñaba seis
+       iconos donde categorias.html ya enseñaba la máquina. Un render de
+       estudio no es una unidad concreta, así que no promete modelo. Las
+       fotos que suba el personal siguen mandando. */
+    const render = fotos.length ? null : renderDeFlota(a);
+    let galeria = `<span class="alq__ico">${icono(a.icono || 'i-hex')}</span>`;
+    if (fotos.length) {
+      galeria = fotos.map((f) => `<img src="${esc(f.url)}" alt="${esc(f.alt || a.nombre)}" loading="lazy" decoding="async">`).join('');
+    } else if (render) {
+      galeria = `<img src="brand_assets/categorias/${esc(render)}" alt="" width="1280" height="720" loading="lazy" decoding="async">`;
+    }
+
     return `<li>
-      <label class="alq">
+      <label class="alq${render ? ' alq--render' : ''}">
         <input type="checkbox" name="equipo" value="${esc(a.nombre)}" data-rotulo="Equipos requeridos">
-        <span class="alq__galeria">
-          ${fotos.length
-            ? fotos.map((f) => `<img src="${esc(f.url)}" alt="${esc(f.alt || a.nombre)}" loading="lazy" decoding="async">`).join('')
-            : `<span class="alq__ico">${icono(a.icono || 'i-hex')}</span>`}
-        </span>
+        <span class="alq__galeria">${galeria}</span>
         <span class="alq__cuerpo">
           <span class="alq__nombre">${esc(a.nombre)}</span>
           <span class="alq__detalle">${esc(a.detalle || '')}</span>
