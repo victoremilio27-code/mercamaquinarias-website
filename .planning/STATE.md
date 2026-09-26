@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: phase_complete
-stopped_at: "Fase 5 completa (05-05, verificación y revisión hechas). Lista para PR."
-last_updated: "2026-09-25T21:20:00.000Z"
-last_activity: "2026-09-25 — 05-05: criterio 5 de extremo a extremo en el arnés (196/0), verificación 5/5 por máquina, revisión con cuatro hallazgos bajos corregidos, batería completa en verde."
+status: paused
+stopped_at: "Fases 5, 7, 8, 9 y 10 en producción. Modelo comercial auditado; esperando el visto bueno de Victor. Fase 6 en pausa."
+last_updated: "2026-09-26T00:30:00.000Z"
+last_activity: "2026-09-26 — Fusionados y desplegados los PR #29 (fase 5), #31 (7), #27 (8), #28 (9) y #30 (10). Auditoría del modelo comercial escrita."
 progress:
   total_phases: 16
-  completed_phases: 4
-  total_plans: 21
-  completed_plans: 19
-  percent: 25
+  completed_phases: 8
+  total_plans: 45
+  completed_plans: 40
+  percent: 50
 ---
 
 # Project State
@@ -21,32 +21,57 @@ progress:
 Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 
 **Core value:** Ser el punto de referencia de República Dominicana para quien tenga, necesite o trabaje con maquinaria pesada — el vacío que hoy no ocupa nadie.
-**Current focus:** Phase 5 — Cobro por transferencia bancaria (completa, lista para PR)
+**Current focus:** Cambio del modelo comercial (`.planning/research/modelo-comercial.md`), a la espera del visto bueno de Victor. **No se ejecuta nada hasta que él lo diga.**
 
 ## Current Position
 
-Phase: 5 de 16 (Cobro por transferencia bancaria) — completa en la rama `claude/dazzling-bardeen-gq9csi`
-Plan: 5 de 5 (05-01 a 05-05 hechos)
-Status: Lista para PR. Verificación `human_needed` (5/5 por máquina; queda la mirada de Victor), revisión en `05-REVIEW.md`
+**Parado a propósito, por orden de Victor (2026-09-25):** terminar solo lo que estaba en marcha, sin
+integrar el modelo comercial en el ROADMAP, sin replanificar la fase 6 y sin lanzar agentes nuevos.
 
-Hecho y en producción:
-- Fase 1: plan 01-01 (CI con `pruebas` y `navegador` antes de `desplegar`). Quedan 01-02, paso manual
-  de Victor (protección de rama en GitHub exigiendo esas dos comprobaciones), y 01-03.
-- Fase 2 completa (PR #23): comprobador de contraste en 0 dentro de `npm run auditar`.
-- Fases 3 y 4 completas (PR #25): pagos `pendiente → aprobado` por `pagos.confirmarPago`;
-  bandeja de solicitudes y bitácora de administración de solo añadir.
+En producción (despliegue verde; el VPS responde «Sitio arriba»):
+- Fase 1: plan 01-01. Quedan 01-02 (protección de rama, manual de Victor) y 01-03.
+- Fases 2, 3 y 4 (PR #23 y #25).
+- Fase 5, transferencia bancaria (PR #29), **apagada** hasta los cinco datos bancarios.
+- Fase 7, verificación y soporte en nombre del dealer (PR #31).
+- Fase 8, moneda y disponibilidad (PR #27). Tasa del dólar de partida RD$63.
+- Fase 9, contactos verificados y `estafas.html` (PR #28). SMS apagado; se verifica por correo.
+  **Los teléfonos de anuncios ya publicados no se ven hasta que su anunciante los verifique.**
+- Fase 10, guardar, compartir, contactos atribuidos y duplicar (PR #30).
 
-Pendiente de Victor, sin bloquear el PR de la fase 5:
-- **Los cinco datos bancarios** (`MERCA_TRANSFERENCIA_BANCO`, `_TITULAR`, `_RNC`, `_TIPO`, `_CUENTA`)
-  en `/etc/mercamaquinarias.env`, cuenta en pesos, según `deploy/README.md` §10b. Hasta entonces la
-  transferencia está apagada y el sitio cobra como antes.
-- **Revisión visual de la fase 5** en claro y oscuro, móvil y escritorio: los pasos 1-8 de
-  05-05-PLAN (lista y cómo levantarlo en local en 05-05-SUMMARY). Lo automatizable ya pasó
-  (prueba de humo en los dos temas y contraste 0). Falta además probar «Copiar» con HTTPS.
-- Verificación visual de las fases 2 y 4 en claro y oscuro (listas en los SUMMARY 02-06 y 04-04).
-- Si anular un comprobante debe ir a la bitácora (hoy es escritura propia; pregunta D-01 de la fase 4).
+A medias, empujado y sin PR:
+- **Fase 6 (CardNet), en pausa** por el cambio de modelo: `claude/fase-06-cardnet`. 06-01 hecho;
+  06-02 a medias (commit «wip», con la prueba en rojo de su migración). Hay que replanificarla desde
+  06-02 según el modelo comercial antes de seguir.
+- **Planes de las fases 11-16:** `claude/planes-11-16`. Solo la investigación y el contexto de la 11
+  («wip»); parado por Victor. Revisar contra el modelo comercial antes de seguir.
+- **Modelo comercial:** `claude/modelo-comercial`, con `.planning/research/modelo-comercial.md`
+  (el mensaje de Victor tal cual), `auditoria-modelo-comercial.md`, la regla de precios nueva en
+  `CLAUDE.md` y este STATE.
 
-Progress: [███░░░░░░░] 25%
+Siguiente paso cuando Victor dé el visto bueno: integrar el modelo en el ROADMAP como fases
+decimales antes de la 6 (con GSD), actualizar REQUIREMENTS y replanificar la 6. Las preguntas que
+solo él contesta están al final de la auditoría (redondeo, 1.800/3.200 frente a 2.000/3.500 de hoy,
+promoción del Estándar a RD$0, regla del quinto cupo, cupos ya comprados, paso de particular a
+dealer, precio de la renovación, ampliación, duraciones y días de borrador).
+
+Hallazgos de la auditoría que conviene cerrar pronto, aunque el resto espere:
+- La API deja reactivar un anuncio `vendido`/`retirado` sin mirar la capacidad (dos anuncios por un cupo).
+- Ninguna suscripción pasa nunca a `vencida`.
+
+Pendiente de Victor:
+- Visto bueno y respuestas del modelo comercial.
+- Los cinco datos bancarios (`deploy/README.md` §10b).
+- Fijar la tasa oficial del dólar en la consola.
+- Créditos SMS de Brevo y `MERCA_SMS=brevo`; validar el remitente.
+- Las 8 preguntas de CardNet en `06-CONTEXT.md` (sobre todo `DataDo.Invoice`: número de orden o NCF).
+- Revisión visual en claro y oscuro de las fases 2, 4, 5, 7, 8, 9 y 10 (listas en cada SUMMARY/VERIFICATION).
+- Probar en producción la tarjeta de WhatsApp de una ficha y duplicar un camión con motor.
+- Mirar en el VPS si a alguna página de dealer le faltan logotipo, portada o galería (la limpieza
+  de huérfanos los borraba antes de la fase 10).
+- Protección de la rama `main` (plan 01-02).
+- Decidir si la Política de publicación menciona la verificación de teléfonos y si se extiende a la página del dealer.
+
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -114,6 +139,10 @@ Decisiones que afectan al trabajo actual:
 
 - Borrar `proximamente.html` y `vercel.json` (restos de Vercel; necesita el visto bueno de Victor).
 - Retirar los worktrees locales ya fusionados (`TuEquipoRD-fase03`, `mercamaquinarias-fase04`).
+- `tools/admin.js` (terminal) cambia el sello sin pasar por la bitácora: a la fase de deuda técnica.
+- Nube: el proxy bloquea `mercamaquinarias.com`, así que el sitio en vivo solo se comprueba por el
+  registro del job `desplegar` («Sitio arriba: <commit>»). Las auditorías tienen el puerto 8080 fijo;
+  con varios worktrees se corren desde copias temporales con otro puerto.
 - Desborde horizontal de `panel.html` a 390 px con un anuncio publicado (anterior a la fase 5): el
   `span.visualmente-oculto` de `.tabla-anuncios` escapa de `.tabla-envoltura`, que no tiene
   `position: relative`. Propuesto como tarea aparte; si no se hace antes, va a la fase de deuda técnica.
@@ -139,6 +168,6 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 
 ## Session Continuity
 
-Last session: 2026-09-25
-Stopped at: Fase 5 completa y empujada en `claude/dazzling-bardeen-gq9csi`; el PR lo abre el orquestador
+Last session: 2026-09-26 (nube)
+Stopped at: fases 5, 7, 8, 9 y 10 publicadas; esperando el visto bueno de Victor sobre el modelo comercial
 Resume file: None
