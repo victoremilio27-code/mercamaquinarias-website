@@ -49,6 +49,7 @@ const SPRITE = `
 <symbol id="i-pausa" viewBox="0 0 24 24"><path d="M9 5v14"/><path d="M15 5v14"/></symbol>
 <symbol id="i-edificio" viewBox="0 0 24 24"><path d="M4 21V5.5L13 3v18"/><path d="M13 9h7v12"/><path d="M7.5 8h2M7.5 12h2M7.5 16h2M16 13h1.5M16 17h1.5"/></symbol>
 <symbol id="i-whatsapp" viewBox="0 0 24 24"><path d="M3.5 20.5l1.3-4.4A8.2 8.2 0 1 1 8 19.3z"/><path d="M9 8.4c.3-.1.6 0 .8.4l.7 1.3c.1.3.1.5-.1.8l-.4.5a5.6 5.6 0 0 0 2.6 2.6l.5-.4c.3-.2.5-.2.8-.1l1.3.7c.4.2.5.5.4.8-.2.8-1 1.4-1.9 1.4-2.8 0-5.9-3.1-5.9-5.9 0-.9.5-1.7 1.2-2.1z"/></symbol>
+<symbol id="i-compartir" viewBox="0 0 24 24"><circle cx="17.5" cy="5.5" r="2.5"/><circle cx="6.5" cy="12" r="2.5"/><circle cx="17.5" cy="18.5" r="2.5"/><path d="m8.7 10.7 6.6-3.9"/><path d="m8.7 13.3 6.6 3.9"/></symbol>
 `;
 
 function inyectarSprite() {
@@ -208,6 +209,7 @@ function avisoHTML(e) {
     <span class="aviso__pie">
       <span class="aviso__precio num">${precioTexto(e)}</span>
       ${e.ofertas ? '<span class="aviso__ofertas">Acepta ofertas</span>' : ''}
+      ${e.disponibilidad === 'bajo-pedido' ? '<span class="pastilla pastilla--ambar">Bajo pedido</span>' : ''}
     </span>
     ${e.dealer && e.esEmpresa
       ? `<span class="aviso__vendedor">${esc(e.dealer)}${e.verificado ? ` ${icono('i-check', 'ico ico--sello')}` : ''}</span>`
@@ -626,13 +628,31 @@ function montarBuscador() {
    se puede compartir, marcar y volver atrás con el botón del
    navegador, que es lo que se espera de un catálogo. */
 const CAMPOS_BUSQUEDA = ['q', 'categoria', 'subcategoria', 'marca', 'provincia',
-  'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax'];
+  'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax',
+  'disponibilidad', 'permuta', 'itbis'];
 
 const ROTULO_FILTRO = {
   q: 'Búsqueda', categoria: 'Categoría', subcategoria: 'Tipo', marca: 'Marca',
   provincia: 'Provincia', condicion: 'Condición', anioMin: 'Desde', anioMax: 'Hasta',
   precioMin: 'Desde', precioMax: 'Hasta', horasMax: 'Hasta',
+  // «Venta» y no «Condición»: ese rótulo ya es el del estado del equipo.
+  disponibilidad: 'Dónde', permuta: 'Venta', itbis: 'Venta',
 };
+
+/* Lo que dice el chip de los filtros que no son una cifra ni un nombre:
+   el valor de la URL (`bajo-pedido`, `1`) no es algo que se lea. */
+const VALOR_FILTRO = {
+  disponibilidad: { 'en-pais': 'Ya en el país', 'bajo-pedido': 'Bajo pedido' },
+  permuta: { 1: 'Acepta permuta' },
+  itbis: { 1: 'ITBIS incluido' },
+};
+
+/* El texto del chip, o '' si el valor no es uno de los conocidos. Solo
+   claves propias: con `?permuta=constructor` la búsqueda directa
+   devolvía la función heredada de Object, el filtro se daba por aplicado
+   y el chip decía «function Object() { [native code] }». */
+const textoValorFiltro = (k, v) =>
+  (Object.prototype.hasOwnProperty.call(VALOR_FILTRO[k], v) ? VALOR_FILTRO[k][v] : '');
 
 /* Enlaces de paginación. Se muestran ventanas de cinco páginas para
    que la tira no crezca sin fin cuando haya cientos. */
@@ -666,6 +686,11 @@ async function montarResultados() {
   const p = params();
   const filtros = {};
   CAMPOS_BUSQUEDA.forEach((k) => { filtros[k] = p.get(k) || ''; });
+  // Un valor que el servidor no reconoce (`permuta=si`) no filtra allí;
+  // aquí tampoco se enseña como aplicado, o el chip mentiría.
+  Object.keys(VALOR_FILTRO).forEach((k) => {
+    if (filtros[k] && !textoValorFiltro(k, filtros[k])) filtros[k] = '';
+  });
 
   const form = $('#filtros');
   const mando = $('#ordenResultados');
@@ -680,6 +705,9 @@ async function montarResultados() {
     Object.entries(filtros).forEach(([k, v]) => {
       const campo = form.elements[k];
       if (!campo || !v) return;
+      // Una casilla se marca, no se reescribe: asignarle `value`
+      // cambiaría lo que manda al enviarse y la dejaría sin marcar.
+      if (campo.type === 'checkbox') { campo.checked = v === campo.value; return; }
       if (campo.tagName === 'SELECT' && ![...campo.options].some((o) => o.value === v)) {
         campo.add(new Option(v, v));
       }
@@ -722,6 +750,7 @@ async function montarResultados() {
       q.delete(k);
       q.delete('pagina');
       const valor = k === 'categoria' ? nombreCategoria(v)
+        : VALOR_FILTRO[k] ? (textoValorFiltro(k, v) || v)
         : /precio/i.test(k) ? pesos(v)
         : k === 'horasMax' ? `${miles(v)} h`
         : v;
@@ -738,6 +767,15 @@ async function montarResultados() {
   cont.setAttribute('aria-busy', 'true');
   const r = await buscarEquipos({ ...filtros, orden: p.get('orden'), pagina: p.get('pagina') });
   cont.setAttribute('aria-busy', 'false');
+
+  // Se dice con qué cambio se compararon los dólares: un comprador que
+  // filtra «desde RD$1,000,000» y ve un precio en US$ tiene que poder
+  // entender por qué está ahí.
+  const notaTasa = $('#notaTasa');
+  if (notaTasa && r.tasaUsd && r.tasaUsd.tasa) {
+    notaTasa.textContent = `Los precios en US$ se comparan a RD$${Number(r.tasaUsd.tasa).toLocaleString('en-US')} por dólar.`;
+    notaTasa.hidden = false;
+  }
 
   if (resumen) {
     resumen.innerHTML = r.total
@@ -852,13 +890,27 @@ function videosHTML(e) {
 
 /* Medios de contacto declarados al publicar.
 
-   Cada número se ofrece por los canales que el anunciante habilitó, y
-   WhatsApp va como enlace propio con el mensaje ya redactado: en este
-   mercado la mayoría de los contactos entran por ahí, y obligar a
-   copiar el número a mano pierde la mitad de esas conversaciones. */
+   Solo se pinta un número si `t.verificado` viene en `true`: el
+   servidor (`verAnuncio`, CONF-03) ya se lo quita a quien no es el
+   dueño, pero el dueño ve su propio anuncio con los sin verificar
+   también, y este filtro es el que hace que su ficha se vea igual que
+   la ve el comprador (D-07 de la fase 9). `anuncioDeApi` no toca
+   `telefonos`: la marca de verificado y la vía llegan tal cual del API.
+
+   Cada número verificado se ofrece por los canales que el anunciante
+   habilitó, y WhatsApp va como enlace propio con el mensaje ya
+   redactado: en este mercado la mayoría de los contactos entran por
+   ahí, y obligar a copiar el número a mano pierde la mitad de esas
+   conversaciones. */
 function contactosHTML(e) {
-  const validos = (e.telefonos || []).filter((t) => t && t.numero);
-  if (!validos.length) return '';
+  const validos = (e.telefonos || []).filter((t) => t && t.numero && t.verificado);
+  if (!validos.length) {
+    return `<div class="contactos">
+      <p class="etiqueta etiqueta--bloque">Teléfonos verificados</p>
+      <p class="panel__texto">Este anunciante todavía no ha verificado ningún teléfono, así que aquí
+        no se muestra ninguno. Lea el aviso de abajo antes de tratar con él por otro medio.</p>
+    </div>`;
+  }
 
   // Los números dominicanos viajan a diez dígitos; WhatsApp los quiere
   // en formato internacional.
@@ -869,9 +921,16 @@ function contactosHTML(e) {
   };
   const mensaje = encodeURIComponent(
     `Hola, le escribo por el ${nombreEquipo(e)} publicado en MercaMaquinarias (${precioTexto(e)}).`);
+  // Por qué vía se probó cada número: por SMS prueba que el anunciante
+  // controla el teléfono; por correo prueba que el titular de la
+  // cuenta lo declara suyo (D-03 de la fase 9). No son lo mismo y la
+  // ficha no debe venderlos como si lo fueran.
+  const viaTexto = (t) => (t.via === 'sms'
+    ? 'Verificado por SMS'
+    : 'Confirmado por el anunciante desde su correo verificado');
 
   return `<div class="contactos">
-    <p class="etiqueta etiqueta--bloque">Contacto directo con el anunciante</p>
+    <p class="etiqueta etiqueta--bloque">Teléfonos verificados</p>
     ${validos.map((t) => {
       const tipo = t.tipo || 'ambos';
       const llamada = tipo === 'llamadas' || tipo === 'ambos';
@@ -879,6 +938,7 @@ function contactosHTML(e) {
       return `<div class="contactos__fila">
         <span class="contactos__num">
           <b class="num">${esc(t.numero)}</b>
+          <span class="contactos__nota">${esc(viaTexto(t))}</span>
           ${t.nota ? `<span class="contactos__nota">${esc(t.nota)}</span>` : ''}
         </span>
         <span class="contactos__acciones">
@@ -909,11 +969,22 @@ function fichaTecnicaHTML(e) {
     ['Potencia', e.potencia, 'num'],
     ['Peso operativo', e.peso, 'num'],
     ['Ubicación', [e.municipio, e.provincia].filter(Boolean).join(', ')],
+    ['Disponibilidad', e.disponibilidad === 'bajo-pedido' ? 'Bajo pedido' : 'En el país'],
   ];
   return `<dl class="ficha-tecnica">
     ${filas.filter(([, valor]) => valor).map(([rotulo, valor, clase, crudo]) =>
       `<div><dt>${esc(rotulo)}</dt><dd class="${clase || ''}">${crudo ? valor : esc(valor)}</dd></div>`).join('')}
   </dl>`;
+}
+
+/* Si la máquina ya está en el país o hay que traerla. Bajo pedido cambia
+   el plazo y, según lo pactado, el costo: se avisa de preguntar las dos
+   cosas en vez de dejar que el comprador lo descubra al cerrar. Los
+   textos son fijos, no salen del anuncio. */
+function disponibilidadHTML(e) {
+  return e.disponibilidad === 'bajo-pedido'
+    ? `<p class="detalle__disponibilidad"><b>Bajo pedido:</b> se importa tras la venta. Confirme con el vendedor el plazo de entrega y si el precio incluye flete y aduana.</p>`
+    : '<p class="detalle__disponibilidad"><b>En el país:</b> el equipo ya está en República Dominicana.</p>';
 }
 
 /* Condiciones comerciales que el anunciante marcó al publicar. Son las
@@ -929,6 +1000,282 @@ function condicionesHTML(e) {
   return `<ul class="detalle__condiciones">
     ${puntos.map((p) => `<li>${icono('i-check')} ${esc(p)}</li>`).join('')}
   </ul>`;
+}
+
+/* ── Guardados del comprador (MET-01) ───────────────────── */
+
+/* Los equipos guardados viven en ESTE navegador, sin cuenta.
+
+   Quien guarda es un comprador, y un comprador casi nunca tiene cuenta:
+   pedírsela para marcar una excavadora es perderlo en ese mismo clic.
+   El precio es que no viajan entre el teléfono y la computadora; eso
+   llega el día que exista cuenta de comprador.
+
+   Todo acceso al almacenamiento va en try/catch: en una ventana privada
+   o con los datos del sitio bloqueados, `localStorage` lanza. Entonces
+   la lista vive en memoria y el botón sigue funcionando mientras la
+   página esté abierta, que es mejor que un botón muerto. */
+const GUARDADOS = (() => {
+  const CLAVE = 'mercamaquinarias:guardados';
+  /* El mismo tope que acepta GET /api/anuncios?ids= (MAXIMO_IDS en
+     tools/api.js). Con 100 aquí, los guardados del 61 en adelante no
+     volvían del servidor, la página los daba por «ya no publicados» y
+     ofrecía borrarlos. */
+  const TOPE = 60;
+  const ID_VALIDO = /^[\w-]{1,64}$/;
+  let enMemoria = [];
+
+  function leer() {
+    let crudo = null;
+    try { crudo = localStorage.getItem(CLAVE); } catch (_) { return enMemoria.slice(); }
+    if (!crudo) return [];
+    try {
+      const lista = JSON.parse(crudo);
+      // Lo que venga de fuera se valida: la clave la puede editar
+      // cualquiera desde la consola, y estos ids acaban en una URL.
+      return Array.isArray(lista)
+        ? lista.filter((g) => g && typeof g.id === 'string' && ID_VALIDO.test(g.id))
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function escribir(lista) {
+    enMemoria = lista.slice(0, TOPE);
+    try { localStorage.setItem(CLAVE, JSON.stringify(enMemoria)); } catch (_) { /* queda en memoria */ }
+  }
+
+  const esta = (id) => leer().some((g) => g.id === id);
+
+  // Devuelve true si el equipo quedó guardado y false si se quitó.
+  function alternar(id) {
+    if (!ID_VALIDO.test(String(id))) return false;
+    const lista = leer();
+    if (lista.some((g) => g.id === id)) {
+      escribir(lista.filter((g) => g.id !== id));
+      return false;
+    }
+    escribir([{ id, guardado: new Date().toISOString() }, ...lista]);
+    return true;
+  }
+
+  const quitar = (ids) => escribir(leer().filter((g) => !ids.includes(g.id)));
+  const cuantos = () => leer().length;
+
+  return { leer, esta, alternar, quitar, cuantos };
+})();
+
+/* «Guardados (N)» en la navegación principal, y solo si hay alguno.
+   Se inyecta desde aquí para no tocar la cabecera escrita a mano en
+   las veinte páginas; un enlace a una lista vacía en todas ellas
+   ocuparía sitio sin servir de nada. */
+function montarEnlaceGuardados() {
+  const menu = $('#navMenu');
+  if (!menu) return;
+  const n = GUARDADOS.cuantos();
+  let enlace = $('[data-guardados]', menu);
+
+  if (!n) {
+    if (enlace) enlace.remove();
+    return;
+  }
+  if (!enlace) {
+    enlace = document.createElement('a');
+    enlace.href = 'guardados.html';
+    enlace.dataset.guardados = '';
+    menu.insertBefore(enlace, $('.cab__nav-cta', menu));
+  }
+  enlace.textContent = `Guardados (${n})`;
+  if ((location.pathname.split('/').pop() || '') === 'guardados.html') enlace.setAttribute('aria-current', 'page');
+}
+
+/* Guardar y compartir, bajo el precio. Son las dos cosas que un
+   comprador dominicano espera poder hacer con una ficha: marcarla para
+   volver luego y mandársela a alguien por WhatsApp. */
+function accionesFichaHTML(e) {
+  const guardado = GUARDADOS.esta(e.id);
+  const n = GUARDADOS.cuantos();
+  const url = `${location.origin}/equipo.html?id=${encodeURIComponent(e.id)}`;
+  const texto = encodeURIComponent(`${nombreEquipo(e)} · ${precioTexto(e)} en MercaMaquinarias: ${url}`);
+
+  return `<div class="detalle__acciones">
+    <button type="button" class="btn btn--linea btn--accion${guardado ? ' is-activo' : ''}" id="btnGuardar" aria-pressed="${guardado}">
+      ${icono('i-estrella')} <span>${guardado ? 'Guardado' : 'Guardar'}</span></button>
+    <button type="button" class="btn btn--linea btn--accion" id="btnCompartir" aria-expanded="false" aria-controls="menuCompartir">
+      ${icono('i-compartir')} <span>Compartir</span></button>
+    <a class="detalle__enlace-guardados" id="enlaceGuardados" href="guardados.html"${n ? '' : ' hidden'}>Ver guardados (${n})</a>
+  </div>
+  <div class="detalle__compartir" id="menuCompartir" hidden>
+    <a class="contactos__it contactos__it--whatsapp" id="compartirWhatsapp" target="_blank" rel="noopener"
+      href="https://wa.me/?text=${texto}">${icono('i-whatsapp')} WhatsApp</a>
+    <button type="button" class="contactos__it" id="btnCopiarEnlace">Copiar enlace</button>
+  </div>
+  <p class="detalle__estado" id="estadoAcciones" role="status"></p>`;
+}
+
+/* Copia al portapapeles. `navigator.clipboard` solo existe en contexto
+   seguro; en otro caso se usa el método viejo sobre un campo temporal. */
+async function copiarTexto(texto) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(texto);
+      return true;
+    }
+  } catch (_) { /* se intenta a la antigua */ }
+  const campo = document.createElement('textarea');
+  campo.value = texto;
+  campo.setAttribute('readonly', '');
+  campo.style.position = 'fixed';
+  campo.style.opacity = '0';
+  document.body.appendChild(campo);
+  campo.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  campo.remove();
+  return ok;
+}
+
+function montarAccionesFicha(e, cont) {
+  const btnGuardar = $('#btnGuardar', cont);
+  const btnCompartir = $('#btnCompartir', cont);
+  const menu = $('#menuCompartir', cont);
+  const estado = $('#estadoAcciones', cont);
+  if (!btnGuardar || !btnCompartir) return;
+
+  let reloj = null;
+  const avisar = (texto) => {
+    estado.textContent = texto;
+    clearTimeout(reloj);
+    reloj = setTimeout(() => { estado.textContent = ''; }, 2500);
+  };
+
+  // Solo guardar cuenta como favorito; quitarlo no resta. Una cifra
+  // del panel que baja sola no hay anunciante que sepa explicarla.
+  btnGuardar.addEventListener('click', () => {
+    const guardado = GUARDADOS.alternar(e.id);
+    if (guardado) anotar(e.id, 'favorito');
+    btnGuardar.setAttribute('aria-pressed', String(guardado));
+    btnGuardar.classList.toggle('is-activo', guardado);
+    $('span', btnGuardar).textContent = guardado ? 'Guardado' : 'Guardar';
+    const n = GUARDADOS.cuantos();
+    const enlace = $('#enlaceGuardados', cont);
+    enlace.textContent = `Ver guardados (${n})`;
+    enlace.hidden = !n;
+    avisar(guardado ? 'Guardado en este navegador.' : 'Quitado de sus guardados.');
+    montarEnlaceGuardados();
+  });
+
+  const url = `${location.origin}/equipo.html?id=${encodeURIComponent(e.id)}`;
+
+  /* La hoja nativa del teléfono cuando existe: ahí ya están WhatsApp y
+     todo lo demás que la persona use. Se anota cuando se completa;
+     cerrar la hoja sin elegir nada rechaza la promesa y no cuenta. */
+  btnCompartir.addEventListener('click', async () => {
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: nombreEquipo(e), text: `${nombreEquipo(e)} · ${precioTexto(e)}`, url });
+        anotar(e.id, 'compartir');
+      } catch (_) { /* cancelado: no se compartió nada */ }
+      return;
+    }
+    const abrir = menu.hidden;
+    menu.hidden = !abrir;
+    btnCompartir.setAttribute('aria-expanded', String(abrir));
+  });
+
+  $('#compartirWhatsapp', cont).addEventListener('click', () => anotar(e.id, 'compartir'));
+
+  $('#btnCopiarEnlace', cont).addEventListener('click', async (ev) => {
+    const boton = ev.currentTarget;
+    if (await copiarTexto(url)) {
+      anotar(e.id, 'compartir');
+      boton.textContent = 'Enlace copiado';
+      avisar('Enlace copiado. Péguelo donde quiera compartirlo.');
+      setTimeout(() => { boton.textContent = 'Copiar enlace'; }, 2000);
+    } else {
+      avisar('No se pudo copiar. Copie la dirección de la barra del navegador.');
+    }
+  });
+}
+
+/* La página de guardados (guardados.html).
+
+   Pide al catálogo solo esos ids, que vuelven únicamente si siguen
+   activos. Los que no vuelven NO se borran solos: uno pausado puede
+   reactivarse mañana, y quien lo guardó lo perdería sin enterarse. Se
+   dice cuántos son y se ofrece quitarlos. */
+async function montarGuardados() {
+  const lista = $('#listaGuardados');
+  if (!lista) return;
+  const vacio = $('#guardadosVacio');
+  const retirados = $('#guardadosRetirados');
+
+  async function pintar() {
+    const guardados = GUARDADOS.leer();
+    retirados.hidden = true;
+    if (!guardados.length) {
+      lista.innerHTML = '';
+      vacio.hidden = false;
+      return;
+    }
+    vacio.hidden = true;
+    lista.setAttribute('aria-busy', 'true');
+
+    let datos = null;
+    try {
+      const ids = guardados.map((g) => g.id).join(',');
+      datos = await api(`/anuncios?ids=${encodeURIComponent(ids)}`);
+    } catch (_) {
+      datos = null;
+    }
+    lista.removeAttribute('aria-busy');
+    if (!datos) {
+      lista.innerHTML = vacioHTML('No se pudo cargar la lista. Vuelva a intentarlo en un momento.');
+      return;
+    }
+
+    // En el orden en que se guardaron, el último primero: el catálogo
+    // los devuelve en su propio orden, que aquí no significa nada.
+    const porId = new Map((datos.anuncios || []).map((a) => [a.id, anuncioDeApi(a)]));
+    const vigentes = guardados.filter((g) => porId.has(g.id)).map((g) => porId.get(g.id));
+    const idsRetirados = guardados.filter((g) => !porId.has(g.id)).map((g) => g.id);
+
+    /* La tarjeta del catálogo es un enlace entero; el botón de quitar va
+       FUERA de él, porque un botón dentro de un enlace es un control
+       anidado que ni el teclado ni un lector de pantalla manejan bien. */
+    lista.innerHTML = vigentes.map((e) => `<li class="guardado">
+      ${avisoHTML(e).replace(/^<li class="aviso">/, '<div class="aviso">').replace(/<\/li>$/, '</div>')}
+      <button type="button" class="btn-tabla guardado__quitar" data-quitar="${esc(e.id)}"
+        aria-label="Quitar ${esc(nombreEquipo(e))} de guardados">Quitar</button>
+    </li>`).join('');
+
+    if (idsRetirados.length) {
+      const n = idsRetirados.length;
+      $('#guardadosRetiradosTexto').textContent = n === 1
+        ? '1 equipo guardado ya no está publicado.'
+        : `${n} equipos guardados ya no están publicados.`;
+      retirados.hidden = false;
+      retirados.dataset.ids = idsRetirados.join(',');
+    }
+    vacio.hidden = vigentes.length > 0 || idsRetirados.length > 0;
+  }
+
+  lista.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-quitar]');
+    if (!btn) return;
+    GUARDADOS.quitar([btn.dataset.quitar]);
+    montarEnlaceGuardados();
+    pintar();
+  });
+
+  $('#btnQuitarRetirados').addEventListener('click', () => {
+    GUARDADOS.quitar((retirados.dataset.ids || '').split(',').filter(Boolean));
+    montarEnlaceGuardados();
+    pintar();
+  });
+
+  await pintar();
 }
 
 async function montarDetalle() {
@@ -977,14 +1324,17 @@ async function montarDetalle() {
         <p class="detalle__cat">${esc(nombreCategoria(e.categoria))}${e.subcategoria ? ` · ${esc(e.subcategoria_nombre || e.subcategoria)}` : ''}</p>
         <h1 class="detalle__titulo">${esc(nombreEquipo(e))}</h1>
         <p class="detalle__sitio">${icono('i-pin')} ${esc([e.municipio, e.provincia].filter(Boolean).join(', ') || 'República Dominicana')}</p>
+        ${disponibilidadHTML(e)}
 
         <p class="etiqueta">Precio</p>
         <p class="detalle__precio num">${precioTexto(e)}</p>
         ${condicionesHTML(e)}
+        ${accionesFichaHTML(e)}
 
         ${fichaTecnicaHTML(e)}
 
         ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> MercaMaquinarias cotejó la existencia registral del negocio y sus datos de contacto. No certifica la calidad del equipo ni garantiza la operación.</p>` : ''}
+        ${e.serieCotejada ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Serie cotejada</span> El personal de MercaMaquinarias comprobó que el número de serie declarado coincide con la placa de las fotos y no se repite en otro anuncio. No es un certificado de propiedad ni de ausencia de robo.</p>` : ''}
 
         <!-- Espacio D del tarifario. Va entre los datos del equipo y el
              contacto del vendedor: en el teléfono la columna se apila y
@@ -1000,7 +1350,8 @@ async function montarDetalle() {
 
         <p class="detalle__aviso">MercaMaquinarias publica este anuncio pero no interviene en la transacción
           ni retiene fondos. Verifique el equipo y su documentación antes de pagar.
-          <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a>.</p>
+          <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a> ·
+          <a href="estafas.html">Señales de estafa: qué revisar antes de pagar</a>.</p>
       </aside>
     </div>`;
 
@@ -1013,7 +1364,8 @@ async function montarDetalle() {
   // es lo que el anunciante ve después en su panel. El canal se lee de
   // data-canal para que "llamar" y "WhatsApp" no se cuenten iguales.
   anotar(e.id, 'vista');
-  $$('.contactos__it', cont).forEach((a) => {
+  montarAccionesFicha(e, cont);
+  $$('.contactos [data-canal]', cont).forEach((a) => {
     a.addEventListener('click', () => anotar(e.id, a.dataset.canal || 'telefono'));
   });
 
@@ -2130,8 +2482,15 @@ function anuncioDeApi(a) {
     implementos: a.implementos,
     destacado: !!a.destacado_hasta && a.destacado_hasta > new Date().toISOString(),
     verificado: !!a.verificada,
+    // Solo `GET /api/anuncios/:id` (la ficha) lo manda; en el listado
+    // llega undefined y aquí se vuelve `false`, que es lo correcto: la
+    // tarjeta del catálogo no pinta esta nota, solo la ficha (07-06).
+    serieCotejada: !!a.serie_cotejada,
     ofertas: a.modalidad_precio === 'ofertas',
     permuta: !!a.permuta,
+    // Un anuncio sin el campo (una respuesta antigua en caché) está en
+    // el país, que es lo que afirmaba antes de existir.
+    disponibilidad: a.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
     financiamiento: !!a.financiamiento,
     itbisIncluido: !!a.itbis_incluido,
     esEmpresa: a.org_tipo === 'dealer',
@@ -2209,6 +2568,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // encuentre los <select> ya poblados al arrancar.
   inyectarSprite();
   montarNav();
+  montarEnlaceGuardados();
   montarNavMovil();
   montarSaludoUsuario();
   montarSelects();
@@ -2252,6 +2612,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     montarDealers(),
     montarResultados(),
     montarDetalle(),
+    montarGuardados(),
     seOfrece('transporte') ? montarTransporte() : null,
     montarContactoDesdeFicha(),
   ]);

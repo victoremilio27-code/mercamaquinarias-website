@@ -286,6 +286,11 @@ main { padding-block: 16px 40px; }
 
 .campo { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 10px; }
 .campo > label { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); }
+/* Rótulo de un grupo de casillas (no es un <label> de un solo control)
+   y ayuda bajo el control: los dos respetan las columnas de la rejilla,
+   o la ayuda caería en la columna estrecha del rótulo. */
+.campo > .campo__rotulo { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); align-self: start; }
+.campo > .campo-v__ayuda { grid-column: 2; margin-top: -4px; }
 
 .rango { display: flex; align-items: center; gap: 7px; }
 .rango span { font-size: 12px; color: var(--gris-acero); flex: none; }
@@ -697,6 +702,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* Dentro del panel de resultados, con el filtro al lado, caben cuatro. */
 .rejilla--panel { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+/* Guardados (fase 10): la tarjeta de siempre y, debajo y fuera del
+   enlace, el botón de quitar. */
+.guardados { margin-top: 14px; }
+.guardado { display: grid; gap: 8px; align-content: start; }
+.guardado__quitar { justify-self: start; margin-left: 0; }
+.guardados__retirados { margin-top: 14px; }
+
 .aviso a { display: grid; gap: 2px; }
 
 .aviso__foto {
@@ -753,6 +765,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.01em;
 }
 .aviso__ofertas { font-size: 11px; color: var(--verde); font-weight: 600; }
+/* «Bajo pedido» en la tarjeta (fase 8). El tinte ámbar al 16 % sobre el
+   fondo gris de la tarjeta dejaba la letra a 4.45:1 en claro; al 10 %,
+   como la pastilla verde, pasa de 4.5 y en oscuro el contraste sube. */
+.aviso__pie .pastilla--ambar { background: rgba(242, 169, 0, .1); }
 
 .aviso__vendedor {
   display: flex; align-items: center; gap: 4px;
@@ -1429,6 +1445,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
    vecino, que no lo tiene, queda descolgado unos píxeles. */
 .campo-v { display: grid; gap: 5px; align-content: start; }
 .campo-v--ancho { grid-column: 1 / -1; }
+
+/* Filtros de «Contactos recibidos» en el panel (fase 10). */
+.contactos-filtros { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.contactos-filtros .campo-v { min-width: 200px; }
 /* `.campo-v__rotulo` es un <label for> y hace de rótulo cuando el campo
    no puede ir envuelto en la etiqueta: un <label> dentro de otro
    <label> no es HTML válido, y el campo con casilla de «No aplica»
@@ -2033,6 +2053,38 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .telefono__quitar:disabled { opacity: .35; cursor: default; }
 .telefono__quitar .ico { width: 14px; height: 14px; }
 
+/* Verificación de teléfonos (fase 9). El bloque ocupa la fila entera
+   bajo el número: en publicar va dentro de la rejilla de cinco columnas
+   de .telefono, y en el panel dentro de cada fila de la lista. Solo
+   tokens de tema, para que el comprobador de contraste siga en cero. */
+.telefono__verif { grid-column: 1 / -1; }
+.telefono__verif:empty { display: none; }
+.verif { display: grid; gap: 8px; font-size: 12.5px; color: var(--texto-2); }
+.verif__estado { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; }
+.verif__texto { color: var(--gris-acero); }
+.verif__acciones { display: flex; flex-wrap: wrap; gap: 8px; }
+.verif__acciones .btn--chico { margin-top: 0; }
+.verif__codigo { display: grid; gap: 6px; }
+.verif__destino { margin: 0; color: var(--texto-2); }
+.verif__fila { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.verif__fila .campo-v { flex: 0 1 180px; }
+.verif__fila .btn--chico { margin-top: 0; }
+.verif__aviso { margin: 0; }
+.verif__enlace {
+  padding: 0; background: none; border: 0; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--ambar-texto); text-decoration: underline;
+}
+
+.contactos-panel { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.contactos-panel__fila {
+  display: grid; gap: 8px;
+  padding: 12px 14px;
+  background: var(--hueso); border: 1px solid var(--linea); border-radius: var(--r);
+}
+.contactos-panel__num { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; }
+.contactos-panel__num b { font-size: 15px; letter-spacing: .01em; color: var(--azul); }
+.contactos-panel__num span { font-size: 12px; color: var(--gris-acero); }
+
 /* ── Planes seleccionables ──────────────────────────────── */
 
 .planes-op {
@@ -2304,6 +2356,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .detalle__sitio .ico { width: 14px; height: 14px; }
 
+/* En el país o bajo pedido, justo bajo la ubicación: es lo primero que
+   pregunta el comprador y cambia plazo y costo. */
+.detalle__disponibilidad { margin-top: 5px; font-size: 12.5px; line-height: 1.5; color: var(--azul); }
+.detalle__disponibilidad b { font-weight: 700; }
+
 /* Condiciones comerciales: permuta, ofertas, financiamiento. */
 .detalle__condiciones { display: grid; gap: 5px; margin: 9px 0 4px; }
 .detalle__condiciones li {
@@ -2311,6 +2368,19 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-size: 12.5px; color: var(--azul);
 }
 .detalle__condiciones .ico { width: 14px; height: 14px; color: var(--verde); stroke-width: 2.4; flex: none; }
+
+/* Guardar y compartir, bajo el precio (fase 10). Botones de línea como
+   los demás de la ficha: la acción principal sigue siendo contactar. */
+.detalle__acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; }
+.btn--accion { height: 34px; padding: 0 14px; font-size: 13px; }
+.btn--accion .ico { width: 15px; height: 15px; }
+.btn--accion.is-activo { border-color: var(--ambar); background: var(--sup-calida); }
+.btn--accion.is-activo .ico { fill: currentColor; }
+.detalle__enlace-guardados { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
+.detalle__enlace-guardados:hover { text-decoration: underline; }
+.detalle__compartir { display: flex; gap: 7px; margin: 6px 0 4px; }
+.detalle__estado { min-height: 1em; margin-top: 4px; font-size: 12px; color: var(--gris-acero); }
+.detalle__estado:empty { margin-top: 0; min-height: 0; }
 
 .detalle__aviso {
   margin-top: 12px; padding-top: 11px;
@@ -2485,6 +2555,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
   margin: 12px 0 0; font-size: 12.5px; color: var(--app-muted);
 }
+/* La sección del panel iba sin regla propia y su título quedaba pegado
+   al párrafo de encima, sin separarse de lo que no es un pago. */
+.pagos-espera { margin: 18px 0; }
 .realce--espera a { font-weight: 600; color: var(--ambar-texto); }
 .realce--espera a:hover { text-decoration: underline; }
 

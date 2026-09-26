@@ -126,11 +126,48 @@ function siguienteCupo({ precioUnitario, cupoActual, dias, diasRestantes }) {
   return { ...p, gratuito: p.total === 0 };
 }
 
+/* ── Moneda del catálogo ────────────────────────────────────
+   Los anuncios se publican en pesos o en dólares, y el buscador
+   comparaba la cifra cruda: una excavadora de US$120,000 quedaba fuera
+   de «desde RD$1,000,000» y se ordenaba por debajo de una camioneta de
+   RD$500,000. Para COMPARAR, los dólares se pasan a pesos con una tasa
+   de referencia. Para MOSTRAR, cada anuncio conserva su moneda: la
+   cifra convertida no la publicó el vendedor.
+
+   La tasa vigente la fija el equipo desde /admin.html (ajuste
+   `tasa_usd`); esta constante es solo el valor de partida cuando nadie
+   la ha fijado. No es la tasa oficial del día. */
+const TASA_USD_POR_DEFECTO = 63;
+
+/* Fuera de este rango, una tasa es un cero de más o de menos al
+   teclearla, no un tipo de cambio. Se rechaza en vez de reordenar el
+   catálogo entero con ella. */
+const TASA_USD_MIN = 20;
+const TASA_USD_MAX = 200;
+
+/* La tasa limpia (dos decimales) o null si no sirve. Admite la coma
+   decimal porque así la escribe quien la copia de un periódico. */
+function tasaValida(valor) {
+  if (valor === null || valor === undefined || valor === '') return null;
+  const n = Number(String(valor).trim().replace(',', '.'));
+  if (!Number.isFinite(n) || n < TASA_USD_MIN || n > TASA_USD_MAX) return null;
+  return Math.round(n * 100) / 100;
+}
+
+/* Cifra en pesos para comparar. Tiene que dar lo mismo que la
+   expresión PRECIO_EN_PESOS de tools/db.js, que es la que ordena y
+   filtra en la base. */
+function precioEnPesos(precio, moneda, tasa = TASA_USD_POR_DEFECTO) {
+  if (precio === null || precio === undefined) return null;
+  return moneda === 'USD' ? Number(precio) * Number(tasa) : Number(precio);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     ITBIS, CUPOS_POR_UNO_GRATIS, RECARGO_60, DURACIONES, CUPO_MAXIMO,
     duracion, cuposGratis, cuposCobrados, ahorro60,
     precioCompra, precioAmpliacion, precioRenovacion, desglose,
     diasRestantes, siguienteCupo,
+    TASA_USD_POR_DEFECTO, TASA_USD_MIN, TASA_USD_MAX, tasaValida, precioEnPesos,
   };
 }

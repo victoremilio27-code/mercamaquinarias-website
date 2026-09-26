@@ -131,6 +131,9 @@ function estadoInicial() {
       categoria: '', subcategoria: '', marca: '', modelo: '', anio: '',
       condicion: '', uso: '', unidad: 'h', serie: '', potencia: '', peso: '',
       provincia: '', ciudad: '', implementos: '', descripcion: '',
+      // En el país o bajo pedido. Un borrador guardado antes de que
+      // existiera el campo lo recibe de estadoInicial al fusionarse.
+      disponibilidad: 'en-pais',
     },
     fotos: [],
     videos: [],
@@ -199,6 +202,36 @@ function leerBorrador() {
 const borrarBorrador = () => {
   try { localStorage.removeItem(CLAVE_BORRADOR); } catch (_) { /* nada que borrar */ }
 };
+
+/* Duplicar un anuncio propio (MET-04): trae la copia del servidor y la
+   deja con la misma forma que `leerBorrador()`, lista para volcarse al
+   formulario. No toca `localStorage` ni el `estado` global: eso lo
+   decide quien llama, según haya o no un borrador a medio escribir que
+   el dueño no quiera perder.
+
+   El servidor ya deja el número de serie en blanco (`copiarAnuncio` en
+   tools/api.js): copiarlo publicaría dos anuncios con la misma serie,
+   que identifica una sola máquina. */
+async function cargarCopia(idAnuncio) {
+  try {
+    const r = await api(`/mis-anuncios/${encodeURIComponent(idAnuncio)}/copia`);
+    if (!r || !r.copia) return null;
+    const base = estadoInicial();
+    const c = r.copia;
+    return {
+      ...base,
+      equipo: { ...base.equipo, ...c.equipo },
+      precio: { ...base.precio, ...c.precio },
+      contacto: { ...base.contacto, ...c.contacto },
+      fotos: Array.isArray(c.fotos) ? c.fotos : [],
+      videos: Array.isArray(c.videos) ? c.videos : [],
+      paso: 0,
+      origen: c.origen || null,
+    };
+  } catch (_) {
+    return null;              // sin conexión, sin permiso o el anuncio ya no existe
+  }
+}
 
 
 /* ── Utilidades de formato ──────────────────────────────── */
@@ -1038,6 +1071,7 @@ function filaTelefonoHTML(tel, i) {
       <input type="text" class="tel-nota" value="${esc(tel.nota)}" placeholder="Ej. Departamento de ventas">
     </label>
     <button type="button" class="telefono__quitar" data-quitar-tel aria-label="Quitar el número ${i + 1}"${i === 0 && estado.contacto.telefonos.length === 1 ? ' disabled' : ''}>${icono('i-equis')}</button>
+    <div class="telefono__verif" aria-live="polite"></div>
   </li>`;
 }
 
@@ -1046,6 +1080,47 @@ function pintarTelefonos() {
   if (!lista) return;
   lista.innerHTML = estado.contacto.telefonos.map(filaTelefonoHTML).join('');
   $('#btnAgregarTelefono').disabled = estado.contacto.telefonos.length >= 5;
+  pintarVerificacion();
+}
+
+/* ── Verificación de cada número (fase 9) ──────────────────
+   El anuncio solo enseña teléfonos verificados. Con sesión, debajo de
+   cada número válido se dice si ya lo está y, si no, se ofrece el
+   código ahí mismo: descubrirlo después de publicar, con el anuncio
+   saliendo sin teléfono, es perder los primeros contactos.
+
+   Sin sesión no se pinta nada por fila: la cuenta se abre al final y
+   la nota de encima explica que se verifica después, desde el panel.
+   Publicar no se bloquea por un número sin verificar; simplemente no
+   se muestra hasta que lo esté. */
+let CONTACTOS = null;       // Map numero → fila de /api/contactos; null sin sesión
+
+async function cargarContactosVerificados() {
+  if (!haySesion() || typeof VerificarContacto === 'undefined') return;
+  const lista = await VerificarContacto.cargar();
+  CONTACTOS = lista ? new Map(lista.map((c) => [c.numero, c])) : null;
+  pintarVerificacion();
+}
+
+function pintarVerificacion() {
+  if (typeof VerificarContacto === 'undefined') return;
+  $$('#listaTelefonos .telefono').forEach((li) => {
+    const caja = $('.telefono__verif', li);
+    if (!caja) return;
+    const numero = VerificarContacto.soloDigitos($('.tel-numero', li).value);
+    if (!CONTACTOS || numero.length !== 10) {
+      caja.innerHTML = '';
+      caja.dataset.clave = '';
+      return;
+    }
+    const c = CONTACTOS.get(numero) || { numero, verificado: false, via: null, pendiente: null };
+    /* Solo se repinta si cambió el número o su estado: repintar en cada
+       tecla cerraría el campo del código mientras se escribe. */
+    const clave = `${numero}|${c.verificado}|${c.via}`;
+    if (caja.dataset.clave === clave) return;
+    caja.dataset.clave = clave;
+    caja.innerHTML = VerificarContacto.estadoHTML(c);
+  });
 }
 
 function leerTelefonos() {
@@ -1074,9 +1149,15 @@ function montarPasoContacto() {
   lista.addEventListener('input', (e) => {
     if (e.target.classList.contains('tel-numero')) {
       e.target.value = formatearTelefono(e.target.value);
+      pintarVerificacion();
     }
     leerTelefonos();
   });
+
+  if (typeof VerificarContacto !== 'undefined') {
+    VerificarContacto.montar(lista, { alVerificar: cargarContactosVerificados });
+    cargarContactosVerificados();
+  }
 
   lista.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-quitar-tel]');
@@ -1426,6 +1507,7 @@ function anuncioParaApi() {
     descripcion: e.descripcion,
     provincia: e.provincia,
     municipio: e.ciudad,
+    disponibilidad: e.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
 
     precio: Number(soloDigitos(estado.precio.monto)) || null,
     moneda: estado.precio.moneda,
@@ -1455,6 +1537,18 @@ function pintarConfirmacion(respuesta) {
   const equipo = esc(`${anuncio.anio} ${anuncio.marca} ${anuncio.modelo}`);
 
   const libres = m && m.libres;
+
+  /* Fase 9: si publicó con números sin verificar, el anuncio sale sin
+     ellos. Se dice aquí, con el camino al panel, y no se deja que lo
+     descubra un comprador que no encuentra cómo llamarle. */
+  const sinVerificar = (anuncio.telefonos || []).filter((t) => !t.verificado).length;
+  const avisoTelefonos = sinVerificar
+    ? `<p class="realce">${icono('i-aviso')} <span>${sinVerificar === 1
+      ? 'Un teléfono de este anuncio está sin verificar y no se muestra.'
+      : `${sinVerificar} teléfonos de este anuncio están sin verificar y no se muestran.`}
+      Verifíquelos desde <a href="panel.html#panelContactos">su panel</a>: tarda un minuto y aparecen al momento.</span></p>`
+    : '';
+
   const cabecera = `
     <h2 class="publicado__titulo">Anuncio publicado</h2>
     <p class="publicado__texto">
@@ -1485,6 +1579,8 @@ function pintarConfirmacion(respuesta) {
         ? 'Sin límite' : libres}</dd></div>
       <div><dt>Fotografías publicadas</dt><dd class="num">${anuncio.fotos.length}</dd></div>
     </dl>
+
+    ${avisoTelefonos}
 
     <p class="publicado__nota">
       Enviamos la confirmación a <b>${esc(estado.contacto.correo)}</b>.
@@ -1578,6 +1674,7 @@ function pintarVistaPrevia() {
       <span class="aviso__specs num">${esc(uso)}${e.provincia ? ` · ${esc(e.provincia)}` : ''}</span>
       <span class="aviso__precio num">${esc(textoPrecioPreview())}</span>
       ${estado.precio.modalidad === 'ofertas' ? '<span class="pastilla pastilla--ambar">Acepta ofertas</span>' : ''}
+      ${e.disponibilidad === 'bajo-pedido' ? '<span class="pastilla pastilla--ambar">Bajo pedido</span>' : ''}
     </div>
     ${e.subcategoria ? `<p class="vista-previa__nota">${esc(nombreCategoria(e.categoria))} · ${esc(e.subcategoria)}</p>` : ''}`;
 }
@@ -1676,6 +1773,7 @@ function leerPaso(id) {
       peso: $('#e-peso').value.trim(),
       provincia: $('#e-provincia').value,
       ciudad: $('#e-ciudad').value.trim(),
+      disponibilidad: $('#e-disponibilidad').value,
       implementos: $('#e-implementos').value.trim(),
       descripcion: $('#e-descripcion').value.trim(),
     });
@@ -1713,6 +1811,7 @@ function volcarEstadoAlFormulario() {
   $('#e-potencia').value = e.potencia;
   $('#e-peso').value = e.peso;
   $('#e-ciudad').value = e.ciudad;
+  $('#e-disponibilidad').value = e.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais';
   $('#e-implementos').value = e.implementos;
   $('#e-descripcion').value = e.descripcion;
   // marca, provincia y condición se llenan por script: se asignan
@@ -1753,13 +1852,46 @@ async function montarPublicador() {
      Lo que no va a poder es publicarlo, y eso lo impide el servidor. */
   montarAvisoLegal('publicar');
 
-  const guardado = leerBorrador();
-  if (guardado) {
+  const previo = leerBorrador();
+  const idDuplicar = params().get('duplicar');
+  let copia = null;
+
+  // Duplicar (MET-04): se resuelve ANTES de tocar `estado`, porque el
+  // texto de confirmación necesita saber de qué equipo es la copia.
+  if (idDuplicar && haySesion()) {
+    copia = await cargarCopia(idDuplicar);
+    if (copia) {
+      const aMedio = previo && (previo.equipo.marca || previo.equipo.modelo);
+      if (aMedio && !window.confirm(
+        `Tiene un anuncio a medio escribir. ¿Reemplazarlo por la copia de ${copia.origen ? copia.origen.nombre : 'este equipo'}?`,
+      )) {
+        copia = null;          // se conserva el borrador que ya tenía
+      }
+    }
+    // Se quita el parámetro tanto si se usó la copia como si no: sin
+    // esto, recargar la página vuelve a preguntar o a copiar de nuevo.
+    history.replaceState(null, '', 'publicar.html');
+  }
+
+  const guardado = copia || previo;
+  if (copia) {
+    estado = copia;
+    guardarBorrador();
+  } else if (guardado) {
     estado = guardado;
     estado.paso = 0;    // se retoma desde el principio, con todo lleno
   }
 
-  montarPasoEquipo();
+  /* Con `await`: la categoría, la marca y el modelo son <select> que
+     `montarPasoEquipo` llena de <option> al recibir la taxonomía del
+     servidor, y `volcarEstadoAlFormulario` de aquí abajo solo puede
+     asignarles un valor si esa opción ya existe. Sin esperar, la
+     asignación llegaba antes que las opciones y un borrador —o una
+     copia— se recuperaba con la ficha técnica en blanco: el número de
+     serie sí quedaba (es un campo de texto), pero categoría, marca y
+     modelo no. Nunca se vio porque hasta ahora nadie había podido
+     probar esta pantalla en un navegador de verdad (ver 10-02-SUMMARY). */
+  await montarPasoEquipo();
   montarPasoFotos();
   montarPasoVideos();
   montarPasoPrecio();
@@ -1768,13 +1900,61 @@ async function montarPublicador() {
 
   if (guardado) {
     volcarEstadoAlFormulario();
-    // El change repuebla las subcategorías de la categoría guardada;
-    // su manejador limpia la elección, así que se repone después.
-    const sub = estado.equipo.subcategoria;
+    /* La cadena es categoría → subcategoría → marca → modelo: cada
+       nivel llena las <option> del siguiente al recibir su propio
+       `change`, así que hay que disparar los cuatro EN ORDEN y no solo
+       el primero. Antes solo se disparaba el de categoría y se
+       reponía a mano el valor de subcategoría sin avisar a marca: la
+       marca se quedaba con la lista vacía de «elija primero el tipo de
+       equipo» y modelo nunca llegaba a existir como <option>, aunque
+       `volcarEstadoAlFormulario` ya le hubiera puesto el valor un
+       instante antes. */
+    const e = estado.equipo;
     $('#e-categoria').dispatchEvent(new Event('change'));
-    estado.equipo.subcategoria = sub;
-    $('#e-subcategoria').value = sub;
+    $('#e-subcategoria').value = e.subcategoria;
+    $('#e-subcategoria').dispatchEvent(new Event('change'));
+    $('#e-marca').value = e.marca;
+    $('#e-marca').dispatchEvent(new Event('change'));
+
+    const selModelo = $('#e-modelo');
+    const modeloConocido = [...selModelo.options].some((o) => o.value === e.modelo);
+    selModelo.value = modeloConocido ? e.modelo : OTRO_MODELO;
+    selModelo.dispatchEvent(new Event('change'));
+    if (!modeloConocido) $('#e-modelo-otro').value = e.modelo;
+
+    /* Motor y transmisión, con la misma cadena: el `change` de la
+       subcategoría de arriba ya llenó sus marcas, y el de cada marca
+       llena sus modelos. Faltaba: al duplicar un camión —que es justo
+       donde el comprador pregunta primero por el motor— el asistente
+       salía con el tren motriz en blanco aunque la copia lo trajera, y
+       el dealer tenía que volver a elegirlo. Vale igual para cualquier
+       borrador recuperado. En una excavadora no hay valores y no pasa
+       nada. */
+    [
+      ['#e-motor-marca', '#e-motor-modelo', e.motorMarca, e.motorModelo],
+      ['#e-trans-marca', '#e-trans-modelo', e.transmisionMarca, e.transmisionModelo],
+    ].forEach(([selMarca, selModeloTren, valorMarca, valorModelo]) => {
+      const sm = $(selMarca);
+      if (!sm || !valorMarca) return;
+      sm.value = valorMarca;
+      sm.dispatchEvent(new Event('change'));
+      const smod = $(selModeloTren);
+      if (smod && valorModelo) smod.value = valorModelo;
+    });
+
     $('#avisoBorrador').hidden = false;
+    if (copia) {
+      $('#avisoBorrador span').textContent =
+        `Copia de ${copia.origen ? copia.origen.nombre : 'un anuncio anterior'}. `
+        + 'Cambie lo que sea distinto —número de serie, horas, precio y fotos— y publíquelo.';
+    }
+  } else if (idDuplicar && haySesion()) {
+    // Se pidió duplicar pero la copia no llegó (ya no es suyo, o no hay
+    // conexión) y no había ningún borrador que mostrar en su lugar: se
+    // avisa aquí mismo en vez de dejarlo sin explicación.
+    $('#avisoBorrador').hidden = false;
+    $('#avisoBorrador span').textContent =
+      'No se pudo cargar el anuncio para duplicar. Puede completar la ficha desde cero.';
   }
 
   // Los datos de contacto se rellenan con los de la cuenta: nadie
@@ -1785,6 +1965,7 @@ async function montarPublicador() {
     if (!$('#listaTelefonos .tel-numero').value && SESION.usuario.telefono) {
       $('#listaTelefonos .tel-numero').value = formatearTelefono(SESION.usuario.telefono);
       leerTelefonos();
+      pintarVerificacion();
     }
   }
 

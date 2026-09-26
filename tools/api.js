@@ -226,9 +226,11 @@ const conAdmin = (manejador) => conSesion((req, res, ctx, ...resto) => {
    La función devuelta lleva `bitacora = accion`: es lo que lee la guarda
    de tools/probar-bitacora.js al recorrer RUTAS, que falla si una ruta de
    escritura de /api/admin/ ni pasa por aquí ni está declarada en
-   ESCRITURAS_ADMIN_PROPIAS. Nota para la fase 7: si la edición asistida
-   de la página del dealer se monta sobre rutas que NO cuelgan de
-   /api/admin/, esa fase tiene que ensanchar la guarda en el mismo cambio. */
+   ESCRITURAS_ADMIN_PROPIAS. La fase 7 montó la edición de la página del
+   dealer, la revisión de la serie y el directorio bajo /api/admin/, así
+   que la guarda las cubre sin ensancharla; una ruta futura en nombre de
+   otro que NO cuelgue de /api/admin/ tiene que ensanchar la guarda en el
+   mismo cambio. */
 function conAdminEnNombreDe(accion, manejador) {
   // Falla al arrancar, no en la primera petición de un administrador.
   if (!Object.prototype.hasOwnProperty.call(db.ACCIONES_BITACORA, accion)) {
@@ -859,6 +861,38 @@ const editarPortada = conAdmin(async (req, res) => {
   if (c.alt !== undefined) db.guardarAjuste('heroe_alt', texto(c.alt, 160) || '');
 
   return responder(res, 200, { heroe: db.heroePortada() });
+});
+
+/* Tasa de referencia del dólar. Solo administración.
+
+   El catálogo la usa para COMPARAR precios en pesos y en dólares al
+   filtrar y ordenar; ningún precio publicado cambia con ella. Sin
+   fijar, vale la de MERCA_TASA_USD o la de partida de precios.js, que
+   no es la oficial: Victor la fija aquí. */
+const verTasaCambio = conAdmin((req, res) => responder(res, 200, {
+  ...db.tasaUsd(),
+  minimo: precios.TASA_USD_MIN,
+  maximo: precios.TASA_USD_MAX,
+  porDefecto: precios.TASA_USD_POR_DEFECTO,
+}));
+
+/* Vacío o null vuelve a la tasa de entorno o de partida. Fuera de rango
+   es un error de tecleo (630 por 63) y se rechaza: aceptarlo reordenaría
+   el catálogo entero sin que nadie lo notara. */
+const editarTasaCambio = conAdmin(async (req, res) => {
+  const c = await leerCuerpo(req);
+  const crudo = c.tasa == null ? '' : String(c.tasa).trim();
+  if (crudo === '') {
+    db.guardarAjuste('tasa_usd', '');
+  } else {
+    const tasa = precios.tasaValida(crudo);
+    if (!tasa) {
+      return fallo(res, 400,
+        `La tasa tiene que ser un número entre ${precios.TASA_USD_MIN} y ${precios.TASA_USD_MAX} pesos por dólar`);
+    }
+    db.guardarAjuste('tasa_usd', String(tasa));
+  }
+  return responder(res, 200, db.tasaUsd());
 });
 
 /* ── Rutas: solicitudes de servicio ─────────────────────────
@@ -1787,6 +1821,22 @@ const verificarOrganizacion = conAdminEnNombreDe('organizacion.verificar', async
   const motivo = texto(c.motivo, 300);
   try {
     ctx.enNombreDe(idOrg, { objetoTipo: 'organizacion', objetoId: idOrg, motivo }, (org) => {
+      /* Las dos reglas van DENTRO: un error lanzado aquí deshace el
+         SAVEPOINT y no deja fila, que es lo correcto para algo que no
+         llegó a hacerse.
+
+         El sello dice que se cotejó «la existencia registral del
+         negocio»: no tiene sentido en una cuenta particular ni en una
+         empresa cuya alta no se ha aprobado todavía (o se rechazó). */
+      if (verificada && (org.tipo !== 'dealer' || org.estado_revision !== 'aprobada')) {
+        throw Object.assign(new Error('Solo se verifica una empresa dealer con el alta aprobada'), { codigo: 409 });
+      }
+      /* Retirarlo es lo que genera el reclamo «¿por qué me lo
+         quitaron?». Sin un motivo escrito, la bitácora dice quién y
+         cuándo pero no contesta lo único que se va a preguntar. */
+      if (!verificada && org.verificada && !motivo) {
+        throw Object.assign(new Error('Escriba el motivo para retirar el sello'), { codigo: 400 });
+      }
       db.marcarVerificada(idOrg, verificada);
       return { antes: { verificada: !!org.verificada }, despues: { verificada } };
     });
@@ -1795,6 +1845,59 @@ const verificarOrganizacion = conAdminEnNombreDe('organizacion.verificar', async
     return fallo(res, e.codigo || 500, e.message);
   }
   return responder(res, 200, { verificada });
+});
+
+/* El directorio de empresas para el personal. De solo lectura: el
+   sello se cambia por verificarOrganizacion, que pasa por la bitácora. */
+const listarOrganizacionesAdmin = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  return responder(res, 200, {
+    empresas: db.organizacionesAdmin({
+      estado: texto(q.get('estado'), 20),
+      q: texto(q.get('q'), 80),
+    }),
+  });
+});
+
+/* ── Revisión del número de serie (ADMIN-03) ─────────────── */
+
+const listarSeries = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  return responder(res, 200, { series: db.seriesParaRevisar({ estado: texto(q.get('estado'), 20) }) });
+});
+
+/* El resultado va por la bitácora sobre la organización dueña del
+   anuncio: «yo no tengo ninguna observación en mi serie» se contesta
+   con la fila. La fila guarda el resultado y la nota, NO la serie: la
+   bitácora la lee todo el personal y la serie no le hace falta. */
+const revisarSerie = conAdminEnNombreDe('anuncio.serie', async (req, res, ctx, idAnuncio) => {
+  const c = await leerCuerpo(req);
+  const resultado = String(c.resultado || '');
+  if (!['conforme', 'observada', 'pendiente'].includes(resultado)) {
+    return fallo(res, 400, 'El resultado es «conforme», «observada» o «pendiente»');
+  }
+  const nota = resultado === 'pendiente' ? null : texto(c.nota, 500);
+  if (resultado === 'observada' && !nota) {
+    return fallo(res, 400, 'Escriba qué no cuadra: es lo que lee el vendedor');
+  }
+
+  const a = db.anuncioSerie(idAnuncio);
+  if (!a || !String(a.serie || '').trim()) return fallo(res, 404, 'Ese anuncio no existe o no declaró serie');
+
+  try {
+    ctx.enNombreDe(a.organizacion_id, { objetoTipo: 'anuncio', objetoId: idAnuncio, motivo: nota }, () => {
+      db.anotarRevisionSerie(idAnuncio, {
+        resultado, nota, nombreAdmin: ctx.usuario.nombre || ctx.usuario.correo,
+      });
+      return {
+        antes: { revision: a.serie_revision || 'pendiente', nota: a.serie_nota || null },
+        despues: { revision: resultado, nota },
+      };
+    });
+  } catch (e) {
+    return fallo(res, e.codigo || 500, e.message);
+  }
+  return responder(res, 200, { ok: true, resultado });
 });
 
 /* La bitácora se lee por aquí y por ningún otro sitio. No existe, ni
@@ -1915,41 +2018,74 @@ const conPagina = (manejador) => conSesion((req, res, ctx, ...resto) => {
   return manejador(req, res, ctx, ...resto);
 });
 
-const verMiPagina = conPagina((req, res, ctx) => {
-  const pagina = db.paginaDe(ctx.organizacion.id);
-  return responder(res, 200, {
+/* ── Núcleo de la página, compartido por el dealer y el personal ──
+ *
+ * Fase 7 (ADMIN-04): el personal edita la página de un dealer en su
+ * nombre. En vez de copiar los manejadores, cada escritura vive aquí UNA
+ * vez —validación incluida— y la llaman dos envoltorios: el del dueño
+ * (conPagina) y el del personal (conAdminEnNombreDe). Así la página que
+ * arregla soporte pasa exactamente por las mismas comprobaciones que la
+ * que arma el dealer, y un arreglo en una no se olvida en la otra.
+ *
+ * Cada núcleo recibe la fila de la organización, lo que mandó el
+ * navegador y, si la ruta lo lleva, el id del bloque o de la foto.
+ * Escribe y devuelve `{ codigo, respuesta, antes, despues }`: `respuesta`
+ * es lo que ve el navegador (idéntica en los dos caminos) y `antes` /
+ * `despues`, lo que anota la bitácora.
+ *
+ * Los errores se LANZAN con `codigo`. Dentro de enNombreDe eso deshace el
+ * SAVEPOINT y no deja fila; fuera, `manejar` los convierte en la misma
+ * respuesta que daba fallo() antes de partir los manejadores. */
+
+const errorPagina = (codigo, mensaje) => Object.assign(new Error(mensaje), { codigo });
+
+function vistaDePagina(org) {
+  const pagina = db.paginaDe(org.id);
+  return {
     pagina,
-    ...reglasDePagina(ctx.organizacion, pagina),
+    ...reglasDePagina(org, pagina),
     /* La dirección donde se verá, para que pueda copiarla y
        comprobarla antes de publicar. */
     direccion: pagina.slug ? `/dealer.html?d=${pagina.slug}` : null,
-  });
-});
+  };
+}
 
-const editarMiPagina = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+/* Campos básicos: la clave que manda el navegador → la columna. Sirve
+   para leer el «antes» de la fila sin otra consulta. */
+const COLUMNAS_PAGINA = {
+  nombre: 'nombre',
+  descripcion: 'descripcion',
+  lema: 'lema',
+  web: 'web',
+  correoPublico: 'correo_publico',
+  telefonoPublico: 'telefono_publico',
+  logo: 'logo',
+  banner: 'banner',
+};
+
+function nucleoEditarPagina(org, c) {
   const datos = {};
 
   if (c.nombre !== undefined) {
     const n = texto(c.nombre, 160);
-    if (!n) return fallo(res, 400, 'El nombre de la empresa no puede quedar vacío');
+    if (!n) throw errorPagina(400, 'El nombre de la empresa no puede quedar vacío');
     datos.nombre = n;
   }
   if (c.descripcion !== undefined) datos.descripcion = texto(c.descripcion, 2000) || '';
   if (c.lema !== undefined) datos.lema = texto(c.lema, 120) || '';
   if (c.web !== undefined) {
     const w = texto(c.web, 200) || '';
-    if (w && !/^https?:\/\//i.test(w)) return fallo(res, 400, 'La web debe empezar por http:// o https://');
+    if (w && !/^https?:\/\//i.test(w)) throw errorPagina(400, 'La web debe empezar por http:// o https://');
     datos.web = w;
   }
   if (c.correoPublico !== undefined) {
     const correoPub = texto(c.correoPublico, 160) || '';
-    if (correoPub && !correoValido(correoPub)) return fallo(res, 400, 'Escriba un correo válido');
+    if (correoPub && !correoValido(correoPub)) throw errorPagina(400, 'Escriba un correo válido');
     datos.correoPublico = correoPub;
   }
   if (c.telefonoPublico !== undefined) {
     const tel = texto(c.telefonoPublico, 20) || '';
-    if (tel && !telefonoValido(tel)) return fallo(res, 400, 'El teléfono debe tener 10 dígitos');
+    if (tel && !telefonoValido(tel)) throw errorPagina(400, 'El teléfono debe tener 10 dígitos');
     datos.telefonoPublico = tel;
   }
 
@@ -1961,38 +2097,23 @@ const editarMiPagina = conPagina(async (req, res, ctx) => {
     if (c[clave] === undefined) continue;
     const ruta = String(c[clave] || '');
     if (ruta && !esRutaDeFoto(ruta)) {
-      return fallo(res, 400, `${rotulo} tiene que ser una imagen subida al sitio`);
+      throw errorPagina(400, `${rotulo} tiene que ser una imagen subida al sitio`);
     }
     datos[clave] = ruta;
   }
 
-  const pagina = db.guardarPagina(ctx.organizacion.id, datos);
-  return responder(res, 200, { pagina, ...reglasDePagina(ctx.organizacion, pagina) });
-});
-
-const publicarMiPagina = conPagina((req, res, ctx) => {
-  const pagina = db.paginaDe(ctx.organizacion.id);
-  const estado = reglasDePagina(ctx.organizacion, pagina);
-
-  /* Se comprueba aquí y no solo en pantalla: la lista de la pantalla
-     es para que el dealer sepa qué le falta, no la que decide. */
-  if (!estado.puedePublicar) {
-    const pendientes = estado.reglas.filter((r) => !r.cumple);
-    return fallo(res, 400, `Falta ${pendientes.length === 1 ? 'una cosa' : `${pendientes.length} cosas`} por resolver`,
-      { pendientes: pendientes.map((r) => ({ id: r.id, titulo: r.titulo, falta: r.falta })) });
-  }
-
-  db.publicarPagina(ctx.organizacion.id);
-  return responder(res, 200, {
-    pagina: db.paginaDe(ctx.organizacion.id),
-    direccion: `/dealer.html?d=${pagina.slug}`,
+  const antes = {};
+  const despues = {};
+  Object.keys(datos).forEach((clave) => {
+    const previo = org[COLUMNAS_PAGINA[clave]];
+    antes[clave] = previo == null ? null : previo;
+    // Cadena vacía es «quitar»; en la bitácora se lee mejor como nada.
+    despues[clave] = datos[clave] === '' ? null : datos[clave];
   });
-});
 
-const despublicarMiPagina = conPagina((req, res, ctx) => {
-  db.despublicarPagina(ctx.organizacion.id);
-  return responder(res, 200, { pagina: db.paginaDe(ctx.organizacion.id) });
-});
+  const pagina = db.guardarPagina(org.id, datos);
+  return { respuesta: { pagina, ...reglasDePagina(org, pagina) }, antes, despues };
+}
 
 /* ── Secciones de la página ─────────────────────────────── */
 
@@ -2020,78 +2141,100 @@ function cuerpoDeSeccion(tipo, crudo) {
   return {};
 }
 
-const crearMiSeccion = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoCrearSeccion(org, c) {
   const tipo = String(c.tipo || '');
-  if (!TIPOS_SECCION.includes(tipo)) return fallo(res, 400, 'Ese tipo de bloque no existe');
+  if (!TIPOS_SECCION.includes(tipo)) throw errorPagina(400, 'Ese tipo de bloque no existe');
 
   /* Un tope, porque una página con cincuenta bloques no es una página.
      Con siete tipos disponibles, veinte da margen de sobra para
      repetir los de texto y destacados varias veces. */
-  if (db.seccionesDe(ctx.organizacion.id).length >= 20) {
-    return fallo(res, 400, 'Su página ya tiene veinte bloques');
+  if (db.seccionesDe(org.id).length >= 20) {
+    throw errorPagina(400, 'Su página ya tiene veinte bloques');
   }
 
-  const idSeccion = db.crearSeccion(ctx.organizacion.id, {
-    tipo,
-    titulo: texto(c.titulo, 120),
-    cuerpo: cuerpoDeSeccion(tipo, c.cuerpo),
-  });
-  return responder(res, 201, { id: idSeccion, secciones: db.seccionesDe(ctx.organizacion.id) });
-});
+  const titulo = texto(c.titulo, 120);
+  const idSeccion = db.crearSeccion(org.id, { tipo, titulo, cuerpo: cuerpoDeSeccion(tipo, c.cuerpo) });
+  return {
+    codigo: 201,
+    respuesta: { id: idSeccion, secciones: db.seccionesDe(org.id) },
+    antes: null,
+    despues: { bloque: tipo, titulo },
+  };
+}
 
-const editarMiSeccion = conPagina(async (req, res, ctx, idSeccion) => {
-  const c = await leerCuerpo(req);
-  const actual = db.seccionesDe(ctx.organizacion.id).find((s) => s.id === idSeccion);
-  if (!actual) return fallo(res, 404, 'Ese bloque no existe');
+function seccionDe(org, idSeccion) {
+  const actual = db.seccionesDe(org.id).find((s) => s.id === idSeccion);
+  if (!actual) throw errorPagina(404, 'Ese bloque no existe');
+  return actual;
+}
+
+function nucleoEditarSeccion(org, c, idSeccion) {
+  const actual = seccionDe(org, idSeccion);
 
   const cambios = {};
   if (c.titulo !== undefined) cambios.titulo = texto(c.titulo, 120);
   if (c.visible !== undefined) cambios.visible = !!c.visible;
   if (c.cuerpo !== undefined) cambios.cuerpo = cuerpoDeSeccion(actual.tipo, c.cuerpo);
 
-  db.editarSeccion(idSeccion, ctx.organizacion.id, cambios);
-  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
-});
+  db.editarSeccion(idSeccion, org.id, cambios);
 
-const borrarMiSeccion = conPagina((req, res, ctx, idSeccion) => {
-  if (!db.borrarSeccion(idSeccion, ctx.organizacion.id)) {
-    return fallo(res, 404, 'Ese bloque no existe');
-  }
-  return responder(res, 200, { secciones: db.seccionesDe(ctx.organizacion.id) });
-});
+  const antes = { bloque: actual.tipo };
+  Object.keys(cambios).forEach((k) => { antes[k] = actual[k] === undefined ? null : actual[k]; });
+  return {
+    respuesta: { secciones: db.seccionesDe(org.id) },
+    antes,
+    despues: { bloque: actual.tipo, ...cambios },
+  };
+}
 
-const ordenarMisSecciones = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoBorrarSeccion(org, c, idSeccion) {
+  const actual = seccionDe(org, idSeccion);
+  if (!db.borrarSeccion(idSeccion, org.id)) throw errorPagina(404, 'Ese bloque no existe');
+  return {
+    respuesta: { secciones: db.seccionesDe(org.id) },
+    antes: { bloque: actual.tipo, titulo: actual.titulo },
+    despues: { bloque: null },
+  };
+}
+
+function nucleoOrdenarSecciones(org, c) {
   const ids = (Array.isArray(c.ids) ? c.ids : []).map((x) => String(x));
-  if (!ids.length) return fallo(res, 400, 'Indique el orden de los bloques');
-  return responder(res, 200, { secciones: db.ordenarSecciones(ctx.organizacion.id, ids) });
-});
+  if (!ids.length) throw errorPagina(400, 'Indique el orden de los bloques');
+  // El orden se anota por tipo de bloque: los ids no le dicen nada a nadie.
+  const antes = db.seccionesDe(org.id).map((s) => s.tipo);
+  const secciones = db.ordenarSecciones(org.id, ids);
+  return {
+    respuesta: { secciones },
+    antes: { orden: antes },
+    despues: { orden: secciones.map((s) => s.tipo) },
+  };
+}
 
 /* ── Galería y enlaces ──────────────────────────────────── */
 
-const anadirAMiGaleria = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoAnadirFoto(org, c) {
   const url = String(c.url || '');
-  if (!esRutaDeFoto(url)) return fallo(res, 400, 'La fotografía tiene que subirse al sitio');
-  if (db.galeriaDe(ctx.organizacion.id).length >= 24) {
-    return fallo(res, 400, 'Su galería ya tiene veinticuatro fotografías');
+  if (!esRutaDeFoto(url)) throw errorPagina(400, 'La fotografía tiene que subirse al sitio');
+  if (db.galeriaDe(org.id).length >= 24) {
+    throw errorPagina(400, 'Su galería ya tiene veinticuatro fotografías');
   }
-  db.anadirAGaleria(ctx.organizacion.id, { url, alt: texto(c.alt, 160) });
-  return responder(res, 201, { galeria: db.galeriaDe(ctx.organizacion.id) });
-});
+  db.anadirAGaleria(org.id, { url, alt: texto(c.alt, 160) });
+  return { codigo: 201, respuesta: { galeria: db.galeriaDe(org.id) }, antes: null, despues: { foto: url } };
+}
 
-const quitarDeMiGaleria = conPagina((req, res, ctx, idFoto) => {
-  if (!db.quitarDeGaleria(idFoto, ctx.organizacion.id)) {
-    return fallo(res, 404, 'Esa fotografía no existe');
-  }
-  return responder(res, 200, { galeria: db.galeriaDe(ctx.organizacion.id) });
-});
+function nucleoQuitarFoto(org, c, idFoto) {
+  const foto = db.galeriaDe(org.id).find((f) => f.id === idFoto);
+  if (!foto || !db.quitarDeGaleria(idFoto, org.id)) throw errorPagina(404, 'Esa fotografía no existe');
+  return {
+    respuesta: { galeria: db.galeriaDe(org.id) },
+    antes: { foto: foto.url },
+    despues: { foto: null },
+  };
+}
 
 const TIPOS_ENLACE = ['instagram', 'facebook', 'youtube', 'tiktok', 'linkedin', 'web', 'whatsapp'];
 
-const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
+function nucleoEnlaces(org, c) {
   const lista = [];
 
   for (const e of (Array.isArray(c.enlaces) ? c.enlaces : []).slice(0, 8)) {
@@ -2102,15 +2245,115 @@ const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
     /* El de WhatsApp es un número; los demás, direcciones. Un enlace
        roto en la página de un dealer es peor que no tenerlo. */
     if (tipo === 'whatsapp') {
-      if (!telefonoValido(valor)) return fallo(res, 400, 'El WhatsApp debe tener 10 dígitos');
+      if (!telefonoValido(valor)) throw errorPagina(400, 'El WhatsApp debe tener 10 dígitos');
     } else if (!/^https?:\/\//i.test(valor)) {
-      return fallo(res, 400, `El enlace de ${tipo} debe empezar por http:// o https://`);
+      throw errorPagina(400, `El enlace de ${tipo} debe empezar por http:// o https://`);
     }
     lista.push({ tipo, valor });
   }
 
-  return responder(res, 200, { enlaces: db.guardarEnlaces(ctx.organizacion.id, lista) });
+  const antes = db.enlacesDe(org.id).map((e) => ({ tipo: e.tipo, valor: e.valor }));
+  const enlaces = db.guardarEnlaces(org.id, lista);
+  return { respuesta: { enlaces }, antes: { enlaces: antes }, despues: { enlaces: lista } };
+}
+
+/* ── El dueño: su propia página ─────────────────────────── */
+
+/* Los DELETE no leen cuerpo: no lo llevan, y así siguen como antes. */
+const delDueno = (nucleo, { conCuerpo = true } = {}) => conPagina(async (req, res, ctx, ...resto) => {
+  const c = conCuerpo ? await leerCuerpo(req) : {};
+  // Tras las capturas del patrón llega la consulta (URLSearchParams).
+  const sub = typeof resto[0] === 'string' ? resto[0] : undefined;
+  const r = nucleo(ctx.organizacion, c, sub);
+  return responder(res, r.codigo || 200, r.respuesta);
 });
+
+const verMiPagina = conPagina((req, res, ctx) => responder(res, 200, {
+  ...vistaDePagina(ctx.organizacion),
+  /* Solo la fecha: el dealer tiene derecho a saber que el personal tocó
+     su página, pero no a quién de dentro fue (eso está en la bitácora). */
+  editadaPorSoporte: db.ultimaAnotacion(ctx.organizacion.id, 'pagina.editar'),
+}));
+
+const editarMiPagina = delDueno(nucleoEditarPagina);
+
+const publicarMiPagina = conPagina((req, res, ctx) => {
+  const pagina = db.paginaDe(ctx.organizacion.id);
+  const estado = reglasDePagina(ctx.organizacion, pagina);
+
+  /* Se comprueba aquí y no solo en pantalla: la lista de la pantalla
+     es para que el dealer sepa qué le falta, no la que decide. */
+  if (!estado.puedePublicar) {
+    const pendientes = estado.reglas.filter((r) => !r.cumple);
+    return fallo(res, 400, `Falta ${pendientes.length === 1 ? 'una cosa' : `${pendientes.length} cosas`} por resolver`,
+      { pendientes: pendientes.map((r) => ({ id: r.id, titulo: r.titulo, falta: r.falta })) });
+  }
+
+  db.publicarPagina(ctx.organizacion.id);
+  return responder(res, 200, {
+    pagina: db.paginaDe(ctx.organizacion.id),
+    direccion: `/dealer.html?d=${pagina.slug}`,
+  });
+});
+
+const despublicarMiPagina = conPagina((req, res, ctx) => {
+  db.despublicarPagina(ctx.organizacion.id);
+  return responder(res, 200, { pagina: db.paginaDe(ctx.organizacion.id) });
+});
+
+const crearMiSeccion = delDueno(nucleoCrearSeccion);
+const editarMiSeccion = delDueno(nucleoEditarSeccion);
+const borrarMiSeccion = delDueno(nucleoBorrarSeccion, { conCuerpo: false });
+const ordenarMisSecciones = delDueno(nucleoOrdenarSecciones);
+const anadirAMiGaleria = delDueno(nucleoAnadirFoto);
+const quitarDeMiGaleria = delDueno(nucleoQuitarFoto, { conCuerpo: false });
+const guardarMisEnlaces = delDueno(nucleoEnlaces);
+
+/* ── El personal: la página de un dealer, en su nombre ─────
+ *
+ * ADMIN-04. Mismas escrituras que el dueño, por el mismo núcleo, bajo
+ * /api/admin/organizaciones/:id/pagina… y cada una en la bitácora con el
+ * trozo que cambió. `motivo` (opcional) viaja en el cuerpo.
+ *
+ * NO hay publicar ni despublicar aquí, a propósito: si la página está
+ * publicada, el arreglo se ve al momento, igual que cuando la edita el
+ * dealer; si está en borrador, sigue en borrador. Hacerla pública o
+ * retirarla es decisión de la empresa. */
+
+const verPaginaEnNombre = conAdmin((req, res, ctx, idOrg) => {
+  const org = db.organizacionPorId(idOrg);
+  if (!org || org.tipo !== 'dealer') return fallo(res, 404, 'Esa empresa no tiene página');
+  // Solo id y nombre: la fila entera lleva el RNC.
+  return responder(res, 200, { organizacion: { id: org.id, nombre: org.nombre }, ...vistaDePagina(org) });
+});
+
+const enNombreDelDealer = (objetoTipo, nucleo) =>
+  conAdminEnNombreDe('pagina.editar', async (req, res, ctx, idOrg, ...resto) => {
+    const c = await leerCuerpo(req);
+    const sub = typeof resto[0] === 'string' ? resto[0] : undefined;
+    let hecho;
+    try {
+      hecho = ctx.enNombreDe(idOrg, { objetoTipo, objetoId: sub || idOrg, motivo: texto(c.motivo, 300) }, (org) => {
+        if (org.tipo !== 'dealer') throw errorPagina(404, 'Esa empresa no tiene página');
+        const r = nucleo(org, c, sub);
+        return { antes: r.antes, despues: r.despues, resultado: r };
+      });
+    } catch (e) {
+      const codigo = e.codigo || 500;
+      if (codigo >= 500) console.error('API página en nombre de', idOrg, e);
+      return fallo(res, codigo, codigo >= 500 ? 'Error del servidor' : e.message);
+    }
+    return responder(res, hecho.codigo || 200, hecho.respuesta);
+  });
+
+const editarPaginaEnNombre = enNombreDelDealer('pagina', nucleoEditarPagina);
+const crearSeccionEnNombre = enNombreDelDealer('seccion', nucleoCrearSeccion);
+const editarSeccionEnNombre = enNombreDelDealer('seccion', nucleoEditarSeccion);
+const borrarSeccionEnNombre = enNombreDelDealer('seccion', nucleoBorrarSeccion);
+const ordenarSeccionesEnNombre = enNombreDelDealer('pagina', nucleoOrdenarSecciones);
+const anadirFotoEnNombre = enNombreDelDealer('galeria', nucleoAnadirFoto);
+const quitarFotoEnNombre = enNombreDelDealer('galeria', nucleoQuitarFoto);
+const guardarEnlacesEnNombre = enNombreDelDealer('enlaces', nucleoEnlaces);
 
 /* ── Rutas: planes y cobro ──────────────────────────────── */
 
@@ -2229,10 +2472,6 @@ const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicad
 const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
 const comprobantePublico = (c) => c && { numero: c.numero, tipo: c.tipo, ncf: c.ncf };
 
-/* Un correo que no se espera. `enviar` devuelve una promesa con Brevo
-   y un objeto con el transporte de archivo, y la plantilla puede lanzar
-   antes de devolver nada: las dos cosas se cubren, porque una promesa
-   rechazada sin manejador tumba el proceso. */
 /* Lo que se compró, leído de la intención guardada en el pago. Una
    intención ilegible (pagos de antes de la fase 3) no rompe nada: sale
    como «Membresía», igual que en pagos.js y db.js. */
@@ -2242,6 +2481,10 @@ function intencionDePago(pago) {
   return i && typeof i === 'object' ? { ...i, concepto: i.concepto || 'Membresía' } : { concepto: 'Membresía' };
 }
 
+/* Un correo que no se espera. `enviar` devuelve una promesa con Brevo
+   y un objeto con el transporte de archivo, y la plantilla puede lanzar
+   antes de devolver nada: las dos cosas se cubren, porque una promesa
+   rechazada sin manejador tumba el proceso. */
 function sinEsperar(que, envio) {
   try {
     Promise.resolve(envio()).catch((e) => console.error(`correo: ${que} · ${e.message}`));
@@ -2715,6 +2958,9 @@ const publicar = conSesion(async (req, res, ctx) => {
     itbisIncluido: !!c.itbisIncluido,
     permuta: !!c.permuta,
     financiamiento: !!c.financiamiento,
+    // En el país o bajo pedido. db.crearAnuncio normaliza: lo que no
+    // sea exactamente «bajo-pedido» queda en el país.
+    disponibilidad: c.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
     video: texto(c.video, 300),
     ...tren,
     /* Las dos fechas salen de la membresía, no de lo que pida el
@@ -2762,6 +3008,78 @@ const misAnuncios = conSesion((req, res, ctx) => {
     // vista del anunciante.
     membresias: db.suscripcionesDe(ctx.organizacion.id),
     exenta: esExenta(ctx.usuario.id),
+  });
+});
+
+/* Un anuncio propio con la forma del borrador de publicar.js (MET-04).
+
+   Duplicar NO crea nada en el servidor: devuelve los datos para que el
+   asistente de publicar los precargue y el anuncio nuevo pase por el
+   mismo camino que cualquier otro —cupo, condiciones, validación—.
+   Crearlo aquí directamente saltaría la comprobación de cupo.
+
+   Va con la forma de `estadoInicial()` de assets/publicar.js y con ''
+   en lugar de null, porque el formulario vuelca estos valores tal cual
+   en sus campos. El número de serie se deja en blanco a propósito:
+   identifica UNA máquina, y copiarlo publicaría dos anuncios con la
+   misma serie. Fotos y videos se reutilizan por ruta; borrar el
+   original ya no los arrastra (ver `borrarAnuncio`). */
+const copiarAnuncio = conSesion((req, res, ctx, idAnuncio) => {
+  const a = ctx.organizacion ? db.copiaDeAnuncio(idAnuncio, ctx.organizacion.id) : null;
+  if (!a) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
+
+  const t = (v) => (v == null ? '' : String(v));
+  const telefonos = a.telefonos.map((x) => ({ numero: t(x.numero), tipo: x.tipo || 'ambos', nota: t(x.nota) }));
+
+  return responder(res, 200, {
+    copia: {
+      equipo: {
+        categoria: t(a.categoria), subcategoria: t(a.subcategoria),
+        marca: t(a.marca), modelo: t(a.modelo), anio: t(a.anio),
+        condicion: t(a.condicion), uso: t(a.uso_valor), unidad: a.uso_unidad || 'h',
+        serie: '',
+        potencia: t(a.potencia), peso: t(a.peso),
+        provincia: t(a.provincia), ciudad: t(a.municipio),
+        implementos: t(a.implementos), descripcion: t(a.descripcion),
+        motorMarca: t(a.motor_marca), motorModelo: t(a.motor_modelo),
+        transmisionMarca: t(a.transmision_marca), transmisionModelo: t(a.transmision_modelo),
+      },
+      precio: {
+        modalidad: a.modalidad_precio || 'fijo',
+        monto: t(a.precio), moneda: a.moneda || 'DOP', minimo: t(a.precio_minimo),
+        itbisIncluido: !!a.itbis_incluido, permuta: !!a.permuta, financiamiento: !!a.financiamiento,
+      },
+      contacto: {
+        sucursal: t(a.sucursal_id),
+        telefonos: telefonos.length ? telefonos : [{ numero: '', tipo: 'ambos', nota: '' }],
+      },
+      fotos: a.fotos.map((f, i) => ({
+        id: `f-copia-${i + 1}`, nombre: `Foto ${i + 1}`, url: f.url, miniatura: f.miniatura || f.url,
+      })),
+      videos: a.videos.map((v, i) => ({
+        id: `v-copia-${i + 1}`, nombre: `Video ${i + 1}`, url: v.url, poster: v.poster, duracion: v.duracion,
+      })),
+      origen: { id: a.id, nombre: `${a.anio} ${a.marca_nombre || a.marca} ${a.modelo}` },
+    },
+  });
+});
+
+/* Los contactos atribuibles de la organización: qué anuncio y cuándo
+   (MET-03). Solo los suyos, siempre: la organización sale de la sesión
+   y nunca de la petición. Lo que llega por la consulta se valida antes
+   de tocar la base: un canal fuera de la lista o un id raro no filtran
+   nada, se descartan. */
+const CANALES_CONTACTO = ['whatsapp', 'telefono'];
+
+const misContactos = conSesion((req, res, ctx, consulta) => {
+  if (!ctx.organizacion) return responder(res, 200, { contactos: [] });
+  const q = consulta || new URLSearchParams();
+  const canal = CANALES_CONTACTO.includes(q.get('canal')) ? q.get('canal') : null;
+  const anuncio = /^[\w-]{1,64}$/.test(q.get('anuncio') || '') ? q.get('anuncio') : null;
+  const limite = Number(q.get('limite')) || 100;
+
+  return responder(res, 200, {
+    contactos: db.contactosDeOrganizacion(ctx.organizacion.id, { anuncio, canal, limite }),
   });
 });
 
@@ -2841,6 +3159,22 @@ const editarTrenMotriz = conSesion(async (req, res, ctx, idAnuncio) => {
   return responder(res, 200, { anuncio: db.anuncio(idAnuncio) });
 });
 
+/* En el país o bajo pedido, cambiado desde el panel por el dueño del
+   anuncio. A cualquier otro se le responde 404, igual que en el tren
+   motriz: no se confirma que el anuncio exista. */
+const editarDisponibilidad = conSesion(async (req, res, ctx, idAnuncio) => {
+  const c = await leerCuerpo(req);
+  const a = db.anuncio(idAnuncio);
+  if (!a || !ctx.organizacion || a.organizacion_id !== ctx.organizacion.id) {
+    return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
+  }
+  if (!db.DISPONIBILIDADES.includes(c.disponibilidad)) {
+    return fallo(res, 400, 'Indique si el equipo está en el país o es bajo pedido');
+  }
+  db.guardarDisponibilidad(idAnuncio, ctx.organizacion.id, c.disponibilidad);
+  return responder(res, 200, { anuncio: { id: idAnuncio, disponibilidad: c.disponibilidad } });
+});
+
 /* Catálogo. Busca, filtra, ordena y pagina en el servidor: el
    navegador ya no recibe el inventario entero para cribarlo, que era
    lo que iba a romperse al llegar a los miles de anuncios. */
@@ -2849,6 +3183,22 @@ function catalogo(req, res, ctx, consulta) {
   const q = consulta || new URLSearchParams();
   const v = (clave) => q.get(clave) || undefined;
 
+  /* `?ids=a,b,c`: los guardados del comprador, que viven en su
+     navegador. Se validan uno a uno, sin repetidos y con tope: la lista
+     llega de fuera y un id raro no debe llegar nunca a la consulta. Si se
+     pidió por ids y no queda ninguno válido, la respuesta es vacía; caer
+     al catálogo entero enseñaría como «guardados» equipos que nadie
+     guardó. */
+  let ids;
+  if (q.has('ids')) {
+    ids = [...new Set(String(q.get('ids')).split(','))]
+      .filter((x) => PATRON_ID_GUARDADO.test(x))
+      .slice(0, MAXIMO_IDS);
+    if (!ids.length) {
+      return responder(res, 200, { anuncios: [], total: 0, pagina: 1, paginas: 1, porPagina: MAXIMO_IDS });
+    }
+  }
+
   const resultado = db.buscarAnuncios({
     q: texto(v('q'), 80),
     categoria: v('categoria'),
@@ -2856,19 +3206,30 @@ function catalogo(req, res, ctx, consulta) {
     marca: v('marca'),
     provincia: v('provincia'),
     condicion: v('condicion'),
+    disponibilidad: v('disponibilidad'),
     precioMin: v('precioMin'),
     precioMax: v('precioMax'),
     anioMin: v('anioMin'),
     anioMax: v('anioMax'),
     horasMax: v('horasMax'),
     soloDestacados: v('destacados') === '1',
+    // Solo el valor exacto '1' activa: es lo que manda la casilla.
+    permuta: v('permuta') === '1',
+    itbis: v('itbis') === '1',
     orden: v('orden'),
-    pagina: v('pagina'),
-    porPagina: v('porPagina'),
+    pagina: ids ? 1 : v('pagina'),
+    porPagina: ids ? MAXIMO_IDS : v('porPagina'),
+    ids,
   });
 
   return responder(res, 200, resultado);
 }
+
+/* Cuántos guardados se piden de una vez. Coincide con el máximo de
+   página del catálogo (POR_PAGINA_MAX en db.js): más ids que eso se
+   cortarían en silencio en la segunda página. */
+const MAXIMO_IDS = 60;
+const PATRON_ID_GUARDADO = /^[\w-]{1,64}$/;
 
 /* Cifras públicas de la portada. Salen de la base en cada petición:
    ninguna cuenta del sitio está escrita a mano. */
@@ -2885,17 +3246,158 @@ const estadisticas = (req, res) => {
    todos los anunciantes sin posición. Los otros cuatro no filtran
    nada grave, pero tampoco pintan nada en una ficha pública. */
 const PRIVADOS_DEL_ANUNCIO = ['precio_minimo', 'usuario_id', 'suscripcion_id',
-  'aviso_por_vencer', 'aviso_vencido'];
+  'aviso_por_vencer', 'aviso_vencido',
+  /* El número de serie. publicar.html le promete al vendedor que solo lo
+     ve el personal, y esta ruta lo entregaba a cualquiera (la consulta
+     es un SELECT a.*). Es además el dato con el que se «legalizan»
+     papeles de una máquina ajena. Con él se van los datos de su
+     revisión: la nota de lo que no cuadró es para el vendedor, y quién
+     la revisó, para la consola. Al público le llega `serie_cotejada`. */
+  'serie', 'serie_revision', 'serie_revisada', 'serie_revisada_por', 'serie_nota'];
 
 function verAnuncio(req, res, ctx, idAnuncio) {
   const a = db.anuncio(idAnuncio);
   if (!a) return fallo(res, 404, 'Ese anuncio no existe');
+  // Antes de borrar los privados: es lo único de la revisión que es público.
+  a.serie_cotejada = a.serie_revision === 'conforme';
+  /* Quién de dentro revisó la serie no sale ni hacia el dueño: es el
+     mismo criterio que la página editada en su nombre (el dealer sabe
+     que el personal actuó, el nombre del empleado está en la bitácora).
+     Su panel no lo usa. */
+  delete a.serie_revisada_por;
   /* `ctx` es null cuando no hay sesión, que es el caso normal aquí:
      esta ruta la llama cualquier visitante del catálogo. */
   const esSuyo = !!ctx && !!ctx.organizacion && a.organizacion_id === ctx.organizacion.id;
-  if (!esSuyo) PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
+  if (!esSuyo) {
+    PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
+    /* CONF-03: a quien no es el dueño, solo los teléfonos verificados.
+       El filtro va aquí y no solo en el navegador: esconderlo con
+       JavaScript deja el número a la vista de cualquiera que abra la
+       respuesta en la consola, que es justo quien copia anuncios. */
+    a.telefonos = (a.telefonos || [])
+      .filter((t) => t.verificado)
+      .map((t) => ({ numero: t.numero, tipo: t.tipo, nota: t.nota, verificado: true, via: t.via }));
+  }
   return responder(res, 200, { anuncio: a });
 }
+
+/* ── Contactos verificados (fase 9, CONF-03) ────────────────
+ *
+ * Un teléfono no sale en ningún anuncio hasta que la organización lo
+ * verifica. Dos vías con las mismas dos rutas:
+ *
+ *   · correo — el código va al correo de la cuenta con sesión, que ya
+ *     está verificado (sin eso no se entra). Es la vía de hoy.
+ *   · sms    — el código va al propio teléfono. Solo si el interruptor
+ *     MERCA_SMS está encendido; hasta que se paguen los créditos de
+ *     Brevo, la API la rechaza con un mensaje que manda al correo.
+ *
+ * Encender el SMS no toca estas rutas: correo.smsActivo() lo decide en
+ * cada petición. */
+
+const ocultarCorreo = (c) => String(c || '').replace(/^(.)[^@]*(@.*)$/, '$1•••$2');
+const ocultarNumero = (n) => `(${n.slice(0, 3)}) •••-${n.slice(6)}`;
+
+const listarContactos = conSesion((req, res, ctx) => {
+  if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  return responder(res, 200, {
+    contactos: db.contactosDe(ctx.organizacion.id),
+    sms: correo.smsActivo(),
+  });
+});
+
+const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
+  if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  const c = await leerCuerpo(req);
+  const numero = db.normalizarNumero(c.numero);
+  if (!numero) return fallo(res, 400, 'Indique un teléfono de 10 dígitos');
+  const via = c.via === 'sms' ? 'sms' : 'correo';
+
+  if (via === 'sms' && !correo.smsActivo()) {
+    return fallo(res, 400, 'La verificación por SMS todavía no está disponible. Verifique el número por correo.');
+  }
+
+  /* Topes por número dentro de la organización, por organización
+     (cada SMS cuesta créditos) y por conexión. */
+  const idOrg = ctx.organizacion.id;
+  if (!db.permitir(`contacto-codigo:${idOrg}:${numero}`, 5, 60)
+    || !db.permitir(`contacto-org:${idOrg}`, 20, 60)
+    || !db.permitir(`contacto-ip:${origen(req)}`, 30, 60)) {
+    return fallo(res, 429, 'Ha pedido demasiados códigos. Espere una hora y vuelva a intentarlo.');
+  }
+
+  /* Y el SMS, además, por número y SIN mirar la organización. Los topes
+     de arriba son por cuenta: quien quisiera acosar un teléfono ajeno
+     con mensajes solo tenía que abrir varias cuentas, cinco SMS cada
+     una. Este tope es del teléfono, venga de donde venga, y también
+     acota los intentos de adivinar un código ajeno por SMS: cinco
+     códigos a la hora, cinco intentos cada uno, entre todas las cuentas. */
+  if (via === 'sms' && !db.permitir(`contacto-sms:${numero}`, 5, 60)) {
+    return fallo(res, 429, 'Ese número ya recibió varios SMS en la última hora. Espere y vuelva a intentarlo.');
+  }
+
+  const r = db.pedirCodigoContacto({ idOrg, numero, via });
+  if (r.yaVerificado) return responder(res, 200, { yaVerificado: true, via: r.via, numero });
+
+  let envio;
+  if (via === 'sms') {
+    envio = await correo.enviarSms({
+      numero,
+      texto: correo.textoSmsContacto({ codigo: r.codigo, minutos: r.minutos }),
+    });
+  } else {
+    envio = await correo.enviarCodigoContacto({
+      para: ctx.usuario.correo,
+      nombre: ctx.usuario.nombre,
+      numero,
+      codigo: r.codigo,
+      minutos: r.minutos,
+    });
+  }
+  if (!envio || !envio.entregado) {
+    return fallo(res, 502, via === 'sms'
+      ? 'No se pudo enviar el SMS. Pruebe a verificar el número por correo.'
+      : 'No se pudo enviar el correo. Inténtelo de nuevo en unos minutos.');
+  }
+
+  return responder(res, 200, {
+    enviado: true,
+    via,
+    numero,
+    destino: via === 'sms' ? ocultarNumero(numero) : ocultarCorreo(ctx.usuario.correo),
+    minutos: r.minutos,
+  });
+});
+
+const confirmarContacto = conSesion(async (req, res, ctx) => {
+  if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`contacto-confirmar:${origen(req)}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
+  }
+
+  const r = db.confirmarCodigoContacto({
+    idOrg: ctx.organizacion.id,
+    numero: c.numero,
+    codigo: c.codigo,
+    idUsuario: ctx.usuario.id,
+  });
+  if (!r.ok) {
+    const mensajes = {
+      inexistente: 'No hay ningún código pendiente para ese número. Solicite uno nuevo.',
+      vencido: 'El código venció. Solicite uno nuevo.',
+      agotado: 'Demasiados intentos con ese código. Solicite uno nuevo.',
+      usado: 'Ese código ya se utilizó.',
+      incorrecto: r.restantes > 0
+        ? `Código incorrecto. Le quedan ${r.restantes} ${r.restantes === 1 ? 'intento' : 'intentos'}.`
+        : 'Código incorrecto. Solicite uno nuevo.',
+    };
+    return fallo(res, 400, mensajes[r.motivo] || 'Código incorrecto');
+  }
+
+  const contacto = db.contactosDe(ctx.organizacion.id).find((x) => x.numero === r.numero) || null;
+  return responder(res, 200, { contacto });
+});
 
 /* Registro de una interacción. Va sin sesión a propósito: lo llama
    cualquier visitante del catálogo. */
@@ -2964,6 +3466,7 @@ const ESCRITURAS_ADMIN_PROPIAS = new Set([
      de tools/facturas.js. Pregunta abierta para Victor (D-01 de 04-01). */
   anularFactura,
   marcarSolicitudServicio, // la manda un visitante, no una organización; guarda atendida_por
+  editarTasaCambio,       // la tasa de referencia del catálogo es de la plataforma
 ]);
 
 const RUTAS = [
@@ -3001,18 +3504,42 @@ const RUTAS = [
   ['POST',   /^\/api\/mi-pagina\/galeria$/,                 anadirAMiGaleria],
   ['DELETE', /^\/api\/mi-pagina\/galeria\/([\w-]+)$/,       quitarDeMiGaleria],
   ['PUT',    /^\/api\/mi-pagina\/enlaces$/,                 guardarMisEnlaces],
+  ['GET',    /^\/api\/admin\/organizaciones$/,               listarOrganizacionesAdmin],
   ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/verificar$/, verificarOrganizacion],
+
+  /* La página de un dealer, editada por el personal en su nombre
+     (ADMIN-04). Como las del dueño: `/secciones/orden` ANTES que
+     `/secciones/:id`. Sin publicar ni despublicar, a propósito. */
+  ['GET',    /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina$/,                    verPaginaEnNombre],
+  ['PATCH',  /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina$/,                    editarPaginaEnNombre],
+  ['PATCH',  /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones\/orden$/,  ordenarSeccionesEnNombre],
+  ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones$/,         crearSeccionEnNombre],
+  ['PATCH',  /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones\/([\w-]+)$/, editarSeccionEnNombre],
+  ['DELETE', /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/secciones\/([\w-]+)$/, borrarSeccionEnNombre],
+  ['POST',   /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/galeria$/,           anadirFotoEnNombre],
+  ['DELETE', /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/galeria\/([\w-]+)$/, quitarFotoEnNombre],
+  ['PUT',    /^\/api\/admin\/organizaciones\/([\w-]+)\/pagina\/enlaces$/,           guardarEnlacesEnNombre],
   ['GET',    /^\/api\/admin\/bitacora$/,                     listarBitacora],
+  ['GET',    /^\/api\/admin\/series$/,                       listarSeries],
+  ['POST',   /^\/api\/admin\/anuncios\/([\w-]+)\/serie$/,    revisarSerie],
   ['GET',  /^\/api\/planes$/,            listarPlanes],
   ['GET',  /^\/api\/estadisticas$/,      estadisticas],
   ['POST', /^\/api\/anuncios$/,          publicar],
   ['GET',  /^\/api\/anuncios$/,          catalogo],
   ['GET',  /^\/api\/mis-anuncios$/,      misAnuncios],
+  ['GET',  /^\/api\/mis-contactos$/,     misContactos],
+  ['GET',  /^\/api\/mis-anuncios\/([\w-]+)\/copia$/, copiarAnuncio],
   ['GET',  /^\/api\/anuncios\/([\w-]+)$/, verAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/plan$/, cambiarPlanDeAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
+  ['PATCH', /^\/api\/anuncios\/([\w-]+)\/disponibilidad$/, editarDisponibilidad],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)$/, cambiarEstado],
   ['DELETE', /^\/api\/anuncios\/([\w-]+)$/, eliminarAnuncio],
+
+  // Teléfonos verificados: ninguno sin verificar sale en un anuncio.
+  ['GET',  /^\/api\/contactos$/,           listarContactos],
+  ['POST', /^\/api\/contactos\/codigo$/,    pedirCodigoContacto],
+  ['POST', /^\/api\/contactos\/confirmar$/, confirmarContacto],
 
   // Capacidad: se compra antes de publicar y se amplía prorrateada.
   ['GET',  /^\/api\/membresias$/,                    misPlanes],
@@ -3039,6 +3566,10 @@ const RUTAS = [
   // Portada: fotografía del héroe y fotos por categoría.
   ['GET',   /^\/api\/portada$/,                         verPortada],
   ['PATCH', /^\/api\/admin\/portada$/,                  editarPortada],
+
+  // Tasa de referencia del dólar con que el catálogo compara precios.
+  ['GET',   /^\/api\/admin\/tasa-cambio$/,              verTasaCambio],
+  ['PATCH', /^\/api\/admin\/tasa-cambio$/,              editarTasaCambio],
 
   // Publicidad. La lectura y el clic son públicos; la gestión, no.
   ['GET',  /^\/api\/publicidad$/,                       listarPublicidad],

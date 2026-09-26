@@ -16,8 +16,8 @@ const PAGINAS = [
   'index.html', 'equipos.html', 'equipo.html', 'categorias.html',
   'publicar.html', 'financiamiento.html', 'alquiler.html',
   'transporte.html', 'importar.html', 'dealers.html',
-  'contacto.html', 'legal.html', 'cuenta.html', 'panel.html', 'dealer.html',
-  'planes.html',
+  'contacto.html', 'legal.html', 'estafas.html', 'cuenta.html', 'panel.html', 'dealer.html',
+  'planes.html', 'guardados.html',
 ];
 
 /* Contenedores que el render debe llenar, por página. */

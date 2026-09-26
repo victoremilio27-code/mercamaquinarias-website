@@ -112,6 +112,49 @@
       <p class="tabla-vacia" id="tablaVacia" hidden></p>
     </section>
 
+    <!-- Cada contacto con su anuncio y su hora. El total de arriba dice
+         cuántos; esto dice cuáles, que es lo que el anunciante necesita
+         para atribuirle una venta al sitio. Lo pinta panel.js. -->
+    <section class="panel" id="panelRecibidos" aria-labelledby="t-recibidos">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-recibidos">Contactos <em>recibidos</em></h2>
+      </div>
+      <p class="panel__texto">Cada fila es una persona distinta que pidió el contacto ese día, por WhatsApp o por teléfono, desde la ficha del equipo.</p>
+      <div class="contactos-filtros">
+        <label class="campo-v"><span>Equipo</span>
+          <select id="filtroContactoAnuncio">
+            <option value="">Todos los equipos</option>
+          </select>
+        </label>
+        <label class="campo-v"><span>Canal</span>
+          <select id="filtroContactoCanal">
+            <option value="">WhatsApp y llamadas</option>
+            <option value="whatsapp">Solo WhatsApp</option>
+            <option value="telefono">Solo llamadas</option>
+          </select>
+        </label>
+      </div>
+      <div class="tabla-envoltura">
+        <table class="tabla-legales tabla-contactos">
+          <thead>
+            <tr><th scope="col">Fecha y hora</th><th scope="col">Equipo</th><th scope="col">Canal</th></tr>
+          </thead>
+          <tbody id="filasContactos"></tbody>
+        </table>
+      </div>
+      <p class="tabla-vacia" id="contactosVacio" hidden></p>
+    <!-- Teléfonos de contacto (fase 9). Un número sin verificar no sale
+         en ningún anuncio, así que esta sección va justo debajo de la
+         tabla: es donde el anunciante ve lo que le está costando
+         contactos. Se esconde si la organización no tiene ninguno. -->
+    <section class="panel" id="panelContactos" aria-labelledby="t-contactos" hidden>
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-contactos"><em>Teléfonos</em> de contacto</h2>
+      </div>
+      <p class="panel__texto">Sus anuncios solo muestran teléfonos verificados. Verifique cada número una vez y aparecerá en todos los anuncios que lo lleven.</p>
+      <ul class="contactos-panel" id="listaContactos"></ul>
+    </section>
+
     <!-- Comprobantes del cliente. Se pinta desde JavaScript y se
          esconde si no hay ninguno: una sección vacía que dice «aún no
          tiene facturas» es ruido en el panel de quien nunca ha pagado. -->
@@ -224,6 +267,7 @@
 <script src="assets/data.js"></script>
 <script src="assets/legales.js"></script>
 <script src="assets/app.js"></script>
+<script src="assets/contactos.js"></script>
 <script src="assets/panel.js"></script>
 <script src="assets/chat.js" defer></script>
 </body>

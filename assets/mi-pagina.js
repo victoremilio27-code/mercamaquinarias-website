@@ -28,6 +28,16 @@
      se note. */
   let estado = null;
 
+  /* Modo soporte (fase 7, ADMIN-04). `mi-pagina.html?org=<id>`, abierto
+     por el personal desde la consola, edita la página de esa empresa en
+     su nombre: el mismo editor, las mismas reglas, contra las rutas de
+     administración, que anotan cada escritura en la bitácora. Si quien
+     lo abre no es del personal, la API responde 404 y se enseña «no
+     encontrada», nunca el editor de otro. */
+  const ORG = new URLSearchParams(location.search).get('org');
+  const SOPORTE = !!ORG;
+  const BASE = SOPORTE ? `/admin/organizaciones/${encodeURIComponent(ORG)}/pagina` : '/mi-pagina';
+
   const REDES = [
     ['instagram', 'Instagram', 'https://instagram.com/…'],
     ['facebook', 'Facebook', 'https://facebook.com/…'],
@@ -58,11 +68,21 @@
      que es donde el dealer lo va a leer. */
   async function llamar(ruta, opciones) {
     try {
-      return await api(ruta, opciones);
+      return await api(ruta, conMotivo(ruta, opciones));
     } catch (e) {
       avisar(e.message || 'No se pudo guardar', false);
       return null;
     }
+  }
+
+  /* En modo soporte, cada escritura sobre la página lleva el motivo del
+     campo de la franja, que acaba en la bitácora. La subida de fotos
+     (/fotos) no: no escribe en la página de nadie hasta que se guarda. */
+  function conMotivo(ruta, opciones) {
+    if (!SOPORTE || !opciones || !opciones.metodo || opciones.metodo === 'GET') return opciones;
+    if (!String(ruta).startsWith(BASE)) return opciones;
+    const motivo = el('motivoSoporte').value.trim();
+    return { ...opciones, cuerpo: { ...(opciones.cuerpo || {}), ...(motivo ? { motivo } : {}) } };
   }
 
   function avisar(texto, bien) {
@@ -116,9 +136,12 @@
   /* ── Guardado ───────────────────────────────────────────── */
 
   async function guardar(cambios) {
-    const r = await llamar('/mi-pagina', { metodo: 'PATCH', cuerpo: cambios });
+    const r = await llamar(BASE, { metodo: 'PATCH', cuerpo: cambios });
     if (!r) return false;
-    estado = r;
+    /* Mezclar y no sustituir: la respuesta del PATCH no trae `direccion`
+       ni `editadaPorSoporte` ni `organizacion`, y sustituir escondía el
+       botón «Verla como la ven» en cuanto se guardaba un campo. */
+    estado = { ...estado, ...r };
     pintarReglas();
     pintarCabecera();
     return true;
@@ -130,13 +153,35 @@
     const p = estado.pagina;
     const publicada = p.estado_pagina === 'publicada';
 
-    el('estadoPagina').textContent = publicada
-      ? 'Su página está publicada y cualquiera puede verla.'
-      : 'Su página está en borrador. Solo la ve usted hasta que la publique.';
+    if (SOPORTE) {
+      /* El personal no publica ni despublica: las rutas ni existen. */
+      el('estadoPagina').textContent = publicada
+        ? 'Está publicada: los cambios se ven al momento.'
+        : 'Está en borrador: los cambios no se ven hasta que la empresa la publique.';
+      el('btnPublicar').hidden = true;
+      el('btnDespublicar').hidden = true;
+    } else {
+      el('estadoPagina').textContent = publicada
+        ? 'Su página está publicada y cualquiera puede verla.'
+        : 'Su página está en borrador. Solo la ve usted hasta que la publique.';
 
-    el('btnPublicar').hidden = publicada;
-    el('btnDespublicar').hidden = !publicada;
-    el('btnPublicar').disabled = !estado.puedePublicar;
+      el('btnPublicar').hidden = publicada;
+      el('btnDespublicar').hidden = !publicada;
+      el('btnPublicar').disabled = !estado.puedePublicar;
+    }
+
+    /* El dealer tiene derecho a saber que el personal tocó su página;
+       quién de dentro fue está en la bitácora, no aquí. */
+    const nota = el('notaSoporte');
+    if (!SOPORTE && estado.editadaPorSoporte) {
+      const fecha = new Date(estado.editadaPorSoporte).toLocaleDateString('es-DO', {
+        day: 'numeric', month: 'long', year: 'numeric',
+      });
+      nota.textContent = `El equipo de MercaMaquinarias editó su página el ${fecha}.`;
+      nota.hidden = false;
+    } else {
+      nota.hidden = true;
+    }
 
     const verla = el('btnVerla');
     if (publicada && estado.direccion) {
@@ -352,7 +397,7 @@
         .map((c) => ({ tipo: c.dataset.red, valor: c.value.trim() }))
         .filter((e) => e.valor);
 
-      const r = await llamar('/mi-pagina/enlaces', { metodo: 'PUT', cuerpo: { enlaces } });
+      const r = await llamar(`${BASE}/enlaces`, { metodo: 'PUT', cuerpo: { enlaces } });
       if (!r) return;
       estado.pagina.enlaces = r.enlaces;
       avisar('Redes guardadas', true);
@@ -364,7 +409,7 @@
       if (!archivo) return;
       const ruta = await subir(archivo, 1600, false);
       if (!ruta) return;
-      const r = await llamar('/mi-pagina/galeria', { metodo: 'POST', cuerpo: { url: ruta } });
+      const r = await llamar(`${BASE}/galeria`, { metodo: 'POST', cuerpo: { url: ruta } });
       if (r) { estado.pagina.galeria = r.galeria; pintarGaleria(); avisar('Fotografía añadida', true); }
       e.target.value = '';
     });
@@ -372,14 +417,14 @@
     el('galeriaEditor').addEventListener('click', async (e) => {
       const boton = e.target.closest('[data-quitar-foto]');
       if (!boton) return;
-      const r = await llamar(`/mi-pagina/galeria/${boton.dataset.quitarFoto}`, { metodo: 'DELETE' });
+      const r = await llamar(`${BASE}/galeria/${boton.dataset.quitarFoto}`, { metodo: 'DELETE' });
       if (r) { estado.pagina.galeria = r.galeria; pintarGaleria(); }
     });
 
     /* Bloques: añadir. */
     el('btnAnadirBloque').addEventListener('click', async () => {
       const tipo = el('tipoBloque').value;
-      const r = await llamar('/mi-pagina/secciones', {
+      const r = await llamar(`${BASE}/secciones`, {
         metodo: 'POST',
         cuerpo: { tipo, titulo: NOMBRES_BLOQUE[tipo] },
       });
@@ -395,14 +440,14 @@
       const d = boton.dataset;
 
       if (d.borrar) {
-        const r = await llamar(`/mi-pagina/secciones/${d.borrar}`, { metodo: 'DELETE' });
+        const r = await llamar(`${BASE}/secciones/${d.borrar}`, { metodo: 'DELETE' });
         if (r) { estado.pagina.secciones = r.secciones; pintarBloques(); pintarReglas(); }
         return;
       }
 
       if (d.visible) {
         const b = estado.pagina.secciones.find((x) => x.id === d.visible);
-        const r = await llamar(`/mi-pagina/secciones/${d.visible}`, {
+        const r = await llamar(`${BASE}/secciones/${d.visible}`, {
           metodo: 'PATCH', cuerpo: { visible: !b.visible },
         });
         if (r) { estado.pagina.secciones = r.secciones; pintarBloques(); }
@@ -415,7 +460,7 @@
         const j = d.subir ? i - 1 : i + 1;
         if (j < 0 || j >= ids.length) return;
         [ids[i], ids[j]] = [ids[j], ids[i]];
-        const r = await llamar('/mi-pagina/secciones/orden', { metodo: 'PATCH', cuerpo: { ids } });
+        const r = await llamar(`${BASE}/secciones/orden`, { metodo: 'PATCH', cuerpo: { ids } });
         if (r) { estado.pagina.secciones = r.secciones; pintarBloques(); }
       }
     });
@@ -423,20 +468,22 @@
     el('listaBloques').addEventListener('blur', async (e) => {
       const d = e.target.dataset || {};
       if (d.titulo) {
-        await llamar(`/mi-pagina/secciones/${d.titulo}`, { metodo: 'PATCH', cuerpo: { titulo: e.target.value } });
+        await llamar(`${BASE}/secciones/${d.titulo}`, { metodo: 'PATCH', cuerpo: { titulo: e.target.value } });
       } else if (d.texto) {
-        await llamar(`/mi-pagina/secciones/${d.texto}`, {
+        await llamar(`${BASE}/secciones/${d.texto}`, {
           metodo: 'PATCH', cuerpo: { cuerpo: { texto: e.target.value } },
         });
       } else if (d.lista) {
         const lista = e.target.value.split(',').map((x) => x.trim()).filter(Boolean);
-        await llamar(`/mi-pagina/secciones/${d.lista}`, { metodo: 'PATCH', cuerpo: { cuerpo: { lista } } });
+        await llamar(`${BASE}/secciones/${d.lista}`, { metodo: 'PATCH', cuerpo: { cuerpo: { lista } } });
       }
     }, true);
 
-    /* Publicar y despublicar. */
+    /* Publicar y despublicar. En modo soporte ni se conectan: los
+       botones están ocultos y las rutas de administración no existen. */
+    if (SOPORTE) return;
     el('btnPublicar').addEventListener('click', async () => {
-      const r = await api('/mi-pagina/publicar', { metodo: 'POST', silencioso: true });
+      const r = await api(`${BASE}/publicar`, { metodo: 'POST', silencioso: true });
       if (!r) {
         /* El servidor dice exactamente qué falta; se sube a la lista
            de reglas, que es donde el dealer lo va a buscar. */
@@ -450,7 +497,7 @@
     });
 
     el('btnDespublicar').addEventListener('click', async () => {
-      const r = await llamar('/mi-pagina/despublicar', { metodo: 'POST' });
+      const r = await llamar(`${BASE}/despublicar`, { metodo: 'POST' });
       if (r) { await cargar(); avisar('Su página vuelve a ser un borrador', true); }
     });
   }
@@ -458,14 +505,48 @@
   /* ── Arranque ───────────────────────────────────────────── */
 
   async function cargar() {
-    const r = await api('/mi-pagina', { silencioso: true });
+    const r = await api(BASE, { silencioso: true });
     if (!r) return false;
     estado = r;
     return true;
   }
 
+  /* Todo lo que cambia en pantalla cuando es el personal quien edita.
+     El nombre va por textContent: es texto de la empresa. */
+  function prepararSoporte() {
+    const nombre = (estado.organizacion && estado.organizacion.nombre) || estado.pagina.nombre || 'la empresa';
+    el('franjaSoporte').hidden = false;
+    el('nombreSoporte').textContent = nombre;
+
+    const miga = el('migaPagina');
+    miga.innerHTML = '<a href="index.html">Inicio</a> &rsaquo; <a href="admin.html">Revisión</a> &rsaquo; <span></span>';
+    miga.querySelector('span').textContent = `Página de ${nombre}`;
+
+    const titulo = el('tituloPagina');
+    titulo.innerHTML = '<em>Página</em> de ';
+    titulo.append(document.createTextNode(nombre));
+    document.title = `Página de ${nombre} · Soporte · MercaMaquinarias`;
+  }
+
   async function arrancar() {
     const sesion = await cargarSesion();
+
+    if (SOPORTE) {
+      /* Sin sesión, sin permiso o con una empresa que no existe, la API
+         responde 404 (o 401) y `silencioso` da null: los tres acaban
+         igual, en «no encontrada». Es el error barato. */
+      if (!sesion || !sesion.usuario || !await cargar()) {
+        el('cargando').hidden = true;
+        el('noEncontrada').hidden = false;
+        return;
+      }
+      el('cargando').hidden = true;
+      el('contenidoPagina').hidden = false;
+      prepararSoporte();
+      pintarTodo();
+      conectar();
+      return;
+    }
 
     if (!sesion || !sesion.usuario) {
       el('cargando').hidden = true;

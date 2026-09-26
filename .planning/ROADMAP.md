@@ -37,12 +37,12 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper (completed 2026-09-25)
 - [ ] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma
 - [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
-- [ ] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet
+- [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
 - [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
-- [ ] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer
+- [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
 - [ ] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana
-- [ ] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio
+- [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
 
@@ -135,9 +135,9 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **Plans**: 5 planes en 4 olas
 - [x] 05-01-PLAN.md — Núcleo: la cuenta configurada fuera del repo, el procesador transferencia, confirmarPago dentro de la bitácora y transferencia:probar en CI
 - [x] 05-02-PLAN.md — Rutas: compra y ampliación por transferencia con datos y referencia, correos, y /api/admin/pagos para marcar recibido o anular
-- [ ] 05-03-PLAN.md — Planes y panel: elegir transferencia, ver datos y referencia, pagos en espera; un 202 deja de anunciarse como compra hecha
-- [ ] 05-04-PLAN.md — Consola: sección de pagos por transferencia con marcado, anulación y la bitácora al día
-- [ ] 05-05-PLAN.md — Criterio 5 de extremo a extremo en el arnés, batería completa y verificación humana en los dos temas
+- [x] 05-03-PLAN.md — Planes y panel: elegir transferencia, ver datos y referencia, pagos en espera; un 202 deja de anunciarse como compra hecha
+- [x] 05-04-PLAN.md — Consola: sección de pagos por transferencia con marcado, anulación y la bitácora al día
+- [x] 05-05-PLAN.md — Criterio 5 de extremo a extremo en el arnés, batería completa y verificación humana en los dos temas
 **UI hint**: yes
 **Notas**: Es la contingencia de lanzamiento y es barata: quita la dependencia externa de la fecha firme, así que va bien antes de CardNet, no después. Usa exactamente la transición `pendiente → aprobado` de la Fase 3 — la misma función, no una copia. `planes.perfil_publico` se usa tal como está; no se proponen planes ni precios nuevos.
 
@@ -173,7 +173,13 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. Lo que un vendedor lee en `publicar.html` sobre la verificación del número de serie se corresponde con la diligencia que el personal hace de verdad — o el texto ya no lo promete.
   4. El personal abre la página de un dealer, la edita en su nombre, y el dealer ve el cambio en su propia pantalla con su estado borrador/publicada respetado.
   5. Cada una de esas escrituras aparece en la bitácora con quién la hizo, cuándo y sobre qué organización.
-**Plans**: TBD
+**Plans**: 6 plans
+- [x] 07-01-PLAN.md — Directorio de empresas y sello con motivo al retirarlo (ADMIN-02)
+- [x] 07-02-PLAN.md — Revisión del número de serie por la bitácora y la serie deja de ser pública (ADMIN-03, CONF-01)
+- [x] 07-03-PLAN.md — API para editar la página de un dealer en su nombre, sin publicar ni despublicar (ADMIN-04)
+- [x] 07-04-PLAN.md — Consola: secciones «Empresas» y «Números de serie»
+- [x] 07-05-PLAN.md — Editor de página en modo soporte y aviso al dealer
+- [x] 07-06-PLAN.md — Texto de publicar, estado de la serie en el panel y en la ficha (CONF-01)
 **UI hint**: yes
 **Notas**: CONF-01 se cierra aquí porque ADMIN-03 es lo que la cumple; si la revisión no va a hacerse, el criterio 3 se satisface retirando el texto de `publicar.html:149`. La edición en nombre de otro (ADMIN-04) respeta las seis reglas visibles de la página del dealer ya existentes. Cuidado con los reductores de imagen: pintan fondo blanco y exportan JPEG, así que un logotipo PNG con transparencia pierde el alfa.
 
@@ -186,7 +192,10 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Ordenar por precio coloca esa máquina de US$120.000 por encima de una de RD$500.000.
   3. La ficha dice si el equipo está ya en el país o es bajo pedido, y el catálogo se puede filtrar por eso.
   4. Permuta e ITBIS incluido se pueden usar como filtro, no solo leer como etiqueta.
-**Plans**: TBD
+**Plans**: 3 plans
+- [x] 08-01-PLAN.md — Comparar y ordenar el precio en pesos con una tasa de referencia configurable, y el arnés del catálogo
+- [x] 08-02-PLAN.md — Disponibilidad «en el país / bajo pedido»: migración, publicar, ficha, tarjeta y panel
+- [x] 08-03-PLAN.md — Permuta, ITBIS y disponibilidad como filtros del catálogo, con auditoría del navegador
 **UI hint**: yes
 **Notas**: Es un defecto funcional, no una mejora: hoy `tools/db.js` compara `a.precio` en crudo (líneas ~2414 y ~2460) aunque `MONEDAS` admite DOP y USD. Es lo único de la lista que puede hacer que un dealer diga «su buscador no funciona» el primer día. Las reglas de precio viven en `assets/precios.js`, cargado por el navegador y por Node: cualquier cambio tiene que seguir funcionando en los dos lados y conservar el `module.exports` del final.
 
@@ -199,7 +208,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Un vendedor verifica su contacto por correo y ese contacto aparece en su anuncio; con los créditos SMS apagados, el correo basta.
   3. El día que se enciendan los SMS, la verificación por teléfono funciona sin volver a tocar el flujo.
   4. El aviso de la ficha lleva a una página de señales de estafa escrita para el mercado dominicano.
-**Plans**: TBD
+**Plans**: 4 plans
+- [x] 09-01-PLAN.md — Tabla de contactos verificados, código por número y SMS apagado tras el interruptor
+- [x] 09-02-PLAN.md — Rutas de verificación y filtro público de la ficha; la semilla sale verificada
+- [x] 09-03-PLAN.md — El vendedor verifica sus números desde el panel y desde el paso 4 de publicar (auditorías del navegador pendientes)
+- [x] 09-04-PLAN.md — Ficha con teléfonos verificados y página de señales de estafa enlazada desde el aviso
 **UI hint**: yes
 **Notas**: Los créditos SMS de Brevo están pendientes de pago: la vía SMS se entrega construida y apagada tras el interruptor, igual que el resto. `tools/correo.js` es el único punto de envío y ya tiene transporte de archivo para desarrollo. La página de estafas es texto, no código, y no publica ningún teléfono.
 
@@ -212,7 +225,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   2. Un visitante comparte la ficha y el enlace llega a WhatsApp con foto, título y precio.
   3. El anunciante ve, por cada contacto de WhatsApp, qué anuncio fue y cuándo, no solo el total.
   4. El anunciante duplica un anuncio desde el panel y solo edita lo que cambia.
-**Plans**: TBD
+**Plans**: 4 plans
+- [x] 10-01-PLAN.md — Servidor: contactos atribuibles permanentes, guardados por ids, vista previa con miniatura, copia de un anuncio y borrado que respeta archivos compartidos (con `metricas:probar`)
+- [x] 10-02-PLAN.md — Ficha: guardar y compartir, y la página `guardados.html`
+- [x] 10-03-PLAN.md — Panel: contactos recibidos, compartidos en la tarjeta y duplicar hacia el asistente de publicar
+- [x] 10-04-PLAN.md — Recorrido de navegador de los cuatro criterios dentro de `npm run auditar`
 **UI hint**: yes
 **Notas**: La infraestructura ya está y nadie la usa: la columna y el tipo de evento `favorito` y `compartir` existen en `tools/db.js` sin emisor, y los metadatos de compartir están hechos en `tools/meta.js`. Los eventos de métrica tienen deduplicación cubierta por `tools/probar-seguridad.js`: no se rompe.
 
@@ -307,12 +324,12 @@ entrega valor sin esperar a la siguiente.
 | 2. Tema claro y oscuro coherentes | 6/6 | Complete   | 2026-09-25 |
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
-| 5. Cobro por transferencia bancaria | 2/5 | In Progress|  |
+| 5. Cobro por transferencia bancaria | 5/5 | Complete   | 2026-09-25 |
 | 6. CardNet construido y apagado | 0/TBD | Not started | - |
-| 7. Verificación y soporte al dealer | 0/TBD | Not started | - |
+| 7. Verificación y soporte al dealer | 6/6 | Complete   | 2026-09-25 |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |
 | 9. Contactos verificados y estafas | 0/TBD | Not started | - |
-| 10. Alcance y métricas del vendedor | 0/TBD | Not started | - |
+| 10. Alcance y métricas del vendedor | 4/4 | Complete   | 2026-09-25 |
 | 11. Transporte y financiamiento | 0/TBD | Not started | - |
 | 12. Lote mensual de comprobantes | 0/TBD | Not started | - |
 | 13. Deuda técnica | 0/TBD | Not started | - |

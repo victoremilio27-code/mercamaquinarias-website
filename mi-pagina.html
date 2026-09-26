@@ -78,19 +78,31 @@
     </div>
   </div>
 
+  <!-- Modo soporte (`?org=`) abierto por quien no es del personal, o
+       sobre una empresa que no existe: lo mismo que la consola, la
+       página no revela que haya un editor detrás. -->
+  <div class="panel-vacio" id="noEncontrada" hidden>
+    <h1 class="vacio__titulo">Página no encontrada</h1>
+    <p class="vacio__texto">La dirección que abrió no existe o no tiene acceso a ella.</p>
+    <div class="vacio__acciones">
+      <a class="btn btn--ambar" href="index.html">Ir al inicio</a>
+    </div>
+  </div>
+
   <div id="cargando" class="panel-cargando">Cargando su página...</div>
 
   <div id="contenidoPagina" hidden>
 
     <header class="pagina pagina--panel">
       <div>
-        <nav class="miga" aria-label="Ruta">
+        <nav class="miga" aria-label="Ruta" id="migaPagina">
           <a href="index.html">Inicio</a> &rsaquo;
           <a href="panel.html">Panel</a> &rsaquo;
           <span>Mi página</span>
         </nav>
-        <h1 class="pagina__titulo"><em>Su página</em> de empresa</h1>
+        <h1 class="pagina__titulo" id="tituloPagina"><em>Su página</em> de empresa</h1>
         <p class="pagina__sub" id="estadoPagina"></p>
+        <p class="panel__meta" id="notaSoporte" hidden></p>
       </div>
       <div class="pagina__acciones">
         <a class="btn btn--linea" href="#" id="btnVerla" hidden>Verla como la ven</a>
@@ -98,6 +110,22 @@
         <button class="btn btn--ambar" type="button" id="btnPublicar">Publicar página</button>
       </div>
     </header>
+
+    <!-- ==== MODO SOPORTE (fase 7, ADMIN-04) ====
+         El personal edita aquí la página de una empresa en su nombre, con
+         el mismo editor y las mismas reglas. Tiene que saber en todo
+         momento que no es su página: cada cambio va a la bitácora, y
+         publicar o despublicar es decisión de la empresa. -->
+    <section class="panel" id="franjaSoporte" aria-labelledby="t-soporte" hidden>
+      <h2 class="panel__titulo panel__titulo--limpio" id="t-soporte"><em>Edición</em> en nombre de la empresa</h2>
+      <p class="acceso__aviso">
+        Está editando la página de <b id="nombreSoporte"></b> en su nombre.
+        Cada cambio queda en la bitácora. Publicar o despublicar es decisión de la empresa.
+      </p>
+      <label class="campo-v"><span>Motivo del soporte (opcional)</span>
+        <input type="text" id="motivoSoporte" maxlength="300" placeholder="Ej. Correo del 25 de septiembre: corregir el teléfono">
+      </label>
+    </section>
 
     <!-- ==== LAS REGLAS ====
          Esto es lo que hace que armar la página sea intuitivo: la lista

@@ -145,8 +145,14 @@
               </div>
             </div>
 
+            <!-- Fase 7 (CONF-01): la promesa anterior («solo visible para el equipo de
+                 verificación») no tenía diligencia detrás y, encima, la serie salía por la
+                 API a cualquier visitante (cerrado en 07-02). Ahora dice lo que de verdad se
+                 hace: se coteja con la placa de las fotos y contra los demás anuncios, no se
+                 publica, y no se consulta ningún registro de robo. -->
             <label class="campo-v"><span>Número de serie o VIN</span>
-              <input type="text" id="e-serie" placeholder="Opcional, solo visible para el equipo de verificación" autocomplete="off">
+              <input type="text" id="e-serie" placeholder="Opcional. No se publica: solo lo ve el personal de MercaMaquinarias" autocomplete="off">
+              <small class="campo-v__ayuda">Si lo indica, lo cotejamos con la placa que se vea en sus fotos y con los demás anuncios. Si cuadra, la ficha dirá «Serie cotejada». No consultamos registros de robo.</small>
             </label>
             <label class="campo-v"><span>Potencia</span>
               <input type="text" id="e-potencia" placeholder="Ej. 148 hp">
@@ -159,6 +165,15 @@
             </label>
             <label class="campo-v"><span>Municipio o sector</span>
               <input type="text" id="e-ciudad" placeholder="Ej. Villa Mella">
+            </label>
+            <!-- Lo primero que pregunta el comprador: si la máquina ya
+                 está aquí o hay que traerla. Se ve en la ficha, marca la
+                 tarjeta del catálogo y se puede filtrar. -->
+            <label class="campo-v"><span>¿Dónde está el equipo? *</span>
+              <select id="e-disponibilidad">
+                <option value="en-pais">Ya está en República Dominicana</option>
+                <option value="bajo-pedido">Bajo pedido: se importa tras la venta</option>
+              </select>
             </label>
 
             <label class="campo-v campo-v--ancho"><span>Implementos y accesorios incluidos</span>
@@ -252,7 +267,7 @@
         <!-- Paso 4 · Contacto -->
         <section class="paso" data-paso="contacto" aria-labelledby="t-p4" hidden>
           <h2 class="panel__titulo" id="t-p4"><em>Datos</em> de contacto</h2>
-          <p class="panel__texto">Los teléfonos se muestran en el anuncio. Puede registrar hasta cinco números y asignar a cada uno el uso que le corresponde.</p>
+          <p class="panel__texto">Puede registrar hasta cinco números y asignar a cada uno el uso que le corresponde. El anuncio solo muestra los teléfonos verificados: con su cuenta abierta se verifican aquí mismo con un código que le llega al correo; si todavía no ha entrado, podrá hacerlo después desde su panel.</p>
 
           <!-- Quién publica sale de la cuenta, no de un desplegable: el
                RNC y la razón social son datos de la organización, ya
@@ -422,6 +437,7 @@
 <script src="assets/data.js"></script>
 <script src="assets/legales.js"></script>
 <script src="assets/app.js"></script>
+<script src="assets/contactos.js"></script>
 <script src="assets/publicar.js"></script>
 <script src="assets/chat.js" defer></script>
 </body>

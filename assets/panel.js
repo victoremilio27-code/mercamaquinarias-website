@@ -222,7 +222,8 @@ function pintarMetricas(resumen) {
     tarjetaMetrica('i-ojo', miles(t.vistas || 0), 'Visualizaciones', 'Últimos 30 días'),
     tarjetaMetrica('i-telefono', miles(contactos), 'Contactos', tasa),
     tarjetaMetrica('i-grafico', miles(activos), 'Anuncios activos', `${inactivos} inactivo${inactivos === 1 ? '' : 's'}`),
-    tarjetaMetrica('i-estrella', miles(t.favoritos || 0), 'Guardados', 'Compradores que lo marcaron'),
+    tarjetaMetrica('i-estrella', miles(t.favoritos || 0), 'Guardados',
+      `Compradores que lo guardaron · ${miles(t.compartidos || 0)} ${t.compartidos === 1 ? 'compartido' : 'compartidos'}`),
   ].join('');
 }
 
@@ -372,6 +373,29 @@ function selectorPlan(a) {
   </label>`;
 }
 
+/* En el país o bajo pedido, cambiado sin republicar: la máquina que se
+   vendía bajo pedido llega un día al país y el anuncio no debe perder
+   sus visitas por eso. El botón dice lo que hará, no lo que hay. */
+function botonDisponibilidad(a) {
+  const nombre = esc(`${a.anio} ${a.marca} ${a.modelo}`);
+  return a.disponibilidad === 'bajo-pedido'
+    ? `<button type="button" class="btn-tabla btn-tabla--avisa" data-disponibilidad="en-pais"
+         aria-label="Marcar que ${nombre} ya está en el país">Ya llegó al país</button>`
+    : `<button type="button" class="btn-tabla" data-disponibilidad="bajo-pedido"
+         aria-label="Marcar ${nombre} como bajo pedido">Es bajo pedido</button>`;
+}
+
+/* Fase 7 (CONF-01): lo que publicar.html le promete al vendedor sobre
+   su número de serie, aquí a la vista. Antes esa diligencia no existía
+   y el campo era decorativo; ahora sí se revisa, y el vendedor tiene
+   que enterarse del resultado sin ir a buscarlo. */
+function estadoSerieHTML(a) {
+  if (!a.tiene_serie) return '';
+  if (a.serie_revision === 'conforme') return '<span class="celda-equipo__meta">Serie cotejada por MercaMaquinarias</span>';
+  if (a.serie_revision === 'observada') return `<span class="celda-equipo__meta">Serie con observaciones: ${esc(a.serie_nota || '')}</span>`;
+  return '<span class="celda-equipo__meta">Serie: pendiente de revisión</span>';
+}
+
 function filaAnuncio(a) {
   const estado = ESTADOS[a.estado] || ESTADOS.borrador;
   const contactos = (a.telefono || 0) + (a.whatsapp || 0);
@@ -386,7 +410,8 @@ function filaAnuncio(a) {
         : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
       <span>
         <a class="celda-equipo__nombre" href="equipo.html?id=${encodeURIComponent(a.id)}">${esc(`${a.anio} ${a.marca} ${a.modelo}`)}</a>
-        <span class="celda-equipo__meta num">${esc(precio)}${a.provincia ? ` · ${esc(a.provincia)}` : ''}</span>
+        <span class="celda-equipo__meta num">${esc(precio)}${a.provincia ? ` · ${esc(a.provincia)}` : ''}${a.disponibilidad === 'bajo-pedido' ? ' · Bajo pedido' : ''}</span>
+        ${estadoSerieHTML(a)}
       </span>
     </th>
     <td><span class="estado ${estado.clase}">${estado.nombre}</span></td>
@@ -408,6 +433,9 @@ function filaAnuncio(a) {
              ${a.motor_marca ? 'Motor' : 'Falta el motor'}
            </button>`
         : ''}
+      <button type="button" class="btn-tabla" data-duplicar="${esc(a.id)}"
+        aria-label="Duplicar ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}">Duplicar</button>
+      ${a.estado !== 'vendido' ? botonDisponibilidad(a) : ''}
       <button type="button" class="btn-tabla btn-tabla--borrar" data-borrar="${esc(a.id)}"
         aria-label="Eliminar ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}">Eliminar</button>
     </td>
@@ -771,6 +799,8 @@ async function montarPanel() {
      tienen por qué retrasar lo que el anunciante viene a ver, que son
      sus anuncios. */
   montarFacturas();
+  montarContactos();
+  montarRecibidos();
 
   const org = SESION.organizacion || {};
   $('#panelTitulo').innerHTML = `<em>${esc((org.nombre || SESION.usuario.nombre).split(/[\s,]+/)[0])}</em> ${esc((org.nombre || '').replace(/^\S+\s*/, ''))}`;
@@ -845,10 +875,6 @@ async function montarPanel() {
     }
   });
 
-  /* Añadir cupos a una membresía viva. Se pregunta cuántos y se dice
-     lo que cuesta ANTES de cobrarlo: prorrateado por los días que
-     queden, que casi siempre es bastante menos de lo que la gente
-     espera. */
   /* «Copiar» la referencia de un pago en espera. Si el navegador niega
      el portapapeles no se dice nada: la referencia sigue a la vista. */
   $('#panelPlan').addEventListener('click', async (ev) => {
@@ -860,6 +886,10 @@ async function montarPanel() {
     } catch (_) { /* sin portapapeles: caída silenciosa */ }
   });
 
+  /* Añadir cupos a una membresía viva. Se pregunta cuántos y se dice
+     lo que cuesta ANTES de cobrarlo: prorrateado por los días que
+     queden, que casi siempre es bastante menos de lo que la gente
+     espera. */
   $('#panelPlan').addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-ampliar]');
     if (!btn) return;
@@ -926,6 +956,16 @@ async function montarPanel() {
     if (!btn) return;
     TREN_ABIERTO = TREN_ABIERTO === btn.dataset.tren ? null : btn.dataset.tren;
     pintarTabla();
+  });
+
+  /* Duplicar un anuncio (MET-04). No crea nada aquí: solo abre el
+     asistente en publicar.html con `?duplicar=<id>`, que es quien pide
+     la copia y la precarga. Publicar el nuevo anuncio sigue pasando
+     por el cupo, como cualquier otro. */
+  $('#filasAnuncios').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-duplicar]');
+    if (!btn) return;
+    location.href = `publicar.html?duplicar=${encodeURIComponent(btn.dataset.duplicar)}`;
   });
 
   /* Eliminar un anuncio.
@@ -1069,10 +1109,65 @@ async function montarPanel() {
     await refrescarCupos();
   });
 
+  // En el país o bajo pedido. Se refleja en memoria y se repinta la
+  // tabla: el botón pasa a ofrecer lo contrario.
+  $('#filasAnuncios').addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-disponibilidad]');
+    if (!btn) return;
+    const idAnuncio = btn.closest('tr').dataset.id;
+
+    btn.disabled = true;
+    try {
+      const r = await api(`/anuncios/${encodeURIComponent(idAnuncio)}/disponibilidad`, {
+        metodo: 'PATCH', cuerpo: { disponibilidad: btn.dataset.disponibilidad },
+      });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      const anuncio = ANUNCIOS.find((a) => a.id === idAnuncio);
+      if (anuncio) anuncio.disponibilidad = r.anuncio.disponibilidad;
+      pintarTabla();
+      avisoPlan(r.anuncio.disponibilidad === 'bajo-pedido'
+        ? 'Marcado como bajo pedido. La ficha ya lo dice.'
+        : 'Marcado como en el país. La ficha ya lo dice.', false);
+    } catch (e) {
+      btn.disabled = false;
+      avisoPlan(`No se pudo cambiar: ${e.message}`);
+    }
+  });
+
   $('#btnSalir').addEventListener('click', async () => {
     await api('/cuenta/salir', { metodo: 'POST', silencioso: true });
     location.href = 'index.html';
   });
+}
+
+/* ── Teléfonos de contacto ──────────────────────────────── */
+
+/* Fase 9: un teléfono sin verificar no sale en ningún anuncio. Aquí el
+   anunciante ve cada número que usan sus anuncios, si está verificado y
+   por qué vía, y lo verifica sin salir del panel. Al verificar se
+   repinta la lista entera: el número pasa a verificado en todos los
+   anuncios a la vez, y la cuenta de «sin verificar» cambia con él. */
+async function montarContactos() {
+  const seccion = $('#panelContactos');
+  const lista = $('#listaContactos');
+  if (!seccion || !lista || typeof VerificarContacto === 'undefined') return;
+
+  const contactos = await VerificarContacto.cargar();
+  if (!contactos || !contactos.length) {
+    seccion.hidden = true;
+    return;
+  }
+
+  lista.innerHTML = contactos.map((c) => `<li class="contactos-panel__fila">
+      <p class="contactos-panel__num"><b class="num">${esc(VerificarContacto.formato(c.numero))}</b>
+        <span>${c.anuncios
+    ? `En ${c.anuncios} ${c.anuncios === 1 ? 'anuncio' : 'anuncios'}`
+    : 'Sin anuncios ahora mismo'}</span></p>
+      ${VerificarContacto.estadoHTML(c)}
+    </li>`).join('');
+  seccion.hidden = false;
+
+  VerificarContacto.montar(lista, { alVerificar: () => montarContactos() });
 }
 
 /* ── Comprobantes ───────────────────────────────────────── */
@@ -1111,6 +1206,60 @@ async function montarFacturas() {
     : ''}</td>
     </tr>`;
   }).join('');
+}
+
+/* ── Contactos recibidos (MET-03) ───────────────────────── */
+
+/* Qué anuncio y cuándo, para cada contacto. El total de la tarjeta
+   «Contactos» dice cuántos; sin esta lista el dealer no puede atribuirle
+   una venta al sitio, y es lo primero que pregunta al renovar.
+
+   La hora va en la de Santo Domingo aunque el navegador esté en otra
+   zona: el dealer la compara con la de su libreta de llamadas. */
+const FECHA_CONTACTO = { timeZone: 'America/Santo_Domingo', dateStyle: 'medium', timeStyle: 'short' };
+
+async function montarRecibidos() {
+  const cuerpo = $('#filasContactos');
+  if (!cuerpo || !haySesion()) return;
+  const selAnuncio = $('#filtroContactoAnuncio');
+  const selCanal = $('#filtroContactoCanal');
+  const vacio = $('#contactosVacio');
+
+  ANUNCIOS.forEach((a) => selAnuncio.add(new Option(`${a.anio} ${a.marca_nombre || a.marca} ${a.modelo}`, a.id)));
+
+  async function pintar() {
+    const consulta = new URLSearchParams({ limite: '100' });
+    if (selAnuncio.value) consulta.set('anuncio', selAnuncio.value);
+    if (selCanal.value) consulta.set('canal', selCanal.value);
+
+    let contactos = [];
+    try {
+      const datos = await api(`/mis-contactos?${consulta}`);
+      contactos = (datos && datos.contactos) || [];
+    } catch (_) {
+      cuerpo.innerHTML = '';
+      vacio.hidden = false;
+      vacio.textContent = 'No se pudieron cargar los contactos. Recargue la página para intentarlo de nuevo.';
+      return;
+    }
+
+    cuerpo.innerHTML = contactos.map((c) => `<tr>
+      <td class="num">${esc(new Date(c.creado).toLocaleString('es-DO', FECHA_CONTACTO))}</td>
+      <td><a href="equipo.html?id=${encodeURIComponent(c.anuncio_id)}">${esc(`${c.anio} ${c.marca_nombre || c.marca} ${c.modelo}`)}</a></td>
+      <td>${c.canal === 'whatsapp'
+    ? '<span class="pastilla pastilla--verde">WhatsApp</span>'
+    : '<span class="pastilla">Llamada</span>'}</td>
+    </tr>`).join('');
+
+    vacio.hidden = contactos.length > 0;
+    vacio.textContent = selAnuncio.value || selCanal.value
+      ? 'Ningún contacto con estos filtros.'
+      : 'Todavía no ha recibido contactos por el sitio.';
+  }
+
+  selAnuncio.addEventListener('change', pintar);
+  selCanal.addEventListener('change', pintar);
+  await pintar();
 }
 
 document.addEventListener('DOMContentLoaded', montarPanel);

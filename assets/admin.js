@@ -211,16 +211,69 @@ async function alternarVerificada(fila) {
   const idOrg = fila.dataset.org;
   const boton = fila.querySelector('[data-accion="verificar"]');
   const dar = /Dar el sello/.test(boton.textContent);
+  if (dar) return enviarSello(idOrg, true, null, avisar);
+  /* Retirarlo exige motivo (el servidor responde 400 sin él): es lo que
+     contesta el reclamo «¿por qué me lo quitaron?». */
+  return pedirEnFila(fila, MOTIVO_RETIRAR_SELLO(avisar),
+    (motivo) => enviarSello(idOrg, false, motivo, avisar));
+}
+
+/* Una caja de texto dentro de la tarjeta, como el motivo de rechazo.
+   `obligatorio` impide confirmar en blanco; el servidor lo vuelve a
+   comprobar, esto solo ahorra el viaje. Los botones llevan `data-caja`
+   y no `data-accion`: así los manejadores de las listas no los ven. */
+function pedirEnFila(fila, { texto: pista, boton, obligatorio, falta, avisar: avisarEn }, alConfirmar) {
+  if (fila.querySelector('.sol__motivo')) return;
+
+  const caja = document.createElement('div');
+  caja.className = 'sol__motivo';
+  caja.innerHTML = `
+    <textarea maxlength="500" placeholder="${esc(pista)}" aria-label="${esc(pista)}"></textarea>
+    <div class="sol__acciones">
+      <button type="button" class="btn btn--ambar btn--chico" data-caja="confirmar">${esc(boton)}</button>
+      <button type="button" class="btn btn--linea btn--chico" data-caja="cancelar">Cancelar</button>
+    </div>`;
+  fila.appendChild(caja);
+  caja.querySelector('textarea').focus();
+
+  caja.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button[data-caja]');
+    if (!btn) return;
+    ev.stopPropagation();
+    if (btn.dataset.caja === 'cancelar') return caja.remove();
+
+    const valor = caja.querySelector('textarea').value.trim();
+    if (obligatorio && !valor) return avisarEn(falta);
+    // Sin esto, dos clics seguidos eran dos filas en la bitácora.
+    btn.disabled = true;
+    try { await alConfirmar(valor); } finally { btn.disabled = false; }
+  });
+}
+
+const MOTIVO_RETIRAR_SELLO = (avisarEn) => ({
+  texto: 'Por qué se retira el sello. Queda en la bitácora.',
+  boton: 'Confirmar retirada',
+  obligatorio: true,
+  falta: 'Escriba el motivo para retirar el sello.',
+  avisar: avisarEn,
+});
+
+/* El sello, desde la cola o desde «Empresas». Se recargan las dos
+   listas y la bitácora: quien lo acaba de cambiar lo ve anotado en el
+   momento, y la otra lista no se queda enseñando el sello de antes. */
+async function enviarSello(idOrg, verificada, motivo, avisarEn) {
   try {
     await api(`/admin/organizaciones/${encodeURIComponent(idOrg)}/verificar`, {
-      metodo: 'POST', cuerpo: { verificada: dar },
+      metodo: 'POST', cuerpo: { verificada, motivo: motivo || undefined },
     });
-    cargar();
-    // Quien acaba de dar el sello lo ve anotado en el momento.
-    cargarBitacora();
   } catch (e) {
-    avisar(e.message || 'No se pudo cambiar el sello.');
+    avisarEn(e.message || 'No se pudo cambiar el sello.');
+    return;
   }
+  // Recargar antes de avisar: las dos cargas limpian su aviso al empezar.
+  await Promise.all([cargar(), cargarEmpresas()]);
+  cargarBitacora();
+  avisarEn(verificada ? 'Sello de verificado concedido.' : 'Sello de verificado retirado.', true);
 }
 
 async function resolver(id, decision, motivo) {
@@ -471,6 +524,244 @@ function montarBandeja() {
   });
 
   cargarBandeja();
+}
+
+/* ═══ Empresas dealer (fase 7, ADMIN-02) ═════════════════
+   El sello solo se podía tocar desde la pestaña «Aprobadas» de la cola:
+   una empresa sin solicitud (alta por línea de comandos) o perdida entre
+   muchas no lo obtenía nunca. Aquí están todas, con buscador, y desde
+   aquí se entra a editar la página de una en su nombre (ADMIN-04).
+   ═══════════════════════════════════════════════════════ */
+
+let EMPRESAS_ESTADO = 'aprobada';
+let EMPRESAS_BUSCA = '';
+
+const REVISION_EMPRESA = {
+  aprobada: 'Alta aprobada',
+  pendiente: 'Alta pendiente de revisar',
+  rechazada: 'Alta rechazada',
+};
+
+function avisarEmpresas(mensaje, bien = false) {
+  const aviso = $('#avisoEmpresas');
+  if (!aviso) return;
+  aviso.hidden = !mensaje;
+  aviso.className = `acceso__aviso${bien ? ' acceso__aviso--bien' : ''}`;
+  aviso.textContent = mensaje || '';
+}
+
+function empresaHTML(e) {
+  const aprobada = e.estado_revision === 'aprobada';
+  const activos = Number(e.activos) || 0;
+  const series = Number(e.series_pendientes) || 0;
+  /* El sello solo se ofrece donde el servidor lo acepta: dar, a una
+     aprobada; retirar, a cualquiera que lo tenga. */
+  const botonSello = aprobada || e.verificada
+    ? `<button type="button" class="btn btn--linea btn--chico" data-empresa="sello">
+        ${e.verificada ? 'Retirar el sello de verificado' : 'Dar el sello de verificado'}
+      </button>` : '';
+
+  return `<li class="sol" data-id="${esc(e.id)}" data-verificada="${e.verificada ? '1' : '0'}">
+    <div class="sol__cabeza">
+      <b class="sol__nombre">${esc(e.nombre)}</b>
+      ${e.verificada ? `<span class="pastilla pastilla--verde">${icono('i-check')} Verificada</span>` : ''}
+      <span class="sol__fecha">${cuando(e.creada)}</span>
+    </div>
+    <p class="sol__meta">
+      ${esc(REVISION_EMPRESA[e.estado_revision] || e.estado_revision)}
+      · Página ${e.estado_pagina === 'publicada' ? 'publicada' : 'en borrador'}${e.perfil_publico ? '' : ' (sin plan que la incluya)'}
+    </p>
+    <p class="sol__meta">
+      ${miles(activos)} ${activos === 1 ? 'equipo activo' : 'equipos activos'}
+      ${series ? ` · <b>${miles(series)} ${series === 1 ? 'número de serie' : 'números de serie'} por revisar</b>` : ''}
+    </p>
+    <div class="sol__acciones">
+      ${botonSello}
+      ${aprobada ? `<a class="btn btn--linea btn--chico" href="mi-pagina.html?org=${encodeURIComponent(e.id)}">Editar su página</a>` : ''}
+    </div>
+  </li>`;
+}
+
+async function cargarEmpresas() {
+  if (!$('#listaEmpresas')) return;
+  avisarEmpresas('');
+  const q = [`estado=${encodeURIComponent(EMPRESAS_ESTADO)}`];
+  if (EMPRESAS_BUSCA) q.push(`q=${encodeURIComponent(EMPRESAS_BUSCA)}`);
+  const datos = await api(`/admin/organizaciones?${q.join('&')}`, { silencioso: true });
+  if (!datos) return avisarEmpresas('No se pudieron cargar las empresas.');
+
+  const lista = datos.empresas || [];
+  $('#listaEmpresas').innerHTML = lista.map(empresaHTML).join('');
+  const vacio = $('#empresasVacio');
+  vacio.hidden = lista.length > 0;
+  vacio.textContent = EMPRESAS_BUSCA ? 'Ninguna empresa con ese nombre.' : 'No hay empresas en esta lista.';
+  $('#metaEmpresas').textContent = `${miles(lista.length)} ${lista.length === 1 ? 'empresa' : 'empresas'}`
+    + (lista.length >= 500 ? ' (las primeras 500: afine la búsqueda)' : '');
+}
+
+function montarEmpresas() {
+  if (!$('#listaEmpresas')) return;
+
+  $('#filtrosEmpresas').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-empresas-estado]');
+    if (!boton) return;
+    EMPRESAS_ESTADO = boton.dataset.empresasEstado;
+    elegirFiltro(boton);
+    cargarEmpresas();
+  });
+
+  // Un cuarto de segundo: sin espera, cada letra era una consulta.
+  let reloj = null;
+  $('#buscarEmpresas').addEventListener('input', (ev) => {
+    clearTimeout(reloj);
+    reloj = setTimeout(() => {
+      EMPRESAS_BUSCA = ev.target.value.trim();
+      cargarEmpresas();
+    }, 250);
+  });
+
+  $('#listaEmpresas').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-empresa]');
+    if (!boton) return;
+    const fila = boton.closest('.sol');
+    if (!fila) return;
+    const retirar = fila.dataset.verificada === '1';
+    pedirEnFila(fila, retirar ? MOTIVO_RETIRAR_SELLO(avisarEmpresas) : {
+      texto: 'Qué documentación se comprobó (opcional). Queda en la bitácora.',
+      boton: 'Dar el sello',
+      obligatorio: false,
+      avisar: avisarEmpresas,
+    }, (motivo) => enviarSello(fila.dataset.id, !retirar, motivo, avisarEmpresas));
+  });
+
+  cargarEmpresas();
+}
+
+/* ═══ Números de serie (fase 7, ADMIN-03) ════════════════
+   La diligencia que se hace, y la única que promete publicar.html:
+   que el número coincide con la placa que se vea en las fotos, que no
+   se repite en otro anuncio y que tiene forma de serie. Las miniaturas
+   abren la foto completa en otra pestaña, que es donde se lee la placa.
+   ═══════════════════════════════════════════════════════ */
+
+let SERIES_ESTADO = 'pendiente';
+
+const SERIES_VACIO = {
+  pendiente: 'No hay números de serie por revisar.',
+  conforme: 'Todavía no se ha cotejado ninguno.',
+  observada: 'Ninguno tiene observaciones.',
+  '': 'Ningún anuncio ha declarado número de serie.',
+};
+
+const SERIE_HECHO = {
+  conforme: 'Serie cotejada. La ficha lo indicará.',
+  observada: 'Anotado. El vendedor verá la nota en su panel.',
+  pendiente: 'La serie vuelve a estar pendiente.',
+};
+
+function avisarSeries(mensaje, bien = false) {
+  const aviso = $('#avisoSeries');
+  if (!aviso) return;
+  aviso.hidden = !mensaje;
+  aviso.className = `acceso__aviso${bien ? ' acceso__aviso--bien' : ''}`;
+  aviso.textContent = mensaje || '';
+}
+
+function serieHTML(s) {
+  const nombre = [s.anio, s.marca_nombre || s.marca, s.modelo].filter(Boolean).join(' ');
+  const rev = s.serie_revision;
+  const fotos = s.fotos || [];
+  const repetidos = Number(s.repetidos) || 0;
+  const pastilla = rev === 'conforme'
+    ? `<span class="pastilla pastilla--verde">${icono('i-check')} Cotejada</span>`
+    : rev === 'observada'
+      ? '<span class="pastilla pastilla--roja">Con observaciones</span>'
+      : '<span class="pastilla pastilla--ambar">Pendiente</span>';
+
+  return `<li class="sol" data-id="${esc(s.id)}">
+    <div class="sol__cabeza">
+      <b class="sol__nombre">${esc(nombre)}</b>
+      <span class="sol__meta">${esc(s.empresa)}</span>
+      ${pastilla}
+    </div>
+    <p class="sol__meta">Serie declarada: <code class="num">${esc(s.serie)}</code>${s.estado !== 'activo' ? ` · anuncio ${esc(s.estado)}` : ''}</p>
+    ${repetidos ? `<p class="sol__meta sol__meta--aviso"><b>La misma placa aparece en ${miles(repetidos)} ${repetidos === 1 ? 'anuncio más' : 'anuncios más'}.</b> Mire de quién es antes de darla por buena.</p>` : ''}
+    ${fotos.length
+      ? `<div class="flota-fotos">${fotos.map((f, i) => `<a href="${esc(f.url)}" target="_blank" rel="noopener" aria-label="Foto ${i + 1} a tamaño completo"><img src="${esc(f.miniatura)}" alt=""></a>`).join('')}</div>`
+      : '<p class="sol__meta sol__meta--aviso">El anuncio no tiene fotos: no hay placa que leer.</p>'}
+    ${rev ? `<p class="sol__meta">Revisada el ${cuando(s.serie_revisada)}${s.serie_revisada_por ? ` por ${esc(s.serie_revisada_por)}` : ''}${s.serie_nota ? ` · <b>Nota:</b> ${esc(s.serie_nota)}` : ''}</p>` : ''}
+    <div class="sol__acciones">
+      <a class="btn btn--linea btn--chico" href="equipo.html?id=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">Ver la ficha</a>
+      ${rev !== 'conforme' ? '<button type="button" class="btn btn--ambar btn--chico" data-serie="conforme">Coincide</button>' : ''}
+      ${rev !== 'observada' ? '<button type="button" class="btn btn--linea btn--chico" data-serie="observada">Con observaciones</button>' : ''}
+      ${rev ? '<button type="button" class="btn btn--linea btn--chico" data-serie="pendiente">Volver a pendiente</button>' : ''}
+    </div>
+  </li>`;
+}
+
+async function cargarSeries() {
+  if (!$('#listaSeries')) return;
+  avisarSeries('');
+  const datos = await api(`/admin/series${SERIES_ESTADO ? `?estado=${encodeURIComponent(SERIES_ESTADO)}` : ''}`,
+    { silencioso: true });
+  if (!datos) return avisarSeries('No se pudieron cargar los números de serie.');
+
+  const lista = datos.series || [];
+  $('#listaSeries').innerHTML = lista.map(serieHTML).join('');
+  const vacio = $('#seriesVacio');
+  vacio.hidden = lista.length > 0;
+  vacio.textContent = SERIES_VACIO[SERIES_ESTADO] || SERIES_VACIO[''];
+}
+
+async function enviarSerie(idAnuncio, resultado, nota) {
+  try {
+    await api(`/admin/anuncios/${encodeURIComponent(idAnuncio)}/serie`, {
+      metodo: 'POST', cuerpo: { resultado, nota: nota || undefined },
+    });
+  } catch (e) {
+    avisarSeries(e.message || 'No se pudo guardar la revisión.');
+    return;
+  }
+  await cargarSeries();
+  cargarEmpresas();
+  cargarBitacora();
+  avisarSeries(SERIE_HECHO[resultado], true);
+}
+
+function montarSeries() {
+  if (!$('#listaSeries')) return;
+
+  $('#filtrosSeries').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-serie-estado]');
+    if (!boton) return;
+    SERIES_ESTADO = boton.dataset.serieEstado;
+    elegirFiltro(boton);
+    cargarSeries();
+  });
+
+  $('#listaSeries').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-serie]');
+    if (!boton) return;
+    const fila = boton.closest('.sol');
+    if (!fila) return;
+    const resultado = boton.dataset.serie;
+
+    if (resultado !== 'observada') {
+      boton.disabled = true;
+      enviarSerie(fila.dataset.id, resultado).finally(() => { boton.disabled = false; });
+      return;
+    }
+    // La nota es lo que lee el vendedor: sin ella no sabría qué corregir.
+    pedirEnFila(fila, {
+      texto: 'Qué no cuadra. Lo lee el vendedor en su panel.',
+      boton: 'Guardar observación',
+      obligatorio: true,
+      falta: 'Escriba qué no cuadra: es lo que lee el vendedor.',
+      avisar: avisarSeries,
+    }, (nota) => enviarSerie(fila.dataset.id, 'observada', nota));
+  });
+
+  cargarSeries();
 }
 
 /* ═══ Pagos por transferencia ════════════════════════════
@@ -1159,11 +1450,14 @@ async function montarAdmin() {
 
   await cargar();
   montarBandeja();
+  montarEmpresas();
+  montarSeries();
   montarPagos();
   montarBitacora();
   montarFlota();
   montarPub();
   montarHeroe();
+  montarTasa();
 }
 
 /* ── Fotografía de la portada ───────────────────────────────
@@ -1284,6 +1578,59 @@ async function montarHeroe() {
   montarFacturasAdmin();
 }
 
+/* ── Tasa de referencia del dólar ───────────────────────────
+   Con ella el catálogo compara los precios en US$ con los de RD$ al
+   filtrar y ordenar. La línea de origen dice de dónde sale la vigente:
+   «valor por defecto» es la señal de que nadie ha puesto la oficial. */
+const ORIGEN_TASA = {
+  ajuste: (t) => `Fijada por el equipo${t.actualizado ? ` el ${new Date(t.actualizado).toLocaleDateString('es-DO')}` : ''}`,
+  entorno: () => 'Tomada de la configuración del servidor',
+  defecto: () => 'Valor por defecto: todavía nadie ha fijado la tasa',
+};
+
+async function montarTasa() {
+  const form = $('#formTasa');
+  if (!form) return;
+
+  const aviso = (mensaje, ok = false) => {
+    const el = $('#avisoTasa');
+    el.hidden = !mensaje;
+    el.textContent = mensaje || '';
+    el.classList.toggle('acceso__aviso--ok', ok);
+  };
+
+  const pintar = (t) => {
+    if (!t) return;
+    $('#tasa-usd').value = t.tasa;
+    $('#tasaOrigen').textContent = (ORIGEN_TASA[t.fuente] || ORIGEN_TASA.defecto)(t);
+    if (t.minimo && t.maximo) {
+      $('#tasaAyuda').textContent = `Entre ${t.minimo} y ${t.maximo}, con hasta dos decimales.`;
+    }
+  };
+
+  const guardar = async (tasa, exito) => {
+    aviso('');
+    try {
+      const r = await api('/admin/tasa-cambio', { metodo: 'PATCH', cuerpo: { tasa } });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      pintar(r);
+      aviso(exito(r), true);
+    } catch (e) { aviso(e.message); }
+  };
+
+  pintar(await api('/admin/tasa-cambio', { silencioso: true }));
+
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const tasa = $('#tasa-usd').value.trim();
+    if (!tasa) return aviso('Escriba la tasa, o use «Volver al valor por defecto».');
+    return guardar(tasa, (r) => `Guardada: RD$${r.tasa} por dólar. El catálogo ya compara con ella.`);
+  });
+
+  $('#btnTasaDefecto').addEventListener('click', () =>
+    guardar('', (r) => `Se quitó la tasa fijada. Vuelve a valer RD$${r.tasa} por dólar.`));
+}
+
 /* ── Comprobantes ───────────────────────────────────────── */
 
 let MES_FACTURAS = null;
@@ -1351,7 +1698,7 @@ function pintarFacturasAdmin(datos) {
         <td class="num">${cuando.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
         <td class="num">${esc(f.numero)}</td>
         <td>${esc(f.razon_social || 'Consumidor final')}</td>
-        <td class="num">RD${Number(f.total).toLocaleString('en-US')}</td>
+        <td class="num">RD$${Number(f.total).toLocaleString('en-US')}</td>
       </tr>`;
     }).join('');
   }
@@ -1537,6 +1884,24 @@ const CLAVES_BITACORA = {
   verificada: 'Sello',
   solicitud: 'Solicitud',
   estado_revision: 'Revisión de alta',
+  // Fase 7: número de serie y página del dealer editada en su nombre.
+  revision: 'Serie',
+  nota: 'Nota',
+  nombre: 'Nombre',
+  descripcion: 'Descripción',
+  lema: 'Lema',
+  web: 'Web',
+  correoPublico: 'Correo público',
+  telefonoPublico: 'Teléfono público',
+  logo: 'Logotipo',
+  banner: 'Portada',
+  bloque: 'Bloque',
+  titulo: 'Título',
+  visible: 'Visible',
+  cuerpo: 'Contenido',
+  orden: 'Orden',
+  foto: 'Foto',
+  enlaces: 'Redes',
   // Las transferencias (fase 5) anotan estas.
   estado: 'Estado',
   referencia: 'Referencia',
@@ -1545,11 +1910,20 @@ const CLAVES_BITACORA = {
   idSusc: 'Membresía',
 };
 
+/* Una descripción de dos mil caracteres o el cuerpo de un bloque no
+   caben en una celda: se recortan. El valor entero está en la base. */
+const recortar = (s, max = 140) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
+
 function valorBitacora(v) {
   if (v === true) return 'sí';
   if (v === false) return 'no';
   if (v == null || v === '') return '—';
-  return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  if (Array.isArray(v)) {
+    if (!v.length) return '—';
+    // Las redes llegan como { tipo, valor }: basta con decir cuáles.
+    return recortar(v.map((x) => (x && typeof x === 'object' ? (x.tipo || JSON.stringify(x)) : String(x))).join(', '));
+  }
+  return recortar(typeof v === 'object' ? JSON.stringify(v) : String(v));
 }
 
 function cambioBitacora(antes, despues) {
