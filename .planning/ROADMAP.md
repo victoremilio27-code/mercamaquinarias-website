@@ -175,7 +175,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **Plans**: 5 plans
 - [x] 05.2-01-PLAN.md — Migración 2026-09-borradores, borrador en la base, pago con `anuncio_id` y activación dentro de `aprobarPago`; arnés `publicacion:probar`
 - [x] 05.2-02-PLAN.md — Rutas del borrador y guardas: un borrador no se ve ni se activa por otro camino
-- [ ] 05.2-03-PLAN.md — Pedir el pago de un borrador y activarlo solo al confirmarse
+- [x] 05.2-03-PLAN.md — Pedir el pago de un borrador y activarlo solo al confirmarse
 - [ ] 05.2-04-PLAN.md — Panel del particular: borradores recuperables y pagos en espera, sin «cupo»
 - [ ] 05.2-05-PLAN.md — Asistente de publicación en el orden nuevo: plan → borrador → resumen → pago
 **UI hint**: yes

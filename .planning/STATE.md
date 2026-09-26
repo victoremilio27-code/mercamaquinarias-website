@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Completado 05.2-02-PLAN.md (rutas del borrador, guardas de visibilidad/activación y textos sin «cupo» del particular)."
-last_updated: "2026-09-26T05:48:00.000Z"
-last_activity: "2026-09-26 — 05.2-02: validarCamposAnuncio compartida con publicar, POST/GET/PUT /api/borradores, un borrador es invisible e intocable para quien no es su dueño, capacidadLibre al vender; npm run publicacion:probar en verde (rama claude/fase-05.2-publicar-equipo)."
+stopped_at: "Completado 05.2-03-PLAN.md (pedir el pago del borrador y activarlo solo al confirmarse; huérfana en la consola)."
+last_updated: "2026-09-26T05:59:42.000Z"
+last_activity: "2026-09-26 — 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
   completed_phases: 9
   total_plans: 45
-  completed_plans: 46
+  completed_plans: 47
   percent: 50
 ---
 
@@ -31,7 +31,10 @@ hecho (borrador en la base, `pagos.anuncio_id` con un solo pendiente por anuncio
 `npm run publicacion:probar` en CI); 05.2-02 hecho (`validarCamposAnuncio` compartida con `publicar`;
 `POST/GET/PUT /api/borradores`; `verAnuncio`, `cambiarEstado`, `cambiarPlanDeAnuncio` y `eliminarAnuncio`
 niegan un borrador ajeno o su activación por otra puerta; `capacidadLibre` al marcar vendido; el
-particular no exento deja de leer «cupo» en el 402/409 de `publicar`). Siguen 05.2-03 a 05.2-05.
+particular no exento deja de leer «cupo» en el 402/409 de `publicar`); 05.2-03 hecho
+(`POST /api/borradores/:id/pago` con el importe del servidor; activa solo `confirmarPago` o el importe
+cero; pendiente devuelto sin duplicar; la consola rechaza la transferencia huérfana con
+`PUBLICACION_HUERFANA`; secciones 9-12 del arnés). Siguen 05.2-04 y 05.2-05.
 
 **Fase 05.1 (precio único) terminada** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
 (fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI), 05.1-02 hecho (desglose
@@ -151,6 +154,8 @@ Decisiones que afectan al trabajo actual:
 - 05.2-02: una sola `validarCamposAnuncio(c, plan, { completo })` para publicar y el borrador (completa
   exigirá lo mismo al pedir el pago en 05.2-03); un borrador responde el mismo 404 a quien no es su
   dueño y a un id inexistente, y ninguna ruta existente lo activa sin pasar por el pago.
+- 05.2-03: el correo «ya está publicado» sale de `confirmarPago` (y de la ruta del importe cero con la
+  misma función), no de la ruta que pide el pago: así lo reciben igual la transferencia y CardNet.
 
 - **Regla de Victor, 2026-09-25 (modelos y ritmo):** fases 5 y 6 con perfil GSD «quality» (Opus en todo) y revisión completa al cerrar cada una. En cuanto se publique la fase 6: `model_profile` a «balanced» en `.planning/config.json` (Opus planifica, revisa y verifica; Sonnet ejecuta), commit, y avisar a Victor en una línea para que baje el chat principal de High a Medium. De la fase 7 en adelante, «balanced»; una fase que toque cobros, facturación o NCF vuelve a «quality» solo mientras dure. Nunca Haiku. Para ahorrar crédito: no releer ni reexplorar `.planning/` ya escrito, la revisión al cerrar una fase cubre solo lo que cambió esa fase, y nada de agentes para lo que se resuelve con unas pocas búsquedas.
 - **Regla de Victor, 2026-09-25 (paralelismo):** ejecución automática sin luz verde entre tareas, planes ni fases. Se planifica por adelantado todo lo que se pueda contra las interfaces de las fases previas; dos fases independientes se ejecutan a la vez, cada una en su git worktree y su rama; nunca dos agentes ejecutores en la misma copia de trabajo. Se fusiona en orden del ROADMAP. Cada fase, antes de su PR: verificación GSD, revisión de código de lo que cambió, correcciones y todas las pruebas. Un PR por fase, fusión a `main` solo con CI en verde y comprobación del sitio en vivo.
