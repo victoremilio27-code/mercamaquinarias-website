@@ -48,6 +48,10 @@ for (const k of Object.keys(process.env)) {
 const db = require('./db');
 const pagos = require('./pagos');
 const precios = require('../assets/precios.js');
+const api = require('./api');
+const legales = require('../assets/legales.js');
+const fotosModulo = require('./fotos');
+const { EventEmitter } = require('events');
 
 const ID_ORG = 'org-publica';
 const ID_OTRA = 'org-ajena';
@@ -127,6 +131,70 @@ const intencionPublicacion = (idAnuncio, idPlan, dias) => ({
   concepto: `Publicación ${idPlan} · ${dias} días`,
   cliente: CLIENTE, correoCliente: CLIENTE.correo,
 });
+
+/* Una petición de verdad contra el enrutador, con req y res fingidos.
+   Copiada de probar-transferencia.js: lo que importa es lo que ve quien
+   llama, no lo que devuelven las funciones de dentro. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-publicacion', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      setHeader() {},
+      writeHead(c) { res.codigo = c; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
+/* Una cuenta con sesión y, salvo que se pida lo contrario, con todas
+   las condiciones legales aceptadas: es lo que hace falta para llegar a
+   /api/borradores sin que la propia comprobación de legales estorbe la
+   prueba de otra cosa. */
+function cuentaCon({ correo: correoCuenta, tipo = 'particular', exenta = false, sinLegales = false }) {
+  const { idUsuario } = db.crearCuenta({
+    correo: correoCuenta, clave: 'UnaClaveLargaYSegura9', nombre: correoCuenta,
+    telefono: '8095550000', tipo, empresa: tipo === 'dealer' ? correoCuenta : undefined,
+  });
+  if (!sinLegales) {
+    Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+      db.registrarAceptacion({
+        usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba',
+      });
+    });
+  }
+  if (exenta) ejecuta('UPDATE organizaciones SET exenta_pago = 1 WHERE id = ?', db.organizacionDe(idUsuario).id);
+  return {
+    idUsuario,
+    org: db.organizacionDe(idUsuario),
+    cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}`, 'cf-connecting-ip': '201.8.8.8' },
+  };
+}
+
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+  + 'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+async function subirFoto(cabeceras) {
+  const r = await pedir({ metodo: 'POST', url: '/api/fotos', cuerpo: { completa: PNG }, cabeceras });
+  return (r.datos || {}).completa;
+}
 
 /* Un borrador listo para pedir el pago: los mismos datos que usa la
    prueba de transferencia, tres fotos y un teléfono. */
@@ -393,6 +461,146 @@ db.cargarSecuencia({
     }));
     ok(!!eYa && eYa.codigo === 409 && suscripcionesDe(ID_ORG) === suscYa && pagosTotales() === pagosYa,
       `sobre un activo: ${eYa ? eYa.codigo : 'NO lanzó'} susc=${suscripcionesDe(ID_ORG) - suscYa} pagos=${pagosTotales() - pagosYa}`);
+  }
+
+  console.log('\n5. Crear el borrador por la API: mismas validaciones que publicar, sin los mínimos');
+  let idBorradorApi = null;
+  let particular = null;
+  {
+    particular = cuentaCon({ correo: `particular-${SELLO}@prueba.invalid` });
+    const dealer = cuentaCon({ correo: `dealer-${SELLO}@prueba.invalid`, tipo: 'dealer' });
+    const exento = cuentaCon({ correo: `exento-${SELLO}@prueba.invalid`, exenta: true });
+    const sinLegales = cuentaCon({ correo: `sinlegales-${SELLO}@prueba.invalid`, sinLegales: true });
+
+    const crear = (cuerpo, quien) => pedir({ metodo: 'POST', url: '/api/borradores', cuerpo, cabeceras: quien && quien.cabeceras });
+
+    const sinSesion = await crear({ plan: 'destacado', dias: 60 });
+    ok(sinSesion.codigo === 401, `sin sesión: ${sinSesion.codigo}`);
+
+    const rSinLegales = await crear({ plan: 'destacado', dias: 60 }, sinLegales);
+    ok(rSinLegales.codigo === 409 && Array.isArray((rSinLegales.datos || {}).faltan) && rSinLegales.datos.faltan.length > 0,
+      `sin aceptar condiciones: ${rSinLegales.codigo} faltan=${JSON.stringify(rSinLegales.datos && rSinLegales.datos.faltan)}`);
+
+    const rDealer = await crear({ plan: 'destacado', dias: 60 }, dealer);
+    ok(rDealer.codigo === 409, `cuenta dealer: ${rDealer.codigo}`);
+
+    const rExento = await crear({ plan: 'destacado', dias: 60 }, exento);
+    ok(rExento.codigo === 409, `cuenta exenta: ${rExento.codigo}`);
+
+    const rPlanMalo = await crear({ plan: 'no-existe', dias: 30 }, particular);
+    ok(rPlanMalo.codigo === 400, `plan inexistente: ${rPlanMalo.codigo}`);
+
+    const planDestacado = db.planPorId('destacado');
+    const precioUnitarioDestacado = planDestacado.precio_vigente != null ? planDestacado.precio_vigente : planDestacado.precio;
+    const r = await crear({ plan: 'destacado', dias: 60 }, particular);
+    const d = (r.datos || {}).borrador || {};
+    idBorradorApi = d.id;
+    ok(r.codigo === 201 && typeof d.id === 'string', `crear: ${r.codigo} id=${d.id}`);
+    ok(!!d.plan && d.plan.id === 'destacado' && d.dias === 60, `plan=${d.plan && d.plan.id} días=${d.dias}`);
+    ok(d.pendientePago === false, `pendientePago=${d.pendientePago}`);
+    const esperado = precios.precioCompra({ precioUnitario: precioUnitarioDestacado, cupo: 1, dias: 60 }).total;
+    ok(!!d.precio && d.precio.total === esperado, `precio.total=${d.precio && d.precio.total} (se esperaba ${esperado})`);
+    ok(!!d.precio && d.precio.base === undefined && d.precio.ajuste === undefined && d.precio.subtotal === undefined,
+      `precio sin base/ajuste/subtotal: ${JSON.stringify(d.precio)}`);
+    const fila = filaAnuncio(idBorradorApi);
+    ok(!!fila && fila.estado === 'borrador' && fila.plan_elegido === 'destacado',
+      `en la base: estado=${fila && fila.estado} plan=${fila && fila.plan_elegido}`);
+
+    // Lo que manda «Duplicar»: el borrador nace ya con los campos guardados.
+    const fotoDup = await subirFoto(particular.cabeceras);
+    const rDup = await crear({
+      plan: 'estandar', dias: 30, modelo: 'D6', anio: 2015, fotos: [{ url: fotoDup, miniatura: null }],
+    }, particular);
+    const dDup = (rDup.datos || {}).borrador || {};
+    ok(rDup.codigo === 201, `crear con campos (duplicar): ${rDup.codigo}`);
+    const filaDup = filaAnuncio(dDup.id);
+    ok(!!filaDup && filaDup.modelo === 'D6' && filaDup.anio === 2015 && fotosDe(dDup.id) === 1,
+      `campos guardados en la creación: modelo=${filaDup && filaDup.modelo} año=${filaDup && filaDup.anio} fotos=${fotosDe(dDup.id)}`);
+  }
+
+  console.log('\n6. Guardar el borrador por partes y leerlo con la forma del formulario');
+  {
+    const inicial = await pedir({ url: `/api/borradores/${idBorradorApi}`, cabeceras: particular.cabeceras });
+    ok(inicial.codigo === 200 && inicial.datos.borrador.datos.equipo.anio === '',
+      `recién creado: año='${inicial.datos && inicial.datos.borrador && inicial.datos.borrador.datos.equipo.anio}'`);
+    ok(inicial.datos.borrador.completo === false && !!inicial.datos.borrador.falta,
+      `incompleto: completo=${inicial.datos.borrador.completo} falta=${inicial.datos.borrador.falta}`);
+
+    const guardar = (cuerpo) => pedir({ metodo: 'PUT', url: `/api/borradores/${idBorradorApi}`, cuerpo, cabeceras: particular.cabeceras });
+
+    const rAnioMalo = await guardar({ anio: 1965 });
+    ok(rAnioMalo.codigo === 400 && /Año entre 1970/.test((rAnioMalo.datos || {}).error || ''),
+      `año inválido: ${rAnioMalo.codigo} ${rAnioMalo.datos && rAnioMalo.datos.error}`);
+
+    const rPrecioMalo = await guardar({ precio: -5 });
+    ok(rPrecioMalo.codigo === 400, `precio inválido: ${rPrecioMalo.codigo}`);
+
+    const f1 = await subirFoto(particular.cabeceras);
+    const f2 = await subirFoto(particular.cabeceras);
+    const f3 = await subirFoto(particular.cabeceras);
+
+    const rGuardar = await guardar({
+      modelo: '320D', anio: 2018, precio: 4500000,
+      fotos: [f1, f2, f3].map((url) => ({ url, miniatura: null })),
+      telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+    });
+    ok(rGuardar.codigo === 200, `guardar: ${rGuardar.codigo} ${JSON.stringify(rGuardar.datos)}`);
+    const filaGuardada = filaAnuncio(idBorradorApi);
+    ok(filaGuardada.modelo === '320D' && filaGuardada.anio === 2018 && filaGuardada.precio === 4500000
+      && fotosDe(idBorradorApi) === 3,
+    `en la base: modelo=${filaGuardada.modelo} año=${filaGuardada.anio} precio=${filaGuardada.precio} fotos=${fotosDe(idBorradorApi)}`);
+
+    const rFotoAjena = await guardar({
+      fotos: [{ url: 'https://otro-sitio.example/f.jpg', miniatura: null }, { url: f1, miniatura: null }],
+    });
+    ok(rFotoAjena.codigo === 200 && fotosDe(idBorradorApi) === 1,
+      `foto de otro sitio descartada: ${rFotoAjena.codigo} quedan ${fotosDe(idBorradorApi)} (se esperaba 1)`);
+
+    const rDataUri = await guardar({
+      fotos: [{ url: 'data:image/png;base64,AAAA', miniatura: null }, { url: f2, miniatura: null }],
+    });
+    ok(rDataUri.codigo === 200 && fotosDe(idBorradorApi) === 1,
+      `data: descartado: quedan ${fotosDe(idBorradorApi)} (se esperaba 1)`);
+
+    const rPlan = await guardar({ plan: 'estandar', dias: 30 });
+    ok(rPlan.codigo === 200, `cambiar plan: ${rPlan.codigo}`);
+    const filaPlan = filaAnuncio(idBorradorApi);
+    ok(filaPlan.plan_elegido === 'estandar' && filaPlan.dias_elegidos === 30,
+      `plan=${filaPlan.plan_elegido} días=${filaPlan.dias_elegidos}`);
+
+    await guardar({ plan: 'destacado', dias: 30 });
+    const muchasFotos = [];
+    for (let i = 0; i < 25; i++) muchasFotos.push({ url: f1, miniatura: null });
+    const rMuchas = await guardar({ fotos: muchasFotos });
+    const planDestacadoRecorte = db.planPorId('destacado');
+    ok(rMuchas.codigo === 200 && fotosDe(idBorradorApi) === planDestacadoRecorte.fotos_maximas,
+      `recorte al tope del plan: ${fotosDe(idBorradorApi)} (se esperaba ${planDestacadoRecorte.fotos_maximas})`);
+
+    // Ahora con todo: cadena completa, modelo, año, precio, fotos y teléfono.
+    const rCompleto = await guardar({
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt',
+      fotos: [f1, f2, f3].map((url) => ({ url, miniatura: null })),
+      telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+    });
+    ok(rCompleto.codigo === 200, `completar la cadena: ${rCompleto.codigo} ${JSON.stringify(rCompleto.datos)}`);
+
+    const completo = await pedir({ url: `/api/borradores/${idBorradorApi}`, cabeceras: particular.cabeceras });
+    const dc = completo.datos.borrador;
+    ok(dc.completo === true && dc.falta === null, `completo con todo: completo=${dc.completo} falta=${dc.falta}`);
+    ok(dc.datos.equipo.modelo === '320D' && dc.datos.equipo.anio === '2018',
+      `modelo=${dc.datos.equipo.modelo} año=${dc.datos.equipo.anio}`);
+    ok(Array.isArray(dc.datos.fotos) && dc.datos.fotos.length === 3 && dc.datos.fotos.every((f) => f.url && f.miniatura),
+      `fotos con url y miniatura: ${JSON.stringify(dc.datos.fotos[0])}`);
+  }
+
+  console.log('\n6b. copiarAnuncio sigue sin serie; el borrador sí devuelve la suya');
+  {
+    await pedir({ metodo: 'PUT', url: `/api/borradores/${idBorradorApi}`, cuerpo: { serie: 'XK-4410' }, cabeceras: particular.cabeceras });
+    const b = await pedir({ url: `/api/borradores/${idBorradorApi}`, cabeceras: particular.cabeceras });
+    ok(b.datos.borrador.datos.equipo.serie === 'XK-4410', `borrador con su serie: '${b.datos.borrador.datos.equipo.serie}'`);
+
+    const copia = await pedir({ url: `/api/mis-anuncios/${idBorradorApi}/copia`, cabeceras: particular.cabeceras });
+    ok(copia.codigo === 200 && copia.datos.copia.equipo.serie === '', `copiarAnuncio sin serie: '${copia.datos.copia.equipo.serie}'`);
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
