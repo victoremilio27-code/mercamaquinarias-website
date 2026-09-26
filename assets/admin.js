@@ -800,6 +800,10 @@ const importePago = (n) => `RD$${Number(n || 0).toLocaleString('en-US', {
   minimumFractionDigits: 2, maximumFractionDigits: 2,
 })}`;
 
+/* La consola es el único sitio donde se ve el ajuste del 3 % (MOD-02):
+   el personal lo necesita para cotejar el extracto del banco contra el
+   comprobante emitido. Un pago anterior a esta columna trae `base` NULL:
+   se lee como base = subtotal, no se ajustó nada y no se inventa una cifra. */
 function pagoHTML(p) {
   const clase = { aprobado: 'sol--aprobada', rechazado: 'sol--rechazada' }[p.estado] || '';
   const huerfana = p.estado === 'pendiente' && p.membresiaViva === false;
@@ -812,6 +816,7 @@ function pagoHTML(p) {
       <span class="sol__fecha">${fechaHora(p.creado)}</span>
     </div>
     <p class="sol__meta">${esc(p.concepto || 'Membresía')} · <b class="num">${esc(importePago(p.total))}</b></p>
+    <p class="sol__meta num">Base ${esc(importePago(p.base ?? p.subtotal))} · ${p.base == null ? 'sin ajuste' : `Ajuste ${esc(importePago(p.ajuste))}`} · ITBIS ${esc(importePago(p.itbis))} · Total ${esc(importePago(p.total))}</p>
     ${p.correoCliente ? `<p class="sol__meta">Comprador: ${esc(p.correoCliente)}</p>` : ''}
     ${huerfana ? `<p class="sol__meta sol__meta--aviso">La membresía que ampliaba este pago ya no existe: anúlelo y devuelva la transferencia.</p>` : ''}
     ${p.estado === 'aprobado' ? `<p class="sol__meta">Recibido${p.confirmado ? ` el ${fechaHora(p.confirmado)}` : ''} · ${f
