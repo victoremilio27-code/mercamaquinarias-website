@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Fase 05.1 verificada (passed) y en el PR #35; la 05.2 planificada (5 planes), por ejecutar."
-last_updated: "2026-09-26T03:00:00.000Z"
-last_activity: "2026-09-26 — 05.1-04: sección 33 de tools/probar-transferencia.js demuestra el precio único por transferencia de punta a punta; batería de 14 scripts en verde (rama claude/fase-05.1-precio-unico)."
+stopped_at: "Completado 05.2-01-PLAN.md (borrador en la base, pago con anuncio_id y activación en aprobarPago)."
+last_updated: "2026-09-26T05:30:00.000Z"
+last_activity: "2026-09-26 — 05.2-01: migración 2026-09-borradores, borrador del particular en la base y activación por aprobarPago; npm run publicacion:probar en CI (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
   completed_phases: 9
   total_plans: 45
-  completed_plans: 44
+  completed_plans: 45
   percent: 50
 ---
 
@@ -25,7 +25,12 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 
 ## Current Position
 
-**Fase 05.1 (precio único) en ejecución** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
+**Fase 05.2 (publicar este equipo) en ejecución** en la rama `claude/fase-05.2-publicar-equipo`: 05.2-01
+hecho (borrador en la base, `pagos.anuncio_id` con un solo pendiente por anuncio, activación dentro de
+`aprobarPago` con una suscripción de un cupo, importe cero por `publicarBorradorSinCosto`,
+`npm run publicacion:probar` en CI). Siguen 05.2-02 a 05.2-05.
+
+**Fase 05.1 (precio único) terminada** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
 (fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI), 05.1-02 hecho (desglose
 guardado en `pagos`, precios base 1.800/3.200, ajuste fuera de las respuestas al comprador), 05.1-03
 hecho (planes, panel, asistente y condiciones enseñan un solo precio final «ITBIS incluido»; contratación
@@ -134,6 +139,8 @@ Progress: [█████░░░░░] 50%
 
 Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
+- 05.2-01: «pendiente de pago» se deriva (borrador + pago pendiente con `anuncio_id`); el índice único
+  parcial `ux_pagos_anuncio_pendiente` garantiza en la base un solo pendiente por anuncio.
 
 - **Regla de Victor, 2026-09-25 (modelos y ritmo):** fases 5 y 6 con perfil GSD «quality» (Opus en todo) y revisión completa al cerrar cada una. En cuanto se publique la fase 6: `model_profile` a «balanced» en `.planning/config.json` (Opus planifica, revisa y verifica; Sonnet ejecuta), commit, y avisar a Victor en una línea para que baje el chat principal de High a Medium. De la fase 7 en adelante, «balanced»; una fase que toque cobros, facturación o NCF vuelve a «quality» solo mientras dure. Nunca Haiku. Para ahorrar crédito: no releer ni reexplorar `.planning/` ya escrito, la revisión al cerrar una fase cubre solo lo que cambió esa fase, y nada de agentes para lo que se resuelve con unas pocas búsquedas.
 - **Regla de Victor, 2026-09-25 (paralelismo):** ejecución automática sin luz verde entre tareas, planes ni fases. Se planifica por adelantado todo lo que se pueda contra las interfaces de las fases previas; dos fases independientes se ejecutan a la vez, cada una en su git worktree y su rama; nunca dos agentes ejecutores en la misma copia de trabajo. Se fusiona en orden del ROADMAP. Cada fase, antes de su PR: verificación GSD, revisión de código de lo que cambió, correcciones y todas las pruebas. Un PR por fase, fusión a `main` solo con CI en verde y comprobación del sitio en vivo.
