@@ -51,6 +51,7 @@ const precios = require('../assets/precios.js');
 const api = require('./api');
 const legales = require('../assets/legales.js');
 const fotosModulo = require('./fotos');
+const correo = require('./correo');
 const { EventEmitter } = require('events');
 
 const ID_ORG = 'org-publica';
@@ -757,6 +758,210 @@ db.cargarSecuencia({
     const rVendido2 = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idUnico}`, cuerpo: { estado: 'vendido' }, cabeceras: soloUnCupo.cabeceras });
     ok(rVendido2.codigo === 200 && rVendido2.datos.capacidadLibre === false,
       `sin capacidad libre tras vender el único: capacidadLibre=${rVendido2.datos && rVendido2.datos.capacidadLibre}`);
+  }
+
+  /* ── 05.2-03: pedir el pago del borrador por la ruta ─────────
+     Desde aquí el cobro va por `POST /api/borradores/:id/pago`, como
+     lo hará el navegador. Cada borrador lleva un modelo con el sello de
+     la pasada: así se encuentra su correo «ya está publicado» en la
+     bandeja compartida sin confundirlo con el de otra ejecución. */
+  const correosCon = (cadena) => {
+    if (!fs.existsSync(correo.BANDEJA)) return [];
+    return fs.readdirSync(correo.BANDEJA).filter((f) => f.endsWith('.txt'))
+      .map((f) => fs.readFileSync(path.join(correo.BANDEJA, f), 'utf8'))
+      .filter((t) => t.includes(cadena));
+  };
+  const publicados = (modelo) => correosCon(modelo).filter((t) => /ya está publicado/.test(t)).length;
+
+  let contadorModelo = 0;
+  async function borradorPorApi(cuenta, { plan = 'destacado', dias = 30, fotos = 3 } = {}) {
+    const r = await pedir({ metodo: 'POST', url: '/api/borradores', cuerpo: { plan, dias }, cabeceras: cuenta.cabeceras });
+    const id = ((r.datos || {}).borrador || {}).id;
+    const modelo = `M${SELLO}${++contadorModelo}`.toUpperCase();
+    const foto = fotos ? await subirFoto(cuenta.cabeceras) : null;
+    const lista = [];
+    for (let i = 0; i < fotos; i++) lista.push({ url: foto, miniatura: null });
+    const g = await pedir({
+      metodo: 'PUT', url: `/api/borradores/${id}`, cabeceras: cuenta.cabeceras,
+      cuerpo: {
+        categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo,
+        anio: 2019, condicion: 'usado', usoValor: 1000, usoUnidad: 'km',
+        descripcion: 'Borrador de prueba del pago.', provincia: 'santo-domingo',
+        precio: 2500000, moneda: 'DOP', fotos: lista,
+        telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
+      },
+    });
+    if (r.codigo !== 201 || g.codigo !== 200) {
+      console.log(`  (aviso) borradorPorApi: crear=${r.codigo} guardar=${g.codigo} ${JSON.stringify(g.datos)}`);
+    }
+    return { id, modelo };
+  }
+  const pedirPago = (id, cuenta, cuerpo = {}) =>
+    pedir({ metodo: 'POST', url: `/api/borradores/${id}/pago`, cuerpo, cabeceras: cuenta.cabeceras });
+  const errorDe = (r) => ((r && r.datos) || {}).error || '';
+  const pendientesDelAnuncio = (idAnuncio) =>
+    consulta("SELECT COUNT(*) AS n FROM pagos WHERE anuncio_id = ? AND estado = 'pendiente'", idAnuncio).n;
+  const unitario = (idPlan) => {
+    const p = db.planPorId(idPlan);
+    return p.precio_vigente != null ? p.precio_vigente : p.precio;
+  };
+
+  console.log('\n9. Pedir el pago del borrador: el importe lo pone el servidor y solo el pago confirmado activa');
+  {
+    const pagador = cuentaCon({ correo: `pagador-${SELLO}@prueba.invalid` });
+
+    const sinFotos = await borradorPorApi(pagador, { plan: 'destacado', fotos: 0 });
+    const rSinFotos = await pedirPago(sinFotos.id, pagador);
+    ok(rSinFotos.codigo === 400 && !!errorDe(rSinFotos) && pagosDelAnuncio(sinFotos.id) === 0,
+      `incompleto (sin fotos): ${rSinFotos.codigo} «${errorDe(rSinFotos)}» pagos=${pagosDelAnuncio(sinFotos.id)}`);
+
+    // Veinticinco fotos guardadas bajo Premium y el plan cambiado después a Estándar (8).
+    const muchas = await borradorPorApi(pagador, { plan: 'premium', fotos: 25 });
+    await pedir({ metodo: 'PUT', url: `/api/borradores/${muchas.id}`, cuerpo: { plan: 'estandar' }, cabeceras: pagador.cabeceras });
+    const rMuchas = await pedirPago(muchas.id, pagador);
+    ok(rMuchas.codigo === 409 && /admite 8 fotografías/.test(errorDe(rMuchas)) && pagosDelAnuncio(muchas.id) === 0,
+      `más fotos que el plan: ${rMuchas.codigo} «${errorDe(rMuchas)}» pagos=${pagosDelAnuncio(muchas.id)}`);
+
+    const retirado = await borradorPorApi(pagador, { plan: 'premium' });
+    ejecuta("UPDATE planes SET activo = 0 WHERE id = 'premium'");
+    let rRetirado = null;
+    try {
+      rRetirado = await pedirPago(retirado.id, pagador);
+    } finally {
+      ejecuta("UPDATE planes SET activo = 1 WHERE id = 'premium'");
+    }
+    ok(rRetirado.codigo === 409 && pagosDelAnuncio(retirado.id) === 0,
+      `plan retirado: ${rRetirado.codigo} «${errorDe(rRetirado)}» pagos=${pagosDelAnuncio(retirado.id)}`);
+
+    // Precio manipulado: nada de lo que manda el navegador cambia el cobro.
+    const esperado = precios.precioCompra({ precioUnitario: unitario('destacado'), cupo: 1, dias: 30 });
+    const bueno = await borradorPorApi(pagador, { plan: 'destacado', dias: 30 });
+    const suscAntes = suscripcionesDe(pagador.org.id);
+    const factAntes = facturasTotales();
+    const b02 = siguienteB02();
+    const correosAntes = publicados(bueno.modelo);
+    const r = await pedirPago(bueno.id, pagador, {
+      total: 1, subtotal: 1, precio: 1, base: 1, cupo: 5, plan: 'estandar', dias: 60,
+    });
+    const d = r.datos || {};
+    ok(r.codigo === 201, `pagar con importes falsos en el cuerpo: ${r.codigo} «${errorDe(r)}»`);
+    const pago = d.pago && d.pago.id ? db.pagoPorId(d.pago.id) : null;
+    ok(!!pago && pago.total === esperado.total && pago.anuncio_id === bueno.id && pago.estado === 'aprobado',
+      `el pago: ${pago ? `total=${pago.total} (se esperaba ${esperado.total}) anuncio=${pago.anuncio_id === bueno.id} ${pago.estado}` : 'NO hay'}`);
+    let intencion = null;
+    try { intencion = JSON.parse(pago.intencion); } catch (_) { /* queda null */ }
+    ok(!!intencion && intencion.tipo === 'publicacion' && intencion.cupo === 1 && intencion.idPlan === 'destacado'
+      && intencion.dias === 30 && intencion.idAnuncio === bueno.id,
+    `intención: ${intencion ? `${intencion.tipo} plan=${intencion.idPlan} cupo=${intencion.cupo} días=${intencion.dias}` : 'ilegible'}`);
+    ok(!!d.cobro && d.cobro.base === undefined && d.cobro.ajuste === undefined && d.cobro.total === esperado.total,
+      `cobro sin base ni ajuste: ${JSON.stringify(d.cobro)}`);
+    ok(!!d.anuncio && d.anuncio.estado === 'activo', `anuncio en la respuesta: ${d.anuncio && d.anuncio.estado}`);
+    const s = pago && pago.suscripcion_id ? consulta('SELECT * FROM suscripciones WHERE id = ?', pago.suscripcion_id) : null;
+    ok(suscripcionesDe(pagador.org.id) === suscAntes + 1 && !!s && s.plan_id === 'destacado'
+      && s.anuncios_incluidos === 1 && s.dias_ciclo === 30,
+    `suscripción nueva: ${s ? `${s.plan_id} cupo=${s.anuncios_incluidos} días=${s.dias_ciclo}` : 'NO hay'} (+${suscripcionesDe(pagador.org.id) - suscAntes})`);
+    const f = pago ? consulta("SELECT * FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'", pago.id) : null;
+    ok(!!f && /^B02/.test(f.ncf || '') && f.subtotal + f.itbis === f.total && f.total === pago.total
+      && facturasTotales() === factAntes + 1 && siguienteB02() === b02 + 1,
+    `factura: ${f ? `${f.ncf} ${f.subtotal}+${f.itbis}=${f.total}` : 'NO hay'} B02 +${siguienteB02() - b02}`);
+    ok(!!d.comprobante && /^B02/.test(d.comprobante.ncf || ''), `comprobante en la respuesta: ${JSON.stringify(d.comprobante)}`);
+    ok(publicados(bueno.modelo) === correosAntes + 1,
+      `correo «ya está publicado»: ${publicados(bueno.modelo) - correosAntes} (se esperaba 1)`);
+
+    // Doble aviso: la confirmación repetida no otorga, no emite y no escribe otra vez.
+    let rep = null;
+    const eRep = lanza(() => { rep = pagos.confirmarPago(pago.id); });
+    ok(!eRep && !!rep && rep.yaEstaba === true && suscripcionesDe(pagador.org.id) === suscAntes + 1
+      && facturasTotales() === factAntes + 1 && publicados(bueno.modelo) === correosAntes + 1,
+    eRep ? `repetir lanzó: ${eRep.message}` : `doble aviso: yaEstaba=${rep && rep.yaEstaba} susc=+${suscripcionesDe(pagador.org.id) - suscAntes} facturas=+${facturasTotales() - factAntes} correos=${publicados(bueno.modelo) - correosAntes}`);
+  }
+
+  console.log('\n10. Pendiente, rechazado, importe cero, ajeno y no borrador');
+  {
+    const cliente = cuentaCon({ correo: `pendiente-${SELLO}@prueba.invalid` });
+    const demoOriginal = pagos.PROCESADORES.demo;
+
+    // Pendiente: el anuncio espera como borrador y pedir otra vez devuelve el MISMO pago.
+    const bp = await borradorPorApi(cliente, { plan: 'destacado' });
+    let r1 = null;
+    let r2 = null;
+    pagos.PROCESADORES.demo = async () => ({ resultado: 'pendiente' });
+    try {
+      r1 = await pedirPago(bp.id, cliente);
+      r2 = await pedirPago(bp.id, cliente);
+    } finally {
+      pagos.PROCESADORES.demo = demoOriginal;
+    }
+    const p1 = ((r1.datos || {}).pago) || {};
+    ok(r1.codigo === 202 && p1.estado === 'pendiente' && filaAnuncio(bp.id).estado === 'borrador',
+      `pendiente: ${r1.codigo} pago=${p1.estado} anuncio=${filaAnuncio(bp.id).estado}`);
+    const mis = await pedir({ url: '/api/mis-anuncios', cabeceras: cliente.cabeceras });
+    const enPanel = ((mis.datos || {}).anuncios || []).find((x) => x.id === bp.id);
+    ok(!!enPanel && enPanel.pendiente_pago === true, `mis-anuncios pendiente_pago=${enPanel && enPanel.pendiente_pago}`);
+    ok(r2.codigo === 202 && ((r2.datos || {}).pago || {}).id === p1.id && pendientesDelAnuncio(bp.id) === 1,
+      `pedir otra vez: ${r2.codigo} mismo pago=${((r2.datos || {}).pago || {}).id === p1.id} pendientes=${pendientesDelAnuncio(bp.id)}`);
+    const putPendiente = await pedir({ metodo: 'PUT', url: `/api/borradores/${bp.id}`, cuerpo: { modelo: 'OTRO' }, cabeceras: cliente.cabeceras });
+    ok(putPendiente.codigo === 409, `guardar con el pago en espera: ${putPendiente.codigo}`);
+    const eConf = lanza(() => pagos.confirmarPago(p1.id));
+    ok(!eConf && filaAnuncio(bp.id).estado === 'activo' && publicados(bp.modelo) === 1,
+      eConf ? `confirmar lanzó: ${eConf.message}` : `al confirmarse: ${filaAnuncio(bp.id).estado} correos=${publicados(bp.modelo)}`);
+
+    // Rechazado: nada otorgado, nada emitido, y se puede volver a pedir.
+    const br = await borradorPorApi(cliente, { plan: 'destacado' });
+    const b02 = siguienteB02();
+    const fact = facturasTotales();
+    let rr = null;
+    pagos.PROCESADORES.demo = async () => ({ resultado: 'rechazado', motivo: 'Fondos insuficientes' });
+    try {
+      rr = await pedirPago(br.id, cliente);
+    } finally {
+      pagos.PROCESADORES.demo = demoOriginal;
+    }
+    const aR = filaAnuncio(br.id);
+    ok(rr.codigo === 402 && /sigue guardado como borrador/.test(errorDe(rr)),
+      `rechazado: ${rr.codigo} «${errorDe(rr)}»`);
+    ok(aR.estado === 'borrador' && aR.suscripcion_id === null && siguienteB02() === b02 && facturasTotales() === fact,
+      `tras el rechazo: ${aR.estado} susc=${aR.suscripcion_id} B02 +${siguienteB02() - b02} facturas +${facturasTotales() - fact}`);
+    const rOtra = await pedirPago(br.id, cliente);
+    ok(rOtra.codigo === 201 && filaAnuncio(br.id).estado === 'activo',
+      `pedir otra vez tras el rechazo: ${rOtra.codigo} anuncio=${filaAnuncio(br.id).estado}`);
+
+    /* Importe cero: la promoción del Estándar se fija aquí con un fin
+       lejano para que la prueba no dependa del día en que corre (la de
+       verdad termina el 2026-11-30). */
+    ejecuta("UPDATE planes SET precio_promocional = 0, promo_hasta = '2099-12-31' WHERE id = 'estandar'");
+    const bc = await borradorPorApi(cliente, { plan: 'estandar' });
+    const factCero = facturasTotales();
+    const rc = await pedirPago(bc.id, cliente);
+    const pc = consulta('SELECT * FROM pagos WHERE anuncio_id = ?', bc.id);
+    ok(rc.codigo === 201 && (rc.datos || {}).comprobante === null,
+      `importe cero: ${rc.codigo} comprobante=${JSON.stringify((rc.datos || {}).comprobante)} «${errorDe(rc)}»`);
+    ok(!!pc && pc.estado === 'aprobado' && pc.total === 0 && pc.procesador === 'sin-costo'
+      && filaAnuncio(bc.id).estado === 'activo' && facturasTotales() === factCero,
+    `pago cero: ${pc ? `${pc.estado} total=${pc.total} ${pc.procesador}` : 'NO hay'} anuncio=${filaAnuncio(bc.id).estado} facturas +${facturasTotales() - factCero}`);
+    ok(publicados(bc.modelo) === 1, `correo «ya está publicado» del importe cero: ${publicados(bc.modelo)}`);
+
+    // Ajeno, ya publicado y sin aceptar la contratación.
+    const otro = cuentaCon({ correo: `ajeno-pago-${SELLO}@prueba.invalid` });
+    const bAjeno = await borradorPorApi(cliente, { plan: 'destacado' });
+    const rAjeno = await pedirPago(bAjeno.id, otro);
+    ok(rAjeno.codigo === 404 && pagosDelAnuncio(bAjeno.id) === 0 && filaAnuncio(bAjeno.id).estado === 'borrador',
+      `borrador ajeno: ${rAjeno.codigo} pagos=${pagosDelAnuncio(bAjeno.id)}`);
+    const rActivo = await pedirPago(br.id, cliente);
+    ok(rActivo.codigo === 404, `sobre un anuncio ya activo: ${rActivo.codigo}`);
+
+    const sinContratacion = cuentaCon({ correo: `sincontrato-${SELLO}@prueba.invalid`, sinLegales: true });
+    for (const idDoc of legales.PARA_PUBLICAR) {
+      const doc = legales.documento(idDoc);
+      db.registrarAceptacion({
+        usuarioId: sinContratacion.idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba',
+      });
+    }
+    const bSin = await borradorPorApi(sinContratacion, { plan: 'destacado' });
+    const rSin = await pedirPago(bSin.id, sinContratacion);
+    const faltan = (rSin.datos || {}).faltan || [];
+    ok(rSin.codigo === 409 && faltan.includes('contratacion') && pagosDelAnuncio(bSin.id) === 0,
+      `sin aceptar la contratación: ${rSin.codigo} faltan=${JSON.stringify(faltan)}`);
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
