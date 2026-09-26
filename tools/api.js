@@ -3102,6 +3102,10 @@ const cambiarEstado = conSesion(async (req, res, ctx, idAnuncio) => {
   if (!permitidos.includes(c.estado)) return fallo(res, 400, 'Estado inválido');
 
   const r = db.cambiarEstadoAnuncio(idAnuncio, ctx.organizacion.id, c.estado);
+  if (r.sinCupo) {
+    return fallo(res, 409, 'Su cupo lo ocupa ya otro equipo. Retire o marque vendido uno de los publicados, '
+      + 'o amplíe su plan, y vuelva a intentarlo.');
+  }
   if (!r.changes) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
   return responder(res, 200, { ok: true, estado: c.estado });
 });
