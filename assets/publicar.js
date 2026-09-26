@@ -131,6 +131,9 @@ function estadoInicial() {
       categoria: '', subcategoria: '', marca: '', modelo: '', anio: '',
       condicion: '', uso: '', unidad: 'h', serie: '', potencia: '', peso: '',
       provincia: '', ciudad: '', implementos: '', descripcion: '',
+      // En el país o bajo pedido. Un borrador guardado antes de que
+      // existiera el campo lo recibe de estadoInicial al fusionarse.
+      disponibilidad: 'en-pais',
     },
     fotos: [],
     videos: [],
@@ -1068,6 +1071,7 @@ function filaTelefonoHTML(tel, i) {
       <input type="text" class="tel-nota" value="${esc(tel.nota)}" placeholder="Ej. Departamento de ventas">
     </label>
     <button type="button" class="telefono__quitar" data-quitar-tel aria-label="Quitar el número ${i + 1}"${i === 0 && estado.contacto.telefonos.length === 1 ? ' disabled' : ''}>${icono('i-equis')}</button>
+    <div class="telefono__verif" aria-live="polite"></div>
   </li>`;
 }
 
@@ -1076,6 +1080,47 @@ function pintarTelefonos() {
   if (!lista) return;
   lista.innerHTML = estado.contacto.telefonos.map(filaTelefonoHTML).join('');
   $('#btnAgregarTelefono').disabled = estado.contacto.telefonos.length >= 5;
+  pintarVerificacion();
+}
+
+/* ── Verificación de cada número (fase 9) ──────────────────
+   El anuncio solo enseña teléfonos verificados. Con sesión, debajo de
+   cada número válido se dice si ya lo está y, si no, se ofrece el
+   código ahí mismo: descubrirlo después de publicar, con el anuncio
+   saliendo sin teléfono, es perder los primeros contactos.
+
+   Sin sesión no se pinta nada por fila: la cuenta se abre al final y
+   la nota de encima explica que se verifica después, desde el panel.
+   Publicar no se bloquea por un número sin verificar; simplemente no
+   se muestra hasta que lo esté. */
+let CONTACTOS = null;       // Map numero → fila de /api/contactos; null sin sesión
+
+async function cargarContactosVerificados() {
+  if (!haySesion() || typeof VerificarContacto === 'undefined') return;
+  const lista = await VerificarContacto.cargar();
+  CONTACTOS = lista ? new Map(lista.map((c) => [c.numero, c])) : null;
+  pintarVerificacion();
+}
+
+function pintarVerificacion() {
+  if (typeof VerificarContacto === 'undefined') return;
+  $$('#listaTelefonos .telefono').forEach((li) => {
+    const caja = $('.telefono__verif', li);
+    if (!caja) return;
+    const numero = VerificarContacto.soloDigitos($('.tel-numero', li).value);
+    if (!CONTACTOS || numero.length !== 10) {
+      caja.innerHTML = '';
+      caja.dataset.clave = '';
+      return;
+    }
+    const c = CONTACTOS.get(numero) || { numero, verificado: false, via: null, pendiente: null };
+    /* Solo se repinta si cambió el número o su estado: repintar en cada
+       tecla cerraría el campo del código mientras se escribe. */
+    const clave = `${numero}|${c.verificado}|${c.via}`;
+    if (caja.dataset.clave === clave) return;
+    caja.dataset.clave = clave;
+    caja.innerHTML = VerificarContacto.estadoHTML(c);
+  });
 }
 
 function leerTelefonos() {
@@ -1104,9 +1149,15 @@ function montarPasoContacto() {
   lista.addEventListener('input', (e) => {
     if (e.target.classList.contains('tel-numero')) {
       e.target.value = formatearTelefono(e.target.value);
+      pintarVerificacion();
     }
     leerTelefonos();
   });
+
+  if (typeof VerificarContacto !== 'undefined') {
+    VerificarContacto.montar(lista, { alVerificar: cargarContactosVerificados });
+    cargarContactosVerificados();
+  }
 
   lista.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-quitar-tel]');
@@ -1456,6 +1507,7 @@ function anuncioParaApi() {
     descripcion: e.descripcion,
     provincia: e.provincia,
     municipio: e.ciudad,
+    disponibilidad: e.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
 
     precio: Number(soloDigitos(estado.precio.monto)) || null,
     moneda: estado.precio.moneda,
@@ -1485,6 +1537,18 @@ function pintarConfirmacion(respuesta) {
   const equipo = esc(`${anuncio.anio} ${anuncio.marca} ${anuncio.modelo}`);
 
   const libres = m && m.libres;
+
+  /* Fase 9: si publicó con números sin verificar, el anuncio sale sin
+     ellos. Se dice aquí, con el camino al panel, y no se deja que lo
+     descubra un comprador que no encuentra cómo llamarle. */
+  const sinVerificar = (anuncio.telefonos || []).filter((t) => !t.verificado).length;
+  const avisoTelefonos = sinVerificar
+    ? `<p class="realce">${icono('i-aviso')} <span>${sinVerificar === 1
+      ? 'Un teléfono de este anuncio está sin verificar y no se muestra.'
+      : `${sinVerificar} teléfonos de este anuncio están sin verificar y no se muestran.`}
+      Verifíquelos desde <a href="panel.html#panelContactos">su panel</a>: tarda un minuto y aparecen al momento.</span></p>`
+    : '';
+
   const cabecera = `
     <h2 class="publicado__titulo">Anuncio publicado</h2>
     <p class="publicado__texto">
@@ -1515,6 +1579,8 @@ function pintarConfirmacion(respuesta) {
         ? 'Sin límite' : libres}</dd></div>
       <div><dt>Fotografías publicadas</dt><dd class="num">${anuncio.fotos.length}</dd></div>
     </dl>
+
+    ${avisoTelefonos}
 
     <p class="publicado__nota">
       Enviamos la confirmación a <b>${esc(estado.contacto.correo)}</b>.
@@ -1608,6 +1674,7 @@ function pintarVistaPrevia() {
       <span class="aviso__specs num">${esc(uso)}${e.provincia ? ` · ${esc(e.provincia)}` : ''}</span>
       <span class="aviso__precio num">${esc(textoPrecioPreview())}</span>
       ${estado.precio.modalidad === 'ofertas' ? '<span class="pastilla pastilla--ambar">Acepta ofertas</span>' : ''}
+      ${e.disponibilidad === 'bajo-pedido' ? '<span class="pastilla pastilla--ambar">Bajo pedido</span>' : ''}
     </div>
     ${e.subcategoria ? `<p class="vista-previa__nota">${esc(nombreCategoria(e.categoria))} · ${esc(e.subcategoria)}</p>` : ''}`;
 }
@@ -1706,6 +1773,7 @@ function leerPaso(id) {
       peso: $('#e-peso').value.trim(),
       provincia: $('#e-provincia').value,
       ciudad: $('#e-ciudad').value.trim(),
+      disponibilidad: $('#e-disponibilidad').value,
       implementos: $('#e-implementos').value.trim(),
       descripcion: $('#e-descripcion').value.trim(),
     });
@@ -1743,6 +1811,7 @@ function volcarEstadoAlFormulario() {
   $('#e-potencia').value = e.potencia;
   $('#e-peso').value = e.peso;
   $('#e-ciudad').value = e.ciudad;
+  $('#e-disponibilidad').value = e.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais';
   $('#e-implementos').value = e.implementos;
   $('#e-descripcion').value = e.descripcion;
   // marca, provincia y condición se llenan por script: se asignan
@@ -1896,6 +1965,7 @@ async function montarPublicador() {
     if (!$('#listaTelefonos .tel-numero').value && SESION.usuario.telefono) {
       $('#listaTelefonos .tel-numero').value = formatearTelefono(SESION.usuario.telefono);
       leerTelefonos();
+      pintarVerificacion();
     }
   }
 

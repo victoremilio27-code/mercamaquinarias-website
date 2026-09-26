@@ -217,6 +217,7 @@ function sitemap() {
     ['/importar.html', '0.6', 'monthly'],
     ['/planes.html', '0.6', 'monthly'],
     ['/contacto.html', '0.4', 'monthly'],
+    ['/estafas.html', '0.4', 'monthly'],
     ['/legal.html', '0.3', 'yearly'],
   ];
 

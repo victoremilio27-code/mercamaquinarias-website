@@ -26,9 +26,40 @@ let NIVEL_ELEGIDO = '';
 let DIAS_PLAN = 30;
 let CUPOS_PEDIDOS = 1;
 
+/* Cómo se cobra, según el servidor (`metodosPago` de /api/planes).
+   Lo decide él y no esta página: con la transferencia encendida `demo`
+   deja de existir para el comprador, y un navegador que mandara otro
+   método recibiría un 400. Vacío hasta que responde. */
+let METODOS_PAGO = [];
+
+/* Pagos pedidos que todavía no se han confirmado (`pagosPendientes` de
+   /api/membresias). Un pago en espera NO es un cupo: por eso se cuentan
+   aparte y nunca se suman a MIS_CUPOS. */
+let PAGOS_PENDIENTES = [];
+
 /* A dónde vuelve después de contratar. Lo pone quien lo mandó aquí
    —el asistente, casi siempre— para poder devolverlo a su borrador. */
 const destino = () => params().get('destino') || '';
+
+/* El mismo destino, pero solo si es una página de este sitio. Sale de
+   la URL, así que cualquiera puede fabricar un enlace con
+   `destino=javascript:…`; pintado como href de un enlace, ese texto
+   se ejecutaría al pulsarlo. */
+const destinoPropio = () => (/^[a-z0-9-]+\.html(?:[?#]|$)/i.test(destino()) ? destino() : '');
+
+const porTransferencia = () => METODOS_PAGO.includes('transferencia');
+
+/* Solo se paga por transferencia lo que cuesta algo. Una cuenta exenta
+   o un pedido a RD$0 (la promoción del Estándar) sale aprobado al
+   instante, igual que antes de la fase: prometerle unos datos
+   bancarios que no van a llegar sería mentirle. */
+const pagaPorTransferencia = (ped) => porTransferencia() && !EXENTA_PLAN && !!ped && ped.total > 0;
+
+/* Un 202 de las rutas de cobro. Durante la fase 3 el navegador lo
+   trataba como una compra hecha —«Listo. Contrató…», vuelta al
+   borrador y cupos que no existían— porque `demo` aprobaba siempre y
+   nadie veía nunca uno. Con la transferencia es lo normal. */
+const enEspera = (r) => !!(r && r.pago && r.pago.estado === 'pendiente');
 
 const unitario = (n) => (n.precio_vigente != null ? n.precio_vigente : n.precio);
 
@@ -199,11 +230,16 @@ function pintarPedido() {
          ${ped.gratis ? `<div><dt>Cupos de regalo</dt><dd class="num">${ped.gratis}</dd></div>` : ''}
          <div><dt>ITBIS (${Math.round(ITBIS * 100)} %)</dt><dd class="num">${pesos(ped.itbis)}</dd></div>
          <div class="pedido__total"><dt>Total</dt><dd class="num">${pesos(ped.total)}</dd></div>
-       </dl>`;
+       </dl>
+       ${pagaPorTransferencia(ped)
+    ? `<p class="pedido__metodo"><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; los cupos y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
+    : ''}`;
 
   $('#btnContratar').textContent = EXENTA_PLAN
     ? 'Activar sin costo'
-    : `Contratar por ${pesos(ped.total)}`;
+    : pagaPorTransferencia(ped)
+      ? `Pedir datos para transferir ${pesos(ped.total)}`
+      : `Contratar por ${pesos(ped.total)}`;
 
   /* Qué se acepta al pulsar, junto al botón que lo acepta.
      Escondido en el pie no serviría: la advertencia tiene que estar
@@ -242,6 +278,127 @@ function pintarTodo() {
   pintarPedido();
 }
 
+/* ── Pago en espera ──────────────────────────────────────── */
+
+const TIPOS_CUENTA = { corriente: 'Corriente', ahorros: 'De ahorros' };
+
+/* El `mailto:` se arma con encodeURIComponent: el correo y la
+   referencia vienen del servidor y no pueden colar nada en el enlace.
+   La arroba se devuelve a su sitio porque algún cliente de correo no
+   entiende «%40» en la dirección. */
+function enlaceComprobante(correo, referencia) {
+  const asunto = `Comprobante de transferencia ${referencia}`;
+  return `mailto:${encodeURIComponent(correo).replace('%40', '@')}?subject=${encodeURIComponent(asunto)}`;
+}
+
+/* Sin portapapeles (página servida sin HTTPS, navegador viejo) no se
+   ofrece un botón que no haría nada: la referencia está a la vista y se
+   puede seleccionar a mano. */
+const botonCopiar = (texto) => (navigator.clipboard
+  ? `<button type="button" class="btn btn--linea btn--chico" data-copiar="${esc(texto)}">Copiar</button>`
+  : '');
+
+/* Los datos para transferir. Todo sale de la respuesta del servidor y
+   pasa por esc(): esta página no tiene ninguna cuenta escrita, así que
+   con la transferencia apagada no hay nada que enseñar por error. */
+function htmlTransferencia(t, cobro) {
+  const ref = cobro.referencia || '';
+  const volver = destinoPropio();
+  return `
+    <h3 class="transferencia__titulo">Datos para transferir</h3>
+    <p class="transferencia__ref">
+      <span class="transferencia__rotulo">Referencia</span>
+      <b class="transferencia__codigo">${esc(ref)}</b>
+      ${botonCopiar(ref)}
+    </p>
+    <dl class="transferencia__cuenta">
+      <div><dt>Banco</dt><dd>${esc(t.banco)}</dd></div>
+      <div><dt>Titular</dt><dd>${esc(t.titular)}</dd></div>
+      <div><dt>RNC</dt><dd class="num">${esc(t.rnc)}</dd></div>
+      <div><dt>Tipo de cuenta</dt><dd>${esc(TIPOS_CUENTA[t.tipoCuenta] || t.tipoCuenta)}</dd></div>
+      <div><dt>Número de cuenta</dt><dd class="num">${esc(t.cuenta)}</dd></div>
+      <div><dt>Importe</dt><dd class="num">${pesos(Number(cobro.total) || 0)}</dd></div>
+    </dl>
+    <ul class="transferencia__pasos">
+      <li>Ponga la referencia en el concepto de la transferencia.</li>
+      <li>Envíe el comprobante de la transferencia a <a href="${esc(enlaceComprobante(t.correo, ref))}">${esc(t.correo)}</a>.</li>
+      <li>Los días de su membresía empiezan a contar cuando confirmemos el ingreso, no antes.</li>
+    </ul>
+    <p class="transferencia__nota">Esto no es un comprobante fiscal. Se lo enviamos por correo cuando confirmemos el pago; le mandamos también estos datos a su correo.</p>
+    ${volver ? `<p class="transferencia__volver">
+      <a class="btn btn--linea btn--chico" href="${esc(volver)}">Volver a mi borrador</a>
+      <span>Se publicará cuando lleguen los cupos.</span>
+    </p>` : ''}`;
+}
+
+/* Lo que se enseña tras un 202. Con datos de cuenta, el bloque entero;
+   sin ellos (otra pasarela en proceso, o la transferencia se apagó
+   entre medias) solo el aviso y la referencia, sin inventar una cuenta.
+   El bloque se queda puesto: quien va a transferir lo necesita a la
+   vista mientras abre su banco, y no desaparece hasta que pida otro. */
+function pintarEspera(r, ancla, aviso) {
+  const previo = $('#datosTransferencia');
+  if (previo) previo.remove();
+  if (!ancla) return;
+
+  const caja = document.createElement('div');
+  caja.id = 'datosTransferencia';
+  caja.className = 'transferencia';
+  caja.setAttribute('role', 'status');
+  const cobro = r.cobro || {};
+  caja.innerHTML = r.transferencia
+    ? htmlTransferencia(r.transferencia, cobro)
+    : `<p class="transferencia__aviso">${esc(aviso || r.aviso || '')}</p>
+       ${cobro.referencia ? `<p class="transferencia__ref">
+         <span class="transferencia__rotulo">Referencia</span>
+         <b class="transferencia__codigo">${esc(cobro.referencia)}</b>
+         ${botonCopiar(cobro.referencia)}
+       </p>` : ''}`;
+  ancla.insertAdjacentElement('afterend', caja);
+  caja.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* Qué aviso acompaña a un 202 que no trae cuenta. Si el pago es por
+   transferencia pero la cuenta ya no está, el aviso genérico («transfiera
+   con la referencia indicada») mandaría a transferir sin datos; el de
+   /api/membresias dice a quién escribir. */
+const avisoSinCuenta = (r, mios) => ((r.cobro || {}).procesador === 'transferencia' && mios && mios.avisoTransferencia)
+  || r.aviso || '';
+
+/* «Tiene N pagos en espera», encima del pedido. Sin él, quien vuelve a
+   esta página tras pedir los datos no ve rastro de su pedido y es fácil
+   que pida otro. */
+function pintarRecordatorio() {
+  let el = $('#pagosEnEspera');
+  const n = PAGOS_PENDIENTES.length;
+  if (!n) { if (el) el.remove(); return; }
+
+  if (!el) {
+    const compra = $('.compra-cupos');
+    if (!compra) return;
+    el = document.createElement('p');
+    el.id = 'pagosEnEspera';
+    el.className = 'realce realce--espera';
+    compra.insertAdjacentElement('beforebegin', el);
+  }
+  el.innerHTML = `${icono('i-aviso')} <span>Tiene <b>${n} ${n === 1 ? 'pago' : 'pagos'} en espera de confirmación</b>. `
+    + `<a href="panel.html">${n === 1 ? 'Ver el pago' : 'Ver los pagos'} en su panel</a>.</span>`;
+}
+
+/* Vuelve a pedir lo que tiene: cupos y pagos en espera. Devuelve la
+   respuesta entera porque el aviso de una transferencia sin cuenta
+   viene en ella. */
+async function recargarCuenta() {
+  const mios = await api('/membresias', { silencioso: true });
+  if (mios) {
+    MIS_CUPOS = mios.membresias || MIS_CUPOS;
+    PAGOS_PENDIENTES = mios.pagosPendientes || [];
+  }
+  pintarMisCupos();
+  pintarRecordatorio();
+  return mios;
+}
+
 /* ── Contratar ───────────────────────────────────────────── */
 
 async function contratar() {
@@ -257,13 +414,27 @@ async function contratar() {
   btn.disabled = true;
   btn.classList.add('btn--ocupado');
   const antes = btn.textContent;
-  btn.textContent = 'Contratando…';
+  btn.textContent = pagaPorTransferencia(ped) ? 'Pidiendo los datos…' : 'Contratando…';
 
   try {
-    const cuerpo = { plan: ped.nivel.id, cupo: CUPOS_PEDIDOS, dias: DIAS_PLAN, ...datosFiscales() };
+    /* El método solo se manda si el servidor lo ofrece. Con la
+       transferencia apagada el cuerpo es el de siempre. */
+    const cuerpo = {
+      plan: ped.nivel.id, cupo: CUPOS_PEDIDOS, dias: DIAS_PLAN,
+      ...(porTransferencia() ? { metodo: 'transferencia' } : {}),
+      ...datosFiscales(),
+    };
 
     const r = await api('/membresias', { metodo: 'POST', cuerpo });
     if (!r) throw new Error('No hay conexión con el servidor.');
+
+    /* Pedido anotado pero sin cobrar: ni vuelta al borrador (no tiene
+       cupo con qué publicarlo) ni «Listo». Los datos se quedan aquí. */
+    if (enEspera(r)) {
+      const mios = await recargarCuenta();
+      pintarEspera(r, btn.closest('.acciones') || btn, avisoSinCuenta(r, mios));
+      return;
+    }
 
     /* Con destino se vuelve solo: el anunciante venía de su borrador y
        devolverlo ahí es la mitad de la mejora. */
@@ -363,8 +534,21 @@ async function ampliar(id) {
   if (!confirm(texto)) return;
 
   try {
-    const r = await api(`/membresias/${encodeURIComponent(id)}/ampliar`, { metodo: 'POST', cuerpo: { cupo } });
+    const r = await api(`/membresias/${encodeURIComponent(id)}/ampliar`, {
+      metodo: 'POST',
+      cuerpo: { cupo, ...(porTransferencia() ? { metodo: 'transferencia' } : {}) },
+    });
     if (!r) throw new Error('No hay conexión con el servidor.');
+
+    /* En espera la membresía sigue con los cupos que tenía: decir que
+       «pasó a N cupos» era anunciar algo que todavía no ha pasado. */
+    if (enEspera(r)) {
+      const mios = await recargarCuenta();
+      avisar(avisoSinCuenta(r, mios), true);
+      if (r.transferencia) pintarEspera(r, $('#avisoPlanes'));
+      return;
+    }
+
     MIS_CUPOS = (await api('/membresias', { silencioso: true }) || {}).membresias || MIS_CUPOS;
     pintarMisCupos();
     avisar(`${m.plan_nombre} pasó a ${cupo} cupos.`, true);
@@ -382,10 +566,12 @@ async function montarPlanes() {
 
   const catalogo = await api('/planes', { silencioso: true });
   NIVELES_PLAN = (catalogo && catalogo.planes) || [];
+  METODOS_PAGO = (catalogo && Array.isArray(catalogo.metodosPago)) ? catalogo.metodosPago : [];
 
   if (haySesion()) {
     const mios = await api('/membresias', { silencioso: true });
     MIS_CUPOS = (mios && mios.membresias) || [];
+    PAGOS_PENDIENTES = (mios && mios.pagosPendientes) || [];
     EXENTA_PLAN = !!(mios && mios.exenta);
   }
 
@@ -401,6 +587,7 @@ async function montarPlanes() {
   $('#ahorro60Planes').textContent = `Ahorra ${ahorro60()} %`;
 
   pintarMisCupos();
+  pintarRecordatorio();
   pintarTablaComparativa();
   pintarTodo();
 
@@ -428,6 +615,18 @@ async function montarPlanes() {
   $('#misCupos').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ampliar]');
     if (btn) ampliar(btn.dataset.ampliar);
+  });
+
+  /* «Copiar» la referencia. En el documento y no en el bloque, porque el
+     bloque se crea después, con cada pedido. Si el navegador niega el
+     portapapeles no se dice nada: la referencia sigue a la vista. */
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-copiar]');
+    if (!btn) return;
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copiar);
+      btn.textContent = 'Copiada';
+    } catch (_) { /* sin portapapeles: caída silenciosa */ }
   });
 }
 

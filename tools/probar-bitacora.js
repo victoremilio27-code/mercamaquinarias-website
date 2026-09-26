@@ -383,6 +383,143 @@ async function bloqueApi() {
     `las ${escrituras.length} escrituras de /api/admin/ están clasificadas una sola vez`);
 }
 
+/* ── Bloque «Empresas y sello» (fase 7, ADMIN-02) ───────── */
+async function bloqueEmpresas() {
+  const { admin, normal } = sembrado;
+  const comoAdmin = { cookie: `te_sesion=${db.abrirSesion(admin.idUsuario)}`, 'cf-connecting-ip': '201.7.7.7' };
+  const comoNormal = { cookie: `te_sesion=${db.abrirSesion(normal.idUsuario)}` };
+  const verificar = (idOrg, cuerpo, cabeceras = comoAdmin) => pedir({
+    metodo: 'POST', url: `/api/admin/organizaciones/${idOrg}/verificar`, cuerpo, cabeceras,
+  });
+
+  console.log('\nEl directorio de empresas');
+  let r = await pedir({ url: '/api/admin/organizaciones', cabeceras: comoAdmin });
+  const empresas = (r.datos && r.datos.empresas) || [];
+  comprobar(r.codigo === 200 && empresas.length >= 4, 'como administrador trae las empresas dealer');
+  const a = empresas.find((e) => e.id === sembrado.dealerA.org.id);
+  comprobar(!!a && typeof a.verificada === 'boolean' && 'estado_revision' in a && 'estado_pagina' in a
+    && 'activos' in a && 'series_pendientes' in a, 'con sello, revisión, página, activos y series pendientes');
+  comprobar(!JSON.stringify(r.datos).includes('"rnc"') && !JSON.stringify(r.datos).includes('"correo"'),
+    'sin el RNC ni el correo de la cuenta');
+  comprobar(!empresas.some((e) => e.id === normal.org.id), 'y sin cuentas particulares');
+  r = await pedir({ url: '/api/admin/organizaciones?estado=aprobada', cabeceras: comoAdmin });
+  comprobar(r.datos.empresas.length > 0 && r.datos.empresas.every((e) => e.estado_revision === 'aprobada'),
+    '?estado=aprobada solo trae aprobadas');
+  r = await pedir({ url: `/api/admin/organizaciones?q=${encodeURIComponent('tractores')}`, cabeceras: comoAdmin });
+  comprobar(r.datos.empresas.length === 1 && /Tractores D/.test(r.datos.empresas[0].nombre),
+    '?q= busca por nombre sin distinguir mayúsculas');
+  r = await pedir({ url: `/api/admin/organizaciones?q=${encodeURIComponent('%')}`, cabeceras: comoAdmin });
+  comprobar(r.codigo === 200 && r.datos.empresas.length === 0, 'un «%» se busca como letra, no como comodín');
+  r = await pedir({ url: '/api/admin/organizaciones', cabeceras: comoNormal });
+  comprobar(r.codigo === 404, 'como usuario normal da 404');
+
+  console.log('\nEl sello solo a una empresa aprobada, y con motivo al retirarlo');
+  const dealerP = cuenta('dealer-p@ejemplo.test', 'Encargado P', 'Palas P, S.R.L.');
+  const idP = dealerP.org.id;
+  let n = filas();
+  r = await verificar(idP, { verificada: true });
+  comprobar(r.codigo === 409 && filas() === n && !verificada(idP), 'a un dealer pendiente: 409, sin fila ni sello');
+  r = await verificar(normal.org.id, { verificada: true });
+  comprobar(r.codigo === 409 && filas() === n, 'a una cuenta particular: 409 sin fila');
+
+  db.resolverSolicitud(solicitudDe(idP).id, { aprobar: true, idRevisor: admin.idUsuario });
+  r = await verificar(idP, { verificada: true });
+  comprobar(r.codigo === 200 && verificada(idP) && filas() === n + 1, 'aprobado: 200, sello y una fila');
+  r = await verificar(idP, { verificada: false });
+  comprobar(r.codigo === 400 && verificada(idP) && filas() === n + 1, 'retirarlo sin motivo: 400, sin fila, sigue el sello');
+  r = await verificar(idP, { verificada: false, motivo: 'Documentación mercantil vencida' });
+  const [fila] = db.bitacora({ organizacion: idP, limite: 1 });
+  comprobar(r.codigo === 200 && !verificada(idP) && filas() === n + 2, 'con motivo: 200 y el sello retirado');
+  comprobar(fila.motivo === 'Documentación mercantil vencida' && fila.antes.verificada === true
+    && fila.despues.verificada === false, 'la fila lleva el motivo y el cambio');
+  r = await verificar(idP, { verificada: true }, comoNormal);
+  comprobar(r.codigo === 404 && filas() === n + 2, 'como usuario normal: 404 sin fila');
+}
+
+/* ── Bloque «Número de serie» (fase 7, ADMIN-03) ────────── */
+async function bloqueSeries() {
+  const { admin, normal, dealerA, dealerB } = sembrado;
+  const comoAdmin = { cookie: `te_sesion=${db.abrirSesion(admin.idUsuario)}`, 'cf-connecting-ip': '201.8.8.8' };
+  const comoNormal = { cookie: `te_sesion=${db.abrirSesion(normal.idUsuario)}` };
+  const anuncio = (org, idUsuario, serie, modelo) => db.crearAnuncio({
+    idOrg: org.id, usuarioId: idUsuario, categoria: 'excavadoras', marca: 'caterpillar',
+    modelo, anio: 2018, provincia: 'santo-domingo', precio: 5000000, moneda: 'DOP',
+    vence: db.sumarDias(30), serie, fotos: ['/fotos/2026-09/placa.jpg'], telefonos: [],
+  });
+  const id1 = anuncio(dealerA.org, dealerA.idUsuario, 'CAT-0320 X', '320');
+  const id2 = anuncio(dealerB.org, dealerB.idUsuario, 'cat0320x', '320 GC');
+  const id3 = anuncio(dealerB.org, dealerB.idUsuario, null, '336');
+  const revisar = (idAnuncio, cuerpo, cabeceras = comoAdmin) => pedir({
+    metodo: 'POST', url: `/api/admin/anuncios/${idAnuncio}/serie`, cuerpo, cabeceras,
+  });
+
+  console.log('\nLa lista de series');
+  let r = await pedir({ url: '/api/admin/series?estado=pendiente', cabeceras: comoAdmin });
+  const lista = (r.datos && r.datos.series) || [];
+  const s1 = lista.find((s) => s.id === id1);
+  const s2 = lista.find((s) => s.id === id2);
+  comprobar(r.codigo === 200 && !!s1 && !!s2, 'como administrador trae las pendientes');
+  comprobar(!lista.some((s) => s.id === id3), 'y no el anuncio que no declaró serie');
+  comprobar(!!s1 && s1.repetidos === 1 && s2.repetidos === 1,
+    'la misma placa escrita distinto cuenta como repetida en el otro anuncio');
+  comprobar(!!s1 && s1.serie === 'CAT-0320 X' && s1.empresa === dealerA.org.nombre
+    && Array.isArray(s1.fotos) && s1.fotos.length === 1, 'con la serie, la empresa y las fotos para leer la placa');
+  const id4 = anuncio(dealerA.org, dealerA.idUsuario, '--', '305');
+  const id5 = anuncio(dealerA.org, dealerA.idUsuario, ' / ', '306');
+  r = await pedir({ url: '/api/admin/series?estado=pendiente', cabeceras: comoAdmin });
+  const basura = (r.datos.series || []).filter((s) => s.id === id4 || s.id === id5);
+  comprobar(basura.length === 2 && basura.every((s) => s.repetidos === 0),
+    'una «serie» hecha solo de separadores no cuenta como placa repetida');
+  r = await pedir({ url: '/api/admin/series', cabeceras: comoNormal });
+  comprobar(r.codigo === 404, 'como usuario normal da 404');
+
+  console.log('\nEl resultado de la revisión');
+  let n = filas();
+  r = await revisar(id1, { resultado: 'observada' });
+  comprobar(r.codigo === 400 && filas() === n, '«observada» sin nota: 400 y sin fila');
+  r = await revisar(id1, { resultado: 'inventado' });
+  comprobar(r.codigo === 400 && filas() === n, 'un resultado inválido: 400 y sin fila');
+  r = await revisar('no-existe', { resultado: 'conforme' });
+  comprobar(r.codigo === 404 && filas() === n, 'un anuncio inexistente: 404 y sin fila');
+  r = await revisar(id3, { resultado: 'conforme' });
+  comprobar(r.codigo === 404 && filas() === n, 'un anuncio sin serie: 404 y sin fila');
+  r = await revisar(id1, { resultado: 'conforme' }, comoNormal);
+  comprobar(r.codigo === 404 && filas() === n, 'como usuario normal: 404 y sin fila');
+
+  r = await revisar(id1, { resultado: 'conforme' });
+  const [fila] = db.bitacora({ limite: 1 });
+  comprobar(r.codigo === 200 && filas() === n + 1 && fila.accion === 'anuncio.serie',
+    '«conforme»: 200 y una fila de «anuncio.serie»');
+  comprobar(fila.organizacion_id === dealerA.org.id && fila.objeto_id === id1 && fila.ip === '201.8.8.8',
+    'sobre la organización dueña del anuncio, con el anuncio y la IP');
+  comprobar(fila.antes.revision === 'pendiente' && fila.despues.revision === 'conforme',
+    'de pendiente a conforme');
+  comprobar(!/0320/.test(JSON.stringify(fila)), 'y la fila no guarda el número de serie');
+  r = await pedir({ url: '/api/admin/series?estado=conforme', cabeceras: comoAdmin });
+  const hecha = r.datos.series.find((s) => s.id === id1);
+  comprobar(!!hecha && hecha.serie_revisada_por === 'Administradora de Prueba' && !!hecha.serie_revisada,
+    '?estado=conforme la trae, con quién y cuándo');
+
+  r = await revisar(id2, { resultado: 'observada', nota: 'La placa de la foto dice 0321, no 0320' });
+  comprobar(r.codigo === 200 && filas() === n + 2, '«observada» con nota: 200 y otra fila');
+  const sesionB = { cookie: `te_sesion=${db.abrirSesion(dealerB.idUsuario)}` };
+  r = await pedir({ url: '/api/mis-anuncios', cabeceras: sesionB });
+  const suyo = ((r.datos && r.datos.anuncios) || []).find((x) => x.id === id2);
+  comprobar(!!suyo && !!suyo.tiene_serie && suyo.serie_revision === 'observada'
+    && suyo.serie_nota === 'La placa de la foto dice 0321, no 0320',
+    'el vendedor ve en su panel el resultado y la nota');
+  const sinSerie = ((r.datos && r.datos.anuncios) || []).find((x) => x.id === id3);
+  comprobar(!!sinSerie && !sinSerie.tiene_serie, 'y el que no declaró serie sale sin ella');
+
+  r = await revisar(id2, { resultado: 'pendiente' });
+  const vuelta = db.anuncioSerie(id2);
+  comprobar(r.codigo === 200 && filas() === n + 3 && vuelta.serie_revision === null && vuelta.serie_nota === null,
+    '«pendiente» deshace: vuelve a NULL y deja su fila');
+  r = await pedir({ url: '/api/admin/organizaciones', cabeceras: comoAdmin });
+  const b = r.datos.empresas.find((e) => e.id === dealerB.org.id);
+  comprobar(!!b && b.series_pendientes === 1, 'el directorio cuenta las series pendientes de la empresa');
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · bitácora de administración\n');
   sembrar();
@@ -392,6 +529,12 @@ async function bloqueApi() {
 
   console.log('\nLa API');
   await bloqueApi();
+
+  console.log('\nEmpresas y sello');
+  await bloqueEmpresas();
+
+  console.log('\nNúmero de serie');
+  await bloqueSeries();
 
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);

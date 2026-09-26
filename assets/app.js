@@ -209,6 +209,7 @@ function avisoHTML(e) {
     <span class="aviso__pie">
       <span class="aviso__precio num">${precioTexto(e)}</span>
       ${e.ofertas ? '<span class="aviso__ofertas">Acepta ofertas</span>' : ''}
+      ${e.disponibilidad === 'bajo-pedido' ? '<span class="pastilla pastilla--ambar">Bajo pedido</span>' : ''}
     </span>
     ${e.dealer && e.esEmpresa
       ? `<span class="aviso__vendedor">${esc(e.dealer)}${e.verificado ? ` ${icono('i-check', 'ico ico--sello')}` : ''}</span>`
@@ -627,13 +628,31 @@ function montarBuscador() {
    se puede compartir, marcar y volver atrás con el botón del
    navegador, que es lo que se espera de un catálogo. */
 const CAMPOS_BUSQUEDA = ['q', 'categoria', 'subcategoria', 'marca', 'provincia',
-  'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax'];
+  'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax',
+  'disponibilidad', 'permuta', 'itbis'];
 
 const ROTULO_FILTRO = {
   q: 'Búsqueda', categoria: 'Categoría', subcategoria: 'Tipo', marca: 'Marca',
   provincia: 'Provincia', condicion: 'Condición', anioMin: 'Desde', anioMax: 'Hasta',
   precioMin: 'Desde', precioMax: 'Hasta', horasMax: 'Hasta',
+  // «Venta» y no «Condición»: ese rótulo ya es el del estado del equipo.
+  disponibilidad: 'Dónde', permuta: 'Venta', itbis: 'Venta',
 };
+
+/* Lo que dice el chip de los filtros que no son una cifra ni un nombre:
+   el valor de la URL (`bajo-pedido`, `1`) no es algo que se lea. */
+const VALOR_FILTRO = {
+  disponibilidad: { 'en-pais': 'Ya en el país', 'bajo-pedido': 'Bajo pedido' },
+  permuta: { 1: 'Acepta permuta' },
+  itbis: { 1: 'ITBIS incluido' },
+};
+
+/* El texto del chip, o '' si el valor no es uno de los conocidos. Solo
+   claves propias: con `?permuta=constructor` la búsqueda directa
+   devolvía la función heredada de Object, el filtro se daba por aplicado
+   y el chip decía «function Object() { [native code] }». */
+const textoValorFiltro = (k, v) =>
+  (Object.prototype.hasOwnProperty.call(VALOR_FILTRO[k], v) ? VALOR_FILTRO[k][v] : '');
 
 /* Enlaces de paginación. Se muestran ventanas de cinco páginas para
    que la tira no crezca sin fin cuando haya cientos. */
@@ -667,6 +686,11 @@ async function montarResultados() {
   const p = params();
   const filtros = {};
   CAMPOS_BUSQUEDA.forEach((k) => { filtros[k] = p.get(k) || ''; });
+  // Un valor que el servidor no reconoce (`permuta=si`) no filtra allí;
+  // aquí tampoco se enseña como aplicado, o el chip mentiría.
+  Object.keys(VALOR_FILTRO).forEach((k) => {
+    if (filtros[k] && !textoValorFiltro(k, filtros[k])) filtros[k] = '';
+  });
 
   const form = $('#filtros');
   const mando = $('#ordenResultados');
@@ -681,6 +705,9 @@ async function montarResultados() {
     Object.entries(filtros).forEach(([k, v]) => {
       const campo = form.elements[k];
       if (!campo || !v) return;
+      // Una casilla se marca, no se reescribe: asignarle `value`
+      // cambiaría lo que manda al enviarse y la dejaría sin marcar.
+      if (campo.type === 'checkbox') { campo.checked = v === campo.value; return; }
       if (campo.tagName === 'SELECT' && ![...campo.options].some((o) => o.value === v)) {
         campo.add(new Option(v, v));
       }
@@ -723,6 +750,7 @@ async function montarResultados() {
       q.delete(k);
       q.delete('pagina');
       const valor = k === 'categoria' ? nombreCategoria(v)
+        : VALOR_FILTRO[k] ? (textoValorFiltro(k, v) || v)
         : /precio/i.test(k) ? pesos(v)
         : k === 'horasMax' ? `${miles(v)} h`
         : v;
@@ -739,6 +767,15 @@ async function montarResultados() {
   cont.setAttribute('aria-busy', 'true');
   const r = await buscarEquipos({ ...filtros, orden: p.get('orden'), pagina: p.get('pagina') });
   cont.setAttribute('aria-busy', 'false');
+
+  // Se dice con qué cambio se compararon los dólares: un comprador que
+  // filtra «desde RD$1,000,000» y ve un precio en US$ tiene que poder
+  // entender por qué está ahí.
+  const notaTasa = $('#notaTasa');
+  if (notaTasa && r.tasaUsd && r.tasaUsd.tasa) {
+    notaTasa.textContent = `Los precios en US$ se comparan a RD$${Number(r.tasaUsd.tasa).toLocaleString('en-US')} por dólar.`;
+    notaTasa.hidden = false;
+  }
 
   if (resumen) {
     resumen.innerHTML = r.total
@@ -853,13 +890,27 @@ function videosHTML(e) {
 
 /* Medios de contacto declarados al publicar.
 
-   Cada número se ofrece por los canales que el anunciante habilitó, y
-   WhatsApp va como enlace propio con el mensaje ya redactado: en este
-   mercado la mayoría de los contactos entran por ahí, y obligar a
-   copiar el número a mano pierde la mitad de esas conversaciones. */
+   Solo se pinta un número si `t.verificado` viene en `true`: el
+   servidor (`verAnuncio`, CONF-03) ya se lo quita a quien no es el
+   dueño, pero el dueño ve su propio anuncio con los sin verificar
+   también, y este filtro es el que hace que su ficha se vea igual que
+   la ve el comprador (D-07 de la fase 9). `anuncioDeApi` no toca
+   `telefonos`: la marca de verificado y la vía llegan tal cual del API.
+
+   Cada número verificado se ofrece por los canales que el anunciante
+   habilitó, y WhatsApp va como enlace propio con el mensaje ya
+   redactado: en este mercado la mayoría de los contactos entran por
+   ahí, y obligar a copiar el número a mano pierde la mitad de esas
+   conversaciones. */
 function contactosHTML(e) {
-  const validos = (e.telefonos || []).filter((t) => t && t.numero);
-  if (!validos.length) return '';
+  const validos = (e.telefonos || []).filter((t) => t && t.numero && t.verificado);
+  if (!validos.length) {
+    return `<div class="contactos">
+      <p class="etiqueta etiqueta--bloque">Teléfonos verificados</p>
+      <p class="panel__texto">Este anunciante todavía no ha verificado ningún teléfono, así que aquí
+        no se muestra ninguno. Lea el aviso de abajo antes de tratar con él por otro medio.</p>
+    </div>`;
+  }
 
   // Los números dominicanos viajan a diez dígitos; WhatsApp los quiere
   // en formato internacional.
@@ -870,9 +921,16 @@ function contactosHTML(e) {
   };
   const mensaje = encodeURIComponent(
     `Hola, le escribo por el ${nombreEquipo(e)} publicado en MercaMaquinarias (${precioTexto(e)}).`);
+  // Por qué vía se probó cada número: por SMS prueba que el anunciante
+  // controla el teléfono; por correo prueba que el titular de la
+  // cuenta lo declara suyo (D-03 de la fase 9). No son lo mismo y la
+  // ficha no debe venderlos como si lo fueran.
+  const viaTexto = (t) => (t.via === 'sms'
+    ? 'Verificado por SMS'
+    : 'Confirmado por el anunciante desde su correo verificado');
 
   return `<div class="contactos">
-    <p class="etiqueta etiqueta--bloque">Contacto directo con el anunciante</p>
+    <p class="etiqueta etiqueta--bloque">Teléfonos verificados</p>
     ${validos.map((t) => {
       const tipo = t.tipo || 'ambos';
       const llamada = tipo === 'llamadas' || tipo === 'ambos';
@@ -880,6 +938,7 @@ function contactosHTML(e) {
       return `<div class="contactos__fila">
         <span class="contactos__num">
           <b class="num">${esc(t.numero)}</b>
+          <span class="contactos__nota">${esc(viaTexto(t))}</span>
           ${t.nota ? `<span class="contactos__nota">${esc(t.nota)}</span>` : ''}
         </span>
         <span class="contactos__acciones">
@@ -910,11 +969,22 @@ function fichaTecnicaHTML(e) {
     ['Potencia', e.potencia, 'num'],
     ['Peso operativo', e.peso, 'num'],
     ['Ubicación', [e.municipio, e.provincia].filter(Boolean).join(', ')],
+    ['Disponibilidad', e.disponibilidad === 'bajo-pedido' ? 'Bajo pedido' : 'En el país'],
   ];
   return `<dl class="ficha-tecnica">
     ${filas.filter(([, valor]) => valor).map(([rotulo, valor, clase, crudo]) =>
       `<div><dt>${esc(rotulo)}</dt><dd class="${clase || ''}">${crudo ? valor : esc(valor)}</dd></div>`).join('')}
   </dl>`;
+}
+
+/* Si la máquina ya está en el país o hay que traerla. Bajo pedido cambia
+   el plazo y, según lo pactado, el costo: se avisa de preguntar las dos
+   cosas en vez de dejar que el comprador lo descubra al cerrar. Los
+   textos son fijos, no salen del anuncio. */
+function disponibilidadHTML(e) {
+  return e.disponibilidad === 'bajo-pedido'
+    ? `<p class="detalle__disponibilidad"><b>Bajo pedido:</b> se importa tras la venta. Confirme con el vendedor el plazo de entrega y si el precio incluye flete y aduana.</p>`
+    : '<p class="detalle__disponibilidad"><b>En el país:</b> el equipo ya está en República Dominicana.</p>';
 }
 
 /* Condiciones comerciales que el anunciante marcó al publicar. Son las
@@ -1254,6 +1324,7 @@ async function montarDetalle() {
         <p class="detalle__cat">${esc(nombreCategoria(e.categoria))}${e.subcategoria ? ` · ${esc(e.subcategoria_nombre || e.subcategoria)}` : ''}</p>
         <h1 class="detalle__titulo">${esc(nombreEquipo(e))}</h1>
         <p class="detalle__sitio">${icono('i-pin')} ${esc([e.municipio, e.provincia].filter(Boolean).join(', ') || 'República Dominicana')}</p>
+        ${disponibilidadHTML(e)}
 
         <p class="etiqueta">Precio</p>
         <p class="detalle__precio num">${precioTexto(e)}</p>
@@ -1263,6 +1334,7 @@ async function montarDetalle() {
         ${fichaTecnicaHTML(e)}
 
         ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> MercaMaquinarias cotejó la existencia registral del negocio y sus datos de contacto. No certifica la calidad del equipo ni garantiza la operación.</p>` : ''}
+        ${e.serieCotejada ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Serie cotejada</span> El personal de MercaMaquinarias comprobó que el número de serie declarado coincide con la placa de las fotos y no se repite en otro anuncio. No es un certificado de propiedad ni de ausencia de robo.</p>` : ''}
 
         <!-- Espacio D del tarifario. Va entre los datos del equipo y el
              contacto del vendedor: en el teléfono la columna se apila y
@@ -1278,7 +1350,8 @@ async function montarDetalle() {
 
         <p class="detalle__aviso">MercaMaquinarias publica este anuncio pero no interviene en la transacción
           ni retiene fondos. Verifique el equipo y su documentación antes de pagar.
-          <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a>.</p>
+          <a href="contacto.html?equipo=${encodeURIComponent(e.id)}&amp;motivo=reporte">Reportar este anuncio</a> ·
+          <a href="estafas.html">Señales de estafa: qué revisar antes de pagar</a>.</p>
       </aside>
     </div>`;
 
@@ -2409,8 +2482,15 @@ function anuncioDeApi(a) {
     implementos: a.implementos,
     destacado: !!a.destacado_hasta && a.destacado_hasta > new Date().toISOString(),
     verificado: !!a.verificada,
+    // Solo `GET /api/anuncios/:id` (la ficha) lo manda; en el listado
+    // llega undefined y aquí se vuelve `false`, que es lo correcto: la
+    // tarjeta del catálogo no pinta esta nota, solo la ficha (07-06).
+    serieCotejada: !!a.serie_cotejada,
     ofertas: a.modalidad_precio === 'ofertas',
     permuta: !!a.permuta,
+    // Un anuncio sin el campo (una respuesta antigua en caché) está en
+    // el país, que es lo que afirmaba antes de existir.
+    disponibilidad: a.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
     financiamiento: !!a.financiamiento,
     itbisIncluido: !!a.itbis_incluido,
     esEmpresa: a.org_tipo === 'dealer',

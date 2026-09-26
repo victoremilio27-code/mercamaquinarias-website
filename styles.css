@@ -286,6 +286,11 @@ main { padding-block: 16px 40px; }
 
 .campo { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 10px; }
 .campo > label { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); }
+/* Rótulo de un grupo de casillas (no es un <label> de un solo control)
+   y ayuda bajo el control: los dos respetan las columnas de la rejilla,
+   o la ayuda caería en la columna estrecha del rótulo. */
+.campo > .campo__rotulo { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); align-self: start; }
+.campo > .campo-v__ayuda { grid-column: 2; margin-top: -4px; }
 
 .rango { display: flex; align-items: center; gap: 7px; }
 .rango span { font-size: 12px; color: var(--gris-acero); flex: none; }
@@ -760,6 +765,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   letter-spacing: -.01em;
 }
 .aviso__ofertas { font-size: 11px; color: var(--verde); font-weight: 600; }
+/* «Bajo pedido» en la tarjeta (fase 8). El tinte ámbar al 16 % sobre el
+   fondo gris de la tarjeta dejaba la letra a 4.45:1 en claro; al 10 %,
+   como la pastilla verde, pasa de 4.5 y en oscuro el contraste sube. */
+.aviso__pie .pastilla--ambar { background: rgba(242, 169, 0, .1); }
 
 .aviso__vendedor {
   display: flex; align-items: center; gap: 4px;
@@ -2044,6 +2053,38 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 .telefono__quitar:disabled { opacity: .35; cursor: default; }
 .telefono__quitar .ico { width: 14px; height: 14px; }
 
+/* Verificación de teléfonos (fase 9). El bloque ocupa la fila entera
+   bajo el número: en publicar va dentro de la rejilla de cinco columnas
+   de .telefono, y en el panel dentro de cada fila de la lista. Solo
+   tokens de tema, para que el comprobador de contraste siga en cero. */
+.telefono__verif { grid-column: 1 / -1; }
+.telefono__verif:empty { display: none; }
+.verif { display: grid; gap: 8px; font-size: 12.5px; color: var(--texto-2); }
+.verif__estado { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; }
+.verif__texto { color: var(--gris-acero); }
+.verif__acciones { display: flex; flex-wrap: wrap; gap: 8px; }
+.verif__acciones .btn--chico { margin-top: 0; }
+.verif__codigo { display: grid; gap: 6px; }
+.verif__destino { margin: 0; color: var(--texto-2); }
+.verif__fila { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.verif__fila .campo-v { flex: 0 1 180px; }
+.verif__fila .btn--chico { margin-top: 0; }
+.verif__aviso { margin: 0; }
+.verif__enlace {
+  padding: 0; background: none; border: 0; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--ambar-texto); text-decoration: underline;
+}
+
+.contactos-panel { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.contactos-panel__fila {
+  display: grid; gap: 8px;
+  padding: 12px 14px;
+  background: var(--hueso); border: 1px solid var(--linea); border-radius: var(--r);
+}
+.contactos-panel__num { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; }
+.contactos-panel__num b { font-size: 15px; letter-spacing: .01em; color: var(--azul); }
+.contactos-panel__num span { font-size: 12px; color: var(--gris-acero); }
+
 /* ── Planes seleccionables ──────────────────────────────── */
 
 .planes-op {
@@ -2315,6 +2356,11 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .detalle__sitio .ico { width: 14px; height: 14px; }
 
+/* En el país o bajo pedido, justo bajo la ubicación: es lo primero que
+   pregunta el comprador y cambia plazo y costo. */
+.detalle__disponibilidad { margin-top: 5px; font-size: 12.5px; line-height: 1.5; color: var(--azul); }
+.detalle__disponibilidad b { font-weight: 700; }
+
 /* Condiciones comerciales: permuta, ofertas, financiamiento. */
 .detalle__condiciones { display: grid; gap: 5px; margin: 9px 0 4px; }
 .detalle__condiciones li {
@@ -2453,6 +2499,67 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .pedido__legal a { font-weight: 600; color: var(--ambar-texto); }
 .pedido__legal a:hover { text-decoration: underline; }
+
+/* ── Pago por transferencia (fase 5) ─────────────────────────
+   Cómo se paga, dentro del resumen del pedido, y los datos para
+   transferir tras pedirlos. El mismo bloque sirve en planes.html y en
+   el panel, así que va con los tokens que giran con el tema y ningún
+   color suelto: en oscuro la tarjeta es casi negra y la letra crema
+   sin tocar nada aquí. La línea del pedido usa los mismos tokens que
+   el resto del resumen, que vive sobre --hueso. */
+.pedido__metodo {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--linea-suave);
+  font-size: 12px; line-height: 1.5; color: var(--gris-acero);
+}
+.pedido__metodo b { color: var(--azul); }
+
+.transferencia {
+  margin-top: 16px;
+  padding: 15px 16px;
+  background: var(--app-card);
+  border: 1px solid var(--app-line);
+  border-left: 3px solid var(--app-accent);
+  border-radius: var(--r-tarjeta);
+  color: var(--app-text);
+  font-size: 13px; line-height: 1.55;
+}
+.transferencia__titulo { margin: 0 0 10px; font-family: var(--display); font-weight: 700; font-size: 15px; }
+.transferencia__ref {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  margin: 0 0 12px; padding: 10px 12px;
+  background: var(--app-soft); border-radius: var(--r);
+}
+.transferencia__rotulo { font-size: 11.5px; font-weight: 600; color: var(--app-muted); }
+/* Grande y con aire entre letras: se copia a mano en la app del banco,
+   y una referencia mal tecleada es un ingreso que nadie sabe de quién es. */
+.transferencia__codigo {
+  font-family: var(--display); font-size: 20px; font-weight: 800;
+  letter-spacing: .06em; overflow-wrap: anywhere;
+}
+.transferencia__cuenta { display: grid; margin: 0 0 12px; }
+.transferencia__cuenta > div {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 14px;
+  padding: 5px 0; border-bottom: 1px solid var(--app-line);
+}
+.transferencia__cuenta > div:last-child { border-bottom: 0; }
+.transferencia__cuenta dt { color: var(--app-muted); }
+.transferencia__cuenta dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.transferencia__pasos { margin: 0 0 10px; padding-left: 18px; list-style: disc; }
+.transferencia__pasos li + li { margin-top: 4px; }
+.transferencia__nota { margin: 0; font-size: 12.5px; color: var(--app-muted); }
+.transferencia__aviso { margin: 0 0 10px; color: var(--app-text); }
+.transferencia a:not(.btn) { font-weight: 600; color: var(--ambar-texto); overflow-wrap: anywhere; }
+.transferencia a:not(.btn):hover { text-decoration: underline; }
+.transferencia__volver {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  margin: 12px 0 0; font-size: 12.5px; color: var(--app-muted);
+}
+/* La sección del panel iba sin regla propia y su título quedaba pegado
+   al párrafo de encima, sin separarse de lo que no es un pago. */
+.pagos-espera { margin: 18px 0; }
+.realce--espera a { font-weight: 600; color: var(--ambar-texto); }
+.realce--espera a:hover { text-decoration: underline; }
 
 /* Tabla de aceptaciones, en administración.
    Va dentro de un contenedor con scroll propio: cinco columnas no caben
