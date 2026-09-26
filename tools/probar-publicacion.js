@@ -740,14 +740,20 @@ db.cargarSecuencia({
     ok(rVendido.codigo === 200 && rVendido.datos.capacidadLibre === true,
       `vender libera el cupo: capacidadLibre=${rVendido.datos && rVendido.datos.capacidadLibre}`);
 
+    // Sin ninguna membresía VIVA con hueco tras vender (la única que
+    // tenía ya venció): capacidadLibre en falso, no en verdad por
+    // descuido. Vender SIEMPRE libera el cupo de su propia membresía;
+    // lo que aquí se prueba es que no hay OTRA membresía viva a la que
+    // acudir.
     const soloUnCupo = cuentaCon({ correo: `uncupo-${SELLO}@prueba.invalid` });
-    db.comprarCupos({
+    const membresiaUnica = db.comprarCupos({
       idOrg: soloUnCupo.org.id, idPlan: 'estandar', cupo: 1, dias: 30,
       cobro: { subtotal: 0, itbis: 0, total: 0, referencia: referencia('UN-CUPO') },
     });
     const f4 = await subirFoto(soloUnCupo.cabeceras);
     const rPub2 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f4, f4, f4]), cabeceras: soloUnCupo.cabeceras });
     const idUnico = ((rPub2.datos || {}).anuncio || {}).id;
+    ejecuta("UPDATE suscripciones SET estado = 'vencida' WHERE id = ?", membresiaUnica.id);
     const rVendido2 = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idUnico}`, cuerpo: { estado: 'vendido' }, cabeceras: soloUnCupo.cabeceras });
     ok(rVendido2.codigo === 200 && rVendido2.datos.capacidadLibre === false,
       `sin capacidad libre tras vender el único: capacidadLibre=${rVendido2.datos && rVendido2.datos.capacidadLibre}`);
