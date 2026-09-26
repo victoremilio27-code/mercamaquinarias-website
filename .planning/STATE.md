@@ -139,6 +139,10 @@ Progress: [█████░░░░░] 50%
   en una línea al lanzarlo. En la 05.1 eso es el 05.1-02; el 05.1-01 terminó con Opus porque ya corría.
 - Investigación, estudios de mercado, resúmenes y mapeos: Sonnet.
 - Máximo 2 agentes a la vez. Sin revisiones extra fuera de la del cierre de cada fase.
+- **Desplegar por plan (Victor, 2026-09-26):** cada plan terminado sale a producción en cuanto el CI
+  está en verde, sin esperar al cierre de la fase, siempre que no deje un flujo del usuario a medias
+  (lo de base de datos y API sale solo; las pantallas de un mismo flujo salen juntas). Un PR por tramo
+  desde la rama de la fase.
 
 Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
