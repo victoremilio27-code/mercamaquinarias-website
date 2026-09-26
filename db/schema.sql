@@ -559,7 +559,9 @@ CREATE TABLE IF NOT EXISTS pagos (
   base            INTEGER,
   ajuste          INTEGER,
   ajuste_tasa     REAL,
-  itbis_tasa      REAL
+  itbis_tasa      REAL,
+  -- Anuncio que paga este cobro (migración 2026-09-borradores); sin clave foránea: borrar el anuncio no toca el rastro del pago.
+  anuncio_id      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_pagos_org ON pagos (organizacion_id, creado);
@@ -617,6 +619,8 @@ CREATE TABLE IF NOT EXISTS anuncios (
   destacado_hasta TEXT,
   publicado       TEXT,
   vence           TEXT,                    -- NULL si lo sostiene una membresía
+  plan_elegido    TEXT,                    -- plan que eligió el particular para el borrador (migración 2026-09-borradores)
+  dias_elegidos   INTEGER,                 -- 30 o 60, los días que pagará al pedir el pago del borrador
 
   -- Cuándo se avisó de cada cosa. Fecha y no 0/1: cuando alguien
   -- reclama que no le llegó el aviso, lo que se mira es el cuándo.
