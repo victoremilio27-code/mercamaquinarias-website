@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Fase 05.1 en marcha: plan 05.1-01 (fórmula única del precio) terminado; sigue el 05.1-02."
-last_updated: "2026-09-26T01:12:00.000Z"
-last_activity: "2026-09-26 — 05.1-01: desglose con AJUSTE 0.03 en assets/precios.js, prueba node:test y paso de CI (rama claude/fase-05.1-precio-unico)."
+stopped_at: "Fase 05.1 en marcha: planes 05.1-01 y 05.1-02 terminados; sigue el 05.1-03."
+last_updated: "2026-09-26T01:15:23.332Z"
+last_activity: "2026-09-26 — 05.1-02: pagos guardan base/ajuste/tasas, precios base 1800/3200 por migración, cobroPublico sin ajuste al comprador (rama claude/fase-05.1-precio-unico)."
 progress:
   total_phases: 16
   completed_phases: 8
   total_plans: 45
-  completed_plans: 41
+  completed_plans: 42
   percent: 50
 ---
 
@@ -26,7 +26,8 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 ## Current Position
 
 **Fase 05.1 (precio único) en ejecución** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
-(fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI). Siguen 05.1-02, 05.1-03 y 05.1-04.
+(fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI) y 05.1-02 hecho (desglose
+guardado en `pagos`, precios base 1.800/3.200, ajuste fuera de las respuestas al comprador). Siguen 05.1-03 y 05.1-04.
 Lo de abajo es el estado anterior al visto bueno de Victor, que ya llegó el 2026-09-26.
 
 **Parado a propósito, por orden de Victor (2026-09-25):** terminar solo lo que estaba en marcha, sin
@@ -148,6 +149,7 @@ Decisiones que afectan al trabajo actual:
 - **Ejecución 01-01: la sintaxis de un flujo solo la valida GitHub.** No hay analizador de YAML en la máquina y no se puede añadir uno. Una revisión estructural hecha a mano dio «sin fallos» sobre un archivo que GitHub rechazó: para dar por bueno un cambio en `.github/workflows/` hay que empujar y mirar la pasada.
 - **Ejecución 02-03: el comprobador de contraste nace en rojo a propósito.** Sale 1 sobre el CSS de hoy y lista los mismos números que midió el diagnóstico. Uno que sale verde sobre un código que sabemos roto no comprueba nada, así que ése es su criterio de aceptación; lo dejan en verde los planes 02-04 y 02-05.
 - **[05.1-01]** `desglose(base)` devuelve `subtotal` = GRAVADO (base + ajuste); se conserva el nombre para que `pagos.subtotal`, `facturas.subtotal` y la tasa que deduce `emitirPorPago` cuadren sin tocarlos. Pesos enteros: ajuste e ITBIS se redondean una vez y total = subtotal + ITBIS por construcción. La tasa `0.03` solo se escribe en `assets/precios.js` (y su prueba).
+- **[05.1-02]** `precio_pactado` es la BASE antes del ajuste (en pagos viejos, con `base` NULL, el subtotal): así renovar o ampliar al pactado no cobra el 3 % dos veces. `registrarCobro` lanza 500 si el cobro no sale entero de `precios.desglose`. El seed de planes se queda en 2000/3500; lo baja la migración `2026-09-precios-base`.
 - [Phase 02]: .aviso__fotos entra en EXCEPCIONES de check-contraste (va sobre la foto, 9.01:1 a 18.91:1); .foto__sello sale por razón falsa
 
 ### Pending Todos
@@ -184,5 +186,5 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 ## Session Continuity
 
 Last session: 2026-09-26 (nube)
-Stopped at: Completado 05.1-01-PLAN.md
+Stopped at: Completado 05.1-02-PLAN.md
 Resume file: None
