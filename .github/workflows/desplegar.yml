@@ -76,6 +76,8 @@ jobs:
         run: npm run taxonomia
       - name: Numeros a letras
         run: npm run facturas:letras
+      - name: Formula del precio
+        run: npm run precios:probar
       - name: Seguridad
         run: npm run seguridad:probar
       - name: Pagina del dealer

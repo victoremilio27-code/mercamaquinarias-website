@@ -31,6 +31,7 @@
     "pagos:probar": "node tools/probar-pagos.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
+    "precios:probar": "node --test tools/precios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
     "bitacora:probar": "node tools/probar-bitacora.js",
