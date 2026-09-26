@@ -109,6 +109,15 @@ Progress: [█████░░░░░] 50%
 
 ### Decisions
 
+**Modelos, desde el 2026-09-26 (Victor, cerca del límite semanal):**
+- Perfil de GSD `balanced` (`.planning/config.json`). Opus solo para planificar, revisar y verificar
+  (el verificador y la revisión del cierre se lanzan con Opus explícito, porque `balanced` los pone en
+  Sonnet); Sonnet para ejecutar planes.
+- Excepción: un plan que toca el cálculo de ITBIS, el comprobante o los NCF lo ejecuta Opus, y se dice
+  en una línea al lanzarlo. En la 05.1 eso es el 05.1-02; el 05.1-01 terminó con Opus porque ya corría.
+- Investigación, estudios de mercado, resúmenes y mapeos: Sonnet.
+- Máximo 2 agentes a la vez. Sin revisiones extra fuera de la del cierre de cada fase.
+
 Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
 
