@@ -2802,6 +2802,294 @@ function exigirAceptacion(res, idUsuario, ids) {
   return true;
 }
 
+/* ── El borrador del particular (fase 05.2) ──────────────────
+   El anuncio nace en el servidor en cuanto el particular elige plan
+   (`estado = 'borrador'`) y solo pasa a activo cuando `pagos.confirmarPago`
+   aprueba el cobro de ESE anuncio. Mientras tanto se guarda por partes,
+   con la MISMA validación de valor que publicar, salvo los mínimos que
+   exigen estar completo. */
+
+/* T-05.2-10: una sola validación para publicar, guardar el borrador y
+   pedir su pago (plan 05.2-03). Dos copias habrían dejado que el
+   borrador aceptara algo —una foto ajena, un año fuera de rango— que el
+   pago, después, rechazaría.
+
+   `completo: true` hace EXACTAMENTE lo que hacía `publicar` antes de
+   esta fase: mismo orden, mismos textos de error, para que
+   probar-seguridad.js, probar-transferencia.js y probar-pagina-dealer.js
+   no noten el cambio. `completo: false` (el borrador) solo valida y
+   devuelve las claves presentes en `c` (`!== undefined`; fotos, videos y
+   teléfonos solo si son arrays de verdad), con los mismos formatos y
+   rangos pero sin los mínimos que exige publicar: 3 fotos, un teléfono,
+   modelo, año y precio. */
+function validarCamposAnuncio(c, plan, { completo = true } = {}) {
+  const presente = (v) => v !== undefined;
+  const datos = {};
+  const limite = new Date().getFullYear() + 1;
+
+  /* Categoría → subcategoría → marca. Al publicar se exige siempre; en
+     el borrador solo cuando llegan las tres no vacías —puede haber
+     elegido la categoría y nada más—, y si no, se guardan como texto
+     recortado, sin comprobar que encajen entre sí. */
+  const tresNoVacias = presente(c.categoria) && presente(c.subcategoria) && presente(c.marca)
+    && String(c.categoria || '').trim() && String(c.subcategoria || '').trim() && String(c.marca || '').trim();
+  if (completo || tresNoVacias) {
+    const errorCadena = taxonomia.validarCadena({
+      categoria: String(c.categoria || ''),
+      subcategoria: String(c.subcategoria || ''),
+      marca: String(c.marca || ''),
+    });
+    if (errorCadena) return { error: errorCadena };
+    if (completo || presente(c.categoria)) datos.categoria = String(c.categoria);
+    if (completo || presente(c.subcategoria)) datos.subcategoria = texto(c.subcategoria, 80);
+    if (completo || presente(c.marca)) datos.marca = texto(c.marca, 60);
+  } else {
+    if (presente(c.categoria)) datos.categoria = texto(c.categoria, 80);
+    if (presente(c.subcategoria)) datos.subcategoria = texto(c.subcategoria, 80);
+    if (presente(c.marca)) datos.marca = texto(c.marca, 80);
+  }
+
+  // Modelo: obligatorio al publicar, opcional mientras se rellena el borrador.
+  if (completo) {
+    if (!texto(c.modelo, 60)) return { error: 'Indique el modelo' };
+    datos.modelo = texto(c.modelo, 60);
+  } else if (presente(c.modelo)) {
+    datos.modelo = texto(c.modelo, 60);
+  }
+
+  // Año: 1970 al año que viene. Vacío a propósito en el borrador: se
+  // guarda como el centinela de db.js, no como un año real.
+  if (completo) {
+    const anio = entero(c.anio);
+    if (!anio || anio < 1970 || anio > limite) return { error: `Año entre 1970 y ${limite}` };
+    datos.anio = anio;
+  } else if (presente(c.anio)) {
+    if (String(c.anio).trim() === '') {
+      datos.anio = null;
+    } else {
+      const anio = entero(c.anio);
+      if (!anio || anio < 1970 || anio > limite) return { error: `Año entre 1970 y ${limite}` };
+      datos.anio = anio;
+    }
+  }
+
+  if (completo || presente(c.modalidadPrecio)) {
+    datos.modalidadPrecio = c.modalidadPrecio === 'ofertas' ? 'ofertas' : 'fijo';
+  }
+
+  // Precio: obligatorio al publicar, opcional mientras se rellena el borrador.
+  if (completo) {
+    const precio = entero(c.precio);
+    if (!precio || precio <= 0) return { error: 'Indique el precio solicitado' };
+    datos.precio = precio;
+  } else if (presente(c.precio)) {
+    if (String(c.precio).trim() === '') {
+      datos.precio = null;
+    } else {
+      const precio = entero(c.precio);
+      if (!precio || precio <= 0) return { error: 'Indique el precio solicitado' };
+      datos.precio = precio;
+    }
+  }
+
+  /* Tren motriz: solo se acepta en las subcategorías que lo piden y
+     solo de las listas. Al publicar manda la subcategoría del propio
+     cuerpo; en el borrador, que puede llegar sin ella, se valida contra
+     las listas en cuanto aparece cualquiera de los cuatro campos. */
+  const tocaTren = completo
+    ? taxonomia.pideTrenMotriz(String(c.subcategoria))
+    : (presente(c.motorMarca) || presente(c.motorModelo)
+      || presente(c.transmisionMarca) || presente(c.transmisionModelo));
+  if (tocaTren) {
+    const motor = taxonomia.MOTORES[String(c.motorMarca || '')];
+    const trans = taxonomia.TRANSMISIONES[String(c.transmisionMarca || '')];
+
+    if (c.motorMarca && !motor) return { error: 'Marca de motor no reconocida' };
+    if (c.transmisionMarca && !trans) return { error: 'Marca de transmisión no reconocida' };
+    if (c.motorModelo && motor && motor.modelos.length && !motor.modelos.includes(String(c.motorModelo))) {
+      return { error: 'Ese modelo de motor no es de esa marca' };
+    }
+    if (c.transmisionModelo && trans && trans.modelos.length
+      && !trans.modelos.includes(String(c.transmisionModelo))) {
+      return { error: 'Ese modelo de transmisión no es de esa marca' };
+    }
+
+    if (completo || presente(c.motorMarca)) datos.motorMarca = motor ? String(c.motorMarca) : null;
+    if (completo || presente(c.motorModelo)) datos.motorModelo = texto(c.motorModelo, 60);
+    if (completo || presente(c.transmisionMarca)) datos.transmisionMarca = trans ? String(c.transmisionMarca) : null;
+    if (completo || presente(c.transmisionModelo)) datos.transmisionModelo = texto(c.transmisionModelo, 60);
+  }
+
+  /* Cada foto tiene que ser una que se subió aquí: ver en `publicar` el
+     porqué (una petición fabricada podía meter treinta imágenes en
+     base64, o una URL de un tercero, dentro del JSON del anuncio). */
+  if (completo || Array.isArray(c.fotos)) {
+    const fotos = (Array.isArray(c.fotos) ? c.fotos : [])
+      .map((f) => (typeof f === 'string' ? { url: f, miniatura: null } : {
+        url: f && f.url,
+        miniatura: f && esRutaDeFoto(f.miniatura) ? f.miniatura : null,
+      }))
+      .filter((f) => f.url && esRutaDeFoto(f.url))
+      .slice(0, plan.fotos_maximas);
+    if (completo && fotos.length < 3) return { error: 'Cargue al menos 3 fotografías subidas al sitio' };
+    datos.fotos = fotos;
+  }
+
+  // Videos: mismo recorte al tope del plan que las fotos, sin mínimo.
+  if (completo || Array.isArray(c.videos)) {
+    const videosDelPlan = (Array.isArray(c.videos) ? c.videos : [])
+      .filter((v) => v && videos.archivoDe(v.url))
+      .map((v) => ({
+        url: v.url,
+        poster: esRutaDeFoto(v.poster) ? v.poster : null,
+        duracion: Number(v.duracion) || null,
+      }))
+      .slice(0, plan.videos_maximos || 0);
+    datos.videos = videosDelPlan;
+  }
+
+  if (completo || Array.isArray(c.telefonos)) {
+    const telefonos = (Array.isArray(c.telefonos) ? c.telefonos : [])
+      .filter((t) => String(t.numero || '').replace(/\D/g, '').length === 10)
+      .slice(0, 5);
+    if (completo && !telefonos.length) return { error: 'Registre al menos un teléfono de 10 dígitos' };
+    datos.telefonos = telefonos.map((t) => ({ numero: t.numero, tipo: t.tipo, nota: t.nota }));
+  }
+
+  // El resto: se normaliza si llega, sin mínimos que exigir.
+  if (completo || presente(c.condicion)) datos.condicion = texto(c.condicion, 40);
+  if (completo || presente(c.usoValor)) datos.usoValor = entero(c.usoValor);
+  if (completo || presente(c.usoUnidad)) datos.usoUnidad = c.usoUnidad === 'km' ? 'km' : 'h';
+  if (completo || presente(c.serie)) datos.serie = texto(c.serie, 60);
+  if (completo || presente(c.potencia)) datos.potencia = texto(c.potencia, 40);
+  if (completo || presente(c.peso)) datos.peso = texto(c.peso, 40);
+  if (completo || presente(c.implementos)) datos.implementos = texto(c.implementos, 500);
+  if (completo || presente(c.descripcion)) datos.descripcion = texto(c.descripcion, 4000);
+  if (completo || presente(c.provincia)) datos.provincia = texto(c.provincia, 60);
+  if (completo || presente(c.municipio)) datos.municipio = texto(c.municipio, 60);
+  if (completo || presente(c.moneda)) datos.moneda = c.moneda === 'USD' ? 'USD' : 'DOP';
+  if (completo || presente(c.precioMinimo)) datos.precioMinimo = entero(c.precioMinimo);
+  if (completo || presente(c.itbisIncluido)) datos.itbisIncluido = !!c.itbisIncluido;
+  if (completo || presente(c.permuta)) datos.permuta = !!c.permuta;
+  if (completo || presente(c.financiamiento)) datos.financiamiento = !!c.financiamiento;
+  if (completo || presente(c.disponibilidad)) {
+    datos.disponibilidad = c.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais';
+  }
+  if (completo || presente(c.video)) datos.video = texto(c.video, 300);
+
+  return { datos };
+}
+
+/* Un anuncio propio (borrador o publicado) con la forma del formulario
+   de publicar.js: extraída de `copiarAnuncio` (MET-04) para que el
+   borrador se lea con la misma forma que precarga «Duplicar». Con
+   `copia: true` la serie sale en blanco y los ids son `f-copia-N`:
+   identifica UNA máquina, y copiarla publicaría dos con la misma serie.
+   Con `copia: false` (el borrador) sale la serie guardada y los ids son
+   `f-N`, porque no hay nada que copiar: es el mismo anuncio. */
+function formaDeFormulario(a, { copia }) {
+  const t = (v) => (v == null ? '' : String(v));
+  const anio = a.anio === db.ANIO_SIN_DEFINIR ? '' : t(a.anio);
+  const telefonos = (a.telefonos || []).map((x) => ({ numero: t(x.numero), tipo: x.tipo || 'ambos', nota: t(x.nota) }));
+
+  return {
+    equipo: {
+      categoria: t(a.categoria), subcategoria: t(a.subcategoria),
+      marca: t(a.marca), modelo: t(a.modelo), anio,
+      condicion: t(a.condicion), uso: t(a.uso_valor), unidad: a.uso_unidad || 'h',
+      serie: copia ? '' : t(a.serie),
+      potencia: t(a.potencia), peso: t(a.peso),
+      provincia: t(a.provincia), ciudad: t(a.municipio),
+      implementos: t(a.implementos), descripcion: t(a.descripcion),
+      motorMarca: t(a.motor_marca), motorModelo: t(a.motor_modelo),
+      transmisionMarca: t(a.transmision_marca), transmisionModelo: t(a.transmision_modelo),
+      disponibilidad: a.disponibilidad || 'en-pais',
+    },
+    precio: {
+      modalidad: a.modalidad_precio || 'fijo',
+      monto: t(a.precio), moneda: a.moneda || 'DOP', minimo: t(a.precio_minimo),
+      itbisIncluido: !!a.itbis_incluido, permuta: !!a.permuta, financiamiento: !!a.financiamiento,
+    },
+    contacto: {
+      sucursal: t(a.sucursal_id),
+      telefonos: telefonos.length ? telefonos : [{ numero: '', tipo: 'ambos', nota: '' }],
+    },
+    fotos: (a.fotos || []).map((f, i) => ({
+      id: copia ? `f-copia-${i + 1}` : `f-${i + 1}`, nombre: `Foto ${i + 1}`, url: f.url, miniatura: f.miniatura || f.url,
+    })),
+    videos: (a.videos || []).map((v, i) => ({
+      id: copia ? `v-copia-${i + 1}` : `v-${i + 1}`, nombre: `Video ${i + 1}`, url: v.url, poster: v.poster, duracion: v.duracion,
+    })),
+  };
+}
+
+/* 409 y no 403: no es un permiso que falte, es un camino que no es el
+   suyo. El dealer sigue comprando capacidad y ocupándola al publicar
+   (D-01); la cuenta exenta publica gratis desde el asistente sin pasar
+   por el borrador ni por ningún pago. */
+function soloParticular(ctx, res) {
+  if (ctx.organizacion.tipo !== 'particular') {
+    fallo(res, 409, 'Las cuentas de empresa publican con la capacidad de su plan desde el asistente.');
+    return true;
+  }
+  if (esExenta(ctx.usuario.id)) {
+    fallo(res, 409, 'Su cuenta publica sin costo desde el asistente.');
+    return true;
+  }
+  return false;
+}
+
+/* La fila cruda de un borrador (la que devuelve `db.borradorDe`) con la
+   forma del cuerpo que manda publicar.js: lo que hace falta para saber
+   si YA se podría publicar (`completo`), sin repetir la lista de campos
+   dos veces. El centinela de año vuelve a `null`: para `publicar` un año
+   sin definir es lo mismo que ausente, no un año real. */
+function cuerpoDeBorrador(b) {
+  return {
+    categoria: b.categoria, subcategoria: b.subcategoria, marca: b.marca, modelo: b.modelo,
+    anio: b.anio === db.ANIO_SIN_DEFINIR ? null : b.anio,
+    condicion: b.condicion, usoValor: b.uso_valor, usoUnidad: b.uso_unidad,
+    serie: b.serie, potencia: b.potencia, peso: b.peso,
+    implementos: b.implementos, descripcion: b.descripcion,
+    provincia: b.provincia, municipio: b.municipio,
+    precio: b.precio, moneda: b.moneda, modalidadPrecio: b.modalidad_precio,
+    precioMinimo: b.precio_minimo, itbisIncluido: b.itbis_incluido, permuta: b.permuta,
+    financiamiento: b.financiamiento, disponibilidad: b.disponibilidad, video: b.video,
+    motorMarca: b.motor_marca, motorModelo: b.motor_modelo,
+    transmisionMarca: b.transmision_marca, transmisionModelo: b.transmision_modelo,
+    fotos: (b.fotos || []).map((f) => ({ url: f.url, miniatura: f.miniatura })),
+    videos: (b.videos || []).map((v) => ({ url: v.url, poster: v.poster, duracion: v.duracion })),
+    telefonos: (b.telefonos || []).map((t) => ({ numero: t.numero, tipo: t.tipo, nota: t.nota })),
+  };
+}
+
+/* Lo que ve el particular de su propio borrador: el precio FINAL, nunca
+   base ni ajuste (T-05.2-11, MOD-02), y si ya podría publicarse tal
+   cual, con el mismo criterio que usará el pago (plan 05.2-03). */
+function borradorPublico(b) {
+  const plan = db.planPorId(b.plan_elegido);
+  const dias = b.dias_elegidos;
+  const { error } = validarCamposAnuncio(cuerpoDeBorrador(b), plan, { completo: true });
+
+  return {
+    id: b.id,
+    estado: 'borrador',
+    plan: plan && {
+      id: plan.id, nombre: plan.nombre, fotos_maximas: plan.fotos_maximas,
+      videos_maximos: plan.videos_maximos, destacado: !!plan.destacado, activo: !!plan.activo,
+    },
+    dias,
+    pendientePago: !!b.pagoPendiente,
+    pago: b.pagoPendiente
+      ? { referencia: b.pagoPendiente.referencia, total: b.pagoPendiente.total, procesador: b.pagoPendiente.procesador }
+      : null,
+    precio: { total: precios.precioCompra({ precioUnitario: precioUnitario(plan), cupo: 1, dias }).total },
+    completo: !error,
+    falta: error || null,
+    datos: formaDeFormulario(b, { copia: false }),
+  };
+}
+
 const publicar = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PUBLICAR)) return undefined;
 
@@ -2845,99 +3133,10 @@ const publicar = conSesion(async (req, res, ctx) => {
   const plan = db.planPorId(membresia.plan_id);
   if (!plan) return fallo(res, 400, 'La membresía apunta a un nivel que ya no existe');
 
-  /* La cadena completa: categoría → subcategoría → marca. Se valida
-     aquí y no solo en la pantalla porque el navegador puede mandar
-     cualquier cosa, y una jerarquía que solo se respeta en el
-     formulario no impide nada. */
-  const errorCadena = taxonomia.validarCadena({
-    categoria: String(c.categoria || ''),
-    subcategoria: String(c.subcategoria || ''),
-    marca: String(c.marca || ''),
-  });
-  if (errorCadena) return fallo(res, 400, errorCadena);
-
-  if (!texto(c.modelo, 60)) return fallo(res, 400, 'Indique el modelo');
-
-  const anio = entero(c.anio);
-  const limite = new Date().getFullYear() + 1;
-  if (!anio || anio < 1970 || anio > limite) return fallo(res, 400, `Año entre 1970 y ${limite}`);
-
-  const modalidadPrecio = c.modalidadPrecio === 'ofertas' ? 'ofertas' : 'fijo';
-  const precio = entero(c.precio);
-  if (!precio || precio <= 0) return fallo(res, 400, 'Indique el precio solicitado');
-
-  /* Tren motriz: solo se acepta en las subcategorías que lo piden, y
-     solo de las listas. Guardarlo en una excavadora ensuciaría la
-     ficha con campos que no significan nada ahí. */
-  let tren = {};
-  if (taxonomia.pideTrenMotriz(String(c.subcategoria))) {
-    const motor = taxonomia.MOTORES[String(c.motorMarca || '')];
-    const trans = taxonomia.TRANSMISIONES[String(c.transmisionMarca || '')];
-
-    if (c.motorMarca && !motor) return fallo(res, 400, 'Marca de motor no reconocida');
-    if (c.transmisionMarca && !trans) return fallo(res, 400, 'Marca de transmisión no reconocida');
-
-    // El modelo es opcional, pero si viene tiene que ser de esa marca.
-    if (c.motorModelo && motor && motor.modelos.length && !motor.modelos.includes(String(c.motorModelo))) {
-      return fallo(res, 400, 'Ese modelo de motor no es de esa marca');
-    }
-    if (c.transmisionModelo && trans && trans.modelos.length
-      && !trans.modelos.includes(String(c.transmisionModelo))) {
-      return fallo(res, 400, 'Ese modelo de transmisión no es de esa marca');
-    }
-
-    tren = {
-      motorMarca: motor ? String(c.motorMarca) : null,
-      motorModelo: texto(c.motorModelo, 60),
-      transmisionMarca: trans ? String(c.transmisionMarca) : null,
-      transmisionModelo: texto(c.transmisionModelo, 60),
-    };
-  }
-
-  /* Cada foto tiene que ser una que se subió aquí.
-   *
-   * Los videos de tres líneas más abajo sí lo comprobaban, y la portada
-   * del sitio también; las fotos del anuncio no. Una petición fabricada
-   * podía meter treinta imágenes en base64 dentro del JSON y quedarse
-   * guardadas en la base: veinticuatro megas en un solo anuncio. Es
-   * exactamente el problema que tools/fotos.js dice en su cabecera
-   * haber venido a resolver, con la puerta de al lado abierta. Con una
-   * URL de un tercero el resultado es otro y tampoco bueno: la política
-   * de contenidos del navegador la bloquea y el catálogo se llena de
-   * imágenes rotas. */
-  const fotos = (Array.isArray(c.fotos) ? c.fotos : [])
-    .map((f) => (typeof f === 'string' ? { url: f, miniatura: null } : {
-      url: f && f.url,
-      /* La miniatura se conserva —es lo que ve el catálogo mientras
-         carga la grande— pero se valida igual, y si no pasa se deja en
-         nulo en vez de descartar la foto entera. */
-      miniatura: f && esRutaDeFoto(f.miniatura) ? f.miniatura : null,
-    }))
-    .filter((f) => f.url && esRutaDeFoto(f.url))
-    .slice(0, plan.fotos_maximas);
-  if (fotos.length < 3) {
-    return fallo(res, 400, 'Cargue al menos 3 fotografías subidas al sitio');
-  }
-
-  /* Los videos se recortan al tope del plan igual que las fotos, y se
-     comprueba que cada ruta sea de las que sirve este servidor: sin
-     eso, quien manipule la petición podría incrustar en la ficha un
-     video alojado en cualquier otro sitio. */
-  const videosDelPlan = Array.isArray(c.videos)
-    ? c.videos
-      .filter((v) => v && videos.archivoDe(v.url))
-      .map((v) => ({
-        url: v.url,
-        poster: esRutaDeFoto(v.poster) ? v.poster : null,
-        duracion: Number(v.duracion) || null,
-      }))
-      .slice(0, plan.videos_maximos || 0)
-    : [];
-
-  const telefonos = (Array.isArray(c.telefonos) ? c.telefonos : [])
-    .filter((t) => String(t.numero || '').replace(/\D/g, '').length === 10)
-    .slice(0, 5);
-  if (!telefonos.length) return fallo(res, 400, 'Registre al menos un teléfono de 10 dígitos');
+  /* Misma validación que el borrador y que pedir el pago (T-05.2-10):
+     completa, porque publicar exige estar completo. */
+  const { error: errorCampos, datos } = validarCamposAnuncio(c, plan, { completo: true });
+  if (errorCampos) return fallo(res, 400, errorCampos);
 
   // El anuncio se ancla a una sucursal. Si se pide una concreta se
   // comprueba que sea de esta organización; si no, va a la principal.
@@ -2949,33 +3148,7 @@ const publicar = conSesion(async (req, res, ctx) => {
     idSucursal: sucursal && sucursal.id,
     idUsuario: ctx.usuario.id,
     idSuscripcion: membresia.id,
-    categoria: String(c.categoria),
-    subcategoria: texto(c.subcategoria, 80),
-    marca: texto(c.marca, 60),
-    modelo: texto(c.modelo, 60),
-    anio,
-    condicion: texto(c.condicion, 40),
-    usoValor: entero(c.usoValor),
-    usoUnidad: c.usoUnidad === 'km' ? 'km' : 'h',
-    serie: texto(c.serie, 60),
-    potencia: texto(c.potencia, 40),
-    peso: texto(c.peso, 40),
-    implementos: texto(c.implementos, 500),
-    descripcion: texto(c.descripcion, 4000),
-    provincia: texto(c.provincia, 60),
-    municipio: texto(c.municipio, 60),
-    precio,
-    moneda: c.moneda === 'USD' ? 'USD' : 'DOP',
-    modalidadPrecio,
-    precioMinimo: entero(c.precioMinimo),
-    itbisIncluido: !!c.itbisIncluido,
-    permuta: !!c.permuta,
-    financiamiento: !!c.financiamiento,
-    // En el país o bajo pedido. db.crearAnuncio normaliza: lo que no
-    // sea exactamente «bajo-pedido» queda en el país.
-    disponibilidad: c.disponibilidad === 'bajo-pedido' ? 'bajo-pedido' : 'en-pais',
-    video: texto(c.video, 300),
-    ...tren,
+    ...datos,
     /* Las dos fechas salen de la membresía, no de lo que pida el
        navegador. El anuncio se publica mientras el cupo esté pagado;
        si la membresía no tiene fin —una cuenta interna— el anuncio
@@ -2983,9 +3156,6 @@ const publicar = conSesion(async (req, res, ctx) => {
        recalculan las dos en db.moverAnuncioDeSuscripcion. */
     vence: membresia.fin,
     destacadoHasta: plan.destacado ? membresia.fin : null,
-    fotos,
-    videos: videosDelPlan,
-    telefonos: telefonos.map((t) => ({ numero: t.numero, tipo: t.tipo, nota: t.nota })),
   });
 
   /* Confirmación al anunciante. Va después de responder
@@ -3041,40 +3211,113 @@ const copiarAnuncio = conSesion((req, res, ctx, idAnuncio) => {
   const a = ctx.organizacion ? db.copiaDeAnuncio(idAnuncio, ctx.organizacion.id) : null;
   if (!a) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
 
-  const t = (v) => (v == null ? '' : String(v));
-  const telefonos = a.telefonos.map((x) => ({ numero: t(x.numero), tipo: x.tipo || 'ambos', nota: t(x.nota) }));
-
   return responder(res, 200, {
     copia: {
-      equipo: {
-        categoria: t(a.categoria), subcategoria: t(a.subcategoria),
-        marca: t(a.marca), modelo: t(a.modelo), anio: t(a.anio),
-        condicion: t(a.condicion), uso: t(a.uso_valor), unidad: a.uso_unidad || 'h',
-        serie: '',
-        potencia: t(a.potencia), peso: t(a.peso),
-        provincia: t(a.provincia), ciudad: t(a.municipio),
-        implementos: t(a.implementos), descripcion: t(a.descripcion),
-        motorMarca: t(a.motor_marca), motorModelo: t(a.motor_modelo),
-        transmisionMarca: t(a.transmision_marca), transmisionModelo: t(a.transmision_modelo),
-      },
-      precio: {
-        modalidad: a.modalidad_precio || 'fijo',
-        monto: t(a.precio), moneda: a.moneda || 'DOP', minimo: t(a.precio_minimo),
-        itbisIncluido: !!a.itbis_incluido, permuta: !!a.permuta, financiamiento: !!a.financiamiento,
-      },
-      contacto: {
-        sucursal: t(a.sucursal_id),
-        telefonos: telefonos.length ? telefonos : [{ numero: '', tipo: 'ambos', nota: '' }],
-      },
-      fotos: a.fotos.map((f, i) => ({
-        id: `f-copia-${i + 1}`, nombre: `Foto ${i + 1}`, url: f.url, miniatura: f.miniatura || f.url,
-      })),
-      videos: a.videos.map((v, i) => ({
-        id: `v-copia-${i + 1}`, nombre: `Video ${i + 1}`, url: v.url, poster: v.poster, duracion: v.duracion,
-      })),
+      ...formaDeFormulario(a, { copia: true }),
       origen: { id: a.id, nombre: `${a.anio} ${a.marca_nombre || a.marca} ${a.modelo}` },
     },
   });
+});
+
+/* ── Rutas: borradores (fase 05.2) ──────────────────────────
+   Rutas propias, fuera de /api/anuncios: el borrador se guarda a
+   medias (sin las validaciones de mínimos) y `POST /api/anuncios` exige
+   estar completo y ocupar un cupo. Mezclar las dos permitiría guardar
+   por la puerta que exige estar completo, o publicar por la que no lo
+   exige (T-05.2-09, T-05.2-10). */
+
+/* Tope de borradores ABIERTOS por organización, independiente del tope
+   de 20/hora de más abajo: ese frena las peticiones seguidas, este
+   frena acumular basura sin límite a lo largo de los días. */
+const BORRADORES_ABIERTOS = 10;
+
+const crearBorradorApi = conSesion(async (req, res, ctx) => {
+  if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PUBLICAR)) return undefined;
+  if (soloParticular(ctx, res)) return undefined;
+
+  /* El mismo contador que `publicar`, a propósito: crear borradores no
+     es una segunda puerta sin límite para escribir en la base. */
+  if (!db.permitir(`publicar:${ctx.usuario.id}`, 20, 60)) {
+    return fallo(res, 429, 'Ha publicado muchos equipos seguidos. Inténtelo en un rato.');
+  }
+
+  const org = ctx.organizacion;
+  if (db.contarBorradores(org.id) >= BORRADORES_ABIERTOS) {
+    return fallo(res, 409, `Tiene ${BORRADORES_ABIERTOS} borradores sin terminar. `
+      + 'Termine o elimine alguno antes de empezar otro.');
+  }
+
+  const c = await leerCuerpo(req);
+  const plan = db.planPorId(String(c.plan || ''));
+  if (!plan || !plan.activo) return fallo(res, 400, 'Seleccione un nivel válido');
+  const dias = Number(c.dias) === 60 ? 60 : 30;
+
+  const idAnuncio = db.crearBorrador({ idOrg: org.id, idUsuario: ctx.usuario.id, idPlan: plan.id, dias });
+
+  /* Lo que manda «Duplicar» (fase 10, D-16): un borrador nuevo que nace
+     ya con los datos precargados, sin ningún atajo al pago. */
+  const hayCampos = Object.keys(c).some((k) => k !== 'plan' && k !== 'dias');
+  if (hayCampos) {
+    const { error, datos } = validarCamposAnuncio(c, plan, { completo: false });
+    if (error) {
+      db.borrarAnuncio(idAnuncio, org.id); // no dejar basura por un borrador que nunca llegó a guardarse
+      return fallo(res, 400, error);
+    }
+    db.guardarBorrador(idAnuncio, org.id, datos);
+  }
+
+  return responder(res, 201, { borrador: borradorPublico(db.borradorDe(idAnuncio, org.id)) });
+});
+
+/* Un id ajeno o inexistente reciben el mismo 404: no se confirma que el
+   borrador exista (T-05.2-07). */
+const verBorrador = conSesion((req, res, ctx, idAnuncio) => {
+  const b = db.borradorDe(idAnuncio, ctx.organizacion.id);
+  if (!b) return fallo(res, 404, 'Ese borrador no es suyo o no existe');
+  return responder(res, 200, { borrador: borradorPublico(b) });
+});
+
+const guardarBorradorApi = conSesion(async (req, res, ctx, idAnuncio) => {
+  if (!db.permitir(`borrador:${ctx.usuario.id}`, 240, 60)) {
+    return fallo(res, 429, 'Ha guardado muchos cambios seguidos. Espere un momento.');
+  }
+
+  const org = ctx.organizacion;
+  const b = db.borradorDe(idAnuncio, org.id);
+  if (!b) return fallo(res, 404, 'Ese borrador no es suyo o no existe');
+  if (b.pagoPendiente) {
+    return fallo(res, 409, 'Este borrador tiene un pago en espera de confirmación. '
+      + 'Podrá cambiar el anuncio cuando se publique.');
+  }
+
+  const c = await leerCuerpo(req);
+
+  let plan = db.planPorId(b.plan_elegido);
+  if (c.plan !== undefined) {
+    plan = db.planPorId(String(c.plan));
+    if (!plan || !plan.activo) return fallo(res, 400, 'Seleccione un nivel válido');
+  }
+  const dias = c.dias !== undefined ? (Number(c.dias) === 60 ? 60 : 30) : undefined;
+
+  const { error, datos } = validarCamposAnuncio(c, plan, { completo: false });
+  if (error) return fallo(res, 400, error);
+
+  if (c.sucursal !== undefined) {
+    const s = db.sucursal(String(c.sucursal), org.id);
+    if (s) datos.idSucursal = s.id;
+  }
+  if (c.plan !== undefined) datos.planElegido = plan.id;
+  if (dias !== undefined) datos.diasElegidos = dias;
+
+  const r = db.guardarBorrador(idAnuncio, org.id, datos);
+  if (!r.ok) {
+    return fallo(res, r.motivo === 'pago-pendiente' ? 409 : 404,
+      r.motivo === 'pago-pendiente'
+        ? 'Este borrador tiene un pago en espera de confirmación. Podrá cambiar el anuncio cuando se publique.'
+        : 'Ese borrador no es suyo o no existe');
+  }
+
+  return responder(res, 200, { borrador: borradorPublico(db.borradorDe(idAnuncio, org.id)) });
 });
 
 /* Los contactos atribuibles de la organización: qué anuncio y cuándo
@@ -3546,6 +3789,14 @@ const RUTAS = [
   ['GET',  /^\/api\/mis-anuncios$/,      misAnuncios],
   ['GET',  /^\/api\/mis-contactos$/,     misContactos],
   ['GET',  /^\/api\/mis-anuncios\/([\w-]+)\/copia$/, copiarAnuncio],
+
+  /* El borrador tiene rutas propias, fuera de /api/anuncios: se guarda
+     incompleto, y POST /api/anuncios exige estar completo y ocupar un
+     cupo (ver el porqué junto a las funciones, más arriba). */
+  ['POST', /^\/api\/borradores$/,           crearBorradorApi],
+  ['GET',  /^\/api\/borradores\/([\w-]+)$/, verBorrador],
+  ['PUT',  /^\/api\/borradores\/([\w-]+)$/, guardarBorradorApi],
+
   ['GET',  /^\/api\/anuncios\/([\w-]+)$/, verAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/plan$/, cambiarPlanDeAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
