@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Fase 05.1 en marcha: planes 05.1-01 y 05.1-02 terminados; sigue el 05.1-03."
-last_updated: "2026-09-26T01:15:23.332Z"
-last_activity: "2026-09-26 — 05.1-02: pagos guardan base/ajuste/tasas, precios base 1800/3200 por migración, cobroPublico sin ajuste al comprador (rama claude/fase-05.1-precio-unico)."
+stopped_at: "Fase 05.1 en marcha: planes 05.1-01, 05.1-02 y 05.1-03 terminados; sigue el 05.1-04."
+last_updated: "2026-09-26T02:00:00.000Z"
+last_activity: "2026-09-26 — 05.1-03: planes, panel, asistente y condiciones enseñan un solo precio final ITBIS incluido; la consola de pagos enseña base/ajuste/ITBIS/total (rama claude/fase-05.1-precio-unico)."
 progress:
   total_phases: 16
   completed_phases: 8
   total_plans: 45
-  completed_plans: 42
+  completed_plans: 43
   percent: 50
 ---
 
@@ -26,8 +26,10 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 ## Current Position
 
 **Fase 05.1 (precio único) en ejecución** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
-(fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI) y 05.1-02 hecho (desglose
-guardado en `pagos`, precios base 1.800/3.200, ajuste fuera de las respuestas al comprador). Siguen 05.1-03 y 05.1-04.
+(fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI), 05.1-02 hecho (desglose
+guardado en `pagos`, precios base 1.800/3.200, ajuste fuera de las respuestas al comprador) y 05.1-03
+hecho (planes, panel, asistente y condiciones enseñan un solo precio final «ITBIS incluido»; contratación
+sube a v2.1; la consola de pagos enseña base/ajuste/ITBIS/total). Sigue 05.1-04.
 Lo de abajo es el estado anterior al visto bueno de Victor, que ya llegó el 2026-09-26.
 
 **Parado a propósito, por orden de Victor (2026-09-25):** terminar solo lo que estaba en marcha, sin
@@ -110,6 +112,7 @@ Progress: [█████░░░░░] 50%
 | Phase 05 P04 | 35 | 2 tasks | 2 files |
 | Phase 05 P05 | 45 | 3 tasks | 1 files |
 | Phase 05.1 P01 | 3 | 2 tasks | 4 files |
+| Phase 05.1 P03 | 20 | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -150,6 +153,7 @@ Decisiones que afectan al trabajo actual:
 - **Ejecución 02-03: el comprobador de contraste nace en rojo a propósito.** Sale 1 sobre el CSS de hoy y lista los mismos números que midió el diagnóstico. Uno que sale verde sobre un código que sabemos roto no comprueba nada, así que ése es su criterio de aceptación; lo dejan en verde los planes 02-04 y 02-05.
 - **[05.1-01]** `desglose(base)` devuelve `subtotal` = GRAVADO (base + ajuste); se conserva el nombre para que `pagos.subtotal`, `facturas.subtotal` y la tasa que deduce `emitirPorPago` cuadren sin tocarlos. Pesos enteros: ajuste e ITBIS se redondean una vez y total = subtotal + ITBIS por construcción. La tasa `0.03` solo se escribe en `assets/precios.js` (y su prueba).
 - **[05.1-02]** `precio_pactado` es la BASE antes del ajuste (en pagos viejos, con `base` NULL, el subtotal): así renovar o ampliar al pactado no cobra el 3 % dos veces. `registrarCobro` lanza 500 si el cobro no sale entero de `precios.desglose`. El seed de planes se queda en 2000/3500; lo baja la migración `2026-09-precios-base`.
+- **[05.1-03]** Planes, panel, asistente y condiciones enseñan un único precio final «ITBIS incluido», sacado de `precioCompra`/`precios.desglose` (nunca una multiplicación aparte); el 3 % no se nombra en esas pantallas. La contratación sube a v2.1 (vigente 2026-09-26) para que se acepte de nuevo antes de pagar. La consola de pagos sí enseña base, ajuste, ITBIS y total; un pago anterior al desglose guardado sale «sin ajuste».
 - [Phase 02]: .aviso__fotos entra en EXCEPCIONES de check-contraste (va sobre la foto, 9.01:1 a 18.91:1); .foto__sello sale por razón falsa
 
 ### Pending Todos
@@ -186,5 +190,5 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 ## Session Continuity
 
 Last session: 2026-09-26 (nube)
-Stopped at: Completado 05.1-02-PLAN.md
+Stopped at: Completado 05.1-03-PLAN.md
 Resume file: None

@@ -158,7 +158,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **Plans**: 4 plans
 - [x] 05.1-01-PLAN.md — Fórmula única en `assets/precios.js:desglose` (AJUSTE 0.03), prueba node:test y paso de CI
 - [x] 05.1-02-PLAN.md — Migraciones del desglose en `pagos` y precios base 1.800/3.200; rutas que guardan el desglose; cuadre fiscal y rechazo sin NCF en el arnés
-- [ ] 05.1-03-PLAN.md — Precio final «ITBIS incluido» en planes, panel, asistente y condiciones (v2.1); base y ajuste en la consola de pagos
+- [x] 05.1-03-PLAN.md — Precio final «ITBIS incluido» en planes, panel, asistente y condiciones (v2.1); base y ajuste en la consola de pagos
 - [ ] 05.1-04-PLAN.md — Precio único por transferencia de punta a punta, batería completa y lista para Victor
 **UI hint**: yes
 **Notas**: Pesos enteros, como hoy (P1 por defecto: no cambia columnas ni el cliente de CardNet). La promoción del Estándar a RD$0 hasta el 2026-11-30 sigue tal cual (P3 por defecto). Los precios base los confirmó Victor el 2026-09-26; `research/precios-mercado.md` es el estudio que pidió antes de operar.
