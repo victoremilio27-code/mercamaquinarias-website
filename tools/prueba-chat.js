@@ -91,6 +91,40 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
   comprobar(!/RD\$0\b/.test(sis), 'el plan gratis no se anuncia como «RD$0»');
   comprobar(/SIN COSTO/.test(sis), 'el plan gratis se anuncia como sin costo');
 
+  /* El asistente anuncia el precio FINAL —el mismo que cobra
+     `precioCompra`/`desglose`—, nunca la base ni el 3 % de ajuste. Lo
+     esperado se calcula aquí con el mismo módulo que usa chat.js, no a
+     mano: si algún día la fórmula cambia, esta prueba cambia con ella
+     en vez de quedarse comprobando un número fijo. */
+  const db = require('./db');
+  const precios = require('../assets/precios.js');
+  const pesosProbeta = (n) => `RD$${Math.round(n).toLocaleString('en-US')}`;
+
+  comprobar(/ITBIS incluido/.test(sis), 'el prompt dice «ITBIS incluido»');
+
+  /* Solo se mira la sección de tarifas (la que arma `tarifas()`, con
+     líneas «- Nombre: precio. Hasta N fotos…»): el resto del prompt ya
+     habla de «comisión» al describir el costo de importar un equipo
+     (subasta o dealer de origen), que no tiene nada que ver con el
+     ajuste del 3 % de esta plataforma y no hay que tocarlo. */
+  const lineasTarifas = sis.split('\n').filter((l) => /^- .+: .+\. Hasta \d/.test(l)).join('\n');
+  comprobar(lineasTarifas.length > 0, 'se encontraron las líneas de tarifas en el prompt');
+  comprobar(!/ajuste|comisi[oó]n|\+ ?3 ?%/i.test(lineasTarifas),
+    'las tarifas no nombran el ajuste, la comisión ni el 3 %');
+
+  db.planes().filter((p) => !p.solo_dealer).forEach((p) => {
+    if (p.precio_vigente > 0) {
+      const total = precios.desglose(p.precio_vigente).total;
+      comprobar(sis.includes(pesosProbeta(total)), `${p.nombre}: el prompt anuncia el total ${pesosProbeta(total)}`);
+      comprobar(!sis.includes(`${pesosProbeta(p.precio_vigente)} por cupo`),
+        `${p.nombre}: el prompt NO anuncia la base ${pesosProbeta(p.precio_vigente)} por cupo`);
+    } else if (p.precio_normal) {
+      const totalNormal = precios.desglose(p.precio_normal).total;
+      comprobar(sis.includes(pesosProbeta(totalNormal)),
+        `${p.nombre} (promoción): el prompt anuncia el total normal ${pesosProbeta(totalNormal)}`);
+    }
+  });
+
   /* La caché exige que el prompt no cambie entre peticiones. */
   guion = [respuestaBuena('otra')];
   await chat.conversar([{ role: 'user', content: 'otra' }]);
