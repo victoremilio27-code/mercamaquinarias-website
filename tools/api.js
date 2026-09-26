@@ -2380,7 +2380,9 @@ const precioUnitario = (plan) =>
 
 const esExenta = (idUsuario) => !!(db.organizacionDe(idUsuario) || {}).exenta_pago;
 
-const SIN_COSTO = { subtotal: 0, itbis: 0, total: 0 };
+// Desde la misma fórmula que cualquier cobro: así el importe cero
+// también lleva base y ajuste (a 0) y se guarda igual (D-04).
+const SIN_COSTO = precios.desglose(0);
 
 const referenciaCobro = () =>
   `TE-${new Date().getFullYear()}-${db.id().slice(0, 6).toUpperCase()}`;
@@ -2422,12 +2424,13 @@ const misPlanes = conSesion((req, res, ctx) => {
       // Qué costaría el siguiente cupo, para poder decirlo en el panel
       // sin que haya que abrir el formulario. Cuando toca el gratis de
       // la regla, saberlo cambia la decisión.
-      siguiente: s.anuncios_incluidos == null ? null : precios.siguienteCupo({
+      // Sin base ni ajuste: esto va al panel del comprador (cobroPublico).
+      siguiente: s.anuncios_incluidos == null ? null : cobroPublico(precios.siguienteCupo({
         precioUnitario: s.precio_unitario,
         cupoActual: s.anuncios_incluidos,
         dias: s.dias_ciclo || 30,
         diasRestantes: precios.diasRestantes(s.fin) ?? (s.dias_ciclo || 30),
-      }),
+      })),
     })),
     exenta: esExenta(ctx.usuario.id),
   });
@@ -2470,6 +2473,16 @@ const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicad
   + 'comprobante fiscal llegan cuando confirmemos el ingreso.';
 
 const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
+
+/* El cobro tal como lo ve el comprador: sin base ni ajuste. La base al
+   lado del subtotal delata el 3 %, y al comprador solo se le enseña el
+   precio final (MOD-02). La consola lo ve entero por pagosParaConsola;
+   lo que se guarda en la base tampoco pasa por aquí. */
+const cobroPublico = (cobro) => {
+  if (!cobro) return cobro;
+  const { base, ajuste, ajusteTasa, ...resto } = cobro;
+  return resto;
+};
 const comprobantePublico = (c) => c && { numero: c.numero, tipo: c.tipo, ncf: c.ncf };
 
 /* Lo que se compró, leído de la intención guardada en el pago. Una
@@ -2586,7 +2599,7 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     const membresia = db.comprarCupos({ idOrg: org.id, idPlan: plan.id, cupo, dias, cobro });
     return responder(res, 201, {
       membresia,
-      cobro,
+      cobro: cobroPublico(cobro),
       comprobante: null,
       sesion: sesionPublica(ctx.usuario.id),
       pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
@@ -2615,18 +2628,18 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (r.estado !== 'aprobado') {
     if (pago.procesador === 'transferencia') {
       responder(res, 202, {
-        membresia: null, cobro, comprobante: null, pago: pagoPublico(r.pago),
+        membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
         aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta(),
       });
       return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
     }
     return responder(res, 202, {
-      membresia: null, cobro, comprobante: null, pago: pagoPublico(r.pago), aviso: EN_PROCESO,
+      membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago), aviso: EN_PROCESO,
     });
   }
   return responder(res, 201, {
     membresia: r.membresia,
-    cobro,
+    cobro: cobroPublico(cobro),
     comprobante: comprobantePublico(r.comprobante),
     sesion: sesionPublica(ctx.usuario.id),
     pago: pagoPublico(r.pago),
@@ -2674,7 +2687,7 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
   if (!(cobro.total > 0)) {
     const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
     return responder(res, 200, {
-      membresia, cobro, comprobante: null, pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
+      membresia, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
     });
   }
 
@@ -2707,19 +2720,19 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
   if (r.estado !== 'aprobado') {
     if (pago.procesador === 'transferencia') {
       responder(res, 202, {
-        membresia: db.suscripcion(idSusc, org.id), cobro, comprobante: null,
+        membresia: db.suscripcion(idSusc, org.id), cobro: cobroPublico(cobro), comprobante: null,
         pago: pagoPublico(r.pago), aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta(),
       });
       return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
     }
     return responder(res, 202, {
-      membresia: db.suscripcion(idSusc, org.id), cobro, comprobante: null,
+      membresia: db.suscripcion(idSusc, org.id), cobro: cobroPublico(cobro), comprobante: null,
       pago: pagoPublico(r.pago), aviso: EN_PROCESO,
     });
   }
   return responder(res, 200, {
     membresia: r.membresia,
-    cobro,
+    cobro: cobroPublico(cobro),
     comprobante: comprobantePublico(r.comprobante),
     pago: pagoPublico(r.pago),
   });

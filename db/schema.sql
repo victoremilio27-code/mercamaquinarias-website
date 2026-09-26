@@ -554,7 +554,12 @@ CREATE TABLE IF NOT EXISTS pagos (
   -- `intencion` (JSON) hasta que el dinero se confirma en `confirmado`.
   intencion       TEXT,
   confirmado      TEXT,
-  actualizado     TEXT
+  actualizado     TEXT,
+  -- Desglose del precio único (migración 2026-09-pagos-desglose); NULL = pago anterior, base = subtotal.
+  base            INTEGER,
+  ajuste          INTEGER,
+  ajuste_tasa     REAL,
+  itbis_tasa      REAL
 );
 
 CREATE INDEX IF NOT EXISTS ix_pagos_org ON pagos (organizacion_id, creado);

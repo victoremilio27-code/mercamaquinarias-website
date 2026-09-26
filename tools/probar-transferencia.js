@@ -57,6 +57,8 @@ const db = require('./db');
 const pagos = require('./pagos');
 const transferencia = require('./transferencia');
 const api = require('./api');
+const facturas = require('./facturas');
+const precios = require('../assets/precios.js');
 const { EventEmitter } = require('events');
 const { spawnSync } = require('child_process');
 
@@ -136,10 +138,10 @@ function prepararOrganizacion(idOrg, nombre) {
            VALUES (?, 'particular', ?, ?, ?)`, idOrg, nombre, t, t);
 }
 
-const cobroDe = (subtotal, etiqueta, procesador = 'transferencia') => {
-  const itbis = Math.round(subtotal * 0.18);
-  return { subtotal, itbis, total: subtotal + itbis, referencia: referencia(etiqueta), procesador };
-};
+/* El cobro sale de la fórmula única, como en las rutas: `registrarCobro`
+   rechaza un cobro armado a mano. El número que se pasa es la base. */
+const cobroDe = (base, etiqueta, procesador = 'transferencia') =>
+  ({ ...precios.desglose(base), referencia: referencia(etiqueta), procesador });
 
 const intencionCompra = (cupo = 1, dias = 30) => ({
   tipo: 'compra', idPlan: 'destacado', cupo, dias,
@@ -1059,6 +1061,115 @@ db.cargarSecuencia({
       pagos.PROCESADORES.demo = demoAntes;
     }
     ok(llamadasDemoE2E === 0, `el procesador demo se llamó ${llamadasDemoE2E} vez/veces en todo el recorrido`);
+  }
+
+  /* ── 05.1-04: precio único por transferencia, de punta a punta ───
+     Es el FISCAL de la sección 39 de research/modelo-comercial.md, por
+     el camino de cobro que ya está en producción (apagado hasta los
+     cinco datos bancarios): el ajuste del 3 % vive dentro del subtotal
+     gravado, nunca a la vista del comprador; la consola sí lo ve; el
+     comprobante cuadra; y anular un pendiente no gasta NCF.
+
+     Los importes esperados (3889, 3296, 593, 6685…) se escriben
+     literales porque son los de la tabla de la auditoría §3 que Victor
+     aprobó: si no salen, falla la fórmula, no la prueba. */
+
+  const NOMBRA_AJUSTE_33 = /ajuste|comisi[oó]n|\+ ?3 ?%/i;
+  const CORREO_CON_AJUSTE_33 = /ajuste|comisi[oó]n|\+ ?3 ?%|RD\$3,200\b/i;
+
+  console.log('\n33. Precio único por transferencia: el 3 % dentro del subtotal, el comprobante cuadra y anular no gasta NCF');
+  {
+    encender();
+    let llamadasDemo33 = 0;
+    const demoAntes33 = pagos.PROCESADORES.demo;
+    pagos.PROCESADORES.demo = async () => { llamadasDemo33++; return { resultado: 'aprobado' }; };
+    try {
+      const nueva = cuentaConLegales('precio-unico-transferencia@prueba.invalid', 'Empresa de Precio Único');
+
+      // Comprar 1 cupo Destacado 30 días: 202, total 3889, sin base ni ajuste en la respuesta.
+      const antesB02 = siguienteB02();
+      const compra = await comprar({ plan: 'destacado', cupo: 1, dias: 30 }, nueva);
+      const c = compra.datos || {};
+      ok(compra.codigo === 202 && !!c.cobro && c.cobro.total === 3889
+        && !('base' in c.cobro) && !('ajuste' in c.cobro) && !('ajusteTasa' in c.cobro),
+      `compra: código ${compra.codigo}, total ${c.cobro && c.cobro.total}, claves ${c.cobro ? Object.keys(c.cobro).join(', ') : 'sin cobro'}`);
+      const idPago = c.pago && c.pago.id;
+      const ref = c.cobro && c.cobro.referencia;
+
+      // La fila del pago: pendiente, con el desglose completo guardado.
+      const fila = idPago ? db.pagoPorId(idPago) : null;
+      ok(!!fila && fila.estado === 'pendiente' && fila.procesador === 'transferencia'
+        && fila.base === 3200 && fila.ajuste === 96 && fila.ajuste_tasa === 0.03
+        && fila.subtotal === 3296 && fila.itbis === 593 && fila.itbis_tasa === 0.18 && fila.total === 3889,
+      fila ? `base ${fila.base} ajuste ${fila.ajuste} (${fila.ajuste_tasa}) subtotal ${fila.subtotal} itbis ${fila.itbis} (${fila.itbis_tasa}) total ${fila.total}`
+        : 'sin pago');
+
+      // El correo de datos de transferencia dice el final, nunca la base ni el ajuste.
+      let alComprador = null;
+      for (let i = 0; i < 40 && !alComprador; i++) {
+        alComprador = correosCon(ref).find((x) => paraDe(x) === 'precio-unico-transferencia@prueba.invalid') || null;
+        if (!alComprador) await new Promise((r) => setTimeout(r, 50));
+      }
+      ok(!!alComprador && alComprador.texto.includes(dinero(3889)), `correo de datos con ${dinero(3889)}`);
+      ok(!!alComprador && !CORREO_CON_AJUSTE_33.test(alComprador.texto) && !CORREO_CON_AJUSTE_33.test(alComprador.html),
+        'el correo no nombra el ajuste ni la base (RD$3,200)');
+
+      // GET /api/membresias del comprador: el pendiente, sin base ni ajuste.
+      const propia = (await misMembresias(nueva)).datos || {};
+      const pend = (propia.pagosPendientes || []).find((p) => p.id === idPago);
+      ok(!!pend && !('base' in pend) && !('ajuste' in pend),
+        `pagosPendientes: ${pend ? Object.keys(pend).join(', ') : 'no encontrado'}`);
+
+      // La consola sí ve base y ajuste.
+      const consola = db.pagosParaConsola({ estado: 'pendiente' }).find((p) => p.id === idPago);
+      ok(!!consola && consola.base === 3200 && consola.ajuste === 96,
+        `consola: base ${consola && consola.base}, ajuste ${consola && consola.ajuste}`);
+
+      // Marcar recibido: B02, comprobante que cuadra, pactado = base.
+      const marcado = await recibido(idPago, { motivo: 'Ref. banco precio único' });
+      const m = marcado.datos || {};
+      ok(marcado.codigo === 200 && !!m.comprobante && /^B02\d{8}$/.test(m.comprobante.ncf || ''),
+        `marcar recibido: ${marcado.codigo}, NCF ${m.comprobante && m.comprobante.ncf}${m.error ? `, ${m.error}` : ''}`);
+      ok(siguienteB02() === antesB02 + 1, `B02 avanzó ${siguienteB02() - antesB02} (se esperaba 1)`);
+
+      const f = idPago ? db.facturaDePago(idPago) : null;
+      ok(!!f && f.subtotal === 3296 && f.itbis === 593 && f.total === 3889
+        && f.subtotal + f.itbis === f.total && !!fila && f.total === fila.total,
+      f ? `comprobante ${f.ncf}: ${f.subtotal} + ${f.itbis} = ${f.total} (cobrado ${fila && fila.total})` : 'sin comprobante');
+      /* Deducida, 593 / 3296 daba 0,1799: el comprobante guardaba una
+         tasa que no es la legal y no se podía corregir después. */
+      ok(!!f && f.itbis_tasa === 0.18, `el comprobante guarda la tasa legal: ${f && f.itbis_tasa} (se esperaba 0.18)`);
+      const s = consulta(
+        'SELECT precio_pactado FROM suscripciones WHERE organizacion_id = ? ORDER BY creada DESC LIMIT 1', nueva.org.id);
+      ok(!!s && s.precio_pactado === 3200, `precio_pactado=${s && s.precio_pactado} (se esperaba 3200)`);
+      const html = f ? facturas.comoHtml(f) : '';
+      const casa = html.match(NOMBRA_AJUSTE_33);
+      ok(!!html && !casa, casa ? `el comprobante nombra el ajuste: «${casa[0]}»` : 'el comprobante no nombra el ajuste');
+
+      // Segunda compra, Premium, anulada: sin factura ni NCF gastado.
+      const antesB02b = siguienteB02();
+      const compra2 = await comprar({ plan: 'premium', cupo: 1, dias: 30 }, nueva);
+      const c2 = compra2.datos || {};
+      ok(compra2.codigo === 202 && !!c2.cobro && c2.cobro.total === 6685,
+        `segunda compra (premium): código ${compra2.codigo}, total ${c2.cobro && c2.cobro.total}`);
+      const idPago2 = c2.pago && c2.pago.id;
+      const fila2 = idPago2 ? db.pagoPorId(idPago2) : null;
+      ok(!!fila2 && fila2.base === 5500 && fila2.ajuste === 165 && fila2.subtotal === 5665
+        && fila2.itbis === 1020 && fila2.total === 6685,
+      fila2 ? `base ${fila2.base} ajuste ${fila2.ajuste} subtotal ${fila2.subtotal} itbis ${fila2.itbis} total ${fila2.total}`
+        : 'sin pago');
+
+      const anulado = idPago2 ? await anular(idPago2, { motivo: 'Prueba: anular sin gastar NCF' }) : { codigo: 0, datos: {} };
+      const a = anulado.datos || {};
+      ok(anulado.codigo === 200 && !!a.pago && a.pago.estado === 'rechazado',
+        `anular: ${anulado.codigo}, pago ${a.pago && a.pago.estado}${a.error ? `, ${a.error}` : ''}`);
+      ok(!!idPago2 && db.pagoPorId(idPago2).estado === 'rechazado' && siguienteB02() === antesB02b
+        && facturasDelPago(idPago2) === 0,
+      `en la base: rechazado, B02 quieto (+${siguienteB02() - antesB02b}), sin factura`);
+    } finally {
+      pagos.PROCESADORES.demo = demoAntes33;
+    }
+    ok(llamadasDemo33 === 0, `el procesador demo se llamó ${llamadasDemo33} vez/veces en la sección 33`);
   }
 
   apagar();

@@ -1014,6 +1014,37 @@ const MIGRACIONES = [
       WHERE e.tipo IN ('whatsapp', 'telefono')
       GROUP BY e.anuncio_id, e.tipo, e.dia, COALESCE(e.visitante, 'sin-huella-' || e.id)`,
   ]],
+
+  /* Precio único (fase 05.1): cada pago guarda el desglose completo de
+     la fórmula base → ajuste 3 % → subtotal gravado → ITBIS → total,
+     como pide `research/modelo-comercial.md` §13. `subtotal` sigue
+     siendo el gravado, que es lo que va al comprobante.
+
+     NULL = pago anterior a esta migración: se lee como «sin ajuste»
+     (base = subtotal) y su tasa de ITBIS la sigue deduciendo
+     `facturas.emitirPorPago`. Solo se añaden columnas; ningún pago ni
+     comprobante existente se reescribe. */
+  ['2026-09-pagos-desglose', [
+    'ALTER TABLE pagos ADD COLUMN base INTEGER',
+    'ALTER TABLE pagos ADD COLUMN ajuste INTEGER',
+    'ALTER TABLE pagos ADD COLUMN ajuste_tasa REAL',
+    'ALTER TABLE pagos ADD COLUMN itbis_tasa REAL',
+  ]],
+
+  /* Los precios base bajan a propósito para que el final con el ajuste
+     y el ITBIS quede donde estaba: confirmado por Victor el 2026-09-26
+     (D-10). Premium y los planes retirados no cambian. Lo ya vendido
+     conserva su `precio_pactado`. La promoción del Estándar
+     (`precio_promocional`, `promo_hasta`) no se toca (D-11).
+
+     El seed de db/schema.sql se deja en 2000/3500 a propósito: esta
+     migración corre también sobre una base nueva y la deja igual que
+     producción. Cambiar el seed no cambiaría nada y ocultaría la
+     historia. */
+  ['2026-09-precios-base', [
+    "UPDATE planes SET precio = 1800 WHERE id = 'estandar'",
+    "UPDATE planes SET precio = 3200 WHERE id = 'destacado'",
+  ]],
 ];
 
 function migrar() {
@@ -2803,10 +2834,12 @@ const soloCero = (cobro) => {
 function anotarPago(d, { idOrg, idSusc, cobro, t }) {
   soloCero(cobro);
   d.prepare(`INSERT INTO pagos
-    (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
-    VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?)`)
+    (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador, creado,
+     base, ajuste, ajuste_tasa, itbis_tasa)
+    VALUES (?, ?, ?, ?, ?, ?, 'aprobado', ?, ?, ?, ?, ?, ?, ?)`)
     .run(id(), idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
-      cobro.referencia, cobro.total > 0 ? (cobro.procesador || 'demo') : 'sin-costo', t);
+      cobro.referencia, cobro.total > 0 ? (cobro.procesador || 'demo') : 'sin-costo', t,
+      cobro.base ?? 0, cobro.ajuste ?? 0, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null);
 }
 
 /* La página pública de la empresa la trae el nivel Premium, pero solo
@@ -2837,7 +2870,8 @@ function comprarCupos({ idOrg, idPlan, cupo, dias, cobro }) {
 
   d.prepare('BEGIN').run();
   try {
-    idSusc = otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado: cobro.subtotal, t });
+    // El pactado es la base, antes del ajuste: ver aprobarPago.
+    idSusc = otorgarCompra(d, { idOrg, plan, cupo, dias, precioPactado: cobro.base ?? cobro.subtotal, t });
     anotarPago(d, { idOrg, idSusc, cobro, t });
     d.prepare('COMMIT').run();
   } catch (e) {
@@ -2884,15 +2918,27 @@ function registrarCobro({ idOrg, idSusc = null, cobro, intencion }) {
       new Error('registrarCobro es para cobros con importe; el importe cero se aprueba al instante por su propio camino'),
       { codigo: 500 });
   }
+  /* El cobro tiene que salir entero de `precios.desglose`: el servidor
+     nunca guarda un importe armado a mano ni uno que venga del
+     navegador. Un cobro sin base o que no cuadra dejaría un
+     comprobante cuyo gravado + ITBIS no es lo cobrado, y eso ante la
+     DGII no se arregla después. */
+  if (!Number.isInteger(cobro.base) || !Number.isInteger(cobro.ajuste)
+    || cobro.subtotal !== cobro.base + cobro.ajuste || cobro.total !== cobro.subtotal + cobro.itbis) {
+    throw Object.assign(
+      new Error('El cobro no cuadra: tiene que salir de precios.desglose (base + ajuste = subtotal, subtotal + ITBIS = total)'),
+      { codigo: 500 });
+  }
   const d = abrir();
   const idPago = id();
   const t = ahora();
   d.prepare(`INSERT INTO pagos
     (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador,
-     creado, intencion, confirmado, actualizado)
-    VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?)`)
+     creado, intencion, confirmado, actualizado, base, ajuste, ajuste_tasa, itbis_tasa)
+    VALUES (?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`)
     .run(idPago, idOrg, idSusc, cobro.subtotal, cobro.itbis, cobro.total,
-      cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t);
+      cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t,
+      cobro.base, cobro.ajuste, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null);
   return pagoPorId(idPago);
 }
 
@@ -2943,7 +2989,11 @@ function aprobarPago(idPago) {
       if (!plan) throw Object.assign(new Error('Plan inexistente'), { codigo: 400 });
       idSusc = otorgarCompra(d, {
         idOrg: pago.organizacion_id, plan, cupo: intencion.cupo, dias: intencion.dias,
-        precioPactado: pago.subtotal, t,
+        /* El pactado es la base, antes del ajuste. Si guardara el
+           gravado, una renovación o ampliación al pactado (05.3/05.4)
+           le sumaría el 3 % otra vez. Un pago de antes del precio
+           único no tiene base: su subtotal era la base. */
+        precioPactado: pago.base ?? pago.subtotal, t,
       });
       d.prepare('UPDATE pagos SET suscripcion_id = ? WHERE id = ?').run(idSusc, idPago);
     } else if (intencion.tipo === 'ampliacion') {
@@ -3014,7 +3064,8 @@ function pagosParaConsola({ estado = 'pendiente', limite = 200 } = {}) {
   const tope = Math.min(Math.max(parseInt(limite, 10) || 200, 1), 500);
   return abrir().prepare(`SELECT p.id, p.organizacion_id, o.nombre AS organizacion, p.referencia,
                                  p.subtotal, p.itbis, p.total, p.estado, p.procesador, p.creado,
-                                 p.confirmado, p.actualizado, p.intencion
+                                 p.confirmado, p.actualizado, p.intencion,
+                                 p.base, p.ajuste, p.ajuste_tasa, p.itbis_tasa
                             FROM pagos p JOIN organizaciones o ON o.id = p.organizacion_id
                            WHERE p.procesador = 'transferencia' AND p.estado = ?
                            ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(e, tope)

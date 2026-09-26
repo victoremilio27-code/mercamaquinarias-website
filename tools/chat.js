@@ -91,6 +91,12 @@ function tarifas() {
   return db.planes()
     .filter((p) => !p.solo_dealer)
     .map((p) => {
+      /* El precio que se anuncia es SIEMPRE el final de
+         `precios.desglose(...).total` —la misma fórmula que cobra el
+         servidor—, nunca la base ni el 3 % de ajuste que lleva dentro:
+         antes esto multiplicaba la base a mano por (1 + ITBIS), una
+         segunda fórmula que con el ajuste ya habría dado un precio
+         distinto del que de verdad se cobra. */
       let precio;
       if (p.precio_vigente === 0) {
         /* Hoy el nivel Estándar es gratis por la promoción de
@@ -98,14 +104,12 @@ function tarifas() {
            quien pregunta el precio quiere oír «no cuesta nada». */
         precio = 'SIN COSTO por la promoción de lanzamiento'
           + (p.promo_hasta ? `, hasta el ${fechaLarga(p.promo_hasta)}` : '')
-          + (p.precio_normal ? ` (después ${pesos(p.precio_normal)} por cupo)` : '');
+          + (p.precio_normal ? ` (después ${pesos(precios.desglose(p.precio_normal).total)} por cupo, ITBIS incluido)` : '');
       } else if (p.en_promo && p.precio_normal > p.precio_vigente) {
-        precio = `${pesos(p.precio_vigente)} por cupo de 30 días en promoción `
-          + `(precio normal ${pesos(p.precio_normal)}), `
-          + `${pesos(p.precio_vigente * (1 + precios.ITBIS))} con ITBIS`;
+        precio = `${pesos(precios.desglose(p.precio_vigente).total)} por cupo de 30 días en promoción, ITBIS incluido `
+          + `(precio normal ${pesos(precios.desglose(p.precio_normal).total)}, ITBIS incluido)`;
       } else {
-        precio = `${pesos(p.precio_vigente)} por cupo de 30 días `
-          + `(${pesos(p.precio_vigente * (1 + precios.ITBIS))} con ITBIS incluido)`;
+        precio = `${pesos(precios.desglose(p.precio_vigente).total)} por cupo de 30 días, ITBIS incluido`;
       }
 
       return `- ${p.nombre}: ${precio}. Hasta ${p.fotos_maximas} fotos.`

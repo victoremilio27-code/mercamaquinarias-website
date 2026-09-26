@@ -924,7 +924,7 @@ async function montarPanel() {
     const texto = EXENTA || previo.total === 0
       ? `Añadir ${cuantoMas} ${cuantoMas === 1 ? 'cupo' : 'cupos'} sin costo. ¿Confirma?`
       : `Añadir ${cuantoMas} ${cuantoMas === 1 ? 'cupo' : 'cupos'} cuesta ${pesos(previo.total)} `
-        + `(${pesos(previo.subtotal)} + ITBIS ${pesos(previo.itbis)}) por los días que le quedan.\n\n¿Confirma?`;
+        + `(ITBIS incluido) por los días que le quedan.\n\n¿Confirma?`;
     if (!confirm(texto)) return;
 
     btn.disabled = true;

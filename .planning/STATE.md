@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: paused
-stopped_at: "Fases 5, 7, 8, 9 y 10 en producción. Modelo comercial auditado; esperando el visto bueno de Victor. Fase 6 en pausa."
-last_updated: "2026-09-26T00:30:00.000Z"
-last_activity: "2026-09-26 — Fusionados y desplegados los PR #29 (fase 5), #31 (7), #27 (8), #28 (9) y #30 (10). Auditoría del modelo comercial escrita."
+status: executing
+stopped_at: "Fase 05.1 verificada (passed) y en el PR #35; la 05.2 planificada (5 planes), por ejecutar."
+last_updated: "2026-09-26T03:00:00.000Z"
+last_activity: "2026-09-26 — 05.1-04: sección 33 de tools/probar-transferencia.js demuestra el precio único por transferencia de punta a punta; batería de 14 scripts en verde (rama claude/fase-05.1-precio-unico)."
 progress:
   total_phases: 16
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 45
-  completed_plans: 40
+  completed_plans: 44
   percent: 50
 ---
 
@@ -24,6 +24,17 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 **Current focus:** Cambio del modelo comercial (`.planning/research/modelo-comercial.md`), a la espera del visto bueno de Victor. **No se ejecuta nada hasta que él lo diga.**
 
 ## Current Position
+
+**Fase 05.1 (precio único) en ejecución** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
+(fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI), 05.1-02 hecho (desglose
+guardado en `pagos`, precios base 1.800/3.200, ajuste fuera de las respuestas al comprador), 05.1-03
+hecho (planes, panel, asistente y condiciones enseñan un solo precio final «ITBIS incluido»; contratación
+sube a v2.1; la consola de pagos enseña base/ajuste/ITBIS/total) y 05.1-04 hecho (sección 33 de
+`tools/probar-transferencia.js`: el precio único por transferencia de punta a punta, con los cuatro
+criterios de éxito de la fase comprobados juntos; batería de 14 scripts en verde; lista para Victor en
+el SUMMARY). Los cuatro planes de la fase están ejecutados; queda la verificación de cierre de fase,
+que hace el orquestador.
+Lo de abajo es el estado anterior al visto bueno de Victor, que ya llegó el 2026-09-26.
 
 **Parado a propósito, por orden de Victor (2026-09-25):** terminar solo lo que estaba en marcha, sin
 integrar el modelo comercial en el ROADMAP, sin replanificar la fase 6 y sin lanzar agentes nuevos.
@@ -104,10 +115,22 @@ Progress: [█████░░░░░] 50%
 | Phase 05 P03 | 35 | 2 tasks | 3 files |
 | Phase 05 P04 | 35 | 2 tasks | 2 files |
 | Phase 05 P05 | 45 | 3 tasks | 1 files |
+| Phase 05.1 P01 | 3 | 2 tasks | 4 files |
+| Phase 05.1 P03 | 20 | 3 tasks | 7 files |
+| Phase 05.1 P04 | 20 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
 ### Decisions
+
+**Modelos, desde el 2026-09-26 (Victor, cerca del límite semanal):**
+- Perfil de GSD `balanced` (`.planning/config.json`). Opus solo para planificar, revisar y verificar
+  (el verificador y la revisión del cierre se lanzan con Opus explícito, porque `balanced` los pone en
+  Sonnet); Sonnet para ejecutar planes.
+- Excepción: un plan que toca el cálculo de ITBIS, el comprobante o los NCF lo ejecuta Opus, y se dice
+  en una línea al lanzarlo. En la 05.1 eso es el 05.1-02; el 05.1-01 terminó con Opus porque ya corría.
+- Investigación, estudios de mercado, resúmenes y mapeos: Sonnet.
+- Máximo 2 agentes a la vez. Sin revisiones extra fuera de la del cierre de cada fase.
 
 Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
@@ -133,6 +156,10 @@ Decisiones que afectan al trabajo actual:
 - **Ejecución 01-01: el sandbox de Chrome se habilita en el runner con `sysctl`,** no metiendo `--no-sandbox` en las herramientas de `tools/`. Esas herramientas también se corren en la máquina de casa, donde el sandbox tiene que seguir puesto.
 - **Ejecución 01-01: la sintaxis de un flujo solo la valida GitHub.** No hay analizador de YAML en la máquina y no se puede añadir uno. Una revisión estructural hecha a mano dio «sin fallos» sobre un archivo que GitHub rechazó: para dar por bueno un cambio en `.github/workflows/` hay que empujar y mirar la pasada.
 - **Ejecución 02-03: el comprobador de contraste nace en rojo a propósito.** Sale 1 sobre el CSS de hoy y lista los mismos números que midió el diagnóstico. Uno que sale verde sobre un código que sabemos roto no comprueba nada, así que ése es su criterio de aceptación; lo dejan en verde los planes 02-04 y 02-05.
+- **[05.1-01]** `desglose(base)` devuelve `subtotal` = GRAVADO (base + ajuste); se conserva el nombre para que `pagos.subtotal`, `facturas.subtotal` y la tasa que deduce `emitirPorPago` cuadren sin tocarlos. Pesos enteros: ajuste e ITBIS se redondean una vez y total = subtotal + ITBIS por construcción. La tasa `0.03` solo se escribe en `assets/precios.js` (y su prueba).
+- **[05.1-02]** `precio_pactado` es la BASE antes del ajuste (en pagos viejos, con `base` NULL, el subtotal): así renovar o ampliar al pactado no cobra el 3 % dos veces. `registrarCobro` lanza 500 si el cobro no sale entero de `precios.desglose`. El seed de planes se queda en 2000/3500; lo baja la migración `2026-09-precios-base`.
+- **[05.1-04]** La sección 33 de `tools/probar-transferencia.js` demuestra los cuatro criterios de éxito de la fase 05.1 juntos en el camino de cobro real (transferencia): 1 Destacado de 30 días deja un pendiente de 3.889 con el desglose guardado, el correo dice el final sin nombrar base ni ajuste, marcar recibido emite un B02 que cuadra y anular un Premium (6.685) no gasta NCF. Solo se añadieron pruebas: no se tocó `tools/facturas.js` ni el cálculo de ITBIS/NCF.
+- **[05.1-03]** Planes, panel, asistente y condiciones enseñan un único precio final «ITBIS incluido», sacado de `precioCompra`/`precios.desglose` (nunca una multiplicación aparte); el 3 % no se nombra en esas pantallas. La contratación sube a v2.1 (vigente 2026-09-26) para que se acepte de nuevo antes de pagar. La consola de pagos sí enseña base, ajuste, ITBIS y total; un pago anterior al desglose guardado sale «sin ajuste».
 - [Phase 02]: .aviso__fotos entra en EXCEPCIONES de check-contraste (va sobre la foto, 9.01:1 a 18.91:1); .foto__sello sale por razón falsa
 
 ### Pending Todos
@@ -169,5 +196,5 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 ## Session Continuity
 
 Last session: 2026-09-26 (nube)
-Stopped at: fases 5, 7, 8, 9 y 10 publicadas; esperando el visto bueno de Victor sobre el modelo comercial
+Stopped at: Completado 05.1-04-PLAN.md
 Resume file: None

@@ -34,10 +34,15 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **v1 — Lanzamiento (2026-10-14, fecha firme)**
 
 - [ ] **Phase 1: Barrera de pruebas en la fusión** - Ninguna fusión a `main` llega a producción sin que pasen las pruebas que ya existen
-- [x] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper (completed 2026-09-25)
+- [x] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper
+ (completed 2026-09-25)
 - [ ] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma
 - [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
 - [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
+- [x] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
+- [ ] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
+- [ ] **Phase 05.3: Renovación, vencimientos y alertas** (INSERTED) - Renovar sin rehacer el anuncio, suscripciones que vencen de verdad y avisos a 7, 3 y 1 día
+- [ ] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo
 - [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
 - [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
@@ -141,6 +146,62 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **UI hint**: yes
 **Notas**: Es la contingencia de lanzamiento y es barata: quita la dependencia externa de la fecha firme, así que va bien antes de CardNet, no después. Usa exactamente la transición `pendiente → aprobado` de la Fase 3 — la misma función, no una copia. `planes.perfil_publico` se usa tal como está; no se proponen planes ni precios nuevos.
 
+### Phase 05.1: Precio único: ajuste del 3 % dentro del subtotal e ITBIS incluido (INSERTED)
+**Goal**: Que todo precio del sitio salga de una sola fórmula —base × 1,03 × 1,18—, que el comprador vea siempre el precio final con «ITBIS incluido» y que el comprobante cuadre ante la DGII con el 3 % dentro del subtotal gravado.
+**Depends on**: Phase 5
+**Requirements**: MOD-01, MOD-02, MOD-03, MOD-04
+**Success Criteria** (what must be TRUE):
+  1. `assets/precios.js` es la única fórmula: navegador y servidor dan el mismo importe para compra, ampliación y (en la 05.3) renovación, y la tasa del ajuste se cambia en un solo sitio.
+  2. Las tarjetas de planes y el resumen de pago enseñan un único precio final «ITBIS incluido»; en ninguna pantalla del comprador aparece el 3 % ni un «cargo».
+  3. Cada pago guarda base, tasa e importe del ajuste, subtotal gravado, tasa e importe de ITBIS y total; el comprobante con NCF cuadra (subtotal + ITBIS = total cobrado) y un pago rechazado no consume NCF.
+  4. Estándar y Destacado pasan a RD$1.800 y RD$3.200 de base con una migración al final; lo ya vendido conserva su `precio_pactado`.
+**Plans**: 4 plans
+- [x] 05.1-01-PLAN.md — Fórmula única en `assets/precios.js:desglose` (AJUSTE 0.03), prueba node:test y paso de CI
+- [x] 05.1-02-PLAN.md — Migraciones del desglose en `pagos` y precios base 1.800/3.200; rutas que guardan el desglose; cuadre fiscal y rechazo sin NCF en el arnés
+- [x] 05.1-03-PLAN.md — Precio final «ITBIS incluido» en planes, panel, asistente y condiciones (v2.1); base y ajuste en la consola de pagos
+- [x] 05.1-04-PLAN.md — Precio único por transferencia de punta a punta, batería completa y lista para Victor
+**UI hint**: yes
+**Notas**: Pesos enteros, como hoy (P1 por defecto: no cambia columnas ni el cliente de CardNet). La promoción del Estándar a RD$0 hasta el 2026-11-30 sigue tal cual (P3 por defecto). Los precios base los confirmó Victor el 2026-09-26; `research/precios-mercado.md` es el estudio que pidió antes de operar.
+
+### Phase 05.2: Publicar este equipo: borrador, pago y activación del particular (INSERTED)
+**Goal**: Que el particular compre «la publicación de este equipo» y no un cupo: elige plan, rellena el anuncio en un borrador guardado en el servidor, paga, y el anuncio se activa solo cuando el pago se confirma.
+**Depends on**: Phase 05.1
+**Requirements**: MOD-05, MOD-06, MOD-07, MOD-08
+**Success Criteria** (what must be TRUE):
+  1. Publicar → elegir plan → formulario → resumen → pago: el anuncio existe como `borrador` desde que elige plan y pasa a `pendiente_pago` al pedir el pago; `pagos.confirmarPago` lo activa, y ningún otro camino lo hace.
+  2. Un borrador abandonado se recupera desde el panel; un borrador o pendiente no sale en el catálogo ni en `GET /api/anuncios/:id` para nadie que no sea su dueño.
+  3. En el flujo del particular no aparece la palabra «cupo»; al marcar vendido ve «Este equipo fue vendido. Ahora puedes publicar otro equipo…».
+  4. El arnés prueba: precio manipulado desde el navegador, activar sin pago, doble pago y doble aviso, publicar dos veces con un pago y reactivar un vendido sin capacidad (este último ya cerrado en el PR #33).
+**Plans**: sin planificar
+**UI hint**: yes
+**Notas**: Por dentro sigue la cadena Plan → Suscripción → Anuncio: cada publicación del particular es una suscripción de un cupo nacida con el pago (P6/P7 por defecto: el particular puede tener varias publicaciones pagadas, cada una con su pago; los cupos ya comprados se conservan hasta que venzan). El dealer no cambia en esta fase.
+
+### Phase 05.3: Renovación manual, vencimientos y alertas de 7, 3 y 1 día (INSERTED)
+**Goal**: Que un anuncio se renueve sin rehacerlo, que lo vencido venza de verdad y que el anunciante reciba a tiempo, una sola vez, cada aviso de vencimiento.
+**Depends on**: Phase 05.2
+**Requirements**: MOD-09, MOD-10, MOD-11, MOD-12, MOD-15
+**Success Criteria** (what must be TRUE):
+  1. «Renovar anuncio» existe antes y después de vencer: mismo anuncio, fotos e historial, transacción nueva por `confirmarPago` al precio vigente, y el periodo nuevo se suma al final del actual.
+  2. Una suscripción cuya fecha pasó queda `vencida`: deja de sostener anuncios y la página pública del dealer se apaga.
+  3. Los avisos de 7 días, 3 días y 24 horas salen una sola vez por anuncio y ciclo aunque la tarea corra dos veces, y no salen si el anuncio se vendió, venció o se renovó.
+  4. La casilla «Activar renovación automática» se guarda (nunca marcada por defecto) y se desactiva desde el panel; el cobro automático queda para la Fase 6, apagado. El panel enseña «Vence el…» y el aviso visual a 7, 3 y 1 día.
+  5. Si cambian las condiciones de pago o renovación de `legal.html`, su versión sube por el mecanismo que ya existe.
+**Plans**: sin planificar
+**UI hint**: yes
+**Notas**: Usa `tools/tareas.js` y sus temporizadores; nada de infraestructura nueva. Renovar cuesta lo mismo que publicar ese plan hoy (P8 por defecto).
+
+### Phase 05.4: Dealer con capacidad de publicaciones activas y la consola del modelo nuevo (INSERTED)
+**Goal**: Que el dealer siga comprando inventario, pero lo vea como «publicaciones activas permitidas» y no como cupos, y que la consola enseñe publicaciones, pagos, renovaciones y dealers del modelo nuevo.
+**Depends on**: Phase 05.3
+**Requirements**: MOD-13, MOD-14
+**Success Criteria** (what must be TRUE):
+  1. El panel del dealer resume publicaciones activas, vendidas y vencidas, capacidad disponible, plan y fecha de vencimiento; ninguna pantalla del dealer dice «cupos».
+  2. «Agregar publicaciones activas» cobra el prorrateo con la fórmula de la 05.1, sin doble cobro, y la regla de uno gratis por cada cinco se conserva.
+  3. La consola lista publicaciones por estado, pagos con base, ajuste (solo ahí), ITBIS y total, renovaciones y dealers con su capacidad; toda escritura en nombre de otro pasa por la bitácora.
+**Plans**: sin planificar
+**UI hint**: yes
+**Notas**: Queda por decidir (P9) si ampliar se cobra al precio pactado o al vigente; por defecto al precio de lista del plan, que es lo que ya hace hoy.
+
 ### Phase 6: CardNet construido, probado y apagado
 **Goal**: Que la integración de cobro con CardNet esté escrita, probada y lista para certificar, entregada apagada tras un interruptor, para que el día de la afiliación sea encender y no construir.
 **Depends on**: Phase 3, Phase 5
@@ -162,6 +223,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] 06-08-PLAN.md — Los cinco criterios de extremo a extremo, batería completa apagado y procedimiento de encendido en deploy/README.md
 **UI hint**: yes
 **Notas**: PCI es frontera dura — la tokenización ocurre en el navegador; ninguna ruta nuestra puede recibir datos de tarjeta. Diseño completo en `.planning/research/cardnet.md`: módulo `tools/cardnet.js` con `https.request` a mano y cero dependencias, `POST /v1/api/purchase` para el primer cobro y las renovaciones, ruta de notificación antes de cualquier patrón genérico `/api/pagos/...`, autenticada con `crypto.timingSafeEqual` y sin limitador por IP. Las claves de QA publicadas por CardNet no entran al repositorio ni a `.env.example`. Pruebas con arnés propio (`tools/probar-pagos.js`) y doble de `tools/cardnet.js`: la red no se toca; las variables de entorno se fijan **antes** del `require` de `tools/db.js`. Queda una pregunta abierta de mayor impacto para CardNet: confirmar que `DataDo.Invoice` es un número de orden del comercio y no el NCF de la DGII.
+**Replanificar desde el 06-02 (2026-09-26):** el modelo comercial (fases 05.1-05.4) cambia a quién se cobra: la renovación automática es por publicación del particular (una suscripción de un cupo por publicación) y por capacidad del dealer, con la casilla de consentimiento que ya guarda la 05.3, y el importe sale de la fórmula única de la 05.1. La migración del 06-02 a medias (`claude/fase-06-cardnet`, commit «wip») se rehace contra ese modelo.
 
 ### Phase 7: Verificación y soporte en nombre del dealer
 **Goal**: Que el personal pueda hacer desde el sitio todo lo que hoy exige una terminal o es imposible: verificar una organización, revisar un número de serie y arreglar la página de un dealer por él.

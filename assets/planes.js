@@ -133,7 +133,11 @@ function pintarMisCupos() {
 
 function tarjetaNivel(n) {
   const elegido = n.id === NIVEL_ELEGIDO;
-  const porCupo = Math.round(unitario(n) * duracion(DIAS_PLAN).factor);
+  /* Antes la tarjeta enseñaba el precio antes de ITBIS y el resumen lo
+     desglosaba (auditoría §4.6); ahora la tarjeta ya enseña el precio
+     final, sacado de la misma fórmula que cobra el servidor —nunca una
+     multiplicación aparte que pudiera desajustarse del cobro real. */
+  const total = precioCompra({ precioUnitario: unitario(n), cupo: 1, dias: DIAS_PLAN }).total;
 
   const rasgos = [
     `Hasta ${n.fotos_maximas} fotografías por equipo`,
@@ -156,8 +160,8 @@ function tarjetaNivel(n) {
             : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
         <span class="plan-op__nombre">${esc(n.nombre)}</span>
       </span>
-      <span class="plan-op__precio num">${EXENTA_PLAN ? 'Sin costo' : pesos(porCupo)}</span>
-      <span class="plan-op__periodo">por equipo · ${DIAS_PLAN} días</span>
+      <span class="plan-op__precio num">${EXENTA_PLAN ? 'Sin costo' : pesos(total)}</span>
+      <span class="plan-op__periodo">${EXENTA_PLAN || total === 0 ? `por equipo · ${DIAS_PLAN} días` : `por equipo · ${DIAS_PLAN} días · ITBIS incluido`}</span>
       <ul class="plan-op__incluye">
         ${rasgos.map((i) => `<li>${icono('i-check')} ${esc(i)}</li>`).join('')}
       </ul>
@@ -224,12 +228,10 @@ function pintarPedido() {
        <p class="pedido__vacio">${icono('i-check')} Su cuenta publica sin pagar y sin límite de equipos.</p>`
     : `<h3 class="pedido__titulo">Resumen</h3>
        <dl class="pedido__lista">
-         <div><dt>${esc(ped.nivel.nombre)} · ${ped.cupo} ${ped.cupo === 1 ? 'equipo' : 'equipos'}</dt>
-           <dd class="num">${pesos(ped.subtotal)}</dd></div>
+         <div><dt>${esc(ped.nivel.nombre)} · ${ped.cupo} ${ped.cupo === 1 ? 'equipo' : 'equipos'}</dt></div>
          <div><dt>Vigencia</dt><dd class="num">${DIAS_PLAN} días · hasta el ${fechaLarga(venceIso)}</dd></div>
          ${ped.gratis ? `<div><dt>Cupos de regalo</dt><dd class="num">${ped.gratis}</dd></div>` : ''}
-         <div><dt>ITBIS (${Math.round(ITBIS * 100)} %)</dt><dd class="num">${pesos(ped.itbis)}</dd></div>
-         <div class="pedido__total"><dt>Total</dt><dd class="num">${pesos(ped.total)}</dd></div>
+         <div class="pedido__total"><dt>Total · ITBIS incluido</dt><dd class="num">${pesos(ped.total)}</dd></div>
        </dl>
        ${pagaPorTransferencia(ped)
     ? `<p class="pedido__metodo"><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; los cupos y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`

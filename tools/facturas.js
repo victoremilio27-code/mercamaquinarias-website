@@ -539,8 +539,17 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
     itbis: pago.itbis,
     /* La tasa se deduce de lo cobrado, no de la constante: si un día el
        ITBIS cambia, un pago viejo que se facture tarde tiene que
-       llevar la tasa con la que se cobró. */
-    itbisTasa: pago.subtotal ? Math.round((pago.itbis / pago.subtotal) * 10000) / 10000 : precios.ITBIS,
+       llevar la tasa con la que se cobró.
+
+       Desde la fase 05.1 el pago guarda esa tasa, y es la que manda.
+       Deducirla ya no sirve: el subtotal lleva dentro el ajuste y el
+       ITBIS se redondea a pesos, así que 593 / 3296 da 0,1799 y el
+       comprobante habría guardado una tasa que no es la legal, sin
+       poder corregirse después. Los pagos anteriores, sin tasa
+       guardada, siguen deduciéndola como siempre. */
+    itbisTasa: pago.itbis_tasa != null
+      ? pago.itbis_tasa
+      : (pago.subtotal ? Math.round((pago.itbis / pago.subtotal) * 10000) / 10000 : precios.ITBIS),
     total: pago.total,
     moneda: pago.moneda || 'DOP',
     condicionPago: 'Pagado',

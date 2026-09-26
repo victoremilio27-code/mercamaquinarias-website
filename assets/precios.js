@@ -27,10 +27,31 @@
       cuando le quedan doce de treinta días paga esos doce días, no
       un ciclo entero. No se fía nada: se cobra en el momento y la
       fecha de renovación no se mueve.
+
+   ── Cómo se llega al precio final ──────────────────────────
+   Las reglas de arriba dan la BASE. De la base al precio final solo
+   se llega por `desglose`: ajuste, subtotal gravado e ITBIS, en ese
+   orden y en ningún otro sitio. Ver el comentario de AJUSTE.
    ═══════════════════════════════════════════════════════════ */
 
 /* ITBIS sobre servicios de publicidad. */
 const ITBIS = 0.18;
+
+/* Ajuste del modelo comercial (research/modelo-comercial.md §12,
+   autorizado por Victor el 2026-09-25):
+
+     subtotal gravado = base × (1 + AJUSTE)
+     ITBIS            = subtotal gravado × ITBIS
+     precio final     = subtotal gravado + ITBIS
+
+   El ajuste va ANTES del ITBIS, dentro del subtotal gravado. Si se
+   sumara después, el ITBIS del comprobante con NCF se calcularía
+   sobre menos de lo cobrado y no cuadraría ante la DGII.
+
+   Esta es la única fuente de la tasa: ningún otro módulo escribe el
+   0.03. Al comprador nunca se le enseña como cargo, comisión ni
+   «+3 %»: ve un solo precio final con el ITBIS incluido. */
+const AJUSTE = 0.03;
 
 /* Un cupo gratis por cada cuantos se compren. */
 const CUPOS_POR_UNO_GRATIS = 5;
@@ -69,8 +90,8 @@ const ahorro60 = () => Math.round((1 - RECARGO_60 / 2) * 100);
    se pactó. */
 function precioCompra({ precioUnitario, cupo, dias }) {
   const cobrados = cuposCobrados(cupo);
-  const subtotal = Math.round(Number(precioUnitario) * cobrados * duracion(dias).factor);
-  return desglose(subtotal, { cupo: Math.trunc(cupo), cobrados, gratis: cuposGratis(cupo), dias: duracion(dias).dias });
+  const base = Math.round(Number(precioUnitario) * cobrados * duracion(dias).factor);
+  return desglose(base, { cupo: Math.trunc(cupo), cobrados, gratis: cuposGratis(cupo), dias: duracion(dias).dias });
 }
 
 /* ── Ampliación a mitad de ciclo ────────────────────────────
@@ -83,10 +104,10 @@ function precioAmpliacion({ precioUnitario, cupoActual, cupoNuevo, dias, diasRes
   const restantes = Math.max(0, Math.min(Number(diasRestantes), d.dias));
   const diferencia = cuposCobrados(cupoNuevo) - cuposCobrados(cupoActual);
 
-  const subtotal = diferencia <= 0 ? 0
+  const base = diferencia <= 0 ? 0
     : Math.round(Number(precioUnitario) * diferencia * d.factor * (restantes / d.dias));
 
-  return desglose(subtotal, {
+  return desglose(base, {
     cupo: Math.trunc(cupoNuevo),
     anade: Math.trunc(cupoNuevo) - Math.trunc(cupoActual),
     cobrados: diferencia,
@@ -103,10 +124,26 @@ function precioAmpliacion({ precioUnitario, cupoActual, cupoNuevo, dias, diasRes
 const precioRenovacion = ({ precioUnitario, cupo, dias }) =>
   precioCompra({ precioUnitario, cupo, dias });
 
-function desglose(subtotal, extra = {}) {
-  const base = Math.max(0, Math.round(subtotal));
-  const itbis = Math.round(base * ITBIS);
-  return { subtotal: base, itbis, total: base + itbis, ...extra };
+/* De la base al precio final. Pesos enteros (D-03 de la fase 05.1):
+   `aCentavos` del cobro con tarjeta lanza con decimales, así que cada
+   importe se redondea una sola vez y el total es la suma exacta de
+   subtotal e ITBIS, sin un tercer redondeo que pueda descuadrarlo.
+
+   `subtotal` es el GRAVADO (base + ajuste), no la base. Antes del
+   ajuste era lo mismo; ahora no, y por eso se llama igual que antes:
+   `pagos.subtotal`, `facturas.subtotal` y la tasa que deduce
+   `facturas.emitirPorPago` (itbis / subtotal) siguen cuadrando sin
+   tocarlos. Una base cero o negativa da todo cero (promoción, D-04). */
+function desglose(base, extra = {}) {
+  const b = Math.max(0, Math.round(Number(base) || 0));
+  const ajuste = Math.round(b * AJUSTE);
+  const subtotal = b + ajuste;
+  const itbis = Math.round(subtotal * ITBIS);
+  return {
+    base: b, ajusteTasa: AJUSTE, ajuste, subtotal,
+    itbisTasa: ITBIS, itbis, total: subtotal + itbis,
+    ...extra,
+  };
 }
 
 /* Días que faltan para una fecha ISO, nunca negativos: para prorratear,
@@ -164,7 +201,7 @@ function precioEnPesos(precio, moneda, tasa = TASA_USD_POR_DEFECTO) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    ITBIS, CUPOS_POR_UNO_GRATIS, RECARGO_60, DURACIONES, CUPO_MAXIMO,
+    ITBIS, AJUSTE, CUPOS_POR_UNO_GRATIS, RECARGO_60, DURACIONES, CUPO_MAXIMO,
     duracion, cuposGratis, cuposCobrados, ahorro60,
     precioCompra, precioAmpliacion, precioRenovacion, desglose,
     diasRestantes, siguienteCupo,
