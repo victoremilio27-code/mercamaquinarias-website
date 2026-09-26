@@ -702,6 +702,13 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 /* Dentro del panel de resultados, con el filtro al lado, caben cuatro. */
 .rejilla--panel { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+/* Guardados (fase 10): la tarjeta de siempre y, debajo y fuera del
+   enlace, el botón de quitar. */
+.guardados { margin-top: 14px; }
+.guardado { display: grid; gap: 8px; align-content: start; }
+.guardado__quitar { justify-self: start; margin-left: 0; }
+.guardados__retirados { margin-top: 14px; }
+
 .aviso a { display: grid; gap: 2px; }
 
 .aviso__foto {
@@ -1438,6 +1445,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
    vecino, que no lo tiene, queda descolgado unos píxeles. */
 .campo-v { display: grid; gap: 5px; align-content: start; }
 .campo-v--ancho { grid-column: 1 / -1; }
+
+/* Filtros de «Contactos recibidos» en el panel (fase 10). */
+.contactos-filtros { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.contactos-filtros .campo-v { min-width: 200px; }
 /* `.campo-v__rotulo` es un <label for> y hace de rótulo cuando el campo
    no puede ir envuelto en la etiqueta: un <label> dentro de otro
    <label> no es HTML válido, y el campo con casilla de «No aplica»
@@ -2357,6 +2368,19 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   font-size: 12.5px; color: var(--azul);
 }
 .detalle__condiciones .ico { width: 14px; height: 14px; color: var(--verde); stroke-width: 2.4; flex: none; }
+
+/* Guardar y compartir, bajo el precio (fase 10). Botones de línea como
+   los demás de la ficha: la acción principal sigue siendo contactar. */
+.detalle__acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; }
+.btn--accion { height: 34px; padding: 0 14px; font-size: 13px; }
+.btn--accion .ico { width: 15px; height: 15px; }
+.btn--accion.is-activo { border-color: var(--ambar); background: var(--sup-calida); }
+.btn--accion.is-activo .ico { fill: currentColor; }
+.detalle__enlace-guardados { font-size: 12.5px; font-weight: 600; color: var(--ambar-texto); }
+.detalle__enlace-guardados:hover { text-decoration: underline; }
+.detalle__compartir { display: flex; gap: 7px; margin: 6px 0 4px; }
+.detalle__estado { min-height: 1em; margin-top: 4px; font-size: 12px; color: var(--gris-acero); }
+.detalle__estado:empty { margin-top: 0; min-height: 0; }
 
 .detalle__aviso {
   margin-top: 12px; padding-top: 11px;

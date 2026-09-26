@@ -104,10 +104,19 @@ function bloqueBase() {
   const { a, b, anuncioA } = sembrado;
   const idA = a.org.id;
 
+  /* Antes exigía que fuera LA última, y eso se rompe en cuanto otra fase
+     añade una detrás (la fase 10 lo hizo). Lo que importa es que se
+     aplicó y que va después de todas las que ya estaban en producción. */
   console.log('\nLa migración va al final');
-  const ultima = db.abrir().prepare('SELECT id FROM migraciones ORDER BY rowid DESC LIMIT 1').get();
-  comprobar(ultima && ultima.id === '2026-09-contactos-verificados',
-    'la última migración aplicada es la de contactos verificados');
+  const orden = (id) => {
+    const f = db.abrir().prepare('SELECT rowid AS n FROM migraciones WHERE id = ?').get(id);
+    return f ? f.n : null;
+  };
+  const nuestra = orden('2026-09-contactos-verificados');
+  comprobar(nuestra != null, 'la migración de contactos verificados está aplicada');
+  comprobar(['2026-09-bitacora-admin', '2026-09-serie-revision', '2026-09-anuncios-disponibilidad']
+    .every((id) => orden(id) != null && orden(id) < nuestra),
+    'va después de las migraciones que ya estaban en producción');
 
   console.log('\nLos números se comparan en dígitos');
   comprobar(db.normalizarNumero('(809) 555-1234') === '8095551234', '«(809) 555-1234» → 8095551234');

@@ -979,6 +979,41 @@ const MIGRACIONES = [
        UNIQUE (organizacion_id, numero)
      )`,
   ]],
+
+  /* Contactos atribuibles (MET-03). El panel sumaba los clics de
+     WhatsApp y de llamada, pero no decía de qué anuncio ni cuándo, y
+     sin eso el dealer no puede atribuirle una venta al sitio: es lo
+     primero que pregunta al renovar.
+
+     Tabla propia y no una consulta sobre `eventos`, porque los eventos
+     crudos se purgan a los noventa días (ver `purgar`) y la renovación
+     puede ser al año. Guarda UNA fila por contacto CONTADO —el primero
+     de cada visitante, canal y día, el mismo criterio del agregado—, así
+     que la lista y el total del panel siempre cuadran.
+
+     Sin la huella del visitante, a propósito: para atribuir basta el
+     anuncio y la hora, y lo que no se guarda no se puede filtrar.
+
+     El INSERT rellena con lo que `eventos` todavía conserva; los
+     eventos sin huella cuentan cada uno por separado, igual que los
+     contó `anotarEvento`. */
+  ['2026-09-contactos-anuncio', [
+    `CREATE TABLE IF NOT EXISTS contactos_anuncio (
+       id               INTEGER PRIMARY KEY AUTOINCREMENT,
+       anuncio_id       TEXT NOT NULL REFERENCES anuncios(id) ON DELETE CASCADE,
+       organizacion_id  TEXT NOT NULL,
+       canal            TEXT NOT NULL CHECK (canal IN ('whatsapp', 'telefono')),
+       dia              TEXT NOT NULL,
+       creado           TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_contactos_anuncio_org ON contactos_anuncio (organizacion_id, creado)',
+    'CREATE INDEX IF NOT EXISTS ix_contactos_anuncio_anuncio ON contactos_anuncio (anuncio_id)',
+    `INSERT INTO contactos_anuncio (anuncio_id, organizacion_id, canal, dia, creado)
+     SELECT e.anuncio_id, a.organizacion_id, e.tipo, e.dia, MIN(e.creado)
+       FROM eventos e JOIN anuncios a ON a.id = e.anuncio_id
+      WHERE e.tipo IN ('whatsapp', 'telefono')
+      GROUP BY e.anuncio_id, e.tipo, e.dia, COALESCE(e.visitante, 'sin-huella-' || e.id)`,
+  ]],
 ];
 
 function migrar() {
@@ -3232,6 +3267,19 @@ function anuncio(idAnuncio) {
   return conNombres(a);
 }
 
+/* La imagen de la tarjeta al compartir: la MINIATURA de la primera foto.
+
+   La completa mide hasta 1.600 px, y WhatsApp deja la vista previa sin
+   imagen cuando pesa demasiado —el límite práctico que se cita ronda los
+   300 KB—. La miniatura, a 900 px, cabe de sobra y sigue viéndose bien en
+   la tarjeta. */
+function fotoParaCompartir(idAnuncio) {
+  const f = abrir().prepare(
+    'SELECT COALESCE(miniatura, url) AS ruta FROM anuncio_fotos WHERE anuncio_id = ? ORDER BY orden LIMIT 1')
+    .get(idAnuncio);
+  return f ? f.ruta : null;
+}
+
 /* ── Catálogo público ───────────────────────────────────── */
 
 /* El precio de un anuncio en pesos, para comparar. Antes el filtro y el
@@ -3327,6 +3375,13 @@ function filtrosCatalogo(f = {}) {
 
   if (f.soloDestacados) donde.push('a.destacado_hasta IS NOT NULL AND a.destacado_hasta > :ahora');
 
+  /* Los guardados del comprador (MET-01): una lista de ids que vive en
+     su navegador. Cada id va como parámetro con nombre propio; la API ya
+     los validó y los recortó, pero aquí tampoco se interpola ninguno. */
+  if (Array.isArray(f.ids) && f.ids.length) {
+    donde.push(`a.id IN (${f.ids.map((_, i) => `:id${i}`).join(', ')})`);
+    f.ids.forEach((valor, i) => { p[`id${i}`] = String(valor); });
+  }
   // Permuta e ITBIS incluido eran solo etiquetas de la ficha. Son dos
   // condiciones muy dominicanas que ningún portal extranjero ofrece, y
   // el comprador que las necesita filtra por ellas (CAT-03). Sin
@@ -3479,7 +3534,8 @@ function anunciosDeOrganizacion(idOrg) {
            COALESCE(SUM(m.vistas), 0)         AS vistas,
            COALESCE(SUM(m.clics_telefono), 0) AS telefono,
            COALESCE(SUM(m.clics_whatsapp), 0) AS whatsapp,
-           COALESCE(SUM(m.favoritos), 0)      AS favoritos
+           COALESCE(SUM(m.favoritos), 0)      AS favoritos,
+           COALESCE(SUM(m.compartidos), 0)    AS compartidos
     FROM anuncios a
     LEFT JOIN metricas_diarias m ON m.anuncio_id = a.id
     WHERE a.organizacion_id = ?
@@ -3511,7 +3567,7 @@ function borrarAnuncio(idAnuncio, idOrg) {
 
   d.prepare('BEGIN').run();
   try {
-    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias']) {
+    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio']) {
       try { d.prepare(`DELETE FROM ${t} WHERE anuncio_id = ?`).run(idAnuncio); } catch (_) { /* tabla sin esa columna */ }
     }
     d.prepare('DELETE FROM anuncios WHERE id = ? AND organizacion_id = ?').run(idAnuncio, idOrg);
@@ -3532,7 +3588,29 @@ function borrarAnuncio(idAnuncio, idOrg) {
 
   const rutasVideos = videos.map((v) => v.url).filter(Boolean);
 
-  return { fotos: [...rutasFotos], videos: rutasVideos };
+  /* Solo las que ya no usa nadie. Duplicar un anuncio reutiliza sus
+     fotos y videos por ruta, así que borrar el original borraba del
+     disco las fotos de la copia, que seguía publicada con imágenes
+     rotas. Se consulta DESPUÉS del COMMIT: la fila de este anuncio ya no
+     cuenta como uso. */
+  const enUso = rutasEnUso();
+  return {
+    fotos: [...rutasFotos].filter((r) => !enUso.has(r)),
+    videos: rutasVideos.filter((r) => !enUso.has(r)),
+  };
+}
+
+/* Todo lo que hace falta para publicar otro anuncio igual (MET-04). Solo
+   al dueño: el precio mínimo es privado, y un id ajeno recibe lo mismo
+   que uno que no existe. */
+function copiaDeAnuncio(idAnuncio, idOrg) {
+  const d = abrir();
+  const a = d.prepare('SELECT * FROM anuncios WHERE id = ? AND organizacion_id = ?').get(idAnuncio, idOrg);
+  if (!a) return null;
+  a.fotos = d.prepare('SELECT url, miniatura FROM anuncio_fotos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
+  a.videos = d.prepare('SELECT url, poster, duracion FROM anuncio_videos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
+  a.telefonos = d.prepare('SELECT numero, tipo, nota FROM anuncio_contactos WHERE anuncio_id = ? ORDER BY orden').all(idAnuncio);
+  return conNombres(a);
 }
 
 /* Motor y transmisión de un anuncio ya publicado. La API valida las
@@ -3675,7 +3753,51 @@ function anotarEvento(idAnuncio, tipo, visitante) {
              ON CONFLICT (anuncio_id, dia) DO UPDATE SET ${columna} = ${columna} + 1`)
     .run(idAnuncio, dia);
 
+  /* El contacto contado se apunta también en su tabla permanente, con
+     el mismo criterio que el agregado: así la lista del panel y el total
+     de «Contactos» no pueden contar cosas distintas. Va aquí y no en la
+     ruta para que quien llame a la base directamente —las pruebas, una
+     tarea— no se salte el registro. */
+  if (tipo === 'whatsapp' || tipo === 'telefono') registrarContacto(idAnuncio, tipo);
+
   return 'contado';
+}
+
+/* Apunta un contacto atribuible. NUNCA lanza: la métrica ya quedó
+   sumada arriba, y perder la fila de la lista es preferible a
+   devolverle un error a un comprador que acaba de pulsar WhatsApp. */
+function registrarContacto(idAnuncio, canal) {
+  try {
+    const d = abrir();
+    const a = d.prepare('SELECT organizacion_id FROM anuncios WHERE id = ?').get(idAnuncio);
+    if (!a) return;
+    d.prepare(`INSERT INTO contactos_anuncio (anuncio_id, organizacion_id, canal, dia, creado)
+               VALUES (?, ?, ?, ?, ?)`)
+      .run(idAnuncio, a.organizacion_id, canal, hoy(), ahora());
+  } catch (e) {
+    console.error(`contactos: no se pudo apuntar el de ${idAnuncio} · ${e.message}`);
+  }
+}
+
+/* Los contactos de una organización, del más reciente al más viejo.
+   Filtros opcionales por anuncio y por canal, siempre como parámetros:
+   nada de la petición se interpola en el SQL. El tope va de 1 a 200
+   para que un `?limite=` inventado no se lleve la tabla entera. */
+function contactosDeOrganizacion(idOrg, { anuncio, canal, limite = 100 } = {}) {
+  const donde = ['c.organizacion_id = :org'];
+  const p = { org: idOrg };
+  if (anuncio) { donde.push('c.anuncio_id = :anuncio'); p.anuncio = String(anuncio); }
+  if (canal) { donde.push('c.canal = :canal'); p.canal = String(canal); }
+  p.limite = Math.min(Math.max(1, Number(limite) || 100), 200);
+
+  return abrir().prepare(`
+    SELECT c.id, c.anuncio_id, c.canal, c.dia, c.creado,
+           a.marca, a.modelo, a.anio, a.estado
+      FROM contactos_anuncio c
+      JOIN anuncios a ON a.id = c.anuncio_id
+     WHERE ${donde.join(' AND ')}
+     ORDER BY c.creado DESC, c.id DESC
+     LIMIT :limite`).all(p).map(conNombres);
 }
 
 /* ── Tráfico del sitio ──────────────────────────────────── */
@@ -3852,7 +3974,8 @@ function resumenOrganizacion(idOrg, dias = 30) {
     SELECT COALESCE(SUM(m.vistas), 0) AS vistas,
            COALESCE(SUM(m.clics_telefono), 0) AS telefono,
            COALESCE(SUM(m.clics_whatsapp), 0) AS whatsapp,
-           COALESCE(SUM(m.favoritos), 0) AS favoritos
+           COALESCE(SUM(m.favoritos), 0) AS favoritos,
+           COALESCE(SUM(m.compartidos), 0) AS compartidos
     FROM metricas_diarias m
     JOIN anuncios a ON a.id = m.anuncio_id
     WHERE a.organizacion_id = ? AND m.dia >= ?`).get(idOrg, desdeDia);
@@ -4150,8 +4273,18 @@ function rutasEnUso() {
   meter(d.prepare('SELECT url, miniatura FROM anuncio_fotos').all(), 'url', 'miniatura');
   meter(d.prepare('SELECT url, poster FROM anuncio_videos').all(), 'url', 'poster');
   meter(d.prepare('SELECT url FROM flota_fotos').all(), 'url');
+  // La foto suelta de la flota, anterior a flota_fotos: sigue siendo el
+  // respaldo cuando un equipo no tiene galería (ver fotosDeFlota).
+  meter(d.prepare('SELECT foto FROM flota').all(), 'foto');
   meter(d.prepare("SELECT valor FROM ajustes WHERE clave LIKE '%imagen%'").all(), 'valor');
   meter(d.prepare('SELECT imagen FROM publicidad').all(), 'imagen');
+
+  /* La página propia del dealer. Faltaban aquí, y la tarea diaria de
+     huérfanos (`recogerHuerfanos` en tareas.js) borra todo lo que no
+     esté en este conjunto tras 48 horas: el logotipo, la portada y la
+     galería que un dealer subía desaparecían solos dos días después. */
+  meter(d.prepare('SELECT logo, banner FROM organizaciones').all(), 'logo', 'banner');
+  meter(d.prepare('SELECT url FROM organizacion_galeria').all(), 'url');
 
   return rutas;
 }
@@ -4258,6 +4391,8 @@ module.exports = {
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   anotarEvento, resumenOrganizacion,
+  /* Alcance y métricas del vendedor (fase 10). */
+  registrarContacto, contactosDeOrganizacion, fotoParaCompartir, copiaDeAnuncio,
   /* Fase 8: moneda y disponibilidad en el catálogo. */
   tasaUsd, DISPONIBILIDADES, guardarDisponibilidad,
 };

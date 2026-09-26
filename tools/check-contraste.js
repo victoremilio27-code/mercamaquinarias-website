@@ -71,6 +71,8 @@ const PAGINAS = [
   // `.plan__cinta`: ámbar usado como FONDO, que no debe convertirse en
   // ámbar de texto al arreglar la hoja.
   ['/planes.html', 'Planes'],
+  // La lista de guardados de la fase 10, en su estado vacío.
+  ['/guardados.html', 'Guardados'],
 ];
 
 /* Los dos temas, con el valor que `assets/tema.js` guarda en
