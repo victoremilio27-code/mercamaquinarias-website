@@ -2779,6 +2779,9 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 .vigencia { font-size: 12px; font-variant-numeric: tabular-nums; }
 .vigencia--pronto { color: var(--texto-peligro); font-weight: 700; }
+.vigencia--urgente { color: var(--texto-peligro); font-weight: 800; background: rgba(179, 38, 30, .10); border-radius: 4px; padding: 1px 6px; }
+.vigencia__aviso { display: block; margin-top: 2px; font-size: 11.5px; }
+.celda-nota { display: inline-block; font-size: 11.5px; color: var(--gris-acero); margin-right: 6px; }
 .vigencia--fin { color: var(--gris-acero); }
 .vigencia--membresia { color: var(--verde); font-weight: 600; }
 

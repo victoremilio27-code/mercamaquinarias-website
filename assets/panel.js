@@ -34,12 +34,60 @@ function textoVigencia(a) {
   if (!a.vence) return '<span class="vigencia vigencia--membresia">Sin caducidad</span>';
 
   const dias = diasHasta(a.vence);
-  if (dias < 0) return '<span class="vigencia vigencia--fin">Vencido</span>';
-  // Cinco días es el margen con el que da tiempo a renovar sin que el
-  // anuncio llegue a caerse del catálogo.
-  const clase = dias <= 5 ? 'vigencia vigencia--pronto' : 'vigencia';
-  return `<span class="${clase}">${dias} ${dias === 1 ? 'día' : 'días'}</span>`;
+  const cuando = fechaCorta(a.vence);
+  if (dias < 0 || a.estado === 'vencido') {
+    return `<span class="vigencia vigencia--fin">Venció el ${esc(cuando)}</span>`;
+  }
+
+  /* Las ventanas del aviso son las mismas de los correos de vencimiento
+     (7, 3 y 1 día, D-07): el panel y el correo dicen lo mismo el mismo
+     día. Antes había un margen suelto de cinco días que no coincidía con
+     ninguno de los dos avisos. Se calcula al pintar, sin guardar nada. */
+  let aviso = '';
+  let clase = 'vigencia';
+  if (dias <= 1) {
+    aviso = dias <= 0 ? 'Vence hoy' : 'Vence mañana';
+    clase = 'vigencia vigencia--urgente';
+  } else if (dias <= 7) {
+    aviso = `Vence en ${dias} días`;
+    clase = 'vigencia vigencia--pronto';
+  }
+  return `<span class="${clase}">Vence el ${esc(cuando)}</span>`
+    + (aviso ? `<span class="vigencia__aviso ${clase.replace('vigencia ', '')}">${aviso}</span>` : '');
 }
+
+/* Fecha corta de un ISO completo o de solo el día. */
+function fechaCorta(iso) {
+  if (!iso) return '';
+  return fechaLarga(String(iso).slice(0, 10)) || '';
+}
+
+/* Botón de renovar de la columna de acciones (MOD-09). Un anuncio de una
+   suscripción de un solo cupo se renueva solo; el de un plan de varios
+   cupos remite al plan entero, porque el precio y la fecha son del plan
+   (D-04). Con una renovación ya pedida se enseña su referencia: pedir
+   otra no cobraría dos veces, pero el botón sobraría. */
+function accionRenovar(a) {
+  if (!['activo', 'pausado', 'vencido'].includes(a.estado)) return '';
+  if (a.renovacion_pendiente) {
+    return `<span class="celda-nota">Renovación en espera · ref. ${esc(a.renovacion_pendiente)}</span>`;
+  }
+  if (!a.suscripcion_id || !a.suscripcion_fin) return '';
+  if (a.suscripcion_cupo === 1) {
+    return a.estado === 'vencido'
+      ? `<button type="button" class="btn-tabla btn-tabla--fuerte" data-renovar="${esc(a.id)}">Renovar anuncio</button>`
+      : `<button type="button" class="btn-tabla" data-renovar="${esc(a.id)}">Renovar ahora</button>`;
+  }
+  return `<button type="button" class="btn-tabla" data-renovar-plan="${esc(a.suscripcion_id)}">Renovar plan</button>`;
+}
+
+/* Renovaciones que ofrece /api/membresias (vigentes y vencidas), el
+   método de pago que acepta el servidor y si existe la renovación
+   automática. Se rellenan en la misma carga que los pagos en espera. */
+let RENOVABLES = [];
+let METODOS_PAGO = [];
+let RENOVACION_AUTO = { disponible: false };
+let RENOVAR_OBJETIVO = null;  // { idAnuncio, r } de la renovación abierta
 
 /* ── Membresías ─────────────────────────────────────────────
    Lo que la cuenta tiene comprado. En plural: quien contrató cinco
@@ -84,6 +132,9 @@ function guardarPagos(r) {
   PAGOS_PENDIENTES = r.pagosPendientes || [];
   TRANSFERENCIA = r.transferencia || null;
   AVISO_TRANSFERENCIA = r.avisoTransferencia || '';
+  RENOVABLES = r.renovables || [];
+  METODOS_PAGO = Array.isArray(r.metodosPago) ? r.metodosPago : [];
+  RENOVACION_AUTO = r.renovacionAutomatica || { disponible: false };
 }
 
 const membresiaDe = (a) => MEMBRESIAS.find((m) => m.id === a.suscripcion_id) || null;
@@ -103,13 +154,54 @@ function barraCupos(m) {
   </span>`;
 }
 
+/* «Vence el [fecha]» en las tarjetas de plan, con la misma fecha que ve
+   el anuncio en la tabla; antes decía «Quedan N días», que obligaba a
+   sumar para saber el día. */
+function vigenciaPlan(m) {
+  if (!m.fin) return 'Sin caducidad';
+  return diasHasta(m.fin) > 0 ? `Vence el ${fechaCorta(m.fin)}` : `Venció el ${fechaCorta(m.fin)}`;
+}
+
+const renovableDe = (id) => RENOVABLES.find((r) => r.id === id) || null;
+
+/* Lo que va al pie de una tarjeta de plan: «Renovar» (o la referencia si
+   ya hay una renovación en espera) y, solo si existe la renovación
+   automática, su interruptor. Apagada no se pinta nada: ni desactivado
+   ni «próximamente» (D-12). */
+function pieRenovarPlan(m) {
+  const r = renovableDe(m.id);
+  if (!r) return '';
+  const accion = r.renovacion_pendiente
+    ? `<span class="celda-nota">Renovación en espera · ref. ${esc(r.renovacion_pendiente)}</span>`
+    : `<button type="button" class="btn btn--linea btn--chico" data-renovar-plan="${esc(r.id)}">Renovar</button>`;
+  const auto = RENOVACION_AUTO.disponible
+    ? `<label class="renovar-auto"><input type="checkbox" data-renovacion-auto="${esc(r.id)}"${r.renovacion_automatica ? ' checked' : ''}> Renovación automática</label>`
+    : '';
+  return `<span class="membresia__renovar">${accion}${auto}</span>`;
+}
+
+/* Planes que ya vencieron y se pueden volver a contratar sin rehacer
+   nada: no salen en la lista de vigentes, así que sin este bloque no
+   habría dónde renovarlos. */
+function planesVencidosHTML() {
+  const vencidos = RENOVABLES.filter((r) => r.vencida);
+  if (!vencidos.length) return '';
+  return `<section class="planes-vencidos" aria-labelledby="t-planes-vencidos">
+    <h3 class="transferencia__titulo" id="t-planes-vencidos">Planes vencidos</h3>
+    <ul class="membresias">${vencidos.map((r) => `<li class="membresia" data-membresia="${esc(r.id)}">
+      <span class="membresia__cabeza">
+        <b class="membresia__nivel">${esc(r.plan_nombre)}</b>
+        <span class="membresia__vigencia">Venció el ${esc(fechaCorta(r.fin))}</span>
+      </span>
+      ${r.renovacion_pendiente
+    ? `<span class="celda-nota">Renovación en espera · ref. ${esc(r.renovacion_pendiente)}</span>`
+    : `<button type="button" class="btn btn--linea btn--chico" data-renovar-plan="${esc(r.id)}">Renovar plan</button>`}
+    </li>`).join('')}</ul>
+  </section>`;
+}
+
 function tarjetaMembresia(m) {
-  const dias = diasHasta(m.fin);
-  const vigencia = !m.fin
-    ? 'Sin caducidad'
-    : dias > 0
-      ? `Quedan ${dias} ${dias === 1 ? 'día' : 'días'}`
-      : 'Vencida';
+  const vigencia = vigenciaPlan(m);
 
   /* Lo que costaría el siguiente cupo. Cuando toca el gratis de la
      regla se dice, porque es justo el dato que cambia la decisión de
@@ -132,6 +224,7 @@ function tarjetaMembresia(m) {
       <button type="button" class="btn btn--linea btn--chico" data-ampliar="${esc(m.id)}">
         Añadir cupos
       </button>`}
+    ${pieRenovarPlan(m)}
   </li>`;
 }
 
@@ -256,12 +349,7 @@ function pintarMetricas(resumen) {
    en su lugar (D-15). Ampliar es cosa de quien reparte cupos entre
    varias máquinas, que es el dealer. */
 function tarjetaPlanParticular(m) {
-  const dias = diasHasta(m.fin);
-  const vigencia = !m.fin
-    ? 'Sin caducidad'
-    : dias > 0
-      ? `Quedan ${dias} ${dias === 1 ? 'día' : 'días'}`
-      : 'Vencida';
+  const vigencia = vigenciaPlan(m);
   const capacidad = m.anuncios_incluidos == null
     ? `${m.ocupados} publicados · sin límite`
     : `Capacidad para ${m.anuncios_incluidos} ${m.anuncios_incluidos === 1 ? 'equipo' : 'equipos'}, ${m.libres} ${m.libres === 1 ? 'disponible' : 'disponibles'}`;
@@ -272,6 +360,7 @@ function tarjetaPlanParticular(m) {
       <span class="membresia__vigencia">${esc(vigencia)}</span>
     </span>
     <span class="membresia__cupo num">${esc(capacidad)}</span>
+    ${pieRenovarPlan(m)}
   </li>`;
 }
 
@@ -288,6 +377,8 @@ function pintarPlanParticular(caja, org) {
       <h2 class="panel__titulo" id="t-plan"><em>Sus</em> publicaciones</h2>
       <p class="panel__texto">Cada equipo se publica con su propio plan: elija Estándar, Destacada o Premium al publicarlo y pague solo esa publicación.</p>
       ${pagosEnEsperaHTML()}
+      ${planesVencidosHTML()}
+      <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
       <a class="btn btn--ambar" href="publicar.html">Publicar un equipo</a>`;
     return;
   }
@@ -301,6 +392,7 @@ function pintarPlanParticular(caja, org) {
     ${pagosEnEsperaHTML()}
 
     <ul class="membresias">${MEMBRESIAS.map(tarjetaPlanParticular).join('')}</ul>
+    ${planesVencidosHTML()}
 
     <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
 
@@ -335,6 +427,8 @@ function pintarPlan() {
       <h2 class="panel__titulo" id="t-plan"><em>Sin</em> cupos contratados</h2>
       <p class="panel__texto">Un cupo es el sitio que ocupa un equipo publicado. Elija el nivel y cuántos equipos quiere publicar; después reparte los cupos entre sus máquinas y los reutiliza cuando venda alguna.</p>
       ${pagosEnEsperaHTML()}
+      ${planesVencidosHTML()}
+      <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
       <a class="btn btn--ambar" href="planes.html">Ver los planes</a>`;
     return;
   }
@@ -358,6 +452,7 @@ function pintarPlan() {
     ${pagosEnEsperaHTML()}
 
     <ul class="membresias">${MEMBRESIAS.map(tarjetaMembresia).join('')}</ul>
+    ${planesVencidosHTML()}
 
     <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
 
@@ -558,6 +653,7 @@ function filaAnuncio(a) {
     <td>${selectorPlan(a)}</td>
     <td>${textoVigencia(a)}</td>
     <td class="col-acciones">
+      ${accionRenovar(a)}
       ${a.estado === 'activo'
         ? '<button type="button" class="btn-tabla" data-accion="pausado">Pausar</button>'
         : a.estado === 'pausado'
