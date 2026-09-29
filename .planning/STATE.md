@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05.3 ejecutada y verificada (human_needed, solo visual), en su PR. Siguiente: planificar la 05.4."
+stopped_at: "05.3 en producción (PR #39). Siguiente: planificar la 05.4."
 last_updated: "2026-09-29T22:00:00.000Z"
 last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
@@ -28,14 +28,12 @@ comprobante o NCF lo ejecuta Opus. Hasta 2-3 agentes si no tocan los mismos arch
 
 **Fase 05.2 en producción** (PR #38 fusionado).
 
-**Fase 05.3 terminada y verificada** (rama `claude/fase-05-3-renovacion-ijucqj`, en su PR): los 5 planes
+**Fase 05.3 en producción** (PR #39 fusionado; «Sitio arriba: 069fcee» el 2026-09-29): los 5 planes
 hechos; `05.3-VERIFICATION.md` da human_needed solo por la revisión visual (5 criterios y 26 verdades
 comprobados en el código). Migración `2026-09-renovacion`, renovar anuncio o plan por `confirmarPago`,
 tarea `suscripciones` que vence de verdad, avisos 7/3/1 con registro idempotente, panel con «Vence el…»
 y renovar, casilla de renovación automática construida y **apagada** (`MERCA_CARDNET`), condiciones 2.2.
 Arneses nuevos: `renovacion:probar` (150) y `recordatorios:probar` (32), ambos en CI.
-**Si al leer esto el PR de la 05.3 sigue abierto:** mirar su CI; si `pruebas` y `navegador` están en verde,
-fusionarlo, comprobar «Sitio arriba» en `desplegar` y marcar aquí que la 05.3 está en producción.
 - Anotado para la fase de deuda técnica (no bloquea): `tipoRecordatorio` redondea hacia arriba, así que
   «vence mañana» puede llegar el mismo día del corte; `fechaCorta` de `assets/panel.js` pinta la fecha en
   UTC (un corte entre 00:00 y 04:00 UTC sale un día después que en hora dominicana); la rama `ampliacion`
