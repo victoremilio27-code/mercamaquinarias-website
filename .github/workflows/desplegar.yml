@@ -102,6 +102,8 @@ jobs:
         run: npm run renovacion:probar
       - name: Pruebas de recordatorios
         run: npm run recordatorios:probar
+      - name: Pruebas de capacidad del dealer
+        run: npm run capacidad:probar
       - name: Asistente
         run: npm run chat:probar
 
