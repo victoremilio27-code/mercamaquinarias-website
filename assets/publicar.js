@@ -1,18 +1,24 @@
 /* ═══════════════════════════════════════════════════════════
    MercaMaquinarias · Asistente de publicación
 
-   Cinco pasos y ninguno cobra. La capacidad se contrata en
-   planes.html, que es el único sitio del portal donde entra dinero;
-   aquí el anuncio solo ocupa un cupo de lo que ya se pagó.
+   Dos caminos, según MODO (fase 05.2, D-01, D-02, D-15):
 
-   Antes había dos pasos más —elegir plan y pagar— dentro de este
-   mismo asistente. Quien ya tenía cupos contratados los veía igual,
-   con su formulario de tarjeta, y parecía que se le cobraba dos veces
-   por lo mismo. No hacía falta redactar mejor esa pantalla: hacía
-   falta que no estuviera.
+   · 'capacidad' — dealer, cuenta exenta o particular con capacidad
+     libre en su plan. Cinco pasos y ninguno cobra: la capacidad se
+     contrató en planes.html, y aquí el anuncio solo ocupa un sitio
+     de lo que ya se pagó. Es el camino de siempre.
+
+   · 'publicacion' — un particular sin capacidad libre, o cualquier
+     visitante sin sesión. Antes esa cuenta chocaba con un asistente
+     que no tenía dónde publicar; ahora el primer paso es elegir plan
+     y días, el borrador nace en el servidor (`POST /api/borradores`)
+     y el último paso pide el pago de ESA publicación
+     (`POST /api/borradores/:id/pago`). El dealer nunca ve este
+     camino: sigue comprando capacidad y ocupándola al publicar.
 
    No hay solicitud previa ni revisión manual: la publicación es del
-   anunciante y se activa al confirmar.
+   anunciante y se activa al confirmarse el pago (o al instante si no
+   cuesta nada).
 
    Depende de data.js y app.js (cargados antes): usa esc, pesos,
    miles, icono, $ y $$. El cálculo del importe, de precios.js.
@@ -30,6 +36,21 @@ const PASOS = [
   { id: 'contacto', nombre: 'Contacto',    detalle: 'Teléfonos' },
   { id: 'confirmar', nombre: 'Publicar',   detalle: 'Revisión' },
 ];
+
+/* Los pasos según MODO. En publicación se antepone el paso del plan y
+   el último cambia de rótulo: ya no es solo "revisar y publicar", es
+   "revisar el precio y pagar". El resto del recorrido —ficha, fotos,
+   precio, contacto— es idéntico en los dos modos: la ficha técnica no
+   cambia porque el equipo se publique con capacidad ya pagada o con
+   una publicación nueva. */
+function pasosDelModo() {
+  if (MODO !== 'publicacion') return PASOS;
+  return [
+    { id: 'plan', nombre: 'Plan', detalle: 'Cómo publicar' },
+    ...PASOS.filter((p) => p.id !== 'confirmar'),
+    { id: 'confirmar', nombre: 'Pago', detalle: 'Resumen' },
+  ];
+}
 
 const FOTOS_MINIMAS = 3;
 const FOTOS_MAXIMAS = 20;
@@ -149,11 +170,18 @@ function estadoInicial() {
       telefonos: [{ numero: '', tipo: 'ambos', nota: '' }],
       horario: '', web: '', preferencia: 'whatsapp',
     },
-    /* Ni plan ni pago viven ya en el borrador. El anuncio ocupa el
-       cupo libre de mayor nivel que tenga la cuenta en el momento de
-       publicar, y eso se consulta al servidor: guardarlo aquí solo
-       serviría para que un borrador de hace tres días apuntara a una
-       membresía que ya venció. */
+    /* El plan vuelve a vivir en el borrador (fase 05.2) — pero ahora es
+       el del SERVIDOR, no un dato que este navegador invente. En modo
+       capacidad estos tres campos no se usan nunca: el anuncio ocupa
+       el cupo libre de mayor nivel que tenga la cuenta, y eso lo
+       decide `membresiaElegida()` con lo que responda el servidor. En
+       modo publicación, `idBorrador` es el id del anuncio `borrador`
+       que ya existe en la base (null hasta que se elige un plan),
+       `planElegido` y `diasElegidos` son lo que se muestra mientras no
+       hay confirmación del servidor todavía. */
+    idBorrador: null,
+    planElegido: '',
+    diasElegidos: 30,
   };
 }
 
@@ -1297,19 +1325,33 @@ const conHueco = () => MEMBRESIAS.filter((m) => m.libres === null || m.libres > 
    llega ordenada por nivel descendente desde el servidor. */
 const membresiaElegida = () => conHueco()[0] || null;
 
-/* Cuántas fotos admite. Sin cupo se permite el máximo: el anunciante
-   sube primero y resuelve la capacidad al final, no al revés. */
+/* El nivel elegido para ESTA publicación, en modo publicación. Sale de
+   PLANES (el catálogo de /api/planes), no de MEMBRESIAS: aquí no se
+   reparte capacidad entre equipos, se paga uno a la vez (D-01). */
+const planPublicarElegido = () => PLANES.find((n) => n.id === estado.planElegido) || null;
+
+/* Cuántas fotos admite. Sin cupo ni plan elegido se permite el
+   máximo: el anunciante sube primero y resuelve la capacidad —o el
+   plan— al final, no al revés. */
 function limiteFotos() {
+  if (MODO === 'publicacion') {
+    const p = planPublicarElegido();
+    return p ? p.fotos_maximas : FOTOS_MAXIMAS;
+  }
   const m = membresiaElegida();
   return m ? m.fotos_maximas : FOTOS_MAXIMAS;
 }
 
 /* Cuántos videos admite el plan. Al revés que con las fotos, sin cupo
-   elegido se permite UNO y no el máximo: el video es lo que más pesa y
-   lo que más tarda en prepararse, y dejar que alguien suba tres para
-   luego decirle que su plan solo admite uno es hacerle perder minutos
-   de su tiempo, no kilobytes. */
+   ni plan elegido se permite UNO y no el máximo: el video es lo que
+   más pesa y lo que más tarda en prepararse, y dejar que alguien suba
+   tres para luego decirle que su plan solo admite uno es hacerle
+   perder minutos de su tiempo, no kilobytes. */
 function limiteVideos() {
+  if (MODO === 'publicacion') {
+    const p = planPublicarElegido();
+    return p ? (p.videos_maximos || 0) : 1;
+  }
   const m = membresiaElegida();
   return m ? (m.videos_maximos || 0) : 1;
 }
@@ -1319,6 +1361,247 @@ async function cargarMembresias() {
   const r = await api('/membresias', { silencioso: true });
   MEMBRESIAS = (r && r.membresias) || [];
   EXENTA = !!(r && r.exenta);
+}
+
+/* Cuenta particular de verdad: ni dealer ni exenta. Sirve para que los
+   textos del camino de "capacidad" (D-15) no digan «cupo» a quien
+   nunca los contrató como tales — la cuenta exenta sigue viendo el
+   lenguaje de cupos que ya conocía, igual que en assets/panel.js. */
+const esParticularCuenta = () => !!(haySesion() && SESION.organizacion
+  && SESION.organizacion.tipo === 'particular' && !EXENTA);
+
+/* ── Modo publicación: el particular sin capacidad paga UNA
+   publicación, con su borrador en el servidor (fase 05.2) ──
+
+   decidirModo() se llama tras cargarSesion() y cargarMembresias(): sin
+   las dos no se puede saber si esta cuenta tiene sitio libre. */
+let MODO = 'capacidad';
+let PLANES = [];
+let METODOS_PAGO = [];
+
+/* Lo último que el SERVIDOR aceptó como plan/días de este borrador.
+   Sirve para no mandar un PUT de más cuando se vuelve al paso del plan
+   sin haber cambiado nada. */
+let borradorPlanServidor = null;
+let borradorDiasServidor = null;
+
+function decidirModo() {
+  if (params().get('borrador')) return 'publicacion';
+  if (!haySesion()) return 'publicacion';
+  const org = SESION.organizacion;
+  if (org && org.tipo === 'particular' && !EXENTA && !conHueco().length) return 'publicacion';
+  return 'capacidad';
+}
+
+async function cargarPlanes() {
+  const r = await api('/planes', { silencioso: true });
+  PLANES = (r && r.planes) || [];
+  METODOS_PAGO = (r && Array.isArray(r.metodosPago)) ? r.metodosPago : [];
+}
+
+/* La tarjeta de un nivel, para pagar UNA publicación (no un cupo): sin
+   radio propio de nivel repetido —el radio SÍ existe, pero arma la
+   elección de plan de este borrador, no un pedido de varios a la vez—
+   y con el precio final de la misma fórmula que va a cobrar el
+   servidor. Mismo marcado que `tarjetaNivelPublicacion` de
+   assets/planes.js, reescrito aquí porque las dos páginas no comparten
+   script. */
+function tarjetaPlanPublicar(n) {
+  const elegido = n.id === estado.planElegido;
+  const unitario = n.precio_vigente != null ? n.precio_vigente : n.precio;
+  const total = precioCompra({ precioUnitario: unitario, cupo: 1, dias: estado.diasElegidos }).total;
+
+  const rasgos = [
+    `Hasta ${n.fotos_maximas} fotografías`,
+    n.videos_maximos
+      ? `${n.videos_maximos} ${n.videos_maximos === 1 ? 'video' : 'videos'} de 30 segundos`
+      : null,
+    n.destacado ? 'Distintivo Destacado y posición preferente' : 'Ficha técnica completa con horas y condición',
+    n.destacado ? 'Aparece en la portada' : 'Contacto directo por teléfono y WhatsApp',
+  ].filter(Boolean);
+
+  return `<li>
+    <label class="plan-op${elegido ? ' plan-op--elegido' : ''}${n.destacado ? ' plan-op--sugerido' : ''}">
+      <input type="radio" name="planPublicar" value="${esc(n.id)}"${elegido ? ' checked' : ''}>
+      <span class="plan-op__cabeza">
+        ${n.destacado
+          ? '<span class="plan-op__cinta">Más contratado</span>'
+          : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
+        <span class="plan-op__nombre">Publicación ${esc(n.nombre)}</span>
+      </span>
+      <span class="plan-op__precio num">${total === 0 ? 'Sin costo' : pesos(total)}</span>
+      <span class="plan-op__periodo">${total === 0 ? `por publicación · ${estado.diasElegidos} días` : `por publicación · ${estado.diasElegidos} días · ITBIS incluido`}</span>
+      <ul class="plan-op__incluye">
+        ${rasgos.map((i) => `<li>${icono('i-check')} ${esc(i)}</li>`).join('')}
+      </ul>
+    </label>
+  </li>`;
+}
+
+function pintarPlanesPublicar() {
+  const lista = $('#planesPublicar');
+  if (!lista) return;
+  lista.innerHTML = PLANES.filter((n) => n.activo).map(tarjetaPlanPublicar).join('');
+}
+
+function montarPasoPlan() {
+  const dur = $('#duracionPublicar');
+  if (dur) {
+    $$('input[name="duracionPublicar"]', dur).forEach((r) => {
+      r.checked = Number(r.value) === estado.diasElegidos;
+    });
+    dur.addEventListener('change', () => {
+      const marcado = dur.querySelector('input:checked');
+      estado.diasElegidos = marcado && Number(marcado.value) === 60 ? 60 : 30;
+      pintarPlanesPublicar();
+      guardarBorrador();
+    });
+  }
+
+  const lista = $('#planesPublicar');
+  if (lista) {
+    lista.addEventListener('change', (e) => {
+      if (e.target.name !== 'planPublicar') return;
+      estado.planElegido = e.target.value;
+      pintarPlanesPublicar();
+      guardarBorrador();
+    });
+  }
+
+  pintarPlanesPublicar();
+}
+
+function validarPlan(seccion) {
+  if (!estado.planElegido) {
+    avisoPaso(seccion, 'Elija cómo quiere publicar este equipo.');
+    return false;
+  }
+  avisoPaso(seccion, '');
+  return true;
+}
+
+/* El comprobante fiscal de la publicación: casilla + campos, igual que
+   `montarComprobante` de assets/planes.js pero con sus propios ids
+   (`pub-*`): las dos páginas nunca comparten DOM, pero sí pueden
+   compartir sesión de navegador, y un id duplicado entre scripts que
+   no se conocen es un accidente esperando a pasar. */
+function montarBloqueFiscalPublicar() {
+  const check = $('#pub-conRnc');
+  const campos = $('#camposFiscalesPublicar');
+  if (!check || !campos) return;
+  check.addEventListener('change', () => {
+    campos.hidden = !check.checked;
+    if (!campos.hidden) $('#pub-razon').focus();
+  });
+  const rnc = $('#pub-rnc');
+  if (rnc) rnc.addEventListener('input', () => { rnc.value = rnc.value.replace(/\D/g, '').slice(0, 9); });
+}
+
+/* Lo que manda /api/borradores y PUT /api/borradores/:id: la misma
+   forma que anuncioParaApi() pero SIN membresía (el borrador no ocupa
+   ninguna: paga su propia publicación) y CON el plan y los días que se
+   eligieron en el primer paso. */
+function cuerpoParaBorrador() {
+  const { membresia, ...resto } = anuncioParaApi();
+  return { ...resto, plan: estado.planElegido, dias: estado.diasElegidos };
+}
+
+/* Aviso discreto, sin bloquear el formulario: para cuando guardar en el
+   servidor falla pero el navegador ya tiene la copia de seguridad
+   (D-06). No usa avisoPaso() porque ese aviso vive DENTRO del paso
+   visible y aquí puede llegar mientras se navega entre pasos. */
+function avisoGuardadoDiscreto(mensaje) {
+  let el = $('#avisoGuardado');
+  if (!el) {
+    const nav = $('.panel--pasos');
+    if (!nav) return;
+    el = document.createElement('p');
+    el.id = 'avisoGuardado';
+    el.className = 'panel__nota';
+    el.setAttribute('role', 'status');
+    nav.appendChild(el);
+  }
+  el.textContent = mensaje;
+  el.hidden = false;
+  clearTimeout(el._temporizador);
+  el._temporizador = setTimeout(() => { el.hidden = true; }, 6000);
+}
+
+let temporizadorGuardado = null;
+
+/* Guarda el borrador en el servidor (D-06, T-05.2-24). `inmediato` en
+   `irAPaso` (sin esperar); con espera de 1,5 s en el `change` del
+   formulario, con un solo temporizador para no mandar un PUT por cada
+   tecla + cambio de foco. Nunca en `input`: eso sí sería un PUT por
+   tecla. */
+async function guardarEnServidor(inmediato) {
+  if (MODO !== 'publicacion' || !estado.idBorrador) return;
+
+  if (!inmediato) {
+    clearTimeout(temporizadorGuardado);
+    temporizadorGuardado = setTimeout(() => { guardarEnServidor(true); }, 1500);
+    return;
+  }
+  clearTimeout(temporizadorGuardado);
+
+  try {
+    const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}`, {
+      metodo: 'PUT', cuerpo: cuerpoParaBorrador(),
+    });
+    if (r) {
+      borradorPlanServidor = estado.planElegido;
+      borradorDiasServidor = estado.diasElegidos;
+    }
+  } catch (e) {
+    if (e.codigo === 409) {
+      // Pago en espera: se enseña la espera y se deja de ofrecer el
+      // formulario editable (el servidor tampoco lo aceptaría).
+      const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}`, { silencioso: true });
+      if (r && r.borrador) pintarEspera(esperaDesdeBorrador(r.borrador));
+    } else if (e.codigo === 404) {
+      estado.idBorrador = null;
+      avisoGuardadoDiscreto('Ese borrador ya no existe o no es suyo.');
+    } else {
+      avisoGuardadoDiscreto('No se pudo guardar en su cuenta; sigue guardado en este navegador.');
+    }
+  }
+}
+
+/* Crea o retoma el borrador en el servidor al salir del paso del plan
+   (D-01, D-02, D-03). Devuelve true si se puede avanzar al paso
+   siguiente; false si hay que quedarse (error del servidor, o porque
+   se manda a crear la cuenta). */
+async function asegurarBorrador() {
+  const seccion = $('.paso[data-paso="plan"]');
+
+  if (!haySesion()) {
+    guardarBorrador();
+    location.href = 'cuenta.html?destino=publicar.html&crear=1';
+    return false;
+  }
+
+  try {
+    if (!estado.idBorrador) {
+      const r = await api('/borradores', { metodo: 'POST', cuerpo: cuerpoParaBorrador() });
+      if (!r) { avisoPaso(seccion, 'No hay conexión con el servidor. Vuelva a intentarlo.'); return false; }
+      estado.idBorrador = r.borrador.id;
+      borradorPlanServidor = estado.planElegido;
+      borradorDiasServidor = estado.diasElegidos;
+      history.replaceState(null, '', `publicar.html?borrador=${encodeURIComponent(estado.idBorrador)}`);
+    } else if (estado.planElegido !== borradorPlanServidor || estado.diasElegidos !== borradorDiasServidor) {
+      const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}`, {
+        metodo: 'PUT', cuerpo: { plan: estado.planElegido, dias: estado.diasElegidos },
+      });
+      if (!r) { avisoPaso(seccion, 'No hay conexión con el servidor. Vuelva a intentarlo.'); return false; }
+      borradorPlanServidor = estado.planElegido;
+      borradorDiasServidor = estado.diasElegidos;
+    }
+    guardarBorrador();
+    return true;
+  } catch (e) {
+    avisoPaso(seccion, e.message);
+    return false;
+  }
 }
 
 /* Lo que se le ofrece a quien se quedó sin sitio. Nunca «vuelva a
@@ -1363,12 +1646,13 @@ function pintarResumenPublicacion() {
   if (!caja) return;
 
   const m = membresiaElegida();
+  const particular = esParticularCuenta();
   const e = estado.equipo;
   const titulo = [e.anio, nombreMarca(e.marca) || e.marca, e.modelo].filter(Boolean).join(' ') || 'Su equipo';
 
   if (!m) {
     caja.innerHTML = `
-      <h3 class="pedido__titulo">Falta un cupo</h3>
+      <h3 class="pedido__titulo">Falta ${particular ? 'capacidad' : 'un cupo'}</h3>
       <p class="pedido__vacio">${icono('i-etiqueta')} ${esc(titulo)} está listo para publicarse. Solo falta el sitio donde ponerlo.</p>`;
     $('#btnPublicar').disabled = true;
     $('#btnPublicar').textContent = 'Publicar anuncio';
@@ -1387,18 +1671,37 @@ function pintarResumenPublicacion() {
       <div><dt>Fotografías</dt><dd class="num">${estado.fotos.length} de ${m.fotos_maximas}</dd></div>
       <div><dt>Vigencia</dt><dd>${dias === null ? 'Sin caducidad' : `${dias} ${dias === 1 ? 'día' : 'días'}`}</dd></div>
       <div class="pedido__total"><dt>Costo</dt><dd class="num">${EXENTA
-    ? 'Sin costo' : 'Ninguno · usa un cupo que ya pagó'}</dd></div>
+    ? 'Sin costo' : (particular ? 'Ninguno · usa la capacidad disponible de su plan' : 'Ninguno · usa un cupo que ya pagó')}</dd></div>
     </dl>
     <p class="pedido__nota">Puede cambiarlo de nivel cuando quiera desde <a href="panel.html">su panel</a>, sin volver a publicarlo.</p>`;
 }
 
 function pintarPasoFinal() {
-  pintarSinCupo();
-  pintarResumenPublicacion();
+  if (MODO === 'publicacion') {
+    actualizarResumenPublicacion();
+  } else {
+    pintarSinCupo();
+    pintarResumenPublicacion();
+  }
   pintarFotos();
 }
 
-async function montarPasoConfirmar() {
+/* El botón de las condiciones es común a los dos modos: se monta una
+   sola vez, aquí, y no dentro de montarPasoConfirmarCapacidad (que en
+   modo publicación ya no se llama). */
+function montarCheckboxCondiciones() {
+  const check = $('#aceptaCondiciones');
+  if (!check) return;
+  check.addEventListener('change', (e) => {
+    if (e.target.checked) avisoPaso($('.paso[data-paso="confirmar"]'), '');
+  });
+}
+
+/* Modo capacidad (dealer, cuenta exenta, particular con capacidad
+   libre): el camino de siempre. En modo publicación este paso no se
+   monta —el plan se eligió en el primer paso— por eso la redirección
+   a planes.html de aquí abajo solo puede darse en modo capacidad. */
+async function montarPasoConfirmarCapacidad() {
   await cargarMembresias();
 
   /* Quien llega sin ninguna capacidad contratada se va derecho a los
@@ -1443,15 +1746,25 @@ async function montarPasoConfirmar() {
       avisoPaso($('.paso[data-paso="confirmar"]'), e.message);
     }
   });
-
-  $('#aceptaCondiciones').addEventListener('change', (e) => {
-    if (e.target.checked) avisoPaso($('.paso[data-paso="confirmar"]'), '');
-  });
 }
 
 function validarConfirmar(seccion) {
+  if (MODO === 'publicacion') {
+    if (!estado.idBorrador) {
+      avisoPaso(seccion, 'No se pudo preparar su borrador. Vuelva al paso anterior e inténtelo de nuevo.');
+      return false;
+    }
+    if (!$('#aceptaCondiciones').checked) {
+      avisoPaso(seccion, 'Debe aceptar las condiciones de publicación.');
+      return false;
+    }
+    avisoPaso(seccion, '');
+    return true;
+  }
   if (!membresiaElegida()) {
-    avisoPaso(seccion, 'Necesita un cupo libre para publicar este equipo.');
+    avisoPaso(seccion, esParticularCuenta()
+      ? 'Necesita capacidad libre para publicar este equipo.'
+      : 'Necesita un cupo libre para publicar este equipo.');
     return false;
   }
   if (!$('#aceptaCondiciones').checked) {
@@ -1560,9 +1873,10 @@ function pintarConfirmacion(respuesta) {
 
   // Publicar nunca cobra: el importe se liquidó al contratar la
   // capacidad, en su propia página y con su propio comprobante.
+  const particular = esParticularCuenta();
   const filasCobro = `<div><dt>Costo</dt><dd>${EXENTA
     ? 'Sin costo · cuenta interna'
-    : 'Ninguno · ocupó un cupo que ya tenía'}</dd></div>`;
+    : (particular ? 'Ninguno · usó la capacidad que ya pagó' : 'Ninguno · ocupó un cupo que ya tenía')}</dd></div>`;
 
   $('#publicar').hidden = true;
   const caja = $('#publicado');
@@ -1575,7 +1889,7 @@ function pintarConfirmacion(respuesta) {
       <div><dt>Referencia del anuncio</dt><dd class="num">${esc(anuncio.id.slice(0, 8).toUpperCase())}</dd></div>
       <div><dt>Nivel</dt><dd>${esc(m ? m.plan_nombre : '—')}</dd></div>
       ${filasCobro}
-      <div><dt>Cupos libres que le quedan</dt><dd class="num">${libres === null || libres === undefined
+      <div><dt>${particular ? 'Capacidad libre que le queda' : 'Cupos libres que le quedan'}</dt><dd class="num">${libres === null || libres === undefined
         ? 'Sin límite' : libres}</dd></div>
       <div><dt>Fotografías publicadas</dt><dd class="num">${anuncio.fotos.length}</dd></div>
     </dl>
@@ -1585,7 +1899,7 @@ function pintarConfirmacion(respuesta) {
     <p class="publicado__nota">
       Enviamos la confirmación a <b>${esc(estado.contacto.correo)}</b>.
       Desde <a href="panel.html">su panel</a> puede seguir las visitas, cambiar el nivel de
-      este equipo o marcarlo como vendido para liberar su cupo.
+      este equipo o marcarlo como vendido para liberar su ${particular ? 'capacidad' : 'cupo'}.
     </p>
 
     <div class="acciones acciones--pie">
@@ -1640,6 +1954,337 @@ async function publicar() {
        ofrece ampliar en vez de repetir un error. */
     await cargarMembresias();
     restaurar(e.message);
+  }
+}
+
+/* ── Modo publicación: resumen, pago y espera de la transferencia
+   (fase 05.2, D-09, D-11, D-12, D-13, D-16) ──────────────────── */
+
+/* Sin portapapeles (página servida sin HTTPS, navegador viejo) no se
+   ofrece un botón que no haría nada: la referencia sigue a la vista y
+   se puede seleccionar a mano. Mismo patrón que `botonCopiar` de
+   assets/planes.js, reescrito aquí porque las dos páginas no comparten
+   script. */
+const botonCopiar = (texto) => (navigator.clipboard
+  ? `<button type="button" class="btn btn--linea btn--chico" data-copiar="${esc(texto)}">Copiar</button>`
+  : '');
+
+/* El `mailto:` se arma con encodeURIComponent: el correo y la
+   referencia vienen del servidor y no pueden colar nada en el enlace.
+   La arroba se devuelve a su sitio porque algún cliente de correo no
+   entiende «%40» en la dirección. */
+function enlaceComprobante(correo, referencia) {
+  const asunto = `Comprobante de transferencia ${referencia}`;
+  return `mailto:${encodeURIComponent(correo).replace('%40', '@')}?subject=${encodeURIComponent(asunto)}`;
+}
+
+/* La espera de un `?borrador=` que ya tiene un pago pendiente: el
+   servidor solo devuelve referencia, total y procesador (T-05.2-11,
+   nunca la cuenta bancaria completa por esta ruta), así que se enseña
+   sin los datos de transferencia. Quien los necesita los tiene en el
+   correo que se le mandó al pedir el pago, o puede volver a pedirlo. */
+function esperaDesdeBorrador(b) {
+  const pago = b.pago || {};
+  return {
+    cobro: { referencia: pago.referencia, total: pago.total },
+    aviso: 'Su anuncio se publica cuando confirmemos el ingreso.',
+  };
+}
+
+/* Lo que se enseña tras un 202, o al retomar un `?borrador=` con un
+   pago pendiente (D-13). Con datos de cuenta, el bloque entero (patrón
+   de `htmlTransferencia` de assets/planes.js); sin ellos, solo el
+   aviso y la referencia. */
+function pintarEspera(r) {
+  const cobro = r.cobro || {};
+  const total = Number(cobro.total) || 0;
+  const t = r.transferencia;
+
+  $('#publicar').hidden = true;
+  const caja = $('#publicado');
+  if (!caja) return;
+  caja.hidden = false;
+
+  const datosBanco = t
+    ? `<div class="transferencia">
+        <h3 class="transferencia__titulo">Datos para transferir</h3>
+        <p class="transferencia__ref">
+          <span class="transferencia__rotulo">Referencia</span>
+          <b class="transferencia__codigo">${esc(cobro.referencia || '')}</b>
+          ${botonCopiar(cobro.referencia || '')}
+        </p>
+        <dl class="transferencia__cuenta">
+          <div><dt>Banco</dt><dd>${esc(t.banco)}</dd></div>
+          <div><dt>Titular</dt><dd>${esc(t.titular)}</dd></div>
+          <div><dt>RNC</dt><dd class="num">${esc(t.rnc)}</dd></div>
+          <div><dt>Tipo de cuenta</dt><dd>${esc(t.tipoCuenta === 'ahorros' ? 'De ahorros' : 'Corriente')}</dd></div>
+          <div><dt>Número de cuenta</dt><dd class="num">${esc(t.cuenta)}</dd></div>
+          <div><dt>Importe</dt><dd class="num">${pesos(total)}</dd></div>
+        </dl>
+        <ul class="transferencia__pasos">
+          <li>Ponga la referencia en el concepto de la transferencia.</li>
+          <li>Envíe el comprobante a <a href="${esc(enlaceComprobante(t.correo, cobro.referencia || ''))}">${esc(t.correo)}</a>.</li>
+        </ul>
+        <p class="transferencia__nota">Esto no es un comprobante fiscal. Se lo enviamos por correo cuando confirmemos el pago.</p>
+      </div>`
+    : (r.avisoTransferencia ? `<p class="transferencia__aviso">${esc(r.avisoTransferencia)}</p>` : '');
+
+  caja.innerHTML = `
+    <div class="publicado__sello">${icono('i-reloj')}</div>
+    <h2 class="publicado__titulo">Esperando confirmación del pago</h2>
+    <p class="publicado__texto">${esc(r.aviso || 'Su anuncio se publica cuando confirmemos el ingreso.')}</p>
+    <dl class="publicado__datos">
+      <div><dt>Referencia</dt><dd class="num">${esc(cobro.referencia || '—')} ${botonCopiar(cobro.referencia || '')}</dd></div>
+      <div><dt>Total</dt><dd class="num">${total === 0 ? 'Sin costo' : `${pesos(total)} — ITBIS incluido`}</dd></div>
+    </dl>
+    ${datosBanco}
+    <p class="publicado__nota">Su anuncio se publica cuando confirmemos el ingreso. Puede cerrar esta página: lo encontrará en <a href="panel.html">su panel</a>.</p>`;
+  caja.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* El anuncio publicado tras pagar la publicación (201 de
+   POST /api/borradores/:id/pago). Distinta de `pintarConfirmacion`:
+   ahí se ocupa un cupo ya pagado; aquí se acaba de pagar ESTA
+   publicación, así que se enseña lo que costó, no «ninguno». */
+function pintarConfirmacionPublicacion(r) {
+  const anuncio = r.anuncio;
+  const cobro = r.cobro || {};
+  const total = Number(cobro.total) || 0;
+  const equipo = esc(`${anuncio.anio} ${anuncio.marca} ${anuncio.modelo}`);
+
+  const sinVerificar = (anuncio.telefonos || []).filter((t) => !t.verificado).length;
+  const avisoTelefonos = sinVerificar
+    ? `<p class="realce">${icono('i-aviso')} <span>${sinVerificar === 1
+      ? 'Un teléfono de este anuncio está sin verificar y no se muestra.'
+      : `${sinVerificar} teléfonos de este anuncio están sin verificar y no se muestran.`}
+      Verifíquelos desde <a href="panel.html#panelContactos">su panel</a>: tarda un minuto y aparecen al momento.</span></p>`
+    : '';
+
+  $('#publicar').hidden = true;
+  const caja = $('#publicado');
+  caja.hidden = false;
+  caja.innerHTML = `
+    <div class="publicado__sello">${icono('i-check')}</div>
+    <h2 class="publicado__titulo">Anuncio publicado</h2>
+    <p class="publicado__texto">
+      ${equipo} ya está visible en el catálogo y empieza a recibir contactos.
+      ${anuncio.vence ? `Se publica hasta el ${fechaCorta(new Date(anuncio.vence))}.` : 'No tiene fecha de caducidad.'}
+    </p>
+    <dl class="publicado__datos">
+      <div><dt>Referencia</dt><dd class="num">${esc(cobro.referencia || anuncio.id.slice(0, 8).toUpperCase())}</dd></div>
+      <div><dt>Publicación</dt><dd>${esc((r.membresia && r.membresia.plan_nombre) || '—')}</dd></div>
+      <div><dt>Pagado</dt><dd class="num">${total === 0 ? 'Sin costo' : `${pesos(total)} — ITBIS incluido`}</dd></div>
+      <div><dt>Vigente hasta</dt><dd>${anuncio.vence ? fechaCorta(new Date(anuncio.vence)) : 'Sin caducidad'}</dd></div>
+      <div><dt>Fotografías</dt><dd class="num">${(anuncio.fotos || []).length}</dd></div>
+    </dl>
+    ${avisoTelefonos}
+    <p class="publicado__nota">
+      Enviamos la confirmación a <b>${esc(estado.contacto.correo)}</b>.
+      Desde <a href="panel.html">su panel</a> puede seguir las visitas o marcarlo como vendido.
+    </p>
+    <div class="acciones acciones--pie">
+      <a class="btn btn--ambar btn--grande" href="equipo.html?id=${encodeURIComponent(anuncio.id)}">Ver el anuncio</a>
+      <a class="btn btn--linea btn--grande" href="panel.html">Ir a mi panel</a>
+      <a class="btn btn--linea btn--grande" href="publicar.html">Publicar otro equipo</a>
+    </div>`;
+  caja.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* D-02: si vendió algo mientras rellenaba el borrador y le quedó
+   capacidad libre en algún plan, se le ofrece usarla en vez de cobrar
+   otra publicación. `MEMBRESIAS` se cargó al montar el asistente: si
+   cambió en otra pestaña no se entera hasta la próxima carga, que es
+   aceptable para un botón que solo AHORRA un cobro, nunca lo fuerza. */
+function pintarOfertaCapacidadLibre() {
+  const previo = $('#ofertaCapacidadLibre');
+  if (previo) previo.remove();
+
+  const caja = $('#resumenPublicacion');
+  if (!caja || !estado.idBorrador || !conHueco().length) return;
+
+  const div = document.createElement('div');
+  div.id = 'ofertaCapacidadLibre';
+  div.className = 'acciones';
+  div.innerHTML = '<button type="button" class="btn btn--linea" id="btnCapacidadLibre">'
+    + 'Publicar con la capacidad disponible de su plan (sin pagar)</button>';
+  caja.insertAdjacentElement('afterend', div);
+
+  $('#btnCapacidadLibre').addEventListener('click', publicarConCapacidadLibre);
+}
+
+async function publicarConCapacidadLibre() {
+  const btn = $('#btnCapacidadLibre');
+  const textoOriginal = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Publicando…'; }
+
+  const idBorradorViejo = estado.idBorrador;
+  try {
+    const r = await api('/anuncios', { metodo: 'POST', cuerpo: anuncioParaApi() });
+    if (!r) throw new Error('No hay conexión con el servidor.');
+    // Las fotos y videos son rutas compartidas: borrar el borrador
+    // viejo no se lleva por delante las que ya usa el anuncio nuevo
+    // (borrarAnuncio solo borra lo que ya nadie usa).
+    try { await api(`/anuncios/${encodeURIComponent(idBorradorViejo)}`, { metodo: 'DELETE' }); } catch (_) { /* se limpiará sola */ }
+    borrarBorrador();
+    estado.idBorrador = null;
+    pintarConfirmacion(r);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = textoOriginal; }
+    avisoPaso($('.paso[data-paso="confirmar"]'), e.message);
+  }
+}
+
+/* El resumen del último paso, con el precio FINAL del servidor: el
+   navegador no calcula lo que se cobra, solo lo enseña (T-05.2-21). */
+function pintarResumenPublicacionServidor(b) {
+  const caja = $('#resumenPublicacion');
+  if (!caja) return;
+
+  if (b.pendientePago) {
+    pintarEspera(esperaDesdeBorrador(b));
+    return;
+  }
+
+  const e = estado.equipo;
+  const titulo = [e.anio, nombreMarca(e.marca) || e.marca, e.modelo].filter(Boolean).join(' ') || 'Su equipo';
+  const total = (b.precio || {}).total || 0;
+  const btn = $('#btnPublicar');
+
+  const bloqueFiscal = $('#bloqueFiscalPublicar');
+  if (bloqueFiscal) bloqueFiscal.hidden = !(total > 0);
+
+  const metodo = $('#metodoPublicar');
+  if (metodo) {
+    const conTransferencia = METODOS_PAGO.includes('transferencia') && total > 0;
+    metodo.hidden = !conTransferencia;
+    metodo.textContent = conTransferencia
+      ? 'Forma de pago: transferencia bancaria. Le damos los datos y la referencia al confirmar; el anuncio se publica cuando recibamos el ingreso.'
+      : '';
+  }
+
+  caja.innerHTML = `
+    <h3 class="pedido__titulo">Resumen de su publicación</h3>
+    <dl class="pedido__lista">
+      <div><dt>Equipo</dt><dd>${esc(titulo)}</dd></div>
+      <div><dt>Publicación</dt><dd>${esc(b.plan ? b.plan.nombre : '—')}${b.plan && b.plan.destacado ? ' · sale destacado' : ''}</dd></div>
+      <div><dt>Fotografías</dt><dd class="num">${estado.fotos.length} de ${b.plan ? b.plan.fotos_maximas : '—'}</dd></div>
+      <div><dt>Vigencia</dt><dd>${b.dias} días desde que se confirme el pago</dd></div>
+      ${b.falta ? `<div><dt>Falta</dt><dd>${esc(b.falta)}</dd></div>` : ''}
+      <div class="pedido__total"><dt>Total</dt><dd class="num">${total === 0 ? 'Sin costo' : `${pesos(total)} — ITBIS incluido`}</dd></div>
+    </dl>`;
+
+  if (btn) {
+    btn.disabled = !b.completo;
+    btn.textContent = total === 0
+      ? 'Publicar sin costo'
+      : (METODOS_PAGO.includes('transferencia')
+        ? `Pedir datos para transferir ${pesos(total)}`
+        : `Pagar ${pesos(total)} y publicar`);
+
+    if (!document.querySelector('#legalPagoPublicacion')) {
+      const aviso = document.createElement('p');
+      aviso.id = 'legalPagoPublicacion';
+      aviso.className = 'pedido__legal';
+      aviso.innerHTML = 'Al confirmar el pago acepta las '
+        + '<a href="legal.html#contratacion" target="_blank" rel="noopener">Condiciones de contratación y pagos</a>, '
+        + 'incluida la política de reembolso.';
+      btn.insertAdjacentElement('afterend', aviso);
+    }
+  }
+
+  pintarOfertaCapacidadLibre();
+  montarAvisoLegal('pagar');
+}
+
+let tokenResumenPublicacion = 0;
+
+/* Al entrar en el último paso, en modo publicación: se guarda lo que
+   haya (por si acaba de escribir algo) y se pide al servidor el precio
+   final, `completo` y `falta` de este borrador. */
+async function actualizarResumenPublicacion() {
+  const miToken = += tokenResumenPublicacion;
+  const caja = $('#resumenPublicacion');
+  if (!caja) return;
+
+  if (!estado.idBorrador) {
+    caja.innerHTML = `<h3 class="pedido__titulo">Elija un plan</h3>
+      <p class="pedido__vacio">${icono('i-etiqueta')} Vuelva al primer paso para elegir cómo publicar este equipo.</p>`;
+    if ($('#btnPublicar')) $('#btnPublicar').disabled = true;
+    return;
+  }
+
+  caja.innerHTML = '<p class="pedido__vacio">Calculando el precio…</p>';
+  await guardarEnServidor(true);
+
+  let r = null;
+  try {
+    r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}`, { silencioso: true });
+  } catch (_) { r = null; }
+
+  if (miToken !== tokenResumenPublicacion) return; // se pidió otro resumen mientras tanto
+  if (!r || !r.borrador) {
+    caja.innerHTML = '<p class="pedido__vacio">No se pudo calcular el precio. Revise su conexión.</p>';
+    return;
+  }
+  pintarResumenPublicacionServidor(r.borrador);
+}
+
+/* Pide el pago del borrador (POST /api/borradores/:id/pago). El
+   navegador nunca manda importes: el servidor calcula con el plan y
+   los días guardados en el borrador (T-05.2-21). */
+async function pagarPublicacion() {
+  const btn = $('#btnPublicar');
+  const seccion = $('.paso[data-paso="confirmar"]');
+
+  btn.disabled = true;
+  btn.classList.add('btn--ocupado');
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Procesando…';
+
+  const restaurar = (mensaje) => {
+    btn.disabled = false;
+    btn.classList.remove('btn--ocupado');
+    btn.textContent = textoOriginal;
+    avisoPaso(seccion, mensaje);
+  };
+
+  const cuerpo = {};
+  if (METODOS_PAGO.includes('transferencia')) cuerpo.metodo = 'transferencia';
+  if ($('#pub-conRnc') && $('#pub-conRnc').checked) {
+    Object.assign(cuerpo, {
+      conRnc: true,
+      razonSocial: $('#pub-razon').value,
+      rnc: $('#pub-rnc').value,
+      direccionFiscal: $('#pub-direccion').value,
+    });
+  }
+
+  try {
+    const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}/pago`, { metodo: 'POST', cuerpo });
+    if (!r) return restaurar('No hay conexión con el servidor. Su borrador sigue guardado.');
+
+    if (r.pago && r.pago.estado === 'pendiente') {
+      borrarBorrador();
+      pintarEspera(r);
+      return;
+    }
+
+    borrarBorrador();
+    pintarConfirmacionPublicacion(r);
+  } catch (e) {
+    restaurar(e.message);
+    if (/fotograf|video/i.test(e.message)) {
+      const aviso = seccion.querySelector('.paso__aviso');
+      if (aviso && !aviso.querySelector('[data-ir-fotos]')) {
+        const btnFotos = document.createElement('button');
+        btnFotos.type = 'button';
+        btnFotos.className = 'btn btn--linea btn--chico';
+        btnFotos.dataset.irFotos = '1';
+        btnFotos.textContent = 'Volver a fotografías';
+        btnFotos.addEventListener('click', () => irAPaso(pasosDelModo().findIndex((p) => p.id === 'fotos')));
+        aviso.appendChild(btnFotos);
+      }
+    }
   }
 }
 
