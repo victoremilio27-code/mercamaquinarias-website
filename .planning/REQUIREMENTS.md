@@ -156,10 +156,10 @@ huérfanos y sin duplicados.
 | MOD-02 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
 | MOD-03 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
 | MOD-04 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
-| MOD-05 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
-| MOD-06 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
-| MOD-07 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
-| MOD-08 | Phase 05.2 — Publicar este equipo | Pendiente | `research/modelo-comercial.md` |
+| MOD-05 | Phase 05.2 — Publicar este equipo | Hecho 2026-09-29 | `research/modelo-comercial.md` |
+| MOD-06 | Phase 05.2 — Publicar este equipo | Hecho 2026-09-29 | `research/modelo-comercial.md` |
+| MOD-07 | Phase 05.2 — Publicar este equipo | Hecho 2026-09-29 | `research/modelo-comercial.md` |
+| MOD-08 | Phase 05.2 — Publicar este equipo | Hecho 2026-09-29 | `research/modelo-comercial.md` |
 | MOD-09 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
 | MOD-10 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
 | MOD-11 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
