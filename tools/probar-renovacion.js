@@ -539,6 +539,69 @@ db.cargarSecuencia({
       && filaSusc(idViva).renovacion_automatica === 0, 'otra organización no la toca');
   }
 
+  console.log('\n3 · registro de recordatorios');
+  {
+    const Q = cuenta('recuerda');
+    const idSusc = nuevaSuscripcion({ idOrg: Q.idOrg, plan: 'estandar', cupo: 10, fin: enDias(30) });
+    const a7 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(6.5) });
+    const a3 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(2.5) });
+    const a1 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(20 / 24) });
+    const a9 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(9) });
+    const aVendido = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'vendido', vence: enDias(2.5) });
+    const aPausado = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'pausado', vence: enDias(2.5) });
+    const aVencido = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'vencido', vence: enDias(-1) });
+    const deEsta = [a7, a3, a1, a9, aVendido, aPausado, aVencido];
+
+    const pendientes = () => db.recordatoriosPendientes().filter((x) => deEsta.includes(x.id));
+    const lista = pendientes();
+    const tipoDe = (idA) => (lista.find((x) => x.id === idA) || {}).tipo || null;
+    ok(tipoDe(a7) === '7d', `a 6,5 días → ${tipoDe(a7)}`);
+    ok(tipoDe(a3) === '3d', `a 2,5 días → ${tipoDe(a3)}`);
+    ok(tipoDe(a1) === '1d', `a 20 horas → ${tipoDe(a1)}`);
+    ok(tipoDe(a9) === null, `a 9 días → ${tipoDe(a9) || 'no sale'}`);
+    ok(![aVendido, aPausado, aVencido].some((x) => tipoDe(x)),
+      `vendido, pausado y vencido no salen (${[aVendido, aPausado, aVencido].map(tipoDe).join(', ')})`);
+    const fila7 = lista.find((x) => x.id === a7);
+    ok(!!fila7 && fila7.correo === Q.correo && fila7.vence === filaAnuncio(a7).vence && fila7.plan_nombre === 'Estándar'
+      && fila7.marca_nombre === 'Peterbilt',
+    `destinatario y datos: ${fila7 ? `${fila7.correo === Q.correo ? 'el propietario' : fila7.correo} plan=${fila7.plan_nombre} marca=${fila7.marca_nombre}` : 'NO sale'}`);
+
+    // Reservar dos veces: la segunda no.
+    const vence3 = filaAnuncio(a3).vence;
+    const r1 = db.reservarRecordatorio({ idAnuncio: a3, tipo: '3d', vence: vence3 });
+    const r2 = db.reservarRecordatorio({ idAnuncio: a3, tipo: '3d', vence: vence3 });
+    ok(typeof r1 === 'string' && r2 === null, `reservar dos veces: ${r1 ? 'id' : r1}, luego ${r2}`);
+    const fila = consulta('SELECT * FROM recordatorios WHERE id = ?', r1);
+    ok(!!fila && fila.resultado === 'enviando' && !!fila.enviado, `reservado: ${fila && fila.resultado}`);
+    ok(!pendientes().some((x) => x.id === a3), 'reservado: deja de salir en pendientes');
+
+    // Un envío fallido se puede reservar otra vez, y solo una.
+    db.anotarRecordatorio(r1, 'fallido');
+    ok(pendientes().some((x) => x.id === a3), 'fallido: vuelve a salir en pendientes');
+    const r3 = db.reservarRecordatorio({ idAnuncio: a3, tipo: '3d', vence: vence3 });
+    const r4 = db.reservarRecordatorio({ idAnuncio: a3, tipo: '3d', vence: vence3 });
+    ok(r3 === r1 && r4 === null, `tras fallido: reserva ${r3 === r1 ? 'la misma fila' : r3}, la siguiente ${r4}`);
+    db.anotarRecordatorio(r3, 'enviado');
+    ok(consulta('SELECT resultado FROM recordatorios WHERE id = ?', r3).resultado === 'enviado', 'anotado como enviado');
+    ok(consulta('SELECT COUNT(*) AS n FROM recordatorios WHERE anuncio_id = ?', a3).n === 1, 'una sola fila para ese ciclo');
+
+    // Renovar cambia `vence`: el mismo tipo vuelve a salir para el ciclo nuevo.
+    const venceNuevo = enDias(2.2);
+    ejecuta('UPDATE anuncios SET vence = ? WHERE id = ?', venceNuevo, a3);
+    const nuevo = pendientes().find((x) => x.id === a3);
+    ok(!!nuevo && nuevo.tipo === '3d' && nuevo.vence === venceNuevo, `ciclo nuevo: ${nuevo ? nuevo.tipo : 'NO sale'}`);
+    const r5 = db.reservarRecordatorio({ idAnuncio: a3, tipo: '3d', vence: venceNuevo });
+    ok(typeof r5 === 'string' && r5 !== r1, 'ciclo nuevo: reserva una fila nueva');
+    ok(consulta('SELECT COUNT(*) AS n FROM recordatorios WHERE anuncio_id = ?', a3).n === 2, 'la fila del ciclo viejo se queda');
+
+    // Si el anuncio cambió entre listar y reservar, no se reserva.
+    const vence1 = filaAnuncio(a1).vence;
+    ok(db.reservarRecordatorio({ idAnuncio: a1, tipo: '1d', vence: enDias(40) }) === null, 'vence que no es el del ciclo → null');
+    ejecuta("UPDATE anuncios SET estado = 'pausado' WHERE id = ?", a1);
+    ok(db.reservarRecordatorio({ idAnuncio: a1, tipo: '1d', vence: vence1 }) === null, 'anuncio que dejó de estar activo → null');
+    ok(consulta('SELECT COUNT(*) AS n FROM recordatorios WHERE anuncio_id = ?', a1).n === 0, 'y no deja fila');
+  }
+
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);
 })().catch((e) => {
