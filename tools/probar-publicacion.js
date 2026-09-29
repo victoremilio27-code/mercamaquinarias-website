@@ -1130,6 +1130,74 @@ db.cargarSecuencia({
       `reactivar el vendido sin capacidad: ${rReact.codigo} A=${filaAnuncio(A.id).estado}`);
   }
 
+  /* ── 05.2-06: borradores abandonados (D-08) ──────────────────
+     Sin esta limpieza los borradores que nadie paga se acumulan con sus
+     fotos y a los 10 el particular queda bloqueado por
+     BORRADORES_ABIERTOS. A los 30 días sin actividad y sin pago se
+     borran; con un pago pendiente o aprobado, nunca. */
+  console.log('\n13. Borradores abandonados: a los 30 días sin pago se limpian, con pago nunca');
+  {
+    const hace = (dias) => new Date(Date.now() - dias * 86400000).toISOString();
+    const fechar = (idAnuncio, dias) =>
+      ejecuta('UPDATE anuncios SET creado = ?, actualizado = ? WHERE id = ?', hace(dias), hace(dias), idAnuncio);
+
+    // Una foto de verdad en disco para el borrador abandonado: la limpieza debe llevársela.
+    const rutaFoto = `/fotos/2026-09/abandonado-${SELLO}.jpg`;
+    const archivoFoto = fotosModulo.archivoDe(rutaFoto);
+    fs.mkdirSync(path.dirname(archivoFoto), { recursive: true });
+    fs.writeFileSync(archivoFoto, 'jpg de prueba');
+
+    const conPago = (idAnuncio, etiqueta, estadoPago) => {
+      const pago = db.registrarCobro({
+        idOrg: ID_ORG, idAnuncio, cobro: cobroDe(3200, etiqueta),
+        intencion: intencionPublicacion(idAnuncio, 'destacado', 30),
+      });
+      if (estadoPago !== 'pendiente') ejecuta('UPDATE pagos SET estado = ? WHERE id = ?', estadoPago, pago.id);
+      return pago;
+    };
+
+    const A = db.crearBorrador({ idOrg: ID_ORG, idPlan: 'estandar', dias: 30 });
+    ejecuta('INSERT INTO anuncio_fotos (id, anuncio_id, url, miniatura, orden, creada) VALUES (?, ?, ?, NULL, 0, ?)',
+      `foto-abandonada-${SELLO}`, A, rutaFoto, new Date().toISOString());
+    const B = db.crearBorrador({ idOrg: ID_ORG, idPlan: 'destacado', dias: 30 });
+    conPago(B, 'ABANDONO-PEND', 'pendiente');
+    const C = db.crearBorrador({ idOrg: ID_ORG, idPlan: 'destacado', dias: 30 });
+    conPago(C, 'ABANDONO-APROB', 'aprobado');
+    const D = db.crearBorrador({ idOrg: ID_ORG, idPlan: 'estandar', dias: 30 });
+    const E = db.crearBorrador({ idOrg: ID_ORG, idPlan: 'estandar', dias: 30 });
+    ejecuta("UPDATE anuncios SET estado = 'activo' WHERE id = ?", E);
+    [A, B, C, E].forEach((x) => fechar(x, 31));
+    fechar(D, 5);
+
+    const lista = db.borradoresAbandonados(30);
+    const ids = lista.map((x) => x.id);
+    ok(ids.includes(A) && lista.find((x) => x.id === A).organizacion_id === ID_ORG,
+      `abandonado sin pago (31 días): ${ids.includes(A) ? 'listado con su organización' : 'NO listado'}`);
+    ok(![B, C, D, E].some((x) => ids.includes(x)),
+      `con pago pendiente, con pago aprobado, reciente y activo: ninguno listado (${[B, C, D, E].filter((x) => ids.includes(x)).length} de 4 se colaron)`);
+
+    // La tarea diaria de verdad, en un proceso aparte contra esta misma base.
+    const tarea = (...args) => require('child_process').spawnSync(
+      process.execPath, [path.join(__dirname, 'tareas.js'), ...args], { encoding: 'utf8', env: process.env });
+    const existe = (x) => !!filaAnuncio(x);
+
+    const seco = tarea('--seco', 'borradores');
+    ok(seco.status === 0 && existe(A) && /borrar/.test(seco.stdout),
+      `--seco cuenta y no borra: salida ${seco.status} A existe=${existe(A)}`);
+
+    const real = tarea('borradores');
+    ok(real.status === 0, `tarea borradores: salida ${real.status} ${(real.stderr || '').trim().slice(0, 120)}`);
+    ok(!existe(A) && fotosDe(A) === 0, `el abandonado se borró con sus fotos: existe=${existe(A)}`);
+    ok(!fs.existsSync(archivoFoto), `y su archivo de foto se fue del disco: existe=${fs.existsSync(archivoFoto)}`);
+    ok(existe(B) && existe(C) && existe(D) && existe(E),
+      `siguen el del pago pendiente, el del aprobado, el reciente y el activo: ${[B, C, D, E].map((x) => existe(x)).join('/')}`);
+    ok(filaAnuncio(E).estado === 'activo', `el activo sigue activo: ${filaAnuncio(E).estado}`);
+
+    const otra = tarea('borradores');
+    ok(otra.status === 0 && existe(B) && existe(C) && existe(D) && existe(E),
+      `segunda pasada: salida ${otra.status}, no borra nada más`);
+  }
+
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exitCode = fallos ? 1 : 0;
 })().catch((e) => {
