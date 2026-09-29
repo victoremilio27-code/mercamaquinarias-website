@@ -53,6 +53,10 @@ for (const k of Object.keys(process.env)) {
 const db = require('./db');
 const pagos = require('./pagos');
 const precios = require('../assets/precios.js');
+const api = require('./api');
+const legales = require('../assets/legales.js');
+const correo = require('./correo');
+const { EventEmitter } = require('events');
 
 const SELLO = Date.now().toString(36);
 const DIA = 86400000;
@@ -181,6 +185,97 @@ function renovarPagando({ idOrg, idSusc, idAnuncio = null, idPlan = 'estandar', 
 
 /* El periodo tal como lo imprime la línea del comprobante. */
 const periodoImpreso = (inicio, fin) => pagos.lineaDeCupos({ cupo: 1, subtotal: 1, inicio, fin }).periodo;
+
+/* ── Para las secciones 4 y 5: la API de verdad ─────────────
+   Una petición contra el enrutador con req y res fingidos, copiada de
+   probar-publicacion.js: lo que importa es lo que ve quien llama, no lo
+   que devuelven las funciones de dentro. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-renovacion', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      setHeader() {},
+      writeHead(c) { res.codigo = c; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
+/* Una cuenta con sesión y, salvo que se pida lo contrario, con todas
+   las condiciones aceptadas: la comprobación de legales no debe
+   estorbar la prueba de otra cosa. */
+function cuentaConSesion(etiqueta, { sinLegales = false } = {}) {
+  const c = cuenta(etiqueta);
+  if (!sinLegales) {
+    Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+      db.registrarAceptacion({
+        usuarioId: c.idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba',
+      });
+    });
+  }
+  return { ...c, cabeceras: { cookie: `te_sesion=${db.abrirSesion(c.idUsuario)}`, 'cf-connecting-ip': '201.8.8.8' } };
+}
+
+const errorDe = (r) => ((r && r.datos) || {}).error || '';
+const pagosDeSusc = (idSusc) => consulta('SELECT COUNT(*) AS n FROM pagos WHERE suscripcion_id = ?', idSusc).n;
+const unitario = (idPlan) => {
+  const p = db.planPorId(idPlan);
+  return p.precio_vigente != null ? p.precio_vigente : p.precio;
+};
+const masDias = (iso, dias) => { const d = new Date(iso); d.setDate(d.getDate() + dias); return d.toISOString(); };
+const renovarAnuncioApi = (idAnuncio, quien, cuerpo = {}) =>
+  pedir({ metodo: 'POST', url: `/api/anuncios/${idAnuncio}/renovar`, cuerpo, cabeceras: quien.cabeceras });
+const renovarMembresiaApi = (idSusc, quien, cuerpo = {}) =>
+  pedir({ metodo: 'POST', url: `/api/membresias/${idSusc}/renovar`, cuerpo, cabeceras: quien.cabeceras });
+
+/* La bandeja del transporte de archivo es compartida entre pruebas y
+   pasadas: el aviso a facturación se busca por la referencia del cobro,
+   que es única. */
+const avisosDe = (referencia) => {
+  if (!referencia || !fs.existsSync(correo.BANDEJA)) return 0;
+  return fs.readdirSync(correo.BANDEJA).filter((f) => f.endsWith('.txt'))
+    .map((f) => fs.readFileSync(path.join(correo.BANDEJA, f), 'utf8'))
+    .filter((t) => t.includes(`Transferencia en espera ${referencia}`)).length;
+};
+const respiro = () => new Promise((r) => setTimeout(r, 30));
+
+/* La transferencia, con los datos falsos de probar-transferencia.js (se
+   leen en cada llamada, así que basta con fijar el entorno). */
+const PRUEBA_TRANSFERENCIA = {
+  MERCA_TRANSFERENCIA_BANCO: 'BANCO DE PRUEBA',
+  MERCA_TRANSFERENCIA_TITULAR: 'TITULAR DE PRUEBA, S.R.L.',
+  MERCA_TRANSFERENCIA_RNC: '000000000',
+  MERCA_TRANSFERENCIA_TIPO: 'corriente',
+  MERCA_TRANSFERENCIA_CUENTA: '000-000000-0',
+};
+const encenderTransferencia = () => {
+  delete process.env.MERCA_TRANSFERENCIA;
+  Object.assign(process.env, PRUEBA_TRANSFERENCIA);
+};
+const apagarTransferencia = () => {
+  for (const k of Object.keys(process.env)) {
+    if (k.startsWith('MERCA_TRANSFERENCIA')) delete process.env[k];
+  }
+};
 
 /* Abrir la base aplica el esquema y las migraciones. */
 db.secuenciasNcf();
@@ -600,6 +695,201 @@ db.cargarSecuencia({
     ejecuta("UPDATE anuncios SET estado = 'pausado' WHERE id = ?", a1);
     ok(db.reservarRecordatorio({ idAnuncio: a1, tipo: '1d', vence: vence1 }) === null, 'anuncio que dejó de estar activo → null');
     ok(consulta('SELECT COUNT(*) AS n FROM recordatorios WHERE anuncio_id = ?', a1).n === 0, 'y no deja fila');
+  }
+
+  console.log('\n4 · renovar por la API');
+  {
+    /* Las promociones se fijan aquí para que la prueba no dependa del
+       día en que corre (la del Estándar de verdad termina el 2026-11-30):
+       Destacado a precio lleno y Estándar a cero. */
+    ejecuta("UPDATE planes SET precio_promocional = NULL, promo_hasta = NULL WHERE id = 'destacado'");
+    ejecuta("UPDATE planes SET precio_promocional = 0, promo_hasta = '2099-12-31' WHERE id = 'estandar'");
+    const demoOriginal = pagos.PROCESADORES.demo;
+    const dueno = cuentaConSesion('renueva-api');
+
+    // Un anuncio activo de un Destacado de un cupo, con el cuerpo manipulado.
+    const finA = enDias(10);
+    const sA = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'destacado', cupo: 1, fin: finA, precio: 3200 });
+    const aA = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sA, vence: finA, fotos: 2 });
+    const esperado = precios.precioRenovacion({ precioUnitario: unitario('destacado'), cupo: 1, dias: 30 });
+    const b02 = siguienteB02();
+    const fact = facturasTotales();
+    const rA = await renovarAnuncioApi(aA, dueno, {
+      total: 1, subtotal: 1, precio: 1, base: 1, cupo: 5, dias: 7, plan: 'estandar',
+    });
+    const dA = rA.datos || {};
+    ok(rA.codigo === 201, `renovar un anuncio de un cupo: ${rA.codigo} «${errorDe(rA)}»`);
+    const pA = dA.pago && dA.pago.id ? db.pagoPorId(dA.pago.id) : null;
+    ok(!!pA && pA.total === esperado.total && pA.estado === 'aprobado' && pA.suscripcion_id === sA && pA.anuncio_id === aA,
+      `el pago: ${pA ? `total=${pA.total} (se esperaba ${esperado.total}) ${pA.estado} susc=${pA.suscripcion_id === sA} anuncio=${pA.anuncio_id === aA}` : 'NO hay'}`);
+    let iA = null;
+    try { iA = JSON.parse(pA.intencion); } catch (_) { /* queda null */ }
+    ok(!!iA && iA.tipo === 'renovacion' && iA.idSusc === sA && iA.idAnuncio === aA && iA.cupo === 1 && iA.dias === 30,
+      `intención: ${iA ? `${iA.tipo} cupo=${iA.cupo} días=${iA.dias}` : 'ilegible'}`);
+    ok(!!dA.cobro && dA.cobro.base === undefined && dA.cobro.ajuste === undefined && dA.cobro.total === esperado.total,
+      `cobro sin base ni ajuste: ${JSON.stringify(dA.cobro)}`);
+    const fA = pA ? facturaDe(pA.id) : null;
+    ok(!!fA && /^B02/.test(fA.ncf || '') && fA.subtotal + fA.itbis === fA.total && fA.total === pA.total
+      && facturasTotales() === fact + 1 && siguienteB02() === b02 + 1,
+    `comprobante: ${fA ? `${fA.ncf} ${fA.subtotal}+${fA.itbis}=${fA.total}` : 'NO hay'}`);
+    ok(!!dA.comprobante && /^B02/.test(dA.comprobante.ncf || ''), `comprobante en la respuesta: ${JSON.stringify(dA.comprobante)}`);
+    ok(filaSusc(sA).fin === masDias(finA, 30), `fin = anterior + 30: ${filaSusc(sA).fin}`);
+    ok(!!dA.anuncio && dA.anuncio.id === aA && filaAnuncio(aA).estado === 'activo' && fotosDe(aA) === 2,
+      `mismo anuncio con sus fotos: ${dA.anuncio && dA.anuncio.id === aA} fotos=${fotosDe(aA)}`);
+
+    // Vencido: vuelve el MISMO anuncio y no nace otro.
+    const sV = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'destacado', cupo: 1, fin: enDias(-2), estado: 'vencida' });
+    const aV = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sV, estado: 'vencido', vence: enDias(-2) });
+    const nAntes = anunciosDeOrg(dueno.idOrg);
+    const rV = await renovarAnuncioApi(aV, dueno);
+    const svF = filaSusc(sV);
+    ok(rV.codigo === 201 && filaAnuncio(aV).estado === 'activo' && anunciosDeOrg(dueno.idOrg) === nAntes,
+      `renovar un vencido: ${rV.codigo} «${errorDe(rV)}» anuncio=${filaAnuncio(aV).estado} anuncios +${anunciosDeOrg(dueno.idOrg) - nAntes}`);
+    ok(svF.estado === 'activa' && Math.abs(new Date(svF.fin).getTime() - (Date.now() + 30 * DIA)) < 2 * 3600000,
+      `suscripción vencida → ${svF.estado}, fin ≈ ahora + 30`);
+
+    // Importe cero: la promoción del Estándar.
+    const finC = enDias(5);
+    const sC = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'estandar', cupo: 1, fin: finC });
+    const aC = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sC, vence: finC });
+    const factC = facturasTotales();
+    const rC = await renovarAnuncioApi(aC, dueno);
+    const pC = consulta('SELECT * FROM pagos WHERE suscripcion_id = ?', sC);
+    ok(rC.codigo === 201 && (rC.datos || {}).comprobante === null,
+      `importe cero: ${rC.codigo} comprobante=${JSON.stringify((rC.datos || {}).comprobante)} «${errorDe(rC)}»`);
+    ok(!!pC && pC.estado === 'aprobado' && pC.total === 0 && pC.procesador === 'sin-costo'
+      && facturasTotales() === factC && filaSusc(sC).fin === masDias(finC, 30),
+    `pago cero: ${pC ? `${pC.estado} total=${pC.total} ${pC.procesador}` : 'NO hay'} facturas +${facturasTotales() - factC}`);
+
+    // Rechazado: la suscripción no cambia.
+    const finR = enDias(4);
+    const sR = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'destacado', cupo: 1, fin: finR });
+    const aR = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sR, vence: finR });
+    const factR = facturasTotales();
+    let rR = null;
+    pagos.PROCESADORES.demo = async () => ({ resultado: 'rechazado', motivo: 'Fondos insuficientes' });
+    try {
+      rR = await renovarAnuncioApi(aR, dueno);
+    } finally {
+      pagos.PROCESADORES.demo = demoOriginal;
+    }
+    ok(rR.codigo === 402 && !/cupo/i.test(errorDe(rR)) && filaSusc(sR).fin === finR && facturasTotales() === factR,
+      `rechazado: ${rR.codigo} «${errorDe(rR)}» fin intacto=${filaSusc(sR).fin === finR}`);
+
+    // Dos cupos: el anuncio no se renueva suelto; el plan, entero.
+    const finM = enDias(3);
+    const sM = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'destacado', cupo: 2, fin: finM });
+    const m1 = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sM, vence: finM });
+    const m2 = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sM, vence: finM });
+    const rM1 = await renovarAnuncioApi(m1, dueno);
+    ok(rM1.codigo === 409 && (rM1.datos || {}).idSusc === sM && pagosDeSusc(sM) === 0,
+      `anuncio de un plan de 2: ${rM1.codigo} idSusc=${(rM1.datos || {}).idSusc === sM} «${errorDe(rM1)}»`);
+    const rM2 = await renovarMembresiaApi(sM, dueno, { cupo: 1, total: 1 });
+    const pM = consulta('SELECT * FROM pagos WHERE suscripcion_id = ?', sM);
+    const esperadoM = precios.precioRenovacion({ precioUnitario: unitario('destacado'), cupo: 2, dias: 30 });
+    const finM2 = masDias(finM, 30);
+    ok(rM2.codigo === 201 && !!pM && pM.total === esperadoM.total && filaSusc(sM).fin === finM2,
+      `renovar el plan: ${rM2.codigo} «${errorDe(rM2)}» total=${pM && pM.total} (se esperaba ${esperadoM.total})`);
+    ok(filaAnuncio(m1).vence === finM2 && filaAnuncio(m2).vence === finM2,
+      `los dos anuncios extendidos: ${filaAnuncio(m1).vence === finM2} ${filaAnuncio(m2).vence === finM2}`);
+
+    // Ajeno, inexistente, borrador, vendido y del sistema anterior.
+    const otro = cuentaConSesion('renueva-ajeno');
+    const rAjeno = await renovarAnuncioApi(aA, otro);
+    const rNada = await renovarAnuncioApi('no-existe', otro);
+    ok(rAjeno.codigo === 404 && rNada.codigo === 404 && errorDe(rAjeno) === errorDe(rNada),
+      `ajeno ${rAjeno.codigo} e inexistente ${rNada.codigo}, mismo texto: ${errorDe(rAjeno) === errorDe(rNada)}`);
+    const rMAjena = await renovarMembresiaApi(sM, otro);
+    ok(rMAjena.codigo === 404, `membresía ajena: ${rMAjena.codigo}`);
+    const aB = nuevoAnuncio({ idOrg: dueno.idOrg, estado: 'borrador' });
+    const rB = await renovarAnuncioApi(aB, dueno);
+    ok(rB.codigo === 409 && consulta('SELECT COUNT(*) AS n FROM pagos WHERE anuncio_id = ?', aB).n === 0,
+      `borrador: ${rB.codigo} «${errorDe(rB)}»`);
+    const sVe = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'destacado', cupo: 1, fin: enDias(8) });
+    const aVe = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sVe, estado: 'vendido', vence: enDias(8) });
+    const rVe = await renovarAnuncioApi(aVe, dueno);
+    ok(rVe.codigo === 409 && pagosDeSusc(sVe) === 0, `vendido: ${rVe.codigo} «${errorDe(rVe)}»`);
+    const aViejo = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: null, vence: enDias(8) });
+    const rViejo = await renovarAnuncioApi(aViejo, dueno);
+    ok(rViejo.codigo === 409, `sin suscripción (modelo viejo): ${rViejo.codigo} «${errorDe(rViejo)}»`);
+    const sSinFin = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'destacado', cupo: 1, fin: null });
+    const rSinFin = await renovarMembresiaApi(sSinFin, dueno);
+    ok(rSinFin.codigo === 404 && pagosDeSusc(sSinFin) === 0, `membresía sin fin: ${rSinFin.codigo}`);
+
+    // Plan que ya no se ofrece: 409 sin teléfono.
+    const sP = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'premium', cupo: 1, fin: enDias(6) });
+    const aP = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sP, vence: enDias(6) });
+    ejecuta("UPDATE planes SET activo = 0 WHERE id = 'premium'");
+    let rP = null;
+    try {
+      rP = await renovarAnuncioApi(aP, dueno);
+    } finally {
+      ejecuta("UPDATE planes SET activo = 1 WHERE id = 'premium'");
+    }
+    ok(rP.codigo === 409 && /correo/.test(errorDe(rP)) && !/\d{3}.?\d{3}.?\d{4}/.test(errorDe(rP)) && pagosDeSusc(sP) === 0,
+      `plan retirado: ${rP.codigo} «${errorDe(rP)}»`);
+
+    // Sin aceptar las condiciones de pago: 409 con `faltan` y nada anotado.
+    const sinLegales = cuentaConSesion('renueva-sin-legales', { sinLegales: true });
+    const sL = nuevaSuscripcion({ idOrg: sinLegales.idOrg, plan: 'destacado', cupo: 1, fin: enDias(6) });
+    const aL = nuevoAnuncio({ idOrg: sinLegales.idOrg, idSusc: sL, vence: enDias(6) });
+    const rL = await renovarAnuncioApi(aL, sinLegales);
+    const faltan = (rL.datos || {}).faltan || [];
+    ok(rL.codigo === 409 && faltan.length > 0 && pagosDeSusc(sL) === 0,
+      `sin aceptar condiciones: ${rL.codigo} faltan=${JSON.stringify(faltan)}`);
+
+    // Sin sesión: 401.
+    const rSin = await pedir({ metodo: 'POST', url: `/api/anuncios/${aA}/renovar`, cuerpo: {} });
+    ok(rSin.codigo === 401, `sin sesión: ${rSin.codigo}`);
+
+    // Transferencia: un solo pendiente y un solo aviso a facturación (D-05).
+    encenderTransferencia();
+    try {
+      const cliente = cuentaConSesion('renueva-transfiere');
+      const finT = enDias(2);
+      const sT = nuevaSuscripcion({ idOrg: cliente.idOrg, plan: 'destacado', cupo: 1, fin: finT });
+      const aT = nuevoAnuncio({ idOrg: cliente.idOrg, idSusc: sT, vence: finT });
+      const r1 = await renovarAnuncioApi(aT, cliente, { metodo: 'transferencia' });
+      await respiro();
+      const d1 = r1.datos || {};
+      const ref = d1.cobro && d1.cobro.referencia;
+      ok(r1.codigo === 202 && !!d1.transferencia && !!d1.pago && d1.pago.estado === 'pendiente'
+        && !/cupo/i.test(d1.aviso || '') && filaSusc(sT).fin === finT,
+      `por transferencia: ${r1.codigo} cuenta=${!!d1.transferencia} pago=${d1.pago && d1.pago.estado} «${d1.aviso}»`);
+      ok(avisosDe(ref) === 1, `aviso a facturación: ${avisosDe(ref)}`);
+      const r2 = await renovarAnuncioApi(aT, cliente, { metodo: 'transferencia' });
+      await respiro();
+      const d2 = r2.datos || {};
+      ok(r2.codigo === 202 && d2.cobro && d2.cobro.referencia === ref && (d2.pago || {}).id === d1.pago.id
+        && pagosDeSusc(sT) === 1 && avisosDe(ref) === 1,
+      `pedir otra vez: ${r2.codigo} misma referencia=${d2.cobro && d2.cobro.referencia === ref} pagos=${pagosDeSusc(sT)} avisos=${avisosDe(ref)}`);
+      const r3 = await renovarMembresiaApi(sT, cliente, { metodo: 'transferencia' });
+      ok(r3.codigo === 202 && ((r3.datos || {}).pago || {}).id === d1.pago.id && pagosDeSusc(sT) === 1,
+        `por la ruta del plan, el mismo pendiente: ${r3.codigo} pagos=${pagosDeSusc(sT)}`);
+    } finally {
+      apagarTransferencia();
+    }
+
+    // GET /api/membresias: las renovables, vencidas incluidas, con su precio final.
+    const panel = cuentaConSesion('renueva-panel');
+    const sPV = nuevaSuscripcion({ idOrg: panel.idOrg, plan: 'destacado', cupo: 1, fin: enDias(-3), estado: 'vencida' });
+    const sPA = nuevaSuscripcion({ idOrg: panel.idOrg, plan: 'destacado', cupo: 2, fin: enDias(12) });
+    const rG = await pedir({ url: '/api/membresias', cabeceras: panel.cabeceras });
+    const g = rG.datos || {};
+    const renovables = g.renovables || [];
+    const vencida = renovables.find((x) => x.id === sPV);
+    const viva = renovables.find((x) => x.id === sPA);
+    ok(rG.codigo === 200 && !!vencida && vencida.vencida === true && !!viva && viva.vencida === false,
+      `renovables: ${renovables.length} vencida=${vencida && vencida.vencida} viva=${viva && viva.vencida}`);
+    ok(!!vencida && !!vencida.precio && vencida.precio.total === esperado.total
+      && vencida.precio.base === undefined && vencida.precio.ajuste === undefined,
+    `precio de la vencida sin base ni ajuste: ${JSON.stringify(vencida && vencida.precio)}`);
+    ok(!!viva && viva.cupo === 2 && viva.dias === 30 && viva.precio.total === esperadoM.total && viva.renovacion_automatica === false,
+      `la viva: cupo=${viva && viva.cupo} días=${viva && viva.dias} total=${viva && viva.precio && viva.precio.total}`);
+    ok(Array.isArray(g.metodosPago) && g.metodosPago.length > 0, `metodosPago: ${JSON.stringify(g.metodosPago)}`);
+    ok(!!g.renovacionAutomatica && g.renovacionAutomatica.disponible === false && g.renovacionAutomatica.texto === undefined,
+      `renovacionAutomatica apagada: ${JSON.stringify(g.renovacionAutomatica)}`);
+    ok(!(g.membresias || []).some((x) => x.id === sPV), 'membresias sigue sin traer la vencida');
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
