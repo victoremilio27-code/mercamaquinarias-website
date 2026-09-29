@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Planes y precios · MercaMaquinarias</title>
-<meta name="description" content="Planes para publicar maquinaria en MercaMaquinarias. Se contratan cupos, no anuncios: un cupo libre se reutiliza sin volver a pagar. Estándar, Destacado y Premium.">
+<meta name="description" content="Planes para publicar maquinaria en MercaMaquinarias. El particular paga la publicación de cada equipo; la empresa contrata publicaciones activas y, al vender un equipo, publica otro sin volver a pagar.">
 <meta name="theme-color" content="#F4F4F1">
 <!-- Vista previa al compartir en WhatsApp, Facebook y X. La imagen
      es la del paquete de marca y va con URL absoluta: las redes no
@@ -13,7 +13,7 @@
 <meta property="og:site_name" content="MercaMaquinarias">
 <meta property="og:locale" content="es_DO">
 <meta property="og:title" content="Planes y precios">
-<meta property="og:description" content="Planes para publicar maquinaria en MercaMaquinarias. Se contratan cupos, no anuncios: un cupo libre se reutiliza sin volver a pagar. Estándar, Destacado y Premium.">
+<meta property="og:description" content="Planes para publicar maquinaria en MercaMaquinarias. El particular paga la publicación de cada equipo; la empresa contrata publicaciones activas y, al vender un equipo, publica otro sin volver a pagar.">
 <meta property="og:url" content="https://mercamaquinarias.com/planes.html">
 <meta property="og:image" content="https://mercamaquinarias.com/brand_assets/img/og-1200x630.jpg">
 <meta property="og:image:width" content="1200">
@@ -59,10 +59,10 @@
     <nav class="miga" aria-label="Ruta"><a href="index.html">Inicio</a> &rsaquo; <span>Planes</span></nav>
     <h1 class="pagina__titulo"><em>Planes</em> para publicar</h1>
     <!-- Dos textos de cabecera, uno por modo (D-01, D-15): al dealer se
-         le sigue hablando de cupos; al particular y al visitante sin
+         le habla de publicaciones activas; al particular y al visitante sin
          sesión, de la publicación de un equipo. planes.js decide cuál
          de los dos queda visible antes de que se vea ninguno. -->
-    <p class="pagina__sub" data-modo="capacidad">No se paga por anuncio: se contratan <b>cupos</b>. Un cupo es el sitio que ocupa un equipo publicado, y es suyo mientras dure el plan: cuando venda una máquina, ese cupo queda libre y publica otra sin volver a pagar.</p>
+    <p class="pagina__sub" data-modo="capacidad">No se paga por anuncio: se contratan <b>publicaciones activas</b>. Cada equipo a la vista ocupa una; cuando lo vende, esa capacidad queda libre para otro.</p>
     <p class="pagina__sub" data-modo="publicacion" hidden>Cada equipo se publica con su propio plan. Elija el nivel, complete el anuncio y pague solo esa publicación: se activa en cuanto se confirma el pago.</p>
   </header>
 
@@ -101,7 +101,7 @@
     <div data-modo="capacidad">
       <p class="realce" data-promo-aviso hidden>
         <svg class="ico" aria-hidden="true"><use href="#i-etiqueta"/></svg>
-        <span>Por la <b>oferta de lanzamiento</b>, los cupos del nivel Estándar no se cobran hasta el
+        <span>Por la <b>oferta de lanzamiento</b>, las publicaciones del nivel Estándar no se cobran hasta el
           <b data-promo-hasta>fecha por definir</b>. <b data-promo-quedan hidden></b></span>
       </p>
     </div>
@@ -143,7 +143,7 @@
 
     <div class="compra-cupos compra-cupos--pagina">
       <label class="campo-v">
-        <span>Cupos</span>
+        <span>Publicaciones activas</span>
         <input type="number" id="cuantosCupos" min="1" max="100" step="1" value="1" inputmode="numeric">
         <small class="campo-v__ayuda">Puede añadir más después y solo paga los días que le queden.</small>
       </label>
@@ -212,19 +212,19 @@
   </section>
 
   <section class="panel" aria-labelledby="t-dudas" data-modo="capacidad">
-    <h2 class="panel__titulo panel__titulo--limpio" id="t-dudas"><em>Cómo</em> funcionan los cupos</h2>
+    <h2 class="panel__titulo panel__titulo--limpio" id="t-dudas"><em>Cómo</em> funcionan las publicaciones activas</h2>
     <dl class="faq">
       <div>
         <dt>¿Qué pasa cuando vendo un equipo?</dt>
-        <dd>Lo marca como vendido en su panel y su cupo queda libre. Publica otra máquina en ese sitio sin volver a pagar.</dd>
+        <dd>Lo marca como vendido en su panel y esa capacidad queda libre. Publica otra máquina sin volver a pagar.</dd>
       </div>
       <div>
         <dt>¿Puedo cambiar un equipo de nivel?</dt>
-        <dd>Sí, desde su panel, sin volver a publicarlo. Si el nivel de destino tiene un cupo libre, el cambio es inmediato.</dd>
+        <dd>Sí, desde su panel, sin volver a publicarlo. Si el nivel de destino tiene capacidad disponible, el cambio es inmediato.</dd>
       </div>
       <div>
-        <dt>¿Y si necesito un cupo más a mitad de mes?</dt>
-        <dd>Lo añade desde su panel y solo paga los días que le queden hasta su renovación, no un ciclo entero.</dd>
+        <dt>¿Y si necesito una publicación activa más a mitad de mes?</dt>
+        <dd>Las agrega desde su panel y solo paga los días que le queden hasta el vencimiento, no un ciclo entero. Una de cada cinco no se cobra.</dd>
       </div>
       <div>
         <dt>¿Qué pasa al terminar el plazo?</dt>
@@ -292,7 +292,7 @@
       <ul class="pie__lista pie__lista--marcada">
         <li><a href="alquiler.html"><b>Alquiler de equipos:</b> flota propia con operador, por hora</a></li>
         <li><a href="importar.html"><b>Importación:</b> cotización según presupuesto</a></li>
-        <li><a href="planes.html"><b>Planes y precios:</b> cupos, niveles y beneficios</a></li>
+        <li><a href="planes.html"><b>Planes y precios:</b> publicaciones, niveles y beneficios</a></li>
         <li><a href="dealers.html"><b>Directorio:</b> dealers y talleres</a></li>
       </ul>
       <p class="pie__sede">Santo Domingo, República Dominicana</p>
