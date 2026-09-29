@@ -77,9 +77,14 @@ Arneses nuevos: `renovacion:probar` (150) y `recordatorios:probar` (32), ambos e
   ¿corte por mes calendario dominicano y fecha de cobro (por defecto)?
 
 **Pendiente de Victor (además de lo de más abajo):**
-- NCF: pedir la secuencia **B02** a la DGII (hoy no está cargada: el que compra sin RNC recibe un recibo no
-  fiscal), fechas de vencimiento de B01 y B04, y un rango de B01 mayor (quedan 15). Preguntar al contador por
-  la facturación electrónica (e-CF).
+- NCF (dato de Victor, 2026-09-29): **las secuencias B quedan obsoletas el 30 de noviembre de 2026; desde el
+  1 de diciembre se factura con e-CF** (migración del Gobierno). Hasta entonces se usan las secuencias que hay
+  y, cuando quedan pocas, se piden más y la DGII las da al instante: hay que estar encima. El aviso ya existe
+  (tarea diaria `ncf` de `tools/tareas.js`, dos umbrales, correo a gerencia). Pedir la **B02** (hoy no está
+  cargada: el que compra sin RNC recibe un recibo no fiscal) y más B01 (quedan 15); cargar sus fechas de
+  vencimiento con `tools/facturas.js`.
+- e-CF: investigación en curso en `research/facturacion-electronica.md`; de ahí sale una fase nueva con fecha
+  límite 30-11-2026, construida y apagada tras un interruptor hasta que la DGII certifique.
 - Revisar la redacción de las Condiciones, ya en la 2.2 (cláusula 2.1 y las nuevas 4.4-4.6 de renovación).
 - Revisión visual de la 05.3 (lista en `05.3-VERIFICATION.md`): «Vence el…» y avisos en el panel, sección
   «Renovar», renovar un vencido tras el despliegue, los tres correos de aviso en un cliente real, y decidir
