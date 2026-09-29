@@ -1512,6 +1512,14 @@ const AMPLIACION_HUERFANA = 'La membresía que ampliaba este pago ya no existe. 
 const PUBLICACION_HUERFANA = 'El borrador de esta publicación ya no existe o ya se publicó. No se '
   + 'publicó nada ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
 
+/* Y para la renovación (05.3-02): mientras la transferencia esperaba,
+   la membresía se canceló o dejó de poder renovarse. Renovarla ahora
+   resucitaría algo que se dio de baja, y convertir el pago en una
+   compra nueva sería decidir por el cliente qué compra. Como con las
+   dos anteriores, la salida es anular y devolver el dinero. */
+const RENOVACION_HUERFANA = 'La membresía que renovaba este pago ya no existe o ya no se puede renovar. '
+  + 'No se renovó nada ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
+
 const SOLO_TRANSFERENCIAS = 'Este pago no es por transferencia: lo resuelve su pasarela, no la consola.';
 
 /* Lo que se comprueba ANTES de escribir, común a marcar y anular. Un
@@ -1558,6 +1566,11 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
       return fallo(res, 409, PUBLICACION_HUERFANA);
     }
   }
+  const esRenovacion = intencion.tipo === 'renovacion';
+  if (pago.estado === 'pendiente' && esRenovacion
+    && !(intencion.idSusc && db.suscripcionRenovable(intencion.idSusc, pago.organizacion_id))) {
+    return fallo(res, 409, RENOVACION_HUERFANA);
+  }
 
   let r;
   try {
@@ -1592,6 +1605,14 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
     if (esPublicacion && (e.codigo === 404
       || (e.codigo === 409 && (db.anuncio(intencion.idAnuncio) || {}).estado !== 'borrador'))) {
       return fallo(res, 409, PUBLICACION_HUERFANA);
+    }
+    /* Y con la renovación: la membresía se canceló o se borró (409 o
+       404 de aplicarRenovacion) entre la comprobación y la aprobación.
+       El SAVEPOINT de aprobarPago ya deshizo todo. Un 409 con la
+       membresía todavía renovable es otra carrera y se dice tal cual. */
+    if (esRenovacion && (e.codigo === 404 || e.codigo === 409)
+      && !(intencion.idSusc && db.suscripcionRenovable(intencion.idSusc, pago.organizacion_id))) {
+      return fallo(res, 409, RENOVACION_HUERFANA);
     }
     return falloInterno(res, e);
   }
@@ -3599,8 +3620,9 @@ const renovacionAutomaticaDisponible = () =>
    comercial, tal cual. Se guarda ESTE, nunca uno que llegue del
    navegador (T-05.3-10): es la prueba del consentimiento para cobros
    futuros y no puede decir lo que el cliente quiera. */
-const TEXTO_RENOVACION_AUTOMATICA = 'Al activar esta opción, autorizas la renovación de este anuncio al '
-  + 'finalizar su período con el método de pago autorizado, según las condiciones y el precio vigente de renovación.';
+const TEXTO_RENOVACION_AUTOMATICA = 'Al activar esta opción, '
+  + 'autorizas la renovación de este anuncio al finalizar su período con el método de pago autorizado, '
+  + 'según las condiciones y el precio vigente de renovación.';
 
 /* Una renovación que ya espera (D-05): se devuelve esa, sin crear otro
    pago ni volver a avisar a facturación. La misma forma que
@@ -3780,6 +3802,33 @@ const renovarMembresia = conSesion(async (req, res, ctx, idSusc) => {
   const s = db.suscripcionRenovable(idSusc, ctx.organizacion.id);
   if (!s) return fallo(res, 404, 'Esa membresía no es suya, no existe o no se renueva');
   return pedirRenovacion(req, res, ctx, { s, idAnuncio: null });
+});
+
+/* La casilla de renovación automática (D-11, D-12). Solo el
+   propietario: activarla autoriza cobros futuros, y eso no lo decide un
+   vendedor ni un administrador de la cuenta. Activar exige CardNet
+   encendido y las condiciones de pago; desactivar funciona SIEMPRE,
+   también con CardNet apagado: nadie puede quedarse atado a un cobro
+   que no sabe cómo quitar. El texto guardado es el del servidor. */
+const cambiarRenovacionAutomatica = conSesion(async (req, res, ctx, idSusc) => {
+  const org = ctx.organizacion;
+  if (!org || org.rol !== 'propietario') {
+    return fallo(res, 403, 'Solo el propietario de la cuenta puede cambiar la renovación automática');
+  }
+  const c = await leerCuerpo(req);
+  const activar = c.activar === true;
+
+  if (!db.suscripcionRenovable(idSusc, org.id)) {
+    return fallo(res, 404, 'Esa membresía no es suya, no existe o no se renueva');
+  }
+  if (activar) {
+    if (!renovacionAutomaticaDisponible()) {
+      return fallo(res, 409, 'La renovación automática todavía no está disponible. Puede renovar a mano cuando quiera.');
+    }
+    if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
+  }
+  db.guardarRenovacionAutomatica({ idSusc, idOrg: org.id, activar, texto: TEXTO_RENOVACION_AUTOMATICA });
+  return responder(res, 200, { renovacionAutomatica: activar, membresia: db.suscripcionRenovable(idSusc, org.id) });
 });
 
 /* Los contactos atribuibles de la organización: qué anuncio y cuándo
@@ -4317,6 +4366,7 @@ const RUTAS = [
   ['POST', /^\/api\/membresias$/,                    comprarMembresia],
   ['POST', /^\/api\/membresias\/([\w-]+)\/ampliar$/, ampliarMembresia],
   ['POST', /^\/api\/membresias\/([\w-]+)\/renovar$/, renovarMembresia],
+  ['PUT',  /^\/api\/membresias\/([\w-]+)\/renovacion-automatica$/, cambiarRenovacionAutomatica],
   ['POST', /^\/api\/eventos$/,           evento],
   ['POST', /^\/api\/fotos$/,             subirFoto],
   ['POST', /^\/api\/videos$/,            subirVideo],
