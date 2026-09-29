@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05.3 en producción (PR #39). Siguiente: planificar la 05.4."
+stopped_at: "05.3 en producción. 05.4 y 12 con CONTEXT y RESEARCH listos; siguiente: planificar la 05.4."
 last_updated: "2026-09-29T22:00:00.000Z"
 last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
@@ -41,9 +41,40 @@ Arneses nuevos: `renovacion:probar` (150) y `recordatorios:probar` (32), ambos e
 - En la nube, puppeteer como root necesita `--no-sandbox` y el proxy del entorno: los ejecutores usaron un
   envoltorio en el scratchpad vía `PUPPETEER_EXECUTABLE_PATH`, sin tocar el repo.
 
-**Siguiente paso: planificar la 05.4** (dealer con capacidad de publicaciones activas y consola).
-Después, replanificar la fase 6 (CardNet) desde el 06-02 contra el modelo nuevo; su migración
-`2026-10-cardnet` no debe volver a crear las columnas `renovacion_*` que ya crea la 05.3.
+**Siguiente paso (en este orden; el próximo chat empieza aquí):**
+1. **Planificar la 05.4** con `gsd-plan-phase 05.4`. Ya tiene `05.4-CONTEXT.md` (D-01 a D-20, sin discusión
+   interactiva) y `05.4-RESEARCH.md` (2026-09-29): **no repetir la investigación**; va directo al planificador
+   (Opus) y al comprobador de planes (Opus). Reparto propuesto en RESEARCH: 01 guardas del servidor y
+   prorrateo con pruebas primero (Opus: toca `aprobarPago`), 02 panel del dealer y sección de ampliar,
+   03 textos sin «cupo», asistente, concepto del comprobante solo hacia adelante (Opus) y contratación 2.3,
+   04 consola de solo lectura, 05 batería y auditorías. Ola 0: `tools/probar-capacidad.js`, script
+   `capacidad:probar` y su paso de CI (en LF). Las pruebas que hoy exigen «cupo» (`probar-publicacion.js:736`,
+   `probar-transferencia.js`, `prueba-chat.js`) se invierten en el mismo plan que cambia el texto.
+   Luego ejecutarla (rama nueva desde `main`, un PR, fusionar con CI en verde).
+2. **Replanificar la fase 6 (CardNet)** desde el 06-02 contra el modelo nuevo; su migración
+   `2026-10-cardnet` no debe volver a crear las columnas `renovacion_*` que ya crea la 05.3, y el cobro
+   recurrente tiene que respetar las guardas de la 05.4 (una operación de capacidad pendiente por membresía,
+   `aprobarPago` no suma a una membresía vencida).
+3. **Planificar la fase 12** (lote mensual): ya tiene `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP escrito a mano
+   con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni `lotes_contador`,
+   restos del envío automático prohibido). Se planifica ya y se ejecuta en su turno del ROADMAP (tras la 11).
+4. Sin planificar por falta de datos de Victor: 11 (contenido real de transporte y financiamiento), 14
+   (personas y protocolo de inspección). 13, 15 y 16 se planifican cuando se acerquen: tocan archivos que la
+   05.4 y la 6 aún cambian.
+5. Papeleo: las fases 2, 3 y 4 tienen todos sus planes hechos pero sin VERIFICATION ni casilla en el ROADMAP;
+   la 8 y la 9 tienen VERIFICATION pero sin casilla. Revisar y marcar.
+
+**Preguntas nuevas para Victor (se planifica con el valor por defecto si no contesta):**
+- 05.4 P9: precio de «Agregar publicaciones activas» — lista (por defecto) / vigente con promoción /
+  pactado (exige migración).
+- 05.4 P13: ampliar tras renovar por adelantado cobra todos los días que quedan (por defecto) o máximo un ciclo.
+- 05.4 P14: página pública del dealer solo con Premium (por defecto) o con cualquier nivel con capacidad viva.
+- 05.4: la contratación 2.3 obliga a todos a aceptar de nuevo antes de su próximo pago, a dos semanas del
+  lanzamiento. Por defecto se sube; la alternativa es dejar esas cláusulas para después.
+- 12 (con el contador): ¿quiere el Formato 607 de la DGII y en qué formato? (por defecto no se genera; el CSV
+  trae los campos); ¿ZIP (por defecto) o un solo PDF?; ¿contenido del paquete (PDF de cada comprobante,
+  `resumen.csv` con `;`, `resumen.pdf`, `LEEME.txt`)?; ¿recibos no fiscales dentro, aparte (por defecto)?;
+  ¿corte por mes calendario dominicano y fecha de cobro (por defecto)?
 
 **Pendiente de Victor (además de lo de más abajo):**
 - NCF: pedir la secuencia **B02** a la DGII (hoy no está cargada: el que compra sin RNC recibe un recibo no
@@ -261,5 +292,5 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 ## Session Continuity
 
 Last session: 2026-09-29 (nube)
-Stopped at: fase 05.2 verificada, PR #38 abierto; siguiente, ejecutar la 05.3
+Stopped at: 05.3 en producción; 05.4 y 12 con CONTEXT y RESEARCH; siguiente, planificar la 05.4
 Resume file: .planning/STATE.md, sección «Para retomar»
