@@ -2698,7 +2698,11 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     cobro,
     intencion: {
       tipo: 'compra', idPlan: plan.id, cupo, dias,
-      concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
+      /* El concepto es lo que imprime el comprobante. Con el vocabulario
+         nuevo cambia solo para lo que se emita desde ahora: lo ya emitido
+         y las intenciones ya guardadas conservan su texto, porque un
+         comprobante emitido nunca se reescribe (fiscal). */
+      concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'publicación activa' : 'publicaciones activas'} · ${dias} días`,
       cliente,
       correoCliente: ctx.usuario.correo,
     },
@@ -2813,8 +2817,10 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
     cobro,
     intencion: {
       tipo: 'ampliacion', idSusc, cupoAnterior: s.anuncios_incluidos, cupoNuevo, anadidos: cuantos,
+      /* Lo que imprime el comprobante: vocabulario nuevo solo hacia
+         adelante; lo ya emitido no se toca nunca (fiscal). */
       concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
-        + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
+        + `${cuantos === 1 ? 'publicación activa' : 'publicaciones activas'} más · hasta ${cupoNuevo}`,
       /* Los mismos datos fiscales de la compra original: quien facturó
          con RNC espera que la ampliación de esa misma membresía salga
          igual, no a nombre de otro. */
