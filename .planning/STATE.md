@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05.1 en producción (PR #35). 05.2: planes 01-02 en producción (PR #36, #37); 03, 04 y 05 hechos en la rama sin desplegar; falta el 05.2-06 y la verificación de cierre. 05.3: contexto escrito, planes sin escribir."
+stopped_at: "05.1 en producción (PR #35). 05.2: planes 01-02 en producción (PR #36, #37); 03, 04 y 05 hechos en la rama sin desplegar; 05.2-06 (limpieza D-08) hecho en la rama; falta la re-verificación de cierre. 05.3: contexto escrito, planes sin escribir."
 last_updated: "2026-09-29T17:00:00.000Z"
 last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
   completed_phases: 9
   total_plans: 45
-  completed_plans: 48
+  completed_plans: 49
   percent: 50
 ---
 
@@ -49,7 +49,7 @@ niegan un borrador ajeno o su activación por otra puerta; `capacidadLibre` al m
 particular no exento deja de leer «cupo» en el 402/409 de `publicar`); 05.2-03 hecho
 (`POST /api/borradores/:id/pago` con el importe del servidor; activa solo `confirmarPago` o el importe
 cero; pendiente devuelto sin duplicar; la consola rechaza la transferencia huérfana con
-`PUBLICACION_HUERFANA`; secciones 9-12 del arnés). 05.2-04 hecho (panel y planes sin «cupo»); 05.2-05 hecho (asistente en el orden nuevo, auditorías de navegador al día). Sigue 05.2-06.
+`PUBLICACION_HUERFANA`; secciones 9-12 del arnés). 05.2-04 hecho (panel y planes sin «cupo»); 05.2-05 hecho (asistente en el orden nuevo, auditorías de navegador al día); 05.2-06 hecho (tarea diaria `borradores`: borra a los 30 días los borradores sin pago pendiente ni aprobado, con sus archivos). Falta re-verificar la fase.
 
 **Fase 05.1 (precio único) terminada** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
 (fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI), 05.1-02 hecho (desglose
@@ -199,6 +199,7 @@ Decisiones que afectan al trabajo actual:
 - **[05.1-02]** `precio_pactado` es la BASE antes del ajuste (en pagos viejos, con `base` NULL, el subtotal): así renovar o ampliar al pactado no cobra el 3 % dos veces. `registrarCobro` lanza 500 si el cobro no sale entero de `precios.desglose`. El seed de planes se queda en 2000/3500; lo baja la migración `2026-09-precios-base`.
 - **[05.1-04]** La sección 33 de `tools/probar-transferencia.js` demuestra los cuatro criterios de éxito de la fase 05.1 juntos en el camino de cobro real (transferencia): 1 Destacado de 30 días deja un pendiente de 3.889 con el desglose guardado, el correo dice el final sin nombrar base ni ajuste, marcar recibido emite un B02 que cuadra y anular un Premium (6.685) no gasta NCF. Solo se añadieron pruebas: no se tocó `tools/facturas.js` ni el cálculo de ITBIS/NCF.
 - **[05.1-03]** Planes, panel, asistente y condiciones enseñan un único precio final «ITBIS incluido», sacado de `precioCompra`/`precios.desglose` (nunca una multiplicación aparte); el 3 % no se nombra en esas pantallas. La contratación sube a v2.1 (vigente 2026-09-26) para que se acepte de nuevo antes de pagar. La consola de pagos sí enseña base, ajuste, ITBIS y total; un pago anterior al desglose guardado sale «sin ajuste».
+- **[05.2-06]** La tarea diaria `borradores` borra a los 30 días (valor por defecto, reversible: `DIAS_BORRADOR_ABANDONADO` en `tools/tareas.js`) los borradores sin pago `pendiente` ni `aprobado`, contando desde `COALESCE(actualizado, creado)`; la fila primero y los archivos después, y va antes de `huerfanos`. La prueba corre la tarea real en un proceso aparte porque `tareas.js` se ejecuta al requerirlo.
 - [Phase 02]: .aviso__fotos entra en EXCEPCIONES de check-contraste (va sobre la foto, 9.01:1 a 18.91:1); .foto__sello sale por razón falsa
 
 ### Pending Todos

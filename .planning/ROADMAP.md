@@ -178,7 +178,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 05.2-03-PLAN.md — Pedir el pago de un borrador y activarlo solo al confirmarse
 - [x] 05.2-04-PLAN.md — Panel del particular: borradores recuperables y pagos en espera, sin «cupo»
 - [x] 05.2-05-PLAN.md — Asistente de publicación en el orden nuevo: plan → borrador → resumen → pago
-- [ ] 05.2-06-PLAN.md — Cierre del hueco D-08: limpieza diaria de borradores sin pago a los 30 días
+- [x] 05.2-06-PLAN.md — Cierre del hueco D-08: limpieza diaria de borradores sin pago a los 30 días
 **UI hint**: yes
 **Notas**: Por dentro sigue la cadena Plan → Suscripción → Anuncio: cada publicación del particular es una suscripción de un cupo nacida con el pago (P6/P7 por defecto: el particular puede tener varias publicaciones pagadas, cada una con su pago; los cupos ya comprados se conservan hasta que venzan). El dealer no cambia en esta fase.
 
