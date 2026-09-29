@@ -3575,6 +3575,11 @@ const cambiarEstado = conSesion(async (req, res, ctx, idAnuncio) => {
   }
 
   const r = db.cambiarEstadoAnuncio(idAnuncio, ctx.organizacion.id, c.estado);
+  // Sin esta rama, el vencido que se niega a reactivar caía en el 404
+  // de abajo y el panel decía «no es suyo» de un anuncio que sí lo es.
+  if (r.vencido) {
+    return fallo(res, 409, 'Este anuncio venció: renuévelo para volver a publicarlo.');
+  }
   if (r.sinCupo) {
     return fallo(res, 409, 'Su cupo lo ocupa ya otro equipo. Retire o marque vendido uno de los publicados, '
       + 'o amplíe su plan, y vuelva a intentarlo.');

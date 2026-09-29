@@ -1077,6 +1077,55 @@ const MIGRACIONES = [
        WHERE anuncio_id IS NOT NULL AND estado = 'pendiente'`,
     "CREATE INDEX IF NOT EXISTS ix_anuncios_borrador ON anuncios (creado) WHERE estado = 'borrador'",
   ]],
+
+  /* Renovación manual, vencimientos y recordatorios (fase 05.3).
+
+     Hasta aquí una suscripción nunca vencía: nadie pasaba su estado a
+     'vencida' y `suscripcionesDe` solo miraba el estado, así que una
+     membresía de 30 días daba cupos y encendía la página del dealer
+     para siempre (auditoría §1.9). Y el aviso «por vencer» era una
+     columna del anuncio (`aviso_por_vencer`): una fecha por anuncio no
+     sirve para tres avisos por ciclo (7, 3 y 1 día), ni se reinicia al
+     renovar (§1.15).
+
+     - `recordatorios`: una fila por anuncio + tipo + ciclo. El ciclo es
+       el `vence` del anuncio en ese momento; renovar lo cambia, así que
+       los recordatorios del ciclo viejo quedan anulados solos. El
+       UNIQUE es la garantía de «uno solo» aunque la tarea corra dos
+       veces a la vez.
+     - Las tres columnas de la renovación automática (D-11) se guardan
+       ya, apagadas (0) en todas las filas: el cobro automático llega con
+       CardNet en la fase 6. La rama de CardNet (06-02, migración
+       `2026-10-cardnet`) añade estas mismas columnas; `migrar()` tolera
+       «duplicate column», así que al fusionarla sus ALTER no romperán,
+       pero conviene quitarlos de allí.
+     - El índice único parcial de pagos: un solo pago de renovación
+       pendiente por suscripción (D-05), EN LA BASE, como el de los
+       borradores. Mira la intención porque una renovación de varios
+       cupos no tiene `anuncio_id` que la frene.
+     - `ix_suscripciones_fin`: la tarea diaria busca las activas con fin
+       pasado; parcial para que solo contenga las que pueden vencer.
+
+     Los índices NO van en db/schema.sql, por el mismo motivo que en
+     `2026-09-borradores`: abrir() lo ejecuta antes de migrar(). */
+  ['2026-09-renovacion', [
+    `CREATE TABLE IF NOT EXISTS recordatorios (
+       id         TEXT PRIMARY KEY,
+       anuncio_id TEXT NOT NULL REFERENCES anuncios(id) ON DELETE CASCADE,
+       tipo       TEXT NOT NULL CHECK (tipo IN ('7d', '3d', '1d')),
+       vence      TEXT NOT NULL,
+       enviado    TEXT,
+       resultado  TEXT,
+       UNIQUE (anuncio_id, tipo, vence))`,
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_automatica INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_aceptada TEXT',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_texto TEXT',
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_renovacion_pendiente ON pagos (suscripcion_id)
+       WHERE suscripcion_id IS NOT NULL AND estado = 'pendiente'
+         AND json_extract(intencion, '$.tipo') = 'renovacion'`,
+    `CREATE INDEX IF NOT EXISTS ix_suscripciones_fin ON suscripciones (fin)
+       WHERE estado = 'activa' AND fin IS NOT NULL`,
+  ]],
 ];
 
 function migrar() {
@@ -2700,7 +2749,10 @@ function apagarPerfilesSinPlan() {
            JOIN planes p ON p.id = s.plan_id
           WHERE s.organizacion_id = o.id
             AND s.estado = 'activa'
-            AND p.perfil_publico = 1)`).all();
+            -- Una Premium con fin pasado ya no sostiene la página aunque
+            -- la tarea todavía no la haya marcado 'vencida' (fase 05.3).
+            AND (s.fin IS NULL OR s.fin > ?)
+            AND p.perfil_publico = 1)`).all(ahora());
 
   if (!sinPlan.length) return { apagados: [] };
 
@@ -2809,7 +2861,18 @@ const ESTADOS_QUE_OCUPAN = "('activo', 'pausado')";
 /* Todas las membresías vivas de una organización, con lo que tienen
    ocupado. Devuelve varias a propósito: quien compró cinco Destacados
    y antes tenía un Estándar suelto tiene dos, y esconderle una era
-   justo el fallo que dejaba un cupo pagado fuera de su alcance. */
+   justo el fallo que dejaba un cupo pagado fuera de su alcance.
+
+   «Viva» es `activa` Y con `fin` futuro (fin NULL = sin caducidad, las
+   internas). Antes bastaba el estado, y como nada lo pasaba a
+   'vencida', una membresía de 30 días daba cupos para siempre
+   (auditoría §1.9). Mirar la fecha aquí, y no solo en la tarea diaria,
+   hace que venza a su hora aunque la tarea no haya pasado todavía.
+
+   Consecuencia buscada: `ampliarMembresia`, `moverAnuncioDeSuscripcion`
+   y la guarda de ampliación huérfana de la consola, que pasan por aquí,
+   dejan de aceptar una membresía pasada (404/409). No se amplía ni se
+   llena lo vencido: primero se renueva. */
 function suscripcionesDe(idOrg) {
   return abrir().prepare(`
     SELECT s.*, p.nombre AS plan_nombre, p.nivel, p.precio AS precio_unitario,
@@ -2819,7 +2882,8 @@ function suscripcionesDe(idOrg) {
                AND a.estado IN ${ESTADOS_QUE_OCUPAN}) AS ocupados
     FROM suscripciones s JOIN planes p ON p.id = s.plan_id
     WHERE s.organizacion_id = ? AND s.estado = 'activa'
-    ORDER BY p.orden DESC, s.creada DESC`).all(idOrg)
+      AND (s.fin IS NULL OR s.fin > ?)
+    ORDER BY p.orden DESC, s.creada DESC`).all(idOrg, ahora())
     .map((s) => ({
       ...s,
       libres: s.anuncios_incluidos == null
@@ -2830,6 +2894,20 @@ function suscripcionesDe(idOrg) {
 
 const suscripcion = (idSusc, idOrg) =>
   suscripcionesDe(idOrg).find((s) => s.id === idSusc) || null;
+
+/* Pasa a 'vencida' las activas cuyo fin ya pasó (D-06). La llama la
+   tarea diaria. `suscripcionesDe` ya no las cuenta desde el minuto en
+   que vencen; esto deja el estado escrito para la consola, los
+   informes y la renovación, que distingue «activa» de «vencida».
+
+   Idempotente: la segunda pasada no encuentra nada. No borra nada: la
+   fila sostiene el historial de pagos, comprobantes y anuncios, y es la
+   que se renueva. */
+const vencerSuscripciones = () => ({
+  vencidas: abrir().prepare(`UPDATE suscripciones SET estado = 'vencida'
+                              WHERE estado = 'activa' AND fin IS NOT NULL AND fin < ?`)
+    .run(ahora()).changes,
+});
 
 /* La membresía con sitio libre que mejor sirve para publicar: el nivel
    más alto disponible, que es el que más hace por el anuncio. Si no
@@ -3284,15 +3362,24 @@ function moverAnuncioDeSuscripcion({ idAnuncio, idOrg, idSusc }) {
   return anuncio(idAnuncio);
 }
 
-/* Rehace las fechas de todos los anuncios que sostiene una membresía.
-   Se llama al renovar: la suscripción estira su fin y los anuncios
-   tienen que estirarse con ella. */
+/* Rehace las fechas de los anuncios que sostiene una membresía. Se
+   llama al renovar (`aplicarRenovacion`): la suscripción estira su fin
+   y los anuncios tienen que estirarse con ella.
+
+   Solo los que la membresía sostiene o puede volver a sostener
+   (activo, pausado, vencido). El `vence` de un vendido o retirado es
+   historial: reescribirlo diría que estuvo publicado hasta una fecha en
+   que ya no lo estaba. Un borrador no tiene fechas todavía.
+
+   Usa `abrir()`, la misma conexión de quien la llama, así que dentro
+   del SAVEPOINT de `aprobarPago` va en la misma transacción. */
 const refrescarAnunciosDe = (idSusc) => {
   const d = abrir();
   const s = d.prepare(`SELECT s.fin, p.destacado FROM suscripciones s
     JOIN planes p ON p.id = s.plan_id WHERE s.id = ?`).get(idSusc);
   if (!s) return 0;
-  return d.prepare('UPDATE anuncios SET vence = ?, destacado_hasta = ?, actualizado = ? WHERE suscripcion_id = ?')
+  return d.prepare(`UPDATE anuncios SET vence = ?, destacado_hasta = ?, actualizado = ?
+                     WHERE suscripcion_id = ? AND estado IN ('activo', 'pausado', 'vencido')`)
     .run(s.fin, s.destacado ? s.fin : null, ahora(), idSusc).changes;
 };
 
@@ -4004,6 +4091,12 @@ function cambiarEstadoAnuncio(idAnuncio, idOrg, estado) {
   if (!actual) return { changes: 0 };
 
   const ocupa = (e) => e === 'activo' || e === 'pausado';
+  /* Un vencido solo vuelve por la renovación pagada (D-03), que lo
+     reactiva en `aplicarRenovacion`. Antes bastaba con que su membresía
+     tuviera cupo libre para volver a publicarlo sin pagar el periodo
+     que se le acabó. Vender o retirar un vencido sigue permitido: no
+     ocupa nada. */
+  if (actual.estado === 'vencido' && ocupa(estado)) return { changes: 0, vencido: true };
   if (ocupa(estado) && !ocupa(actual.estado)) {
     const s = actual.suscripcion_id ? suscripcion(actual.suscripcion_id, idOrg) : null;
     if (!s || (s.libres !== null && s.libres <= 0)) return { changes: 0, sinCupo: true };
@@ -4764,6 +4857,8 @@ module.exports = {
   suscripcionConHueco, comprarCupos, ampliarCupos, membresiaInterna,
   registrarCobro, aprobarPago, rechazarPago, pagosPendientesDe, pagosParaConsola,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
+  /* Renovación y vencimientos (fase 05.3). */
+  vencerSuscripciones,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
