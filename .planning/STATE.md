@@ -90,7 +90,9 @@ Arneses nuevos: `renovacion:probar` (150) y `recordatorios:probar` (32), ambos e
   es el 1-nov). Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador, con un certificado
   digital propio; emitir directo queda como alternativa. Fase propuesta «6.1 e-CF» (FE-01 a FE-13, §7),
   construida y apagada tras `MERCA_ECF`, ejecutada con Opus: **pendiente del visto bueno de Victor porque
-  altera el orden fijado** (va antes de la 11). Hasta decidirlo no se inserta en el ROADMAP.
+  altera el orden fijado** (va antes de la 11). **Victor, 2026-09-29: todavía no se ha solicitado ser emisor
+  electrónico; se solicita en octubre de 2026. La fase 6.1 no se inserta hasta que esa solicitud esté hecha.**
+  Cuando Victor diga que está presentada, insertarla con `gsd-phase` y planificarla con la investigación.
 - Calendario para Victor (§6, hacia atrás desde el 15-nov): ya, preguntar al contador el grupo de la empresa,
   de dónde sale el 30-nov y si ya es emisor electrónico; 2-oct, clave de la OFV y dispositivo de seguridad;
   6-oct, pedir el certificado digital (Avansi, Viafirma o Digifirma; 3-10 días hábiles); 9-oct, elegir
