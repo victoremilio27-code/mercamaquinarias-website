@@ -1690,19 +1690,12 @@ function pintarSinCupo() {
   const tiene = MEMBRESIAS.filter((m) => m.anuncios_incluidos != null);
 
   $('#textoSinCupo').textContent = tiene.length
-    ? 'Sus cupos están ocupados. Añada uno a la membresía que ya tiene —solo paga los días que le queden— o libere uno marcando un equipo como vendido.'
-    : 'Todavía no tiene cupos. Contrate uno para publicar este equipo; su borrador queda guardado.';
+    ? 'Toda su capacidad está en uso. Agregue publicaciones activas a su plan —solo paga los días que le quedan— o marque un equipo como vendido para liberar capacidad.'
+    : 'Todavía no tiene publicaciones activas contratadas. Contrate un plan para publicar este equipo; su borrador queda guardado.';
 
   const ampliables = tiene.map((m) => {
-    const p = precioAmpliacion({
-      precioUnitario: m.precio_unitario,
-      cupoActual: m.anuncios_incluidos,
-      cupoNuevo: m.anuncios_incluidos + 1,
-      dias: m.dias_ciclo || 30,
-      diasRestantes: diasRestantes(m.fin) ?? (m.dias_ciclo || 30),
-    });
     return `<button type="button" class="btn btn--ambar" data-ampliar="${esc(m.id)}">
-      Añadir un cupo a ${esc(m.plan_nombre)}${EXENTA || p.total === 0 ? '' : ` · ${pesos(p.total)}`}
+      Agregar publicaciones activas a ${esc(m.plan_nombre)}
     </button>`;
   }).join('');
 
@@ -1723,7 +1716,7 @@ function pintarResumenPublicacion() {
 
   if (!m) {
     caja.innerHTML = `
-      <h3 class="pedido__titulo">Falta ${particular ? 'capacidad' : 'un cupo'}</h3>
+      <h3 class="pedido__titulo">Falta ${particular ? 'capacidad' : 'capacidad disponible'}</h3>
       <p class="pedido__vacio">${icono('i-etiqueta')} ${esc(titulo)} está listo para publicarse. Solo falta el sitio donde ponerlo.</p>`;
     $('#btnPublicar').disabled = true;
     $('#btnPublicar').textContent = 'Publicar anuncio';
@@ -1742,7 +1735,7 @@ function pintarResumenPublicacion() {
       <div><dt>Fotografías</dt><dd class="num">${estado.fotos.length} de ${m.fotos_maximas}</dd></div>
       <div><dt>Vigencia</dt><dd>${dias === null ? 'Sin caducidad' : `${dias} ${dias === 1 ? 'día' : 'días'}`}</dd></div>
       <div class="pedido__total"><dt>Costo</dt><dd class="num">${EXENTA
-    ? 'Sin costo' : (particular ? 'Ninguno · usa la capacidad disponible de su plan' : 'Ninguno · usa un cupo que ya pagó')}</dd></div>
+    ? 'Sin costo' : (particular ? 'Ninguno · usa la capacidad disponible de su plan' : 'Ninguno · usa la capacidad disponible de su plan')}</dd></div>
     </dl>
     <p class="pedido__nota">Puede cambiarlo de nivel cuando quiera desde <a href="panel.html">su panel</a>, sin volver a publicarlo.</p>`;
 }
@@ -1792,31 +1785,11 @@ async function montarPasoConfirmarCapacidad() {
     const m = MEMBRESIAS.find((x) => x.id === btn.dataset.ampliar);
     if (!m) return;
 
-    const p = precioAmpliacion({
-      precioUnitario: m.precio_unitario,
-      cupoActual: m.anuncios_incluidos,
-      cupoNuevo: m.anuncios_incluidos + 1,
-      dias: m.dias_ciclo || 30,
-      diasRestantes: diasRestantes(m.fin) ?? (m.dias_ciclo || 30),
-    });
-
-    const texto = EXENTA || p.total === 0
-      ? `Añadir un cupo a ${m.plan_nombre} sin costo. ¿Confirma?`
-      : `Añadir un cupo a ${m.plan_nombre} cuesta ${pesos(p.total)} por los días que le quedan.\n\n¿Confirma?`;
-    if (!confirm(texto)) return;
-
-    btn.disabled = true;
-    try {
-      const r = await api(`/membresias/${encodeURIComponent(m.id)}/ampliar`, {
-        metodo: 'POST', cuerpo: { cupo: m.anuncios_incluidos + 1 },
-      });
-      if (!r) throw new Error('No hay conexión con el servidor.');
-      await cargarMembresias();
-      pintarPasoFinal();
-    } catch (e) {
-      btn.disabled = false;
-      avisoPaso($('.paso[data-paso="confirmar"]'), e.message);
-    }
+    /* Ampliar vive en un solo sitio, el panel (D-09): aquí había un confirm()
+       con su propio precio y una llamada a la API que duplicaba la del panel.
+       Antes de salir se guarda el borrador, para que lo escrito no se pierda. */
+    guardarBorrador();
+    location.href = 'panel.html?ampliar=' + encodeURIComponent(m.id);
   });
 }
 
@@ -1836,7 +1809,7 @@ function validarConfirmar(seccion) {
   if (!membresiaElegida()) {
     avisoPaso(seccion, esParticularCuenta()
       ? 'Necesita capacidad libre para publicar este equipo.'
-      : 'Necesita un cupo libre para publicar este equipo.');
+      : 'Necesita capacidad disponible para publicar este equipo.');
     return false;
   }
   if (!$('#aceptaCondiciones').checked) {
@@ -1948,7 +1921,7 @@ function pintarConfirmacion(respuesta) {
   const particular = esParticularCuenta();
   const filasCobro = `<div><dt>Costo</dt><dd>${EXENTA
     ? 'Sin costo · cuenta interna'
-    : (particular ? 'Ninguno · usó la capacidad que ya pagó' : 'Ninguno · ocupó un cupo que ya tenía')}</dd></div>`;
+    : (particular ? 'Ninguno · usó la capacidad que ya pagó' : 'Ninguno · usó la capacidad disponible de su plan')}</dd></div>`;
 
   $('#publicar').hidden = true;
   const caja = $('#publicado');
@@ -1961,7 +1934,7 @@ function pintarConfirmacion(respuesta) {
       <div><dt>Referencia del anuncio</dt><dd class="num">${esc(anuncio.id.slice(0, 8).toUpperCase())}</dd></div>
       <div><dt>Nivel</dt><dd>${esc(m ? m.plan_nombre : '—')}</dd></div>
       ${filasCobro}
-      <div><dt>${particular ? 'Capacidad libre que le queda' : 'Cupos libres que le quedan'}</dt><dd class="num">${libres === null || libres === undefined
+      <div><dt>${particular ? 'Capacidad libre que le queda' : 'Capacidad disponible que le queda'}</dt><dd class="num">${libres === null || libres === undefined
         ? 'Sin límite' : libres}</dd></div>
       <div><dt>Fotografías publicadas</dt><dd class="num">${anuncio.fotos.length}</dd></div>
     </dl>
@@ -1971,7 +1944,7 @@ function pintarConfirmacion(respuesta) {
     <p class="publicado__nota">
       Enviamos la confirmación a <b>${esc(estado.contacto.correo)}</b>.
       Desde <a href="panel.html">su panel</a> puede seguir las visitas, cambiar el nivel de
-      este equipo o marcarlo como vendido para liberar su ${particular ? 'capacidad' : 'cupo'}.
+      este equipo o marcarlo como vendido para liberar su capacidad.
     </p>
 
     <div class="acciones acciones--pie">
@@ -2445,8 +2418,8 @@ function pintarResumenPedido() {
 
   if (!m) {
     caja.innerHTML = haySesion()
-      ? `<h3 class="pedido__titulo">Le falta un cupo</h3>
-         <p class="pedido__vacio">${icono('i-etiqueta')} Complete la ficha igual: al final podrá añadir un cupo o contratar un plan, y su borrador no se pierde.</p>`
+      ? `<h3 class="pedido__titulo">Le falta capacidad disponible</h3>
+         <p class="pedido__vacio">${icono('i-etiqueta')} Complete la ficha igual: al final podrá agregar publicaciones activas o contratar un plan, y su borrador no se pierde.</p>`
       : `<p class="pedido__vacio">${icono('i-etiqueta')} Entre a su cuenta al terminar para publicar el equipo.</p>`;
     return;
   }
@@ -2456,7 +2429,7 @@ function pintarResumenPedido() {
     <dl class="pedido__lista">
       <div><dt>Se publica en</dt><dd>${esc(m.plan_nombre)}</dd></div>
       <div><dt>Fotografías</dt><dd class="num">hasta ${m.fotos_maximas}</dd></div>
-      <div><dt>${particular ? 'Capacidad libre' : 'Cupos libres'}</dt><dd class="num">${m.libres === null ? 'Sin límite' : m.libres}</dd></div>
+      <div><dt>${particular ? 'Capacidad libre' : 'Capacidad disponible'}</dt><dd class="num">${m.libres === null ? 'Sin límite' : m.libres}</dd></div>
       <div class="pedido__total"><dt>Total</dt><dd class="num">${EXENTA ? 'Sin costo' : 'Ya pagado'}</dd></div>
     </dl>`;
 }
