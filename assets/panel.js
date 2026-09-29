@@ -1139,68 +1139,14 @@ async function montarPanel() {
     } catch (_) { /* sin portapapeles: caída silenciosa */ }
   });
 
-  /* Añadir cupos a una membresía viva. Se pregunta cuántos y se dice
-     lo que cuesta ANTES de cobrarlo: prorrateado por los días que
-     queden, que casi siempre es bastante menos de lo que la gente
-     espera. */
-  $('#panelPlan').addEventListener('click', async (ev) => {
+  /* Añadir publicaciones activas a una membresía viva (D-08/D-09). Antes
+     esto eran tres copias con cuadros del navegador, una de ellas sin «ITBIS
+     incluido». Ahora abre la sección «Agregar publicaciones activas»
+     (abrirAmpliacion, más abajo), que enseña capacidad, días y precio. */
+  $('#panelPlan').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-ampliar]');
     if (!btn) return;
-
-    const m = MEMBRESIAS.find((x) => x.id === btn.dataset.ampliar);
-    if (!m) return;
-
-    const cuantos = prompt(
-      `¿Cuántos equipos quiere poder publicar en total con su membresía ${m.plan_nombre}?\n\n`
-      + `Ahora tiene ${m.anuncios_incluidos}. Solo paga los días que le quedan, `
-      + `y cada quinto cupo no se cobra.`,
-      String(m.anuncios_incluidos + 1));
-    if (cuantos === null) return;
-
-    const cupo = Number(String(cuantos).replace(/\D+/g, ''));
-    if (!cupo || cupo <= m.anuncios_incluidos) {
-      avisoPlan(`Indique una cantidad mayor que ${m.anuncios_incluidos}.`);
-      return;
-    }
-
-    // La cifra se calcula aquí con el mismo módulo que usa el
-    // servidor, así que lo que se confirma es lo que se cobra.
-    const previo = precioAmpliacion({
-      precioUnitario: m.precio_unitario,
-      cupoActual: m.anuncios_incluidos,
-      cupoNuevo: cupo,
-      dias: m.dias_ciclo || 30,
-      diasRestantes: diasHasta(m.fin) ?? (m.dias_ciclo || 30),
-    });
-
-    const cuantoMas = cupo - m.anuncios_incluidos;
-    const texto = EXENTA || previo.total === 0
-      ? `Añadir ${cuantoMas} ${cuantoMas === 1 ? 'cupo' : 'cupos'} sin costo. ¿Confirma?`
-      : `Añadir ${cuantoMas} ${cuantoMas === 1 ? 'cupo' : 'cupos'} cuesta ${pesos(previo.total)} `
-        + `(ITBIS incluido) por los días que le quedan.\n\n¿Confirma?`;
-    if (!confirm(texto)) return;
-
-    btn.disabled = true;
-    try {
-      const r = await api(`/membresias/${encodeURIComponent(m.id)}/ampliar`, {
-        metodo: 'POST', cuerpo: { cupo },
-      });
-      if (!r) throw new Error('No hay conexión con el servidor.');
-      await refrescarCupos();
-
-      /* 202: la ampliación quedó pedida, no hecha. La membresía sigue
-         con los cupos que tenía y el pago aparece arriba, en «Pagos en
-         espera», con la referencia y los datos. Decir aquí que «pasó a
-         N cupos» era lo que hacía la fase 3 con un pago sin cobrar. */
-      if (r.pago && r.pago.estado === 'pendiente') {
-        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
-        return;
-      }
-      avisoPlan(`Su membresía ${m.plan_nombre} pasó a ${cupo} cupos.`, false);
-    } catch (e) {
-      avisoPlan(e.message);
-      btn.disabled = false;
-    }
+    abrirAmpliacion(btn.dataset.ampliar);
   });
 
   /* Abrir y cerrar el editor de motor y transmisión. */
@@ -1523,6 +1469,7 @@ async function montarPanel() {
       caja.hidden = true;
     }
 
+    cerrarAmpliacion();
     avisoRen('');
     if (faltanLegales('pagar').length) {
       montarAvisoLegal('pagar');
@@ -1597,6 +1544,109 @@ async function montarPanel() {
     }
   }
 
+  /* ── Agregar publicaciones activas (MOD-13, 05.4) ──────────
+     Sección a imagen de «Renovar». El precio que se enseña sale de
+     precioAmpliacion (assets/precios.js), la misma función con la que
+     cobra el servidor, y los días de diasRestantes, no de diasHasta: los
+     dos redondean distinto y un día de diferencia es plata de diferencia.
+     El navegador nunca manda un importe: solo `cupo` y, si se ofrece,
+     `metodo`; el servidor lo recalcula. */
+  let AMPLIAR_OBJETIVO = null;
+
+  const avisoAmp = (mensaje, ok = false) => {
+    const el = $('#avisoAmpliar');
+    el.hidden = !mensaje;
+    el.textContent = mensaje || '';
+    el.classList.toggle('acceso__aviso--ok', ok);
+  };
+
+  function cerrarAmpliacion() {
+    AMPLIAR_OBJETIVO = null;
+    $('#panelAmpliar').hidden = true;
+    avisoAmp('');
+  }
+
+  // Cuántas publicaciones quiere agregar, acotado a lo que cabe bajo el tope.
+  function cantidadAmpliar() {
+    if (!AMPLIAR_OBJETIVO) return 0;
+    const cabe = Math.max(0, CUPO_MAXIMO - AMPLIAR_OBJETIVO.m.anuncios_incluidos);
+    const n = Math.trunc(Number($('#ampliarCantidad').value));
+    return Number.isFinite(n) && n >= 1 ? Math.min(n, cabe) : 0;
+  }
+
+  function pintarPrecioAmpliar() {
+    if (!AMPLIAR_OBJETIVO) return;
+    const { m, restantes } = AMPLIAR_OBJETIVO;
+    const cantidad = cantidadAmpliar();
+    const el = $('#ampliarPrecio');
+    if (!cantidad) {
+      el.textContent = 'Indique cuántas publicaciones activas quiere agregar.';
+      $('#btnConfirmarAmpliar').disabled = true;
+      return;
+    }
+    const previo = precioAmpliacion({
+      precioUnitario: m.precio_unitario,
+      cupoActual: m.anuncios_incluidos,
+      cupoNuevo: m.anuncios_incluidos + cantidad,
+      dias: m.dias_ciclo || 30,
+      diasRestantes: restantes,
+    });
+    AMPLIAR_OBJETIVO.previo = previo;
+    const gratisTxt = previo.gratis > 0
+      ? ` La quinta no se cobra: ${previo.gratis} de las que agrega ${previo.gratis === 1 ? 'va' : 'van'} sin costo.`
+      : '';
+    el.textContent = (EXENTA || previo.total === 0
+      ? 'Sin costo.'
+      : `${pesos(previo.total)} ITBIS incluido, por los ${restantes} días que quedan hasta el vencimiento.`)
+      + gratisTxt;
+    $('#btnConfirmarAmpliar').disabled = faltanLegales('pagar').length > 0;
+  }
+
+  function abrirAmpliacion(idSusc) {
+    const m = MEMBRESIAS.find((x) => x.id === idSusc && x.anuncios_incluidos != null);
+    if (!m) return;
+
+    const restantes = diasRestantes(m.fin) ?? (m.dias_ciclo || 30);
+    AMPLIAR_OBJETIVO = { m, restantes, previo: null };
+
+    $('#ampliarResumen').innerHTML = `
+      <p class="panel__texto"><b>${esc(m.plan_nombre)}</b>: ${esc(m.anuncios_incluidos)} publicaciones activas permitidas · ${esc(m.ocupados)} en uso</p>
+      <p class="panel__texto">Vence el ${esc(fechaCorta(m.fin))} · quedan ${esc(restantes)} días</p>`;
+
+    const tope = Math.max(1, CUPO_MAXIMO - m.anuncios_incluidos);
+    const campo = $('#ampliarCantidad');
+    campo.max = String(tope);
+    campo.value = '1';
+
+    const metodos = $('#ampliarMetodos');
+    metodos.hidden = METODOS_PAGO.length < 2;
+    metodos.innerHTML = METODOS_PAGO.length > 1
+      ? '<legend class="comprobante__titulo">Forma de pago</legend>' + METODOS_PAGO.map((mt, i) => `
+        <label class="opcion opcion--chica">
+          <input type="radio" name="metodoAmp" value="${esc(mt)}"${i === 0 ? ' checked' : ''}>
+          <span class="opcion__cuerpo"><b class="opcion__nombre">${esc(ROTULO_METODO[mt] || mt)}</b></span>
+        </label>`).join('')
+      : '';
+
+    avisoAmp('');
+    if (faltanLegales('pagar').length) {
+      montarAvisoLegal('pagar');
+      avisoAmp('Antes de pagar hace falta aceptar las condiciones nuevas (arriba).');
+    }
+
+    cerrarRenovacion();
+    const btn = $('#btnConfirmarAmpliar');
+    btn.classList.remove('btn--ocupado');
+    pintarPrecioAmpliar();
+    const sec = $('#panelAmpliar');
+    sec.hidden = false;
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('#t-ampliar').focus({ preventScroll: true });
+  }
+
+  $('#ampliarCantidad').addEventListener('input', pintarPrecioAmpliar);
+  $('#btnCancelarAmpliar').addEventListener('click', cerrarAmpliacion);
+
   $('#btnPagarRenovacion').addEventListener('click', pagarRenovacion);
   $('#btnCancelarRenovacion').addEventListener('click', cerrarRenovacion);
   document.querySelectorAll('input[name="tipoComprobanteRen"]').forEach((rad) => {
@@ -1649,6 +1699,55 @@ async function montarPanel() {
      anuncio de esta cuenta y nunca se pinta (T-05.3-17). */
   const idRenovar = new URLSearchParams(location.search).get('renovar');
   if (idRenovar && ANUNCIOS.some((x) => x.id === idRenovar)) abrirRenovacion({ idAnuncio: idRenovar });
+
+  /* Solo `cupo` y `metodo`: nunca importe (T-05.4-09). `api()` lanza, así
+     que va con su try/catch. Un 202 no es una ampliación hecha: la
+     membresía sigue con lo que tenía y el pago queda en «Pagos en
+     espera» (T-05.4-11). */
+  async function confirmarAmpliacion() {
+    const obj = AMPLIAR_OBJETIVO;
+    if (!obj) return;
+    const cantidad = cantidadAmpliar();
+    if (!cantidad) { pintarPrecioAmpliar(); return; }
+    const { m } = obj;
+    const btn = $('#btnConfirmarAmpliar');
+
+    const metodo = document.querySelector('input[name="metodoAmp"]:checked');
+    const cupo = m.anuncios_incluidos + cantidad;
+
+    btn.disabled = true;
+    btn.classList.add('btn--ocupado');
+    avisoAmp('');
+    try {
+      const r = await api(`/membresias/${encodeURIComponent(m.id)}/ampliar`, {
+        metodo: 'POST', cuerpo: { cupo, ...(metodo ? { metodo: metodo.value } : {}) },
+      });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      await refrescarCupos();
+      cerrarAmpliacion();
+
+      if (r.pago && r.pago.estado === 'pendiente') {
+        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+        return;
+      }
+      avisoPlan(`Su plan ${m.plan_nombre} pasó a ${cupo} publicaciones activas permitidas.`, false);
+    } catch (e) {
+      btn.disabled = false;
+      btn.classList.remove('btn--ocupado');
+      const msg = e.message || 'No se pudo agregar las publicaciones.';
+      avisoAmp(msg);
+      // 409 de condiciones sin aceptar: mismo enlace que la sección de renovar.
+      // Cualquier otro 409 (operación en espera) ya trae su referencia en `msg`.
+      if (/debe aceptar/i.test(msg)) montarAvisoLegal('pagar');
+    }
+  }
+  $('#btnConfirmarAmpliar').addEventListener('click', confirmarAmpliacion);
+
+  /* Enlace panel.html?ampliar=<id>. El valor sale de la URL: solo abre si
+     coincide EXACTAMENTE con una membresía de esta cuenta con límite y
+     nunca se pinta (T-05.4-08). */
+  const idAmpliar = new URLSearchParams(location.search).get('ampliar');
+  if (idAmpliar && MEMBRESIAS.some((x) => x.id === idAmpliar && x.anuncios_incluidos != null)) abrirAmpliacion(idAmpliar);
 
   $('#btnSalir').addEventListener('click', async () => {
     await api('/cuenta/salir', { metodo: 'POST', silencioso: true });
