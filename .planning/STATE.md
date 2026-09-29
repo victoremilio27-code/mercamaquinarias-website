@@ -83,8 +83,20 @@ Arneses nuevos: `renovacion:probar` (150) y `recordatorios:probar` (32), ambos e
   (tarea diaria `ncf` de `tools/tareas.js`, dos umbrales, correo a gerencia). Pedir la **B02** (hoy no está
   cargada: el que compra sin RNC recibe un recibo no fiscal) y más B01 (quedan 15); cargar sus fechas de
   vencimiento con `tools/facturas.js`.
-- e-CF: investigación en curso en `research/facturacion-electronica.md`; de ahí sale una fase nueva con fecha
-  límite 30-11-2026, construida y apagada tras un interruptor hasta que la DGII certifique.
+- e-CF: investigación hecha en `research/facturacion-electronica.md` (2026-09-29; `dgii.gov.do` bloqueado
+  por el proxy, cada dato marcado [V]/[C]/[P]/[E]). **Lo publicado no casa con el 30-nov:** pequeños y micro
+  tienen hasta el **15-nov-2026** (Aviso 06-26) y grandes y medianos, e-CF exclusivo desde el **1-nov-2026**.
+  Se planifica contra el 15-nov. **Primero, saber en qué grupo cae Inversiones XZT** (si es mediana, el corte
+  es el 1-nov). Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador, con un certificado
+  digital propio; emitir directo queda como alternativa. Fase propuesta «6.1 e-CF» (FE-01 a FE-13, §7),
+  construida y apagada tras `MERCA_ECF`, ejecutada con Opus: **pendiente del visto bueno de Victor porque
+  altera el orden fijado** (va antes de la 11). Hasta decidirlo no se inserta en el ROADMAP.
+- Calendario para Victor (§6, hacia atrás desde el 15-nov): ya, preguntar al contador el grupo de la empresa,
+  de dónde sale el 30-nov y si ya es emisor electrónico; 2-oct, clave de la OFV y dispositivo de seguridad;
+  6-oct, pedir el certificado digital (Avansi, Viafirma o Digifirma; 3-10 días hábiles); 9-oct, elegir
+  proveedor PSFE y bajar los PDF/XSD oficiales al repositorio; 16-oct, solicitud de emisor electrónico en la
+  OFV; 19-30 oct, pruebas en el portal; 31-oct, declaración jurada; ~6-nov, secuencias E31/E32/E34; 9-13 nov,
+  pruebas en producción; 15-nov, corte.
 - Revisar la redacción de las Condiciones, ya en la 2.2 (cláusula 2.1 y las nuevas 4.4-4.6 de renovación).
 - Revisión visual de la 05.3 (lista en `05.3-VERIFICATION.md`): «Vence el…» y avisos en el panel, sección
   «Renovar», renovar un vencido tras el despliegue, los tres correos de aviso en un cliente real, y decidir
