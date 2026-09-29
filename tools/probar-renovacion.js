@@ -1081,12 +1081,20 @@ db.cargarSecuencia({
        de 7/3/1 día y la renovación automática. Quien aceptó la 2.1 tiene que
        aceptar la 2.2 ANTES de pagar una renovación (PARA_PAGAR). */
     ejecuta("UPDATE planes SET precio_promocional = 0, promo_hasta = '2099-12-31' WHERE id = 'estandar'");
-    ok(legales.versionDe('contratacion') === '2.2', `versionDe('contratacion') = ${legales.versionDe('contratacion')}`);
+    /* La 05.4 sube la contratación a 2.3 (cláusulas de «cupos» pasan a
+       capacidad de publicaciones activas). Esta prueba vigila que la
+       versión no baje de la 2.2 y que la página enseñe la vigente, no un
+       número fijo. Términos, privacidad y política de publicación NO se
+       tocan en la 05.4: subirlos obligaría a reaceptar antes de publicar. */
+    ok(Number(legales.versionDe('contratacion')) >= 2.2, `versionDe('contratacion') = ${legales.versionDe('contratacion')}`);
+    ok(legales.versionDe('anuncios') === '2.0' && legales.versionDe('privacidad') === '2.1'
+      && legales.versionDe('terminos') === '2.1',
+    `anuncios/privacidad/términos intactos: ${legales.versionDe('anuncios')}/${legales.versionDe('privacidad')}/${legales.versionDe('terminos')}`);
 
     const html = fs.readFileSync(path.join(__dirname, '..', 'legal.html'), 'utf8');
     const seccion = html.slice(html.indexOf('id="contratacion"'), html.indexOf('id="t-contratacion"') + 400);
-    ok(/v2\.2 · vigente desde/.test(seccion) && !/v2\.1 · vigente desde 2026-09-26/.test(seccion),
-      'legal.html enseña v2.2 en la sección de contratación');
+    ok(seccion.includes(`v${legales.versionDe('contratacion')} · vigente desde`) && !/v2\.1 · vigente desde 2026-09-26/.test(seccion),
+      'legal.html enseña la versión vigente en la sección de contratación');
 
     const cli = cuentaConSesion('legales-22', { sinLegales: true });
     // La versión vieja se anota como '2.1' literal a propósito: es lo que aceptó quien ya tenía cuenta.
