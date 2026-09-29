@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05.2 verificada y en el PR #38 (fusionar si el CI está en verde). Siguiente: ejecutar la 05.3, ya planificada."
+stopped_at: "05.1 y 05.2 en producción. Siguiente: ejecutar la 05.3 (planificada) en la rama claude/fase-05.3-renovacion."
 last_updated: "2026-09-29T17:00:00.000Z"
 last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
@@ -24,20 +24,15 @@ comprobante o NCF lo ejecuta Opus. Hasta 2-3 agentes si no tocan los mismos arch
 
 **Hecho y en producción:**
 - PR #33 (reactivar un vendido exige cupo libre), #34 (renders en alquiler), #35 (fase 05.1: precio único
-  con el 3 % dentro e ITBIS incluido, 1.800/3.200, condiciones v2.1), #36 y #37 (05.2-01 y 05.2-02).
+  con el 3 % dentro e ITBIS incluido, 1.800/3.200, condiciones v2.1), #36, #37 y #38 (fase 05.2 entera).
 
-**Fase 05.2 terminada y verificada (passed), en el PR #38** (rama `claude/fase-05.2-publicar-equipo`):
-planes 03 a 06 (pago del borrador, panel y planes sin «cupo», asistente de publicar, limpieza de
-borradores a los 30 días). **Si al leer esto el PR #38 sigue abierto:** mirar su CI; si `pruebas` y
-`navegador` están en verde, fusionarlo, comprobar «Sitio arriba» en el job `desplegar` de `main` y marcar
-aquí que la 05.2 está en producción. Si está rojo, arreglarlo en esa rama.
+**Fase 05.2 en producción** (PR #38, fusionado el 2026-09-29): planes 01 a 06, verificación passed.
 
 **Siguiente paso: ejecutar la fase 05.3** (renovación manual, vencimientos y alertas 7/3/1).
 - Planes ya escritos y validados: `.planning/phases/05.3-renovaci-n-manual-vencimientos-y-alertas-de-7-3-y-1-d-a/`
   05.3-01 a 05.3-05 (4 olas; 02 y 03 en paralelo). **01 y 02 tocan el camino del comprobante → Opus**;
   03, 04 y 05 → Sonnet (campo `comprobante_ncf` del frontmatter).
-- Crear la rama `claude/fase-05.3-renovacion` desde `main` **después** de fusionar el PR #38 (la rama
-  remota con ese nombre existe pero está vieja: recrearla desde `main`, sin commits propios).
+- Rama `claude/fase-05.3-renovacion`, ya creada desde `main` con este STATE: trabajar ahí.
 - Luego: 05.4 (dealer con capacidad de publicaciones activas y consola), sin planificar todavía.
   Después, replanificar la fase 6 (CardNet) desde el 06-02 contra el modelo nuevo; su migración
   `2026-10-cardnet` no debe volver a crear las columnas `renovacion_*` que crea la 05.3.
@@ -255,5 +250,5 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 ## Session Continuity
 
 Last session: 2026-09-29 (nube)
-Stopped at: fase 05.2 verificada, PR #38 abierto; siguiente, ejecutar la 05.3
+Stopped at: 05.2 en producción (PR #38); siguiente, ejecutar la 05.3
 Resume file: .planning/STATE.md, sección «Para retomar»
