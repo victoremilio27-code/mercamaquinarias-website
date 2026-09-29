@@ -557,6 +557,139 @@ db.cargarSecuencia({
       `el comprobante lleva el concepto viejo tal cual y la intención no se reescribió: «${fViejo && fViejo.concepto}»`);
   }
 
+  console.log('\n6. Consola de solo lectura: publicaciones, pagos, renovaciones y capacidad por dealer');
+  {
+    const dueno = cuenta('consola');
+    const part = db.crearCuenta({
+      correo: `part-consola-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9',
+      nombre: 'Particular de consola', telefono: '8095550000', tipo: 'particular',
+    });
+    const idOrgPart = db.organizacionDe(part.idUsuario).id;
+    const { idUsuario: idPersonal } = db.crearCuenta({
+      correo: `personal-consola-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9',
+      nombre: 'Personal de consola', telefono: '8095550000', tipo: 'particular',
+    });
+    db.marcarAdmin(`personal-consola-${SELLO}@prueba.invalid`, true);
+    const personal = { cookie: `te_sesion=${db.abrirSesion(idPersonal)}`, 'cf-connecting-ip': '190.1.2.4' };
+
+    // El dealer: Destacado de 5 con un anuncio en cada estado.
+    const sD = membresia(dueno.idOrg, { cupo: 5, finEnDias: 20 });
+    const anuncio = (idOrg, idSusc, estado, marcaEq) => {
+      const idA = `anu-${estado}-${SELLO}-${++contador}`;
+      const t = new Date().toISOString();
+      ejecuta(`INSERT INTO anuncios
+        (id, organizacion_id, suscripcion_id, estado, categoria, subcategoria, marca, modelo, anio,
+         precio, provincia, publicado, vence, creado, actualizado)
+        VALUES (?, ?, ?, ?, 'camiones', 'cam-volteo', ?, 'M1', 2019, 1000000, 'Santo Domingo', ?, ?, ?, ?)`,
+      idA, idOrg, idSusc, estado, marcaEq, t, enDias(20), t, t);
+      return idA;
+    };
+    anuncio(dueno.idOrg, sD, 'activo', 'MarcaActiva');
+    anuncio(dueno.idOrg, sD, 'pausado', 'MarcaPausada');
+    const idVendido = anuncio(dueno.idOrg, sD, 'vendido', 'MarcaVendida');
+    anuncio(dueno.idOrg, sD, 'vencido', 'MarcaVencida');
+    anuncio(dueno.idOrg, sD, 'retirado', 'MarcaRetirada');
+
+    // El particular: un borrador con un pago pendiente de publicación.
+    const idBorrador = db.crearBorrador({ idOrg: idOrgPart, idUsuario: part.idUsuario, idPlan: 'estandar', dias: 30 });
+    const cobroPub = { ...precios.desglose(1800), referencia: referencia('PUB'), procesador: 'transferencia' };
+    const pPub = db.registrarCobro({
+      idOrg: idOrgPart, idAnuncio: idBorrador, cobro: cobroPub,
+      intencion: { tipo: 'publicacion', concepto: 'Publicación de prueba', idAnuncio: idBorrador },
+    });
+
+    // Pagos: uno aprobado por «demo», uno sin costo, una ampliación pendiente y una renovación aprobada.
+    const pDemo = db.registrarCobro({
+      idOrg: dueno.idOrg, cobro: { ...precios.desglose(1800), referencia: referencia('DEMO') },
+      intencion: { tipo: 'compra', concepto: 'Compra demo' },
+    });
+    ejecuta("UPDATE pagos SET estado = 'aprobado', procesador = 'demo' WHERE id = ?", pDemo.id);
+    const pSin = db.registrarCobro({
+      idOrg: dueno.idOrg, cobro: { ...precios.desglose(1800), referencia: referencia('SIN') },
+      intencion: { tipo: 'compra', concepto: 'Compra sin costo' },
+    });
+    ejecuta("UPDATE pagos SET estado = 'aprobado', procesador = 'sin-costo' WHERE id = ?", pSin.id);
+    const sAmp = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+    ampliacionPendiente({ idOrg: dueno.idOrg, idSusc: sAmp, cupoActual: 3, cupoNuevo: 5 });
+    const sRen = membresia(dueno.idOrg, { cupo: 2, finEnDias: 20 });
+    const pRen = db.registrarCobro({
+      idOrg: dueno.idOrg, idSusc: sRen, cobro: { ...precios.desglose(1800), referencia: referencia('REN'), procesador: 'transferencia' },
+      intencion: { tipo: 'renovacion', idSusc: sRen, concepto: 'Renovación de prueba' },
+    });
+    ejecuta("UPDATE pagos SET estado = 'aprobado' WHERE id = ?", pRen.id);
+    ejecuta('UPDATE suscripciones SET renovacion_automatica = 1 WHERE id = ?', sD);
+
+    const bitacoraAntes = consulta('SELECT COUNT(*) AS n FROM bitacora_admin').n;
+    const get = (url, quien = personal) => pedir({ url, cabeceras: quien.cabeceras || quien });
+
+    // Publicaciones.
+    const rV = await get('/api/admin/publicaciones?estado=vendido');
+    const dV = rV.datos || {};
+    ok(rV.codigo === 200 && dV.estado === 'vendido', `publicaciones vendidas: 200 (${rV.codigo})`);
+    ok((dV.recuentos || {}).vendido >= 1, `recuento de vendidas (${JSON.stringify(dV.recuentos)})`);
+    const fV = (dV.publicaciones || []).find((a) => a.id === idVendido);
+    ok(!!fV && fV.organizacion === `Empresa consola ${SELLO}` && !!fV.plan_nombre && !!fV.vence,
+      `la vendida trae empresa, plan y vencimiento (${fV && fV.organizacion}/${fV && fV.plan_nombre}/${fV && fV.vence})`);
+    const rPP = await get('/api/admin/publicaciones?estado=pendiente_pago');
+    const fB = ((rPP.datos || {}).publicaciones || []).find((a) => a.id === idBorrador);
+    ok(rPP.codigo === 200 && !!fB && fB.plan_nombre === db.planPorId('estandar').nombre,
+      `pendiente de pago trae el borrador con el plan elegido (${fB && fB.plan_nombre})`);
+    ok(((rPP.datos || {}).recuentos || {}).pendiente_pago >= 1, 'y el recuento derivado de pendientes de pago');
+    const rX = await get('/api/admin/publicaciones?estado=inventado');
+    ok((rX.datos || {}).estado === 'activo', `un estado desconocido cae a activo (${(rX.datos || {}).estado})`);
+
+    // Cobros.
+    const rC = await get('/api/admin/cobros');
+    const filas = (rC.datos || {}).cobros || [];
+    const procs = new Set(filas.map((f) => f.procesador));
+    ok(rC.codigo === 200 && ['demo', 'sin-costo', 'transferencia'].every((p) => procs.has(p)),
+      `cobros de todos los procesadores (${[...procs].join(',')})`);
+    const fDemo = filas.find((f) => f.referencia === pDemo.referencia);
+    ok(!!fDemo && fDemo.base === pDemo.base && typeof fDemo.ajuste === 'number' && fDemo.itbis === pDemo.itbis
+      && fDemo.total === pDemo.total && fDemo.tipo === 'compra' && fDemo.concepto === 'Compra demo' && fDemo.estado === 'aprobado',
+      'cada fila lleva base, ajuste, ITBIS, total, tipo, concepto y estado');
+    const rTA = await get('/api/admin/cobros?tipo=ampliacion');
+    const tiposA = ((rTA.datos || {}).cobros || []).map((f) => f.tipo);
+    ok(tiposA.length >= 1 && tiposA.every((t) => t === 'ampliacion'), `?tipo=ampliacion filtra (${tiposA.join(',')})`);
+    const rEP = await get('/api/admin/cobros?estado=pendiente');
+    const estadosP = ((rEP.datos || {}).cobros || []).map((f) => f.estado);
+    ok(estadosP.length >= 1 && estadosP.every((e) => e === 'pendiente'), '?estado=pendiente filtra');
+    const fPub = ((rEP.datos || {}).cobros || []).find((f) => f.referencia === pPub.referencia);
+    ok(!!fPub && fPub.anuncio_id === idBorrador, 'el cobro de publicación trae su anuncio');
+    const rTope = await get('/api/admin/cobros?tipo=compra%27%3B--&estado=x&limite=99999');
+    ok(rTope.codigo === 200 && ((rTope.datos || {}).cobros || []).length <= 500, 'un filtro malicioso no rompe ni desborda el tope');
+
+    // Renovaciones.
+    const rR = await get('/api/admin/renovaciones');
+    const dR = rR.datos || {};
+    ok(rR.codigo === 200 && !!dR.recuentos && dR.recuentos.aprobado >= 1
+      && 'pendiente' in dR.recuentos && 'rechazado' in dR.recuentos && Array.isArray(dR.renovaciones),
+      `renovaciones con recuentos (${JSON.stringify(dR.recuentos)})`);
+    ok(dR.automaticasMarcadas >= 1, `automáticas marcadas (${dR.automaticasMarcadas})`);
+    ok((dR.renovaciones || []).every((f) => f.tipo === 'renovacion'), 'la lista solo trae renovaciones');
+
+    // Directorio con capacidad, sin RNC.
+    const rO = await get('/api/admin/organizaciones');
+    const fO = ((rO.datos || {}).organizaciones || []).find((o) => o.id === dueno.idOrg);
+    ok(rO.codigo === 200 && !!fO, `el dealer sale en el directorio (${rO.codigo})`);
+    ok(!!fO && fO.permitidas === 5 + 3 + 2 && fO.sin_limite === false, `permitidas ${fO && fO.permitidas} (5+3+2 de sus tres membresías)`);
+    ok(!!fO && fO.en_uso === 2 && fO.vendidas === 1 && fO.vencidas === 1 && fO.disponible === fO.permitidas - 2,
+      `en uso 2, vendidas 1, vencidas 1, disponible ${fO && fO.disponible}`);
+    ok(!!fO && !!fO.vence && /Destacado/.test(fO.planes || ''), `vence y planes (${fO && fO.vence} / ${fO && fO.planes})`);
+    ok(!!fO && !Object.keys(fO).some((k) => /rnc/i.test(k)), 'el directorio no lleva ninguna clave rnc');
+
+    // Solo el personal: el dealer recibe 404 y sin sesión no entra.
+    for (const ruta of ['publicaciones', 'cobros', 'renovaciones']) {
+      const rD = await get(`/api/admin/${ruta}`, dueno);
+      ok(rD.codigo === 404, `/api/admin/${ruta} con la sesión del dealer: 404 (${rD.codigo})`);
+      const rN = await get(`/api/admin/${ruta}`, {});
+      ok([401, 404].includes(rN.codigo), `/api/admin/${ruta} sin sesión: ${rN.codigo}`);
+    }
+
+    // Ninguna escritura: la bitácora no se movió.
+    ok(consulta('SELECT COUNT(*) AS n FROM bitacora_admin').n === bitacoraAntes, 'la bitácora no cambia tras leer la consola');
+  }
+
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
