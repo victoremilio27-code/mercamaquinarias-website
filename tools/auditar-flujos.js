@@ -159,47 +159,106 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   console.log(`  registro + verificación → panel: ${entro ? 'sí' : 'NO'}`);
   if (!entro) anota('particular', 'flujo', 'no llegó al panel tras verificar el correo');
 
-  /* Publicar un equipo: primero la puerta de los cupos.
-     Quien acaba de registrarse no tiene ninguno, así que /publicar.html
-     no enseña el asistente: manda a contratar un plan. Lo que hay que
-     comprobar aquí es que esa puerta explique por qué y sepa volver.
-     (Esta parte daba por rota la publicación entera: se escribió antes
-     de que la puerta existiera y esperaba el asistente a secas.) */
+  /* Publicar un equipo (fase 05.2, MOD-05, MOD-06, MOD-07).
+
+     Esta parte esperaba el flujo VIEJO: que un particular recién
+     registrado, sin cupos, fuera mandado a planes.html y que esa página
+     «explicara qué es un cupo». Con el modelo nuevo no hay a dónde
+     mandarlo ni cupo que explicar: /publicar.html empieza por el paso
+     «Elige cómo publicar este equipo», el borrador nace en el servidor
+     al elegir plan, y el particular no lee la palabra «cupo». Las dos
+     comprobaciones viejas se sustituyen por su equivalente, no se
+     quitan: que el asistente se abra para quien no tiene capacidad, y
+     que no le hable de lo que no contrató. */
   console.log('\n  ── Publicar un equipo ──');
   await p.goto(`${BASE}/publicar.html`, { waitUntil: 'networkidle0' });
   await esperar(1200);
 
   const url = new URL(p.url());
-  console.log(`  sin cupos, /publicar.html acaba en: ${url.pathname}${url.search}`);
+  console.log(`  sin capacidad, /publicar.html acaba en: ${url.pathname}${url.search}`);
 
-  if (url.pathname.endsWith('/planes.html')) {
-    ok('sin cupos, manda a contratar un plan en vez de enseñar un asistente inservible');
-
-    /* Sin el destino, quien contrata acaba en la página de planes con
-       un cupo en la mano y sin camino de vuelta al asistente. */
-    const destino = url.searchParams.get('destino');
-    if (destino === 'publicar.html') ok('conserva el destino para volver al asistente');
-    else anota('publicar', 'ux', `manda a planes sin conservar el destino (destino=${destino})`);
-
-    const explica = await p.$eval('body', (b) => /cupo/i.test(b.innerText));
-    if (explica) ok('explica qué es un cupo');
-    else anota('publicar', 'ux', 'manda a contratar sin explicar por qué');
+  if (url.pathname.endsWith('/publicar.html')) {
+    ok('el particular sin capacidad se queda en el asistente de publicar');
   } else {
-    // Con cupos sí toca el asistente: que no avance con todo en blanco.
-    const pasos = await p.$$eval('.paso', (n) => n.length).catch(() => 0);
-    console.log(`  asistente con ${pasos} paso(s)`);
+    anota('publicar', 'flujo', `el particular nuevo acaba en ${url.pathname}${url.search} en vez de en publicar.html`);
+  }
 
-    const avanzar = await p.$('#btnSiguiente');
-    if (!avanzar) {
-      anota('publicar', 'ux', 'no se encontró el botón para avanzar');
-    } else {
-      await avanzar.click();
-      await esperar(700);
-      const textoErr = await p.$$eval('.campo-v__error, .paso__aviso, [role="alert"]',
-        (n) => n.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim()).join(' | '));
-      if (!textoErr) anota('publicar', 'validación', 'el asistente avanza con el formulario vacío');
-      else ok(`frena en vacío y avisa: ${textoErr.slice(0, 90)}`);
-    }
+  const pasoPlan = await p.$eval('.paso[data-paso="plan"]',
+    (el) => ({ visible: !el.hidden, texto: el.innerText })).catch(() => null);
+  if (pasoPlan && pasoPlan.visible && /Elige cómo publicar este equipo/.test(pasoPlan.texto)) {
+    ok('empieza por «Elige cómo publicar este equipo»');
+  } else {
+    anota('publicar', 'flujo', 'el paso del plan no es lo primero que ve el particular sin capacidad');
+  }
+
+  const nPlanes = await p.$$eval('input[name="planPublicar"]', (n) => n.length).catch(() => 0);
+  if (nPlanes >= 3) ok(`ofrece ${nPlanes} planes (Estándar, Destacada, Premium)`);
+  else anota('publicar', 'flujo', `el paso del plan ofrece ${nPlanes} plan(es), se esperaban al menos 3`);
+
+  const cuerpoPlan = await p.$eval('main#contenido', (m) => m.innerText).catch(() => '');
+  if (/ITBIS incluido/.test(cuerpoPlan)) ok('el precio dice «ITBIS incluido»');
+  else anota('publicar', 'ux', 'el paso del plan no dice «ITBIS incluido» junto al precio');
+
+  // MOD-07: el particular no lee «cupo» en el asistente.
+  const cupoPlan = /cupo/i.exec(cuerpoPlan);
+  if (cupoPlan) {
+    const i = cuerpoPlan.search(/cupo/i);
+    anota('publicar', 'ux', `publicar.html dice «cupo» al particular: …${cuerpoPlan.slice(Math.max(0, i - 40), i + 40).replace(/\s+/g, ' ')}…`);
+  } else {
+    ok('publicar.html no dice «cupo» al particular');
+  }
+
+  /* Quien acaba de registrarse aún no aceptó la política de publicación
+     de anuncios: la página lo dice arriba con un botón, y el servidor no
+     crea el borrador hasta que se acepta. Se pulsa como lo haría una
+     persona. Si la cuenta ya lo tenía aceptado, no hay aviso y no pasa
+     nada. */
+  const avisoLegal = await p.$('#btnAceptarLegal');
+  if (avisoLegal) {
+    await avisoLegal.click();
+    await p.waitForSelector('.aviso-legal', { hidden: true, timeout: 5000 })
+      .then(() => ok('acepta las condiciones de publicación desde el aviso de la página'))
+      .catch(() => anota('publicar', 'flujo', 'el aviso de condiciones no desaparece al aceptarlo'));
+  }
+
+  // Elegir el primer plan y seguir: el borrador se crea en el servidor.
+  // Se pulsa la etiqueta: el círculo de radio de las tarjetas no se ve.
+  let idBorrador = null;
+  await p.click('#planesPublicar li label').catch(() => {});
+  await p.click('#btnSiguiente').catch(() => {});
+  await p.waitForFunction(() => location.search.includes('borrador='), { timeout: 8000 }).catch(() => {});
+  idBorrador = new URL(p.url()).searchParams.get('borrador');
+
+  if (idBorrador) {
+    ok('al elegir plan la URL pasa a publicar.html?borrador=<id>');
+
+    const mios = await p.evaluate(async () => {
+      const r = await fetch('/api/mis-anuncios', { credentials: 'same-origin' });
+      return r.ok ? (await r.json()).anuncios : null;
+    });
+    const suyo = (mios || []).find((a) => a.id === idBorrador);
+    if (suyo && suyo.estado === 'borrador') ok('el borrador existe en el servidor con estado «borrador»');
+    else anota('publicar', 'flujo', `el borrador ${idBorrador} no aparece como «borrador» en /api/mis-anuncios`);
+
+    /* T-05.2-07 / D-14: un borrador no es público. Se pide SIN la
+       cookie de sesión, como lo haría un visitante cualquiera. */
+    const visitante = await p.evaluate(async (id) => {
+      const r = await fetch(`/api/anuncios/${encodeURIComponent(id)}`, { credentials: 'omit' });
+      return r.status;
+    }, idBorrador);
+    if (visitante === 404) ok('un visitante sin sesión recibe 404 al pedir el borrador');
+    else anota('publicar', 'SEGURIDAD', `un visitante ve el borrador ${idBorrador} (HTTP ${visitante})`);
+
+    // El paso del equipo, vacío, sigue frenando el avance (la comprobación de siempre).
+    await esperar(400);
+    await p.click('#btnSiguiente').catch(() => {});
+    await esperar(700);
+    const textoErr = await p.$$eval('.campo-v__error, .paso__aviso, [role="alert"]',
+      (n) => n.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim()).join(' | '));
+    if (!textoErr) anota('publicar', 'validación', 'el asistente avanza con el formulario vacío');
+    else ok(`frena en vacío y avisa: ${textoErr.slice(0, 90)}`);
+  } else {
+    anota('publicar', 'flujo', 'al elegir plan y pulsar Continuar no se creó el borrador (la URL no lleva ?borrador=)');
   }
 
   // Panel del particular
@@ -209,6 +268,53 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   console.log(`  panel: ${subP}`);
   const ofreceDealer = await p.$eval('body', (b) => b.innerText.includes('Comercializa maquinaria'));
   console.log(`  ofrece pasar a dealer: ${ofreceDealer ? 'sí' : 'NO'}`);
+
+  /* El borrador de arriba vive ahora en el servidor, así que el panel lo
+     ofrece con «Continuar» hacia publicar.html?borrador=<id> (MOD-06),
+     y el panel del particular no le habla de cupos (MOD-07). */
+  if (idBorrador) {
+    const fila = await p.$$eval('#panelAnuncios tr, #cuerpoAnuncios tr, main tr', (filas, id) => {
+      const f = filas.find((tr) => tr.dataset.id === id);
+      if (!f) return null;
+      const enlace = [...f.querySelectorAll('a')].find((a) => /Continuar/.test(a.textContent));
+      return {
+        borrador: /Borrador/.test(f.innerText),
+        continuar: enlace ? enlace.getAttribute('href') : null,
+      };
+    }, idBorrador).catch(() => null);
+
+    if (fila && fila.borrador) ok('el panel lista el borrador como «Borrador»');
+    else anota('panel', 'flujo', 'el panel no lista el borrador recién creado como «Borrador»');
+
+    if (fila && fila.continuar === `publicar.html?borrador=${encodeURIComponent(idBorrador)}`) {
+      ok('el panel ofrece «Continuar» hacia el borrador');
+    } else {
+      anota('panel', 'flujo', `el borrador no tiene un «Continuar» hacia publicar.html?borrador=<id> (href: ${fila && fila.continuar})`);
+    }
+  }
+
+  const planPanel = await p.$eval('#panelPlan', (el) => el.innerText).catch(() => '');
+  if (/cupo/i.test(planPanel)) anota('panel', 'ux', 'el panel del particular dice «cupo» en su plan');
+  else ok('el panel del particular no dice «cupo»');
+
+  // planes.html, con esta sesión de particular: sin «cupo» y con enlaces
+  // que llevan al asistente con el plan ya elegido.
+  await p.goto(`${BASE}/planes.html`, { waitUntil: 'networkidle0' });
+  await esperar(900);
+  const cuerpoPlanes = await p.$eval('main#contenido', (m) => m.innerText).catch(() => '');
+  if (!cuerpoPlanes) {
+    anota('planes', 'flujo', 'planes.html no pinta contenido para el particular');
+  } else if (/cupo/i.test(cuerpoPlanes)) {
+    const i = cuerpoPlanes.search(/cupo/i);
+    anota('planes', 'ux', `planes.html dice «cupo» al particular: …${cuerpoPlanes.slice(Math.max(0, i - 40), i + 40).replace(/\s+/g, ' ')}…`);
+  } else {
+    ok('planes.html no dice «cupo» al particular');
+  }
+  const nEnlacesPlan = await p.$$eval('a[href^="publicar.html?plan="]', (n) => n.length).catch(() => 0);
+  if (nEnlacesPlan) ok(`planes.html lleva a publicar.html con el plan elegido (${nEnlacesPlan} enlaces)`);
+  else anota('planes', 'flujo', 'planes.html no tiene enlaces a publicar.html?plan=<id> para el particular');
+  await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+  await esperar(500);
 
   // El particular no debe ver el panel de administración
   await p.goto(`${BASE}/admin.html`, { waitUntil: 'networkidle0' });
