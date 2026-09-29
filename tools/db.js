@@ -2658,12 +2658,42 @@ function organizacionesAdmin({ estado, q } = {}) {
              WHERE a.organizacion_id = o.id AND a.estado = 'activo') AS activos,
            (SELECT COUNT(*) FROM anuncios a
              WHERE a.organizacion_id = o.id AND TRIM(COALESCE(a.serie, '')) <> ''
-               AND a.estado <> 'borrador' AND a.serie_revision IS NULL) AS series_pendientes
+               AND a.estado <> 'borrador' AND a.serie_revision IS NULL) AS series_pendientes,
+           -- Capacidad (fase 05.4): lo que el dealer tiene contratado y cuánto usa.
+           -- «Viva» es la misma regla que aprobarPago: activa y sin haber vencido.
+           (SELECT GROUP_CONCAT(DISTINCT pl.nombre) FROM suscripciones s
+              JOIN planes pl ON pl.id = s.plan_id
+             WHERE s.organizacion_id = o.id AND s.estado = 'activa'
+               AND (s.fin IS NULL OR s.fin > ?)) AS planes,
+           (SELECT COALESCE(SUM(s.anuncios_incluidos), 0) FROM suscripciones s
+             WHERE s.organizacion_id = o.id AND s.estado = 'activa'
+               AND (s.fin IS NULL OR s.fin > ?)) AS permitidas,
+           (SELECT COUNT(*) FROM suscripciones s
+             WHERE s.organizacion_id = o.id AND s.estado = 'activa'
+               AND (s.fin IS NULL OR s.fin > ?) AND s.anuncios_incluidos IS NULL) AS sin_limite,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND a.estado IN ${ESTADOS_QUE_OCUPAN}) AS en_uso,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND a.estado = 'vendido') AS vendidas,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.organizacion_id = o.id AND a.estado = 'vencido') AS vencidas,
+           (SELECT MIN(s.fin) FROM suscripciones s
+             WHERE s.organizacion_id = o.id AND s.estado = 'activa' AND s.fin > ?) AS vence
       FROM organizaciones o
      WHERE ${donde.join(' AND ')}
      ORDER BY o.nombre COLLATE NOCASE
-     LIMIT 500`).all(...args)
-    .map((o) => ({ ...o, verificada: !!o.verificada, perfil_publico: !!o.perfil_publico }));
+     LIMIT 500`).all(...Array(4).fill(ahora()), ...args)
+    .map((o) => {
+      const sinLimite = o.sin_limite > 0;
+      return {
+        ...o,
+        verificada: !!o.verificada,
+        perfil_publico: !!o.perfil_publico,
+        sin_limite: sinLimite,
+        permitidas: sinLimite ? null : o.permitidas,
+        disponible: sinLimite ? null : Math.max(0, o.permitidas - o.en_uso),
+      };
+    });
 }
 
 /* ── Revisión del número de serie (ADMIN-03) ───────────────
@@ -3497,6 +3527,109 @@ function pagosParaConsola({ estado = 'pendiente', limite = 200 } = {}) {
       }
       return fila;
     });
+}
+
+/* ── Consola de solo lectura de la fase 05.4 (MOD-14) ─────
+ *
+ * Publicaciones por estado, pagos de TODOS los procesadores y
+ * renovaciones. Ninguna escribe. Todas topadas con LIMIT (200 por
+ * omisión, 500 como máximo: el droplet tiene 512 MB) y los recuentos
+ * salen de un COUNT(*) agrupado, nunca de contar filas en JS. Los
+ * filtros pasan por listas blancas y viajan como parámetros: ningún
+ * texto del navegador llega al SQL. */
+
+const topeConsola = (limite) => Math.min(Math.max(parseInt(limite, 10) || 200, 1), 500);
+
+const ESTADOS_PUBLICACION_CONSOLA = ['activo', 'pausado', 'vendido', 'vencido', 'retirado', 'pendiente_pago'];
+
+/* «Pendiente de pago» no es un estado del anuncio (05.2 D-04): es un
+   borrador con un pago pendiente ligado a él. */
+const PENDIENTE_DE_PAGO_SQL = `a.estado = 'borrador' AND EXISTS (
+  SELECT 1 FROM pagos p WHERE p.anuncio_id = a.id AND p.estado = 'pendiente')`;
+
+function publicacionesParaConsola({ estado = 'activo', limite = 200 } = {}) {
+  const e = ESTADOS_PUBLICACION_CONSOLA.includes(estado) ? estado : 'activo';
+  const d = abrir();
+
+  const recuentos = Object.fromEntries(ESTADOS_PUBLICACION_CONSOLA.map((x) => [x, 0]));
+  for (const f of d.prepare('SELECT estado, COUNT(*) AS n FROM anuncios GROUP BY estado').all()) {
+    if (f.estado in recuentos) recuentos[f.estado] = f.n;
+  }
+  recuentos.pendiente_pago = d.prepare(
+    `SELECT COUNT(*) AS n FROM anuncios a WHERE ${PENDIENTE_DE_PAGO_SQL}`).get().n;
+
+  const donde = e === 'pendiente_pago' ? PENDIENTE_DE_PAGO_SQL : 'a.estado = ?';
+  const args = e === 'pendiente_pago' ? [] : [e];
+  const publicaciones = d.prepare(`
+    SELECT a.id, a.marca, a.modelo, a.anio, a.categoria, a.estado, a.vence, a.creado, a.actualizado,
+           o.id AS organizacion_id, o.nombre AS organizacion, o.tipo AS tipo_organizacion,
+           COALESCE(pl.nombre, pe.nombre) AS plan_nombre
+      FROM anuncios a
+      JOIN organizaciones o ON o.id = a.organizacion_id
+      LEFT JOIN suscripciones s ON s.id = a.suscripcion_id
+      LEFT JOIN planes pl ON pl.id = s.plan_id
+      LEFT JOIN planes pe ON pe.id = a.plan_elegido
+     WHERE ${donde}
+     ORDER BY a.actualizado DESC, a.rowid DESC LIMIT ?`).all(...args, topeConsola(limite));
+  return { estado: e, recuentos, publicaciones };
+}
+
+const TIPOS_COBRO_CONSOLA = ['compra', 'publicacion', 'ampliacion', 'renovacion'];
+const ESTADOS_COBRO_CONSOLA = ['pendiente', 'aprobado', 'rechazado', 'devuelto'];
+
+/* Lo que devuelven cobrosParaConsola y renovacionesParaConsola por fila.
+   El ajuste (el 3 %) sale AQUÍ y solo aquí, para el personal; un pago
+   anterior al desglose trae base NULL y la pantalla dice «sin ajuste». */
+function filasDeCobros(donde, args, limite) {
+  return abrir().prepare(`
+    SELECT p.id, p.organizacion_id, o.nombre AS organizacion, p.referencia, p.procesador, p.estado,
+           p.base, p.ajuste, p.ajuste_tasa, p.subtotal, p.itbis, p.itbis_tasa, p.total,
+           p.creado, p.confirmado, p.intencion, p.anuncio_id,
+           NULLIF(TRIM(COALESCE(a.marca, '') || ' ' || COALESCE(a.modelo, '')), '') AS anuncio_titulo
+      FROM pagos p
+      JOIN organizaciones o ON o.id = p.organizacion_id
+      LEFT JOIN anuncios a ON a.id = p.anuncio_id
+     WHERE ${donde}
+     ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(...args, topeConsola(limite))
+    .map(({ intencion, ...p }) => {
+      const i = intencionDe({ intencion });
+      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null };
+    });
+}
+
+function cobrosParaConsola({ tipo, estado, limite = 200 } = {}) {
+  const donde = ['1 = 1'];
+  const args = [];
+  if (TIPOS_COBRO_CONSOLA.includes(tipo)) {
+    donde.push(`${TIPO_INTENCION('p.intencion')} = ?`);
+    args.push(tipo);
+  }
+  if (ESTADOS_COBRO_CONSOLA.includes(estado)) {
+    donde.push('p.estado = ?');
+    args.push(estado);
+  }
+  return {
+    tipo: TIPOS_COBRO_CONSOLA.includes(tipo) ? tipo : null,
+    estado: ESTADOS_COBRO_CONSOLA.includes(estado) ? estado : null,
+    cobros: filasDeCobros(donde.join(' AND '), args, limite),
+  };
+}
+
+function renovacionesParaConsola({ limite = 200 } = {}) {
+  const d = abrir();
+  const recuentos = { pendiente: 0, aprobado: 0, rechazado: 0 };
+  for (const f of d.prepare(`SELECT p.estado, COUNT(*) AS n FROM pagos p
+                              WHERE ${TIPO_INTENCION('p.intencion')} = 'renovacion'
+                              GROUP BY p.estado`).all()) {
+    if (f.estado in recuentos) recuentos[f.estado] = f.n;
+  }
+  const automaticasMarcadas = d.prepare(
+    "SELECT COUNT(*) AS n FROM suscripciones WHERE renovacion_automatica = 1 AND estado = 'activa'").get().n;
+  return {
+    recuentos,
+    renovaciones: filasDeCobros(`${TIPO_INTENCION('p.intencion')} = 'renovacion'`, [], limite),
+    automaticasMarcadas,
+  };
 }
 
 /* Solo un pendiente se rechaza. Un aprobado no: si el dinero entró, lo
@@ -5176,6 +5309,7 @@ module.exports = {
   planes, planPorId, suscripcionActiva, suscripcionesDe, suscripcion,
   suscripcionConHueco, comprarCupos, ampliarCupos, membresiaInterna,
   registrarCobro, aprobarPago, rechazarPago, pagosPendientesDe, pagosParaConsola,
+  publicacionesParaConsola, cobrosParaConsola, renovacionesParaConsola,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
   /* Renovación y vencimientos (fase 05.3). */
   vencerSuscripciones, renovarSinCosto, pagoPendienteDeRenovacion, pagoPendienteDeAmpliacion,

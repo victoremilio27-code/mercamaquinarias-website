@@ -178,6 +178,9 @@ async function entrar(correo, clave) {
     ['/admin/anuncios/cualquiera/serie', 'POST', { resultado: 'conforme' }, 'revisar una serie bloqueado'],
     ['/admin/organizaciones/cualquiera/pagina', 'GET', null, 'la página de otro dealer oculta'],
     ['/admin/organizaciones/cualquiera/pagina', 'PATCH', { lema: 'x' }, 'editar la página de otro dealer bloqueado'],
+    ['/admin/publicaciones', 'GET', null, 'la consola de publicaciones oculta'],
+    ['/admin/cobros', 'GET', null, 'la consola de pagos de todos los métodos oculta'],
+    ['/admin/renovaciones', 'GET', null, 'la consola de renovaciones oculta'],
   ]) {
     const rr = await pedir(ruta, { metodo, cuerpo: cuerpo || undefined, cookie: cibao });
     comprobar(`${que} a cuenta sin permiso`, rr.estado === 404, `devolvió ${rr.estado}`);
