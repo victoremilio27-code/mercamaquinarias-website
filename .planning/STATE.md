@@ -22,8 +22,8 @@ Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y 
 .planning/STATE.md y sigue.»*
 
 **Forma de trabajar:** una rama y un PR por fase; se fusiona y despliega al cerrar la fase (verificación
-passed + CI en verde, sin volver a preguntar). Opus planifica con GSD y verifica; Sonnet ejecuta; un plan
-que toca ITBIS, comprobante o NCF lo ejecuta Opus. Hasta 2-3 agentes si no tocan los mismos archivos (el
+passed + CI en verde, sin volver a preguntar). Opus planifica con GSD y verifica; **toda ejecución la hace
+Sonnet 5.5, sin excepciones** (también ITBIS, comprobante o NCF; regla de Victor del 2026-09-29). Hasta 2-3 agentes si no tocan los mismos archivos (el
 segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions».
 
 ### Dónde estamos
@@ -41,8 +41,8 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 1. **Fase 05.4 — dealer con capacidad de publicaciones activas y consola.** `gsd-plan-phase 05.4`: ya hay
    `05.4-CONTEXT.md` (D-01 a D-20) y `05.4-RESEARCH.md`, **no repetir la investigación**; directo al
    planificador (Opus) y al comprobador (Opus). Reparto propuesto: 01 guardas del servidor y prorrateo con
-   pruebas primero (Opus: toca `aprobarPago`); 02 panel del dealer y sección de ampliar; 03 textos sin
-   «cupo», asistente, concepto del comprobante solo hacia adelante (Opus) y contratación 2.3; 04 consola de
+   pruebas primero (toca `aprobarPago`); 02 panel del dealer y sección de ampliar; 03 textos sin
+   «cupo», asistente, concepto del comprobante solo hacia adelante y contratación 2.3; 04 consola de
    solo lectura; 05 batería y auditorías. Ola 0: `tools/probar-capacidad.js`, script `capacidad:probar` y su
    paso de CI (en LF). Las pruebas que hoy exigen «cupo» (`probar-publicacion.js:736`,
    `probar-transferencia.js`, `prueba-chat.js`) se invierten en el mismo plan que cambia el texto. Después,
@@ -60,7 +60,7 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 5. **Facturación electrónica (e-CF) — en espera.** Victor todavía no ha solicitado ser emisor electrónico; lo
    hace en **octubre de 2026**. Cuando diga que está presentada: insertar la fase «6.1 e-CF» con `gsd-phase`
    (propuesta en §7 de la investigación: FE-01 a FE-13, construida y apagada tras `MERCA_ECF`, ejecutada con
-   Opus) y planificarla. Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador.
+   Sonnet 5.5) y planificarla. Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador.
 6. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan
    personas y protocolo de inspección); 13, 15 y 16 se planifican cuando se acerquen, porque tocan archivos que
    la 05.4 y la 6 aún cambian.
@@ -234,8 +234,12 @@ Progress: [█████░░░░░] 50%
 - Perfil de GSD `balanced` (`.planning/config.json`). Opus solo para planificar, revisar y verificar
   (el verificador y la revisión del cierre se lanzan con Opus explícito, porque `balanced` los pone en
   Sonnet); Sonnet para ejecutar planes.
-- Excepción: un plan que toca el cálculo de ITBIS, el comprobante o los NCF lo ejecuta Opus, y se dice
-  en una línea al lanzarlo. En la 05.1 eso es el 05.1-02; el 05.1-01 terminó con Opus porque ya corría.
+- ~~Excepción: un plan que toca ITBIS, el comprobante o los NCF lo ejecuta Opus.~~ **Retirada por Victor el
+  2026-09-29:** Opus ya no ejecuta nada. Toda ejecución (`gsd-executor`, `gsd-code-fixer`, `gsd-debugger`,
+  `gsd-doc-writer`) va con Sonnet 5.5, fijado en `.planning/config.json` (`models.execution` y
+  `model_overrides` con `claude-sonnet-5-5`). Un plan fiscal se compensa con más pruebas y con la
+  verificación de Opus, no cambiando de ejecutor. Lo que digan en contra los CONTEXT/RESEARCH ya escritos
+  queda sustituido por esta regla.
 - Investigación, estudios de mercado, resúmenes y mapeos: Sonnet.
 - **Forma de trabajar habitual, restaurada por Victor el 2026-09-29:** una rama y **un PR por fase**, y se
   fusiona y despliega **al cerrar la fase** (verificación en verde + CI en verde), no plan a plan. Hasta 2 o
@@ -253,7 +257,7 @@ Decisiones que afectan al trabajo actual:
 - 05.2-03: el correo «ya está publicado» sale de `confirmarPago` (y de la ruta del importe cero con la
   misma función), no de la ruta que pide el pago: así lo reciben igual la transferencia y CardNet.
 
-- **Regla de Victor, 2026-09-25 (modelos y ritmo):** fases 5 y 6 con perfil GSD «quality» (Opus en todo) y revisión completa al cerrar cada una. En cuanto se publique la fase 6: `model_profile` a «balanced» en `.planning/config.json` (Opus planifica, revisa y verifica; Sonnet ejecuta), commit, y avisar a Victor en una línea para que baje el chat principal de High a Medium. De la fase 7 en adelante, «balanced»; una fase que toque cobros, facturación o NCF vuelve a «quality» solo mientras dure. Nunca Haiku. Para ahorrar crédito: no releer ni reexplorar `.planning/` ya escrito, la revisión al cerrar una fase cubre solo lo que cambió esa fase, y nada de agentes para lo que se resuelve con unas pocas búsquedas.
+- **Regla de Victor, 2026-09-25 (modelos y ritmo):** fases 5 y 6 con perfil GSD «quality» (Opus en todo) y revisión completa al cerrar cada una. En cuanto se publique la fase 6: `model_profile` a «balanced» en `.planning/config.json` (Opus planifica, revisa y verifica; Sonnet ejecuta), commit, y avisar a Victor en una línea para que baje el chat principal de High a Medium. De la fase 7 en adelante, «balanced»; una fase que toque cobros, facturación o NCF vuelve a «quality» solo mientras dure *(sustituido el 2026-09-29: la ejecución es siempre Sonnet 5.5, también en esas fases)*. Nunca Haiku. Para ahorrar crédito: no releer ni reexplorar `.planning/` ya escrito, la revisión al cerrar una fase cubre solo lo que cambió esa fase, y nada de agentes para lo que se resuelve con unas pocas búsquedas.
 - **Regla de Victor, 2026-09-25 (paralelismo):** ejecución automática sin luz verde entre tareas, planes ni fases. Se planifica por adelantado todo lo que se pueda contra las interfaces de las fases previas; dos fases independientes se ejecutan a la vez, cada una en su git worktree y su rama; nunca dos agentes ejecutores en la misma copia de trabajo. Se fusiona en orden del ROADMAP. Cada fase, antes de su PR: verificación GSD, revisión de código de lo que cambió, correcciones y todas las pruebas. Un PR por fase, fusión a `main` solo con CI en verde y comprobación del sitio en vivo.
 - **Regla de Victor, 2026-09-25:** el 14 de octubre todo lo que depende de nosotros está terminado. Si algo retrasa el lanzamiento, que sea la afiliación de CardNet, nunca nuestro trabajo. Consecuencia: el código de CardNet se escribe, prueba y certifica dentro de v1 (Fase 6), aunque la afiliación no esté aprobada.
 - **[05-01]** Con la transferencia encendida, `pagos.metodosDeCobro()` retira `demo`: toda compra con importe queda pendiente hasta que el personal la marque recibida. `db.aprobarPago` va con SAVEPOINT para poder ir dentro de `enNombreDe`; la emisión del comprobante queda fuera del envoltorio.
