@@ -4317,28 +4317,6 @@ const caducarAnuncios = () =>
 
 /* ── Cola de avisos ─────────────────────────────────────── */
 
-/* Anuncios que vencen dentro de `dias` y a los que todavía no se les
-   avisó. Devuelve ya el correo y el nombre de quien hay que avisar,
-   para que el proceso de tareas no tenga que encadenar consultas.
-
-   Se apoya en ix_anuncios_vence, que es un índice parcial: solo
-   contiene los anuncios que pueden caducar. */
-const anunciosPorVencer = (dias = 5) =>
-  abrir().prepare(`
-    SELECT a.id, a.marca, a.modelo, a.anio, a.vence,
-           u.correo, u.nombre
-    FROM anuncios a
-    JOIN organizaciones o ON o.id = a.organizacion_id
-    JOIN usuarios u ON u.id = COALESCE(
-      a.usuario_id,
-      (SELECT usuario_id FROM miembros WHERE organizacion_id = o.id AND rol = 'propietario' LIMIT 1))
-    WHERE a.estado = 'activo'
-      AND a.vence IS NOT NULL
-      AND a.vence > ?
-      AND a.vence <= ?
-      AND a.aviso_por_vencer IS NULL`)
-    .all(ahora(), sumarDias(dias));
-
 /* Anuncios recién vencidos a los que no se avisó del corte. */
 const anunciosVencidosSinAvisar = () =>
   abrir().prepare(`
@@ -4353,6 +4331,8 @@ const anunciosVencidosSinAvisar = () =>
       AND a.aviso_vencido IS NULL`)
     .all();
 
+/* La rama 'por-vencer' ya no se escribe desde la fase 05.3 (los avisos
+   van a `recordatorios`); la columna se conserva por historial (D-08). */
 const marcarAviso = (idAnuncio, cual) =>
   abrir().prepare(`UPDATE anuncios SET ${cual === 'vencido' ? 'aviso_vencido' : 'aviso_por_vencer'} = ?
                    WHERE id = ?`).run(ahora(), idAnuncio);
@@ -4380,7 +4360,7 @@ const tipoRecordatorio = (vence, momento) => {
 
 /* Los recordatorios que tocan ahora: anuncios activos que vencen en
    los próximos 7 días, con a quién avisar (el usuario del anuncio o el
-   propietario, como `anunciosPorVencer`), el nombre de la marca y el
+   propietario, como `anunciosVencidosSinAvisar`), el nombre de la marca y el
    plan. Descarta los que ya tienen su fila del ciclo, salvo que el
    envío fallara: esos se reintentan.
 
@@ -5168,7 +5148,7 @@ module.exports = {
   suscripcionesRenovablesDe, suscripcionRenovable, guardarRenovacionAutomatica,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
-  anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
+  anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
   recordatoriosPendientes, reservarRecordatorio, anotarRecordatorio, TIPOS_RECORDATORIO,
   anotarEvento, resumenOrganizacion,
   /* Alcance y métricas del vendedor (fase 10). */

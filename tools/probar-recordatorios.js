@@ -48,7 +48,7 @@ process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 process.env.MERCA_ENV = path.join(BANCO, 'no-existe.env');
 
 for (const k of Object.keys(process.env)) {
-  if (k.startsWith('MERCA_TRANSFERENCIA') || k === 'MERCA_CARDNET' || k === 'MERCA_DIAS_AVISO') {
+  if (k.startsWith('MERCA_TRANSFERENCIA') || k === 'MERCA_CARDNET') {
     delete process.env[k];
   }
 }
