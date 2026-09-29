@@ -348,6 +348,10 @@ const fechaHora = (iso) => {
   return `${f.toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}, ${f.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}`;
 };
 
+const fechaCorta = (iso) => (iso
+  ? new Date(iso).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })
+  : '—');
+
 function bandejaHTML(s) {
   const apagado = !serviciosBandeja().includes(s.servicio);
   const clase = { atendida: 'sol--aprobada' }[s.estado] || '';
@@ -550,6 +554,27 @@ function avisarEmpresas(mensaje, bien = false) {
   aviso.textContent = mensaje || '';
 }
 
+/* Capacidad del dealer (fase 05.4, D-20). «RNC validado» sale de la
+   revisión de la empresa; el número de RNC no viaja al navegador. */
+function capacidadHTML(e) {
+  const validado = e.estado_revision === 'aprobada' ? 'sí' : 'no';
+  if (!e.sin_limite && !e.planes) {
+    return `<p class="sol__meta">Sin membresía viva · RNC validado: ${validado}</p>`;
+  }
+  const permitidas = e.sin_limite ? 'Sin límite' : miles(e.permitidas || 0);
+  const disponible = e.sin_limite ? 'Sin límite' : miles(e.disponible || 0);
+  return `<p class="sol__meta">
+      ${esc(e.planes || 'Sin plan')}
+      · Publicaciones activas permitidas: <b>${esc(permitidas)}</b>
+      · Activas: ${miles(e.en_uso || 0)}
+      · Vendidas: ${miles(e.vendidas || 0)}
+      · Vencidas: ${miles(e.vencidas || 0)}
+      · Capacidad disponible: <b>${esc(disponible)}</b>
+      ${e.vence ? ` · Vence el ${fechaCorta(e.vence)}` : ''}
+      · RNC validado: ${validado}
+    </p>`;
+}
+
 function empresaHTML(e) {
   const aprobada = e.estado_revision === 'aprobada';
   const activos = Number(e.activos) || 0;
@@ -575,6 +600,7 @@ function empresaHTML(e) {
       ${miles(activos)} ${activos === 1 ? 'equipo activo' : 'equipos activos'}
       ${series ? ` · <b>${miles(series)} ${series === 1 ? 'número de serie' : 'números de serie'} por revisar</b>` : ''}
     </p>
+    ${capacidadHTML(e)}
     <div class="sol__acciones">
       ${botonSello}
       ${aprobada ? `<a class="btn btn--linea btn--chico" href="mi-pagina.html?org=${encodeURIComponent(e.id)}">Editar su página</a>` : ''}
@@ -766,8 +792,8 @@ function montarSeries() {
 
 /* ═══ Pagos por transferencia ════════════════════════════
    El servidor no puede saber cuándo entra el dinero en la cuenta: lo
-   confirma una persona desde aquí. Al marcarlo recibido se otorgan los
-   cupos y se emite el comprobante en ese momento; al anularlo no se
+   confirma una persona desde aquí. Al marcarlo recibido se activa lo
+   lo comprado y se emite el comprobante en ese momento; al anularlo no se
    otorga nada y el cliente recibe el motivo por correo.
 
    Una ampliación cuya membresía ya no existe no ofrece «recibido»: el
@@ -854,6 +880,151 @@ async function cargarPagos() {
     : n === 0 ? 'Ninguna en espera' : `${n} en espera`;
 }
 
+/* ═══ Consola de solo lectura (fase 05.4, MOD-14) ═════════
+   Publicaciones por estado, pagos de TODOS los métodos y renovaciones.
+   Aquí no hay botones que escriban: marcar recibido y anular siguen solo
+   en «Pagos por transferencia». «Anulado» es `rechazado` en los datos.
+   Cada carga tiene su propio try/catch: `api()` lanza si la respuesta no
+   es ok, y una sección caída no debe tumbar a las demás. */
+
+const PUB_ESTADOS = [
+  ['activo', 'Activas'], ['pausado', 'Pausadas'], ['vendido', 'Vendidas'], ['vencido', 'Vencidas'],
+  ['retirado', 'Retiradas'], ['pendiente_pago', 'Pendientes de pago'],
+];
+let PUB_ESTADO = 'activo';
+
+function pintarFiltrosPublicaciones(recuentos) {
+  const caja = $('#filtrosPublicaciones');
+  if (!caja) return;
+  caja.innerHTML = PUB_ESTADOS.map(([clave, rotulo]) => {
+    const activo = clave === PUB_ESTADO;
+    const n = recuentos && recuentos[clave] != null ? ` (${miles(recuentos[clave])})` : '';
+    return `<button type="button" class="btn ${activo ? 'btn--ambar' : 'btn--linea'} btn--chico" data-pub-estado="${esc(clave)}" role="tab" aria-selected="${activo}">${esc(rotulo)}${n}</button>`;
+  }).join('');
+}
+
+function publicacionHTML(a) {
+  const equipo = [a.marca, a.modelo, a.anio].filter((x) => x && String(x).trim()).join(' ') || 'Borrador sin datos';
+  return `<li class="sol" data-id="${esc(a.id)}">
+    <div class="sol__cabeza">
+      <b class="sol__nombre">${esc(equipo)}</b>
+      <span class="sol__meta">${esc(a.organizacion || '')}</span>
+      <span class="sol__fecha">${fechaHora(a.actualizado)}</span>
+    </div>
+    <p class="sol__meta">Plan: ${esc(a.plan_nombre || '—')} · Vence: ${a.vence ? fechaCorta(a.vence) : '—'} · Creado: ${fechaCorta(a.creado)}</p>
+  </li>`;
+}
+
+async function cargarPublicacionesConsola() {
+  if (!$('#listaPublicaciones')) return;
+  const aviso = $('#avisoPublicaciones');
+  try {
+    const datos = await api(`/admin/publicaciones?estado=${encodeURIComponent(PUB_ESTADO)}`, { silencioso: true });
+    if (!datos) throw new Error('sin datos');
+    aviso.hidden = true;
+    pintarFiltrosPublicaciones(datos.recuentos);
+    const lista = datos.publicaciones || [];
+    $('#listaPublicaciones').innerHTML = lista.map(publicacionHTML).join('');
+    $('#publicacionesVacia').hidden = lista.length > 0;
+    $('#metaPublicaciones').textContent = `${miles(lista.length)} ${lista.length === 1 ? 'publicación' : 'publicaciones'}`
+      + (lista.length >= 200 ? ' (las más recientes)' : '');
+  } catch (_) {
+    aviso.hidden = false;
+    aviso.textContent = 'No se pudieron cargar las publicaciones.';
+  }
+}
+
+const TIPOS_COBRO_ROTULO = { compra: 'Compra', publicacion: 'Publicación', ampliacion: 'Ampliación', renovacion: 'Renovación' };
+const ESTADOS_COBRO_ROTULO = { pendiente: 'Pendiente', aprobado: 'Aprobado', rechazado: 'Anulado', devuelto: 'Devuelto' };
+const METODOS_ROTULO = { transferencia: 'Transferencia', demo: 'Demostración', 'sin-costo': 'Sin costo', cardnet: 'CardNet' };
+let COBROS_TIPO = '';
+let COBROS_ESTADO = '';
+
+function cobroHTML(p) {
+  const clase = { aprobado: 'sol--aprobada', rechazado: 'sol--rechazada' }[p.estado] || '';
+  return `<li class="sol ${clase}" data-id="${esc(p.id)}">
+    <div class="sol__cabeza">
+      <b class="sol__nombre num">${esc(p.referencia || p.id)}</b>
+      <span class="sol__meta">${esc(p.organizacion || '')}</span>
+      <span class="sol__fecha">${fechaHora(p.creado)}</span>
+    </div>
+    <p class="sol__meta">${esc(p.concepto || 'Membresía')}${p.anuncio_titulo ? ` · Anuncio: ${esc(p.anuncio_titulo)}` : ''}</p>
+    <p class="sol__meta">${esc(TIPOS_COBRO_ROTULO[p.tipo] || 'Membresía')} · ${esc(METODOS_ROTULO[p.procesador] || p.procesador)} · ${esc(ESTADOS_COBRO_ROTULO[p.estado] || p.estado)}</p>
+    <p class="sol__meta num">Base ${esc(importePago(p.base ?? p.subtotal))} · ${p.base == null ? 'sin ajuste' : `Ajuste ${esc(importePago(p.ajuste))}`} · ITBIS ${esc(importePago(p.itbis))} · Total ${esc(importePago(p.total))}</p>
+  </li>`;
+}
+
+async function cargarCobrosConsola() {
+  if (!$('#listaCobros')) return;
+  const aviso = $('#avisoCobros');
+  try {
+    const q = [];
+    if (COBROS_TIPO) q.push(`tipo=${encodeURIComponent(COBROS_TIPO)}`);
+    if (COBROS_ESTADO) q.push(`estado=${encodeURIComponent(COBROS_ESTADO)}`);
+    const datos = await api(`/admin/cobros${q.length ? `?${q.join('&')}` : ''}`, { silencioso: true });
+    if (!datos) throw new Error('sin datos');
+    aviso.hidden = true;
+    const lista = datos.cobros || [];
+    $('#listaCobros').innerHTML = lista.map(cobroHTML).join('');
+    $('#cobrosVacia').hidden = lista.length > 0;
+    $('#metaCobros').textContent = `${miles(lista.length)} ${lista.length === 1 ? 'pago' : 'pagos'}`
+      + (lista.length >= 200 ? ' (los más recientes)' : '');
+  } catch (_) {
+    aviso.hidden = false;
+    aviso.textContent = 'No se pudieron cargar los pagos.';
+  }
+}
+
+async function cargarRenovacionesConsola() {
+  if (!$('#listaRenovaciones')) return;
+  const aviso = $('#avisoRenovaciones');
+  try {
+    const datos = await api('/admin/renovaciones', { silencioso: true });
+    if (!datos) throw new Error('sin datos');
+    aviso.hidden = true;
+    const r = datos.recuentos || {};
+    $('#recuentoRenovaciones').textContent = `Pendientes: ${miles(r.pendiente || 0)} · Aprobadas: ${miles(r.aprobado || 0)} · Anuladas: ${miles(r.rechazado || 0)}`;
+    $('#automaticasMarcadas').textContent = `Con renovación automática marcada: ${miles(datos.automaticasMarcadas || 0)}`;
+    const lista = datos.renovaciones || [];
+    $('#listaRenovaciones').innerHTML = lista.map(cobroHTML).join('');
+    $('#renovacionesVacia').hidden = lista.length > 0;
+  } catch (_) {
+    aviso.hidden = false;
+    aviso.textContent = 'No se pudieron cargar las renovaciones.';
+  }
+}
+
+function montarConsolaLectura() {
+  if ($('#listaPublicaciones')) {
+    pintarFiltrosPublicaciones(null);
+    $('#filtrosPublicaciones').addEventListener('click', (ev) => {
+      const boton = ev.target.closest('button[data-pub-estado]');
+      if (!boton) return;
+      PUB_ESTADO = boton.dataset.pubEstado;
+      cargarPublicacionesConsola();
+    });
+    cargarPublicacionesConsola();
+  }
+  if ($('#listaCobros')) {
+    $('#filtrosCobros').addEventListener('click', (ev) => {
+      const boton = ev.target.closest('button[data-cobros-tipo]');
+      if (!boton) return;
+      COBROS_TIPO = boton.dataset.cobrosTipo;
+      elegirFiltro(boton);
+      cargarCobrosConsola();
+    });
+    $('#filtrosCobrosEstado').addEventListener('click', (ev) => {
+      const boton = ev.target.closest('button[data-cobros-estado]');
+      if (!boton) return;
+      COBROS_ESTADO = boton.dataset.cobrosEstado;
+      elegirFiltro(boton);
+      cargarCobrosConsola();
+    });
+    cargarCobrosConsola();
+  }
+  cargarRenovacionesConsola();
+}
+
 /* Lo que cambia al resolver un pago: la propia lista, la bitácora (la
    acción tiene que verse ya, sin recargar la página) y los comprobantes
    emitidos, si esa sección está montada, porque acaba de entrar uno. */
@@ -887,9 +1058,9 @@ async function marcarRecibido(id, motivo) {
        que decir lo que se emitió de verdad. */
     const c = datos.comprobante;
     if (datos.aviso) return avisarPagos(datos.aviso);
-    let texto = 'Recibido. Se otorgaron los cupos.';
-    if (c && c.ncf) texto = `Recibido. Se otorgaron los cupos y se emitió el comprobante ${c.ncf}.`;
-    else if (c && c.numero) texto = `Recibido. Se otorgaron los cupos y se emitió el recibo ${c.numero} (sin NCF).`;
+    let texto = 'Recibido. Se activó lo comprado.';
+    if (c && c.ncf) texto = `Recibido. Se activó lo comprado y se emitió el comprobante ${c.ncf}.`;
+    else if (c && c.numero) texto = `Recibido. Se activó lo comprado y se emitió el recibo ${c.numero} (sin NCF).`;
     avisarPagos(texto, true);
   } catch (e) {
     await falloPago(e, 'No se pudo marcar el pago como recibido.');
@@ -1458,6 +1629,7 @@ async function montarAdmin() {
   montarEmpresas();
   montarSeries();
   montarPagos();
+  montarConsolaLectura();
   montarBitacora();
   montarFlota();
   montarPub();

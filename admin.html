@@ -171,7 +171,7 @@
 
     <!-- Pagos por transferencia. El servidor no puede saber cuándo entra
          el dinero en la cuenta: lo confirma una persona desde aquí, y en
-         ese momento se otorgan los cupos y se emite el comprobante. Cada
+         ese momento se activa lo comprado y se emite el comprobante. Cada
          acción la anota la bitácora de más abajo, que se recarga sola. -->
     <section class="panel" aria-labelledby="t-pagos">
       <div class="panel__cabeza">
@@ -179,7 +179,7 @@
         <p class="panel__meta" id="metaPagos"></p>
       </div>
 
-      <p class="sol__meta">Marque un pago como recibido solo cuando el dinero esté en la cuenta. En ese momento el cliente recibe sus cupos y su comprobante fiscal, y queda anotado en la bitácora.</p>
+      <p class="sol__meta">Marque un pago como recibido solo cuando el dinero esté en la cuenta. En ese momento el cliente recibe lo que compró y su comprobante fiscal, y queda anotado en la bitácora.</p>
 
       <div class="revision__filtros" id="filtrosPagos" role="tablist" aria-label="Estado de los pagos por transferencia">
         <button type="button" class="btn btn--ambar btn--chico" data-pagos-estado="pendiente" role="tab" aria-selected="true">Pendientes</button>
@@ -191,6 +191,65 @@
 
       <ul class="solicitudes" id="listaPagos"></ul>
       <p class="revision__vacio" id="pagosVacia" hidden></p>
+    </section>
+
+    <!-- Consola de solo lectura (fase 05.4, MOD-14): publicaciones por
+         estado, pagos de todos los métodos y renovaciones. Nada de aquí
+         escribe; marcar recibido y anular siguen en «Pagos por transferencia». -->
+    <section class="panel" aria-labelledby="t-publicaciones">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-publicaciones"><em>Publicaciones</em> por estado</h2>
+        <p class="panel__meta" id="metaPublicaciones"></p>
+      </div>
+
+      <div class="revision__filtros" id="filtrosPublicaciones" role="tablist" aria-label="Estado de las publicaciones"></div>
+
+      <p class="acceso__aviso" id="avisoPublicaciones" role="alert" hidden></p>
+
+      <ul class="solicitudes" id="listaPublicaciones" aria-live="polite"></ul>
+      <p class="revision__vacio" id="publicacionesVacia" hidden>No hay publicaciones en este estado.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="t-cobros">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-cobros"><em>Pagos</em> (todos los métodos)</h2>
+        <p class="panel__meta" id="metaCobros"></p>
+      </div>
+
+      <div class="revision__filtros" id="filtrosCobros" role="tablist" aria-label="Tipo de pago">
+        <button type="button" class="btn btn--ambar btn--chico" data-cobros-tipo="" role="tab" aria-selected="true">Todos</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-tipo="compra" role="tab" aria-selected="false">Compra</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-tipo="publicacion" role="tab" aria-selected="false">Publicación</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-tipo="ampliacion" role="tab" aria-selected="false">Ampliación</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-tipo="renovacion" role="tab" aria-selected="false">Renovación</button>
+      </div>
+      <div class="revision__filtros" id="filtrosCobrosEstado" role="tablist" aria-label="Estado del pago">
+        <button type="button" class="btn btn--ambar btn--chico" data-cobros-estado="" role="tab" aria-selected="true">Todos</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-estado="pendiente" role="tab" aria-selected="false">Pendiente</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-estado="aprobado" role="tab" aria-selected="false">Aprobado</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-estado="rechazado" role="tab" aria-selected="false">Anulado</button>
+        <button type="button" class="btn btn--linea btn--chico" data-cobros-estado="devuelto" role="tab" aria-selected="false">Devuelto</button>
+      </div>
+
+      <p class="acceso__aviso" id="avisoCobros" role="alert" hidden></p>
+
+      <ul class="solicitudes" id="listaCobros" aria-live="polite"></ul>
+      <p class="revision__vacio" id="cobrosVacia" hidden>No hay pagos con ese filtro.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="t-renovaciones">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-renovaciones"><em>Renovaciones</em></h2>
+      </div>
+
+      <p class="sol__meta num" id="recuentoRenovaciones" aria-live="polite"></p>
+      <p class="sol__meta" id="automaticasMarcadas"></p>
+      <p class="sol__meta">Automáticas, exitosas y fallidas: llega con CardNet.</p>
+
+      <p class="acceso__aviso" id="avisoRenovaciones" role="alert" hidden></p>
+
+      <ul class="solicitudes" id="listaRenovaciones" aria-live="polite"></ul>
+      <p class="revision__vacio" id="renovacionesVacia" hidden>Todavía no hay renovaciones.</p>
     </section>
 
     <!-- Comprobantes emitidos, con el estado de las secuencias de NCF.
