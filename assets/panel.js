@@ -727,13 +727,11 @@ function filaAnuncio(a) {
 function pintarTabla() {
   const lista = FILTRO === 'todos'
     ? ANUNCIOS
-    : FILTRO === 'activos'
-      ? ANUNCIOS.filter((a) => a.estado === 'activo')
+    : ESTADO_DE_FILTRO[FILTRO]
+      ? ANUNCIOS.filter((a) => a.estado === ESTADO_DE_FILTRO[FILTRO])
       // Un borrador no es un anuncio inactivo: nunca llegó a publicarse,
       // así que tiene su propio filtro y no infla el de "Inactivos".
-      : FILTRO === 'borradores'
-        ? ANUNCIOS.filter((a) => a.estado === 'borrador')
-        : ANUNCIOS.filter((a) => a.estado !== 'activo' && a.estado !== 'borrador');
+      : ANUNCIOS.filter((a) => a.estado !== 'activo' && a.estado !== 'borrador');
 
   // La fila del tren motriz se dibuja debajo de su anuncio y solo
   // cuando está abierta: la tabla no carga cuatro selectores por cada
@@ -751,15 +749,36 @@ function pintarTabla() {
       : 'Ningún anuncio en este estado.';
 }
 
+/* Estado real que casa cada filtro del dealer (D-06). El particular sigue
+   con «Inactivos», que agrupa todo lo que no está activo ni es borrador. */
+const ESTADO_DE_FILTRO = {
+  activos: 'activo', pausados: 'pausado', vendidos: 'vendido',
+  vencidos: 'vencido', retirados: 'retirado', borradores: 'borrador',
+};
+
 function pintarFiltros() {
   const activos = ANUNCIOS.filter((a) => a.estado === 'activo').length;
   const borradores = ANUNCIOS.filter((a) => a.estado === 'borrador').length;
   const inactivos = ANUNCIOS.length - activos - borradores;
-  const opciones = [
-    ['todos', `Todos (${ANUNCIOS.length})`],
-    ['activos', `Activos (${activos})`],
-    ['inactivos', `Inactivos (${inactivos})`],
-  ];
+  const cuenta = (estado) => ANUNCIOS.filter((a) => a.estado === estado).length;
+  const opciones = esParticular()
+    ? [
+      ['todos', `Todos (${ANUNCIOS.length})`],
+      ['activos', `Activos (${activos})`],
+      ['inactivos', `Inactivos (${inactivos})`],
+    ]
+    : [
+      ['todos', `Todos (${ANUNCIOS.length})`],
+      ['activos', `Activos (${activos})`],
+      ['pausados', `Pausados (${cuenta('pausado')})`],
+      ['vendidos', `Vendidos (${cuenta('vendido')})`],
+      ['vencidos', `Vencidos (${cuenta('vencido')})`],
+      ['retirados', `Retirados (${cuenta('retirado')})`],
+    ];
+  // Un filtro guardado que este modo no ofrece (p. ej. «inactivos» del
+  // particular) vuelve a «todos» en vez de dejar la tabla sin explicación.
+  if (!esParticular() && FILTRO === 'inactivos') FILTRO = 'todos';
+  if (esParticular() && ['pausados', 'vendidos', 'vencidos', 'retirados'].includes(FILTRO)) FILTRO = 'todos';
   // Solo se enseña si hay alguno: quien nunca dejó un borrador a medias
   // no necesita un filtro vacío.
   if (borradores) opciones.push(['borradores', `Borradores (${borradores})`]);
@@ -1353,15 +1372,15 @@ async function montarPanel() {
 
     // Vender libera capacidad, que es medio motivo para hacerlo. Se dice
     // aquí para que nadie descubra después que podía haber publicado
-    // otro equipo sin pagar. El particular no tiene "cupo": el mismo
+    // otro equipo sin pagar. El particular no tiene capacidad propia: el mismo
     // motivo se lo dice avisoPlan tras la respuesta, con el texto
     // exacto de D-15 y un atajo para publicar otro equipo.
     if (estado === 'vendido' && !confirm(esParticular()
       ? '¿Marcar este equipo como vendido?\n\n'
         + 'El anuncio deja de aparecer en el catálogo y queda en su historial con sus fotos, visitas y contactos.'
       : '¿Marcar este equipo como vendido?\n\n'
-        + 'El anuncio deja de aparecer en el catálogo y su cupo queda libre '
-        + 'para publicar otra máquina sin volver a pagar.')) return;
+        + 'El anuncio deja de aparecer en el catálogo y libera capacidad '
+        + 'para publicar otro equipo sin volver a pagar.')) return;
 
     btn.disabled = true;
     const r = await api(`/anuncios/${encodeURIComponent(idAnuncio)}`, {
@@ -1375,6 +1394,15 @@ async function montarPanel() {
     pintarMetricas(datos.resumen || {});
     await refrescarCupos();
 
+    // El dealer (y la exenta) lee el mismo aviso con el texto de D-07: lo
+    // vendido libera capacidad en su plan, no un pago aparte.
+    if (estado === 'vendido' && !esParticular()) {
+      avisoPlan(
+        'Este equipo fue vendido. Ahora puede publicar otro equipo con la capacidad disponible de su plan.',
+        false,
+        { href: 'publicar.html', texto: 'Publicar otro equipo' },
+      );
+    }
     if (estado === 'vendido' && esParticular()) {
       avisoPlan(
         `Este equipo fue vendido. Ahora puedes publicar otro equipo${r.capacidadLibre ? ' con la capacidad disponible de tu plan.' : '.'}`,
