@@ -51,11 +51,14 @@ const DOCUMENTOS = [
   {
     id: 'contratacion',
     nombre: 'Condiciones de contratación y pagos',
-    version: '2.1',
-    // La 2.0 decía «no incluyen el ITBIS», lo contrario de lo que ahora
-    // se enseña (precio final con ITBIS incluido): subir la versión hace
+    version: '2.2',
+    // La 2.1 subió porque la 2.0 decía «no incluyen el ITBIS», lo contrario
+    // de lo que se enseña (precio final con ITBIS incluido). La 2.2 sube
+    // porque la 2.1 decía que la vigencia empieza al aprobarse el pago, y
+    // renovar suma el período al final del actual; además hay avisos a 7, 3
+    // y 1 día y la casilla de renovación automática. Subir la versión hace
     // que se vuelva a aceptar antes de pagar (PARA_PAGAR, más abajo).
-    vigenteDesde: '2026-09-26',
+    vigenteDesde: '2026-09-29',
     // Se exige al pagar, no antes.
     obligatorio: false,
   },
