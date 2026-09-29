@@ -156,11 +156,11 @@ Progress: [█████░░░░░] 50%
 - Excepción: un plan que toca el cálculo de ITBIS, el comprobante o los NCF lo ejecuta Opus, y se dice
   en una línea al lanzarlo. En la 05.1 eso es el 05.1-02; el 05.1-01 terminó con Opus porque ya corría.
 - Investigación, estudios de mercado, resúmenes y mapeos: Sonnet.
-- Máximo 2 agentes a la vez. Sin revisiones extra fuera de la del cierre de cada fase.
-- **Desplegar por plan (Victor, 2026-09-26):** cada plan terminado sale a producción en cuanto el CI
-  está en verde, sin esperar al cierre de la fase, siempre que no deje un flujo del usuario a medias
-  (lo de base de datos y API sale solo; las pantallas de un mismo flujo salen juntas). Un PR por tramo
-  desde la rama de la fase.
+- **Forma de trabajar habitual, restaurada por Victor el 2026-09-29:** una rama y **un PR por fase**, y se
+  fusiona y despliega **al cerrar la fase** (verificación en verde + CI en verde), no plan a plan. Hasta 2 o
+  3 agentes a la vez si no tocan los mismos archivos (regla de `CLAUDE.md`). Se retiran el «desplegar por
+  plan» y el tope de 2 agentes que se pusieron el 2026-09-26. Se mantiene el reparto de modelos de arriba.
+  (Los PR #36 y #37 salieron por tramos antes de este cambio; el resto de la 05.2 sale ya junto.)
 
 Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
