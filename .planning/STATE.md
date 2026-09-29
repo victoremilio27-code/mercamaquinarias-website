@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05.1 en producción (PR #35). 05.2: planes 01-02 en producción (PR #36, #37); 03 y 04 hechos en la rama sin desplegar; 05 sin empezar (cortado por el límite). 05.3: contexto escrito, planes sin escribir."
-last_updated: "2026-09-26T05:59:42.000Z"
-last_activity: "2026-09-26 — 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
+stopped_at: "05.1 en producción (PR #35). 05.2: planes 01-02 en producción (PR #36, #37); 03, 04 y 05 hechos en la rama sin desplegar; falta el 05.2-06 y la verificación de cierre. 05.3: contexto escrito, planes sin escribir."
+last_updated: "2026-09-29T17:00:00.000Z"
+last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
   completed_phases: 9
   total_plans: 45
-  completed_plans: 47
+  completed_plans: 48
   percent: 50
 ---
 
@@ -49,7 +49,7 @@ niegan un borrador ajeno o su activación por otra puerta; `capacidadLibre` al m
 particular no exento deja de leer «cupo» en el 402/409 de `publicar`); 05.2-03 hecho
 (`POST /api/borradores/:id/pago` con el importe del servidor; activa solo `confirmarPago` o el importe
 cero; pendiente devuelto sin duplicar; la consola rechaza la transferencia huérfana con
-`PUBLICACION_HUERFANA`; secciones 9-12 del arnés). Siguen 05.2-04 y 05.2-05.
+`PUBLICACION_HUERFANA`; secciones 9-12 del arnés). 05.2-04 hecho (panel y planes sin «cupo»); 05.2-05 hecho (asistente en el orden nuevo, auditorías de navegador al día). Sigue 05.2-06.
 
 **Fase 05.1 (precio único) terminada** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
 (fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI), 05.1-02 hecho (desglose
@@ -148,6 +148,8 @@ Progress: [█████░░░░░] 50%
 ## Accumulated Context
 
 ### Decisions
+
+- **05.2-05:** el guardado del borrador en el servidor cuelga de `guardarBorrador()` (un temporizador de 1,5 s); Chrome se lanza en la nube con `chrome-headless-shell` y `--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu` (`PUPPETEER_EXECUTABLE_PATH`), así que las auditorías sí corren aquí. Los anuncios del seed con la subcategoría escrita como nombre (no id) no pasan `validarCadena`: el asistente la manda vacía al duplicar.
 
 **Modelos, desde el 2026-09-26 (Victor, cerca del límite semanal):**
 - Perfil de GSD `balanced` (`.planning/config.json`). Opus solo para planificar, revisar y verificar
