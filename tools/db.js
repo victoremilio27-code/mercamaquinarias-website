@@ -4357,6 +4357,111 @@ const marcarAviso = (idAnuncio, cual) =>
   abrir().prepare(`UPDATE anuncios SET ${cual === 'vencido' ? 'aviso_vencido' : 'aviso_por_vencer'} = ?
                    WHERE id = ?`).run(ahora(), idAnuncio);
 
+/* ── Recordatorios de 7, 3 y 1 día (fase 05.3) ─────────────
+   Sustituyen al aviso único de 5 días (`aviso_por_vencer`), que era
+   una columna del anuncio: una fecha no sirve para tres avisos por
+   ciclo ni se reinicia al renovar (auditoría §1.15). Aquí cada aviso es
+   una fila de `recordatorios` por anuncio + tipo + ciclo (el `vence`).
+
+   El tipo sale de los días que faltan, redondeados hacia arriba: 4-7 →
+   '7d', 2-3 → '3d', 1 → '1d'. La tarea corre una vez al día a las
+   05:00 (auditoría §1.14), así que cada ventana se pisa al menos una
+   vez. No se rellenan avisos atrasados: si faltó una pasada, sale el
+   del tramo actual, no los tres juntos. */
+const TIPOS_RECORDATORIO = ['7d', '3d', '1d'];
+
+const tipoRecordatorio = (vence, momento) => {
+  const faltan = Math.ceil((new Date(vence).getTime() - new Date(momento).getTime()) / 86400000);
+  if (faltan >= 4 && faltan <= 7) return '7d';
+  if (faltan >= 2 && faltan <= 3) return '3d';
+  if (faltan === 1) return '1d';
+  return null;
+};
+
+/* Los recordatorios que tocan ahora: anuncios activos que vencen en
+   los próximos 7 días, con a quién avisar (el usuario del anuncio o el
+   propietario, como `anunciosPorVencer`), el nombre de la marca y el
+   plan. Descarta los que ya tienen su fila del ciclo, salvo que el
+   envío fallara: esos se reintentan.
+
+   No hay en la base una preferencia de «no quiero avisos» (D-10); si
+   algún día existe, se filtra aquí. */
+function recordatoriosPendientes(momento = ahora()) {
+  const d = abrir();
+  const yaEsta = d.prepare(`SELECT 1 FROM recordatorios
+                             WHERE anuncio_id = ? AND tipo = ? AND vence = ?
+                               AND (resultado IS NULL OR resultado <> 'fallido')`);
+  return d.prepare(`
+    SELECT a.id, a.marca, a.modelo, a.anio, a.vence, a.suscripcion_id,
+           u.correo, u.nombre,
+           (SELECT p.nombre FROM suscripciones s JOIN planes p ON p.id = s.plan_id
+             WHERE s.id = a.suscripcion_id) AS plan_nombre
+    FROM anuncios a
+    JOIN organizaciones o ON o.id = a.organizacion_id
+    JOIN usuarios u ON u.id = COALESCE(
+      a.usuario_id,
+      (SELECT usuario_id FROM miembros WHERE organizacion_id = o.id AND rol = 'propietario' LIMIT 1))
+    WHERE a.estado = 'activo'
+      AND a.vence IS NOT NULL
+      AND a.vence > ?
+      AND a.vence <= ?
+    ORDER BY a.vence`).all(momento, sumarDias(7, momento))
+    .map((a) => ({ ...conNombres(a), tipo: tipoRecordatorio(a.vence, momento) }))
+    .filter((a) => a.tipo && !yaEsta.get(a.id, a.tipo, a.vence));
+}
+
+/* Aparta un recordatorio ANTES de enviarlo. Es lo que impide dos
+   correos si dos pasadas coinciden: la segunda choca con el UNIQUE y
+   recibe null. Un proceso que muera entre reservar y enviar deja la
+   fila en 'enviando' y ese aviso no se reenvía: es preferible perder
+   uno a mandarlo dos veces.
+
+   Comprueba en la misma transacción que el anuncio sigue activo y que
+   su `vence` es el del ciclo: si se vendió o se renovó entre listar y
+   reservar, no se avisa de un vencimiento que ya no es. Un envío
+   'fallido' se puede reservar otra vez, y solo una. Devuelve el id de
+   la fila reservada o null. */
+function reservarRecordatorio({ idAnuncio, tipo, vence }) {
+  if (!TIPOS_RECORDATORIO.includes(tipo)) return null;
+  const d = abrir();
+  const t = ahora();
+  d.prepare('BEGIN').run();
+  try {
+    const vigente = d.prepare("SELECT 1 FROM anuncios WHERE id = ? AND estado = 'activo' AND vence = ?")
+      .get(idAnuncio, vence);
+    let reservado = null;
+    if (vigente) {
+      const nuevo = id();
+      const r = d.prepare(`INSERT OR IGNORE INTO recordatorios (id, anuncio_id, tipo, vence, enviado, resultado)
+                           VALUES (?, ?, ?, ?, ?, 'enviando')`).run(nuevo, idAnuncio, tipo, vence, t);
+      if (r.changes === 1) {
+        reservado = nuevo;
+      } else {
+        const fila = d.prepare(`SELECT id FROM recordatorios
+                                 WHERE anuncio_id = ? AND tipo = ? AND vence = ? AND resultado = 'fallido'`)
+          .get(idAnuncio, tipo, vence);
+        if (fila) {
+          const u = d.prepare(`UPDATE recordatorios SET resultado = 'enviando', enviado = ?
+                                WHERE id = ? AND resultado = 'fallido'`).run(t, fila.id);
+          if (u.changes === 1) reservado = fila.id;
+        }
+      }
+    }
+    d.prepare('COMMIT').run();
+    return reservado;
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+}
+
+/* El resultado del envío: 'enviado', 'fallido' o lo que diga el
+   transporte. `enviado` guarda cuándo, que es lo que se mira cuando
+   alguien reclama que no le llegó. */
+const anotarRecordatorio = (idRecordatorio, resultado) =>
+  abrir().prepare('UPDATE recordatorios SET resultado = ?, enviado = ? WHERE id = ?')
+    .run(resultado, ahora(), idRecordatorio).changes > 0;
+
 /* Dueño de un anuncio, para avisarle de un contacto o de una
    publicación. Un anuncio sin usuario asociado cae en el propietario
    de la organización. */
@@ -5064,6 +5169,7 @@ module.exports = {
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
+  recordatoriosPendientes, reservarRecordatorio, anotarRecordatorio, TIPOS_RECORDATORIO,
   anotarEvento, resumenOrganizacion,
   /* Alcance y métricas del vendedor (fase 10). */
   registrarContacto, contactosDeOrganizacion, fotoParaCompartir, copiaDeAnuncio,
