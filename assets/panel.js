@@ -59,6 +59,26 @@ let PAGOS_PENDIENTES = [];
 let TRANSFERENCIA = null;
 let AVISO_TRANSFERENCIA = '';
 
+/* El particular no compra cupos: paga cada publicación por separado
+   (D-01, D-15 de la fase 05.2). Se usa para todo lo que cambia solo en
+   su panel; el dealer sigue viendo exactamente lo de hoy. Una cuenta
+   exenta no cuenta como "particular" a estos efectos: publica gratis y
+   sin las reglas del modelo comercial nuevo, igual que un dealer
+   exento, así que sigue viendo el lenguaje de cupos (que para ella no
+   cuesta nada). */
+const esParticular = () => (SESION.organizacion || {}).tipo === 'particular' && !EXENTA;
+
+/* Año (salvo el "sin año" 1900 con el que nace un borrador, D-03),
+   marca y modelo. Antes de escribir ninguno de los tres, un borrador
+   recién creado no tiene nada que enseñar en su fila. */
+function nombreDe(a) {
+  const partes = [];
+  if (a.anio && a.anio !== 1900) partes.push(a.anio);
+  if (a.marca_nombre || a.marca) partes.push(a.marca_nombre || a.marca);
+  if (a.modelo) partes.push(a.modelo);
+  return partes.length ? partes.join(' ') : 'Borrador sin terminar';
+}
+
 function guardarPagos(r) {
   if (!r) return;
   PAGOS_PENDIENTES = r.pagosPendientes || [];
@@ -179,7 +199,9 @@ function pagosEnEsperaHTML() {
   if (!PAGOS_PENDIENTES.length) return '';
   return `<section class="pagos-espera" aria-labelledby="t-pagos-espera">
     <h3 class="transferencia__titulo" id="t-pagos-espera">Pagos en espera de confirmación</h3>
-    <p class="panel__texto">Sus cupos aparecerán aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.</p>
+    <p class="panel__texto">${esParticular()
+      ? 'Su anuncio se publica cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'
+      : 'Sus cupos aparecerán aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'}</p>
     ${PAGOS_PENDIENTES.map(tarjetaPagoEnEspera).join('')}
   </section>`;
 }
@@ -229,9 +251,84 @@ function pintarMetricas(resumen) {
 
 /* ── Estado del plan ────────────────────────────────────── */
 
+/* Sin barra de cupos ni «Añadir cupos»: para el particular la capacidad
+   que le sobra en un plan no se amplía, se usa publicando otro equipo
+   en su lugar (D-15). Ampliar es cosa de quien reparte cupos entre
+   varias máquinas, que es el dealer. */
+function tarjetaPlanParticular(m) {
+  const dias = diasHasta(m.fin);
+  const vigencia = !m.fin
+    ? 'Sin caducidad'
+    : dias > 0
+      ? `Quedan ${dias} ${dias === 1 ? 'día' : 'días'}`
+      : 'Vencida';
+  const capacidad = m.anuncios_incluidos == null
+    ? `${m.ocupados} publicados · sin límite`
+    : `Capacidad para ${m.anuncios_incluidos} ${m.anuncios_incluidos === 1 ? 'equipo' : 'equipos'}, ${m.libres} ${m.libres === 1 ? 'disponible' : 'disponibles'}`;
+
+  return `<li class="membresia${m.libres === 0 ? ' membresia--llena' : ''}" data-membresia="${esc(m.id)}">
+    <span class="membresia__cabeza">
+      <b class="membresia__nivel">${esc(m.plan_nombre)}</b>
+      <span class="membresia__vigencia">${esc(vigencia)}</span>
+    </span>
+    <span class="membresia__cupo num">${esc(capacidad)}</span>
+  </li>`;
+}
+
+/* El particular no reparte cupos entre equipos: cada publicación es su
+   propio plan, pagado aparte (D-01, D-15). Antes esta caja hablaba de
+   "cupos" para cualquier cuenta, y un particular sin ese vocabulario
+   técnico terminaba preguntando qué es un cupo. */
+function pintarPlanParticular(caja, org) {
+  const activas = ANUNCIOS.filter((a) => a.estado === 'activo').length;
+  const conCapacidad = MEMBRESIAS.some((m) => m.libres === null || m.libres > 0);
+
+  if (!MEMBRESIAS.length) {
+    caja.innerHTML = `
+      <h2 class="panel__titulo" id="t-plan"><em>Sus</em> publicaciones</h2>
+      <p class="panel__texto">Cada equipo se publica con su propio plan: elija Estándar, Destacada o Premium al publicarlo y pague solo esa publicación.</p>
+      ${pagosEnEsperaHTML()}
+      <a class="btn btn--ambar" href="publicar.html">Publicar un equipo</a>`;
+    return;
+  }
+
+  caja.innerHTML = `
+    <div class="panel__cabeza">
+      <h2 class="panel__titulo panel__titulo--limpio" id="t-plan"><em>Sus</em> publicaciones</h2>
+      <p class="panel__meta">${activas} ${activas === 1 ? 'publicación activa' : 'publicaciones activas'}</p>
+    </div>
+
+    ${pagosEnEsperaHTML()}
+
+    <ul class="membresias">${MEMBRESIAS.map(tarjetaPlanParticular).join('')}</ul>
+
+    <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
+
+    <dl class="plan-estado">
+      <div><dt>Página pública</dt>
+        <dd>${org.tipo === 'dealer'
+          ? `<a href="mi-pagina.html">Armar mi página de empresa</a>`
+          : 'Solo para cuentas de empresa'}</dd></div>
+      <div><dt>Sello de verificación</dt>
+        <dd>${org.verificada ? 'Otorgado' : 'Pendiente de comprobar documentación'}</dd></div>
+    </dl>
+
+    ${conCapacidad
+      ? `<p class="realce">${icono('i-check')} <span>Tiene capacidad disponible en su plan: puede publicar otro equipo sin pagar.</span></p>
+         <div class="acciones acciones--pie">
+           <a class="btn btn--ambar" href="publicar.html">Publicar otro equipo</a>
+           <a class="btn btn--linea" href="planes.html">Ver planes</a>
+         </div>`
+      : `<div class="acciones acciones--pie">
+           <a class="btn btn--linea" href="planes.html">Ver planes</a>
+         </div>`}`;
+}
+
 function pintarPlan() {
   const caja = $('#panelPlan');
   const org = SESION.organizacion || {};
+
+  if (esParticular()) { pintarPlanParticular(caja, org); return; }
 
   if (!MEMBRESIAS.length) {
     caja.innerHTML = `
@@ -362,13 +459,13 @@ function selectorPlan(a) {
     const suya = actual && m.id === actual.id;
     const lleno = m.libres === 0 && !suya;
     const pocas = (a.fotos || a.total_fotos || 0) > m.fotos_maximas;
-    const motivo = lleno ? ' · sin cupos libres'
+    const motivo = lleno ? (esParticular() ? ' · sin capacidad libre' : ' · sin cupos libres')
       : pocas ? ` · admite ${m.fotos_maximas} fotos` : '';
     return `<option value="${esc(m.id)}"${suya ? ' selected' : ''}${lleno || pocas ? ' disabled' : ''}>${esc(m.plan_nombre)}${motivo}</option>`;
   }).join('');
 
   return `<label class="plan-celda">
-    <span class="visualmente-oculto">Plan de ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}</span>
+    <span class="visualmente-oculto">Plan de ${esc(nombreDe(a))}</span>
     <select class="plan-celda__sel" data-plan-de="${esc(a.id)}">${opciones}</select>
   </label>`;
 }
@@ -377,7 +474,7 @@ function selectorPlan(a) {
    vendía bajo pedido llega un día al país y el anuncio no debe perder
    sus visitas por eso. El botón dice lo que hará, no lo que hay. */
 function botonDisponibilidad(a) {
-  const nombre = esc(`${a.anio} ${a.marca} ${a.modelo}`);
+  const nombre = esc(nombreDe(a));
   return a.disponibilidad === 'bajo-pedido'
     ? `<button type="button" class="btn-tabla btn-tabla--avisa" data-disponibilidad="en-pais"
          aria-label="Marcar que ${nombre} ya está en el país">Ya llegó al país</button>`
@@ -396,7 +493,48 @@ function estadoSerieHTML(a) {
   return '<span class="celda-equipo__meta">Serie: pendiente de revisión</span>';
 }
 
+/* Un borrador no es un anuncio publicado (MOD-06): no tiene visitas,
+   ni plan que mover entre membresías, ni un botón de vender algo que
+   nunca llegó al catálogo. Antes esta fila no existía y el borrador
+   solo vivía en el `localStorage` del asistente: cambiar de navegador
+   o borrar los datos del sitio se lo llevaba sin dejar rastro. Su
+   nombre enlaza al asistente y no a `equipo.html`, que le daría un 404
+   a cualquiera (D-14: un borrador no es público ni para su dueño). */
+function filaBorrador(a) {
+  const nombre = esc(nombreDe(a));
+  const estadoTexto = a.pendiente_pago ? 'Esperando confirmación del pago' : ESTADOS.borrador.nombre;
+  const plan = a.plan_elegido_nombre
+    ? `Publicación ${esc(a.plan_elegido_nombre)} · ${esc(a.dias_elegidos)} días`
+    : '—';
+  // Con un pago pendiente el servidor rechaza eliminar el borrador
+  // (409, D-12): no se ofrece un botón que solo daría un error.
+  const acciones = a.pendiente_pago
+    ? `<span class="celda-equipo__meta num">Ref. ${esc(a.pago_pendiente)}</span>`
+    : `<a class="btn-tabla btn-tabla--fuerte" href="publicar.html?borrador=${encodeURIComponent(a.id)}">Continuar</a>
+       <button type="button" class="btn-tabla btn-tabla--borrar" data-borrar="${esc(a.id)}"
+         aria-label="Eliminar ${nombre}">Eliminar</button>`;
+
+  return `<tr data-id="${esc(a.id)}">
+    <th scope="row" class="celda-equipo">
+      <span class="celda-equipo__foto">${a.foto
+        ? `<img src="${esc(a.foto)}" alt="">`
+        : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
+      <span>
+        <a class="celda-equipo__nombre" href="publicar.html?borrador=${encodeURIComponent(a.id)}">${nombre}</a>
+      </span>
+    </th>
+    <td><span class="estado ${ESTADOS.borrador.clase}">${esc(estadoTexto)}</span></td>
+    <td class="col-num num">—</td>
+    <td class="col-num num">—</td>
+    <td>${plan}</td>
+    <td>—</td>
+    <td class="col-acciones">${acciones}</td>
+  </tr>`;
+}
+
 function filaAnuncio(a) {
+  if (a.estado === 'borrador') return filaBorrador(a);
+
   const estado = ESTADOS[a.estado] || ESTADOS.borrador;
   const contactos = (a.telefono || 0) + (a.whatsapp || 0);
   const precio = a.precio != null
@@ -409,7 +547,7 @@ function filaAnuncio(a) {
         ? `<img src="${esc(a.foto)}" alt="">`
         : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
       <span>
-        <a class="celda-equipo__nombre" href="equipo.html?id=${encodeURIComponent(a.id)}">${esc(`${a.anio} ${a.marca} ${a.modelo}`)}</a>
+        <a class="celda-equipo__nombre" href="equipo.html?id=${encodeURIComponent(a.id)}">${esc(nombreDe(a))}</a>
         <span class="celda-equipo__meta num">${esc(precio)}${a.provincia ? ` · ${esc(a.provincia)}` : ''}${a.disponibilidad === 'bajo-pedido' ? ' · Bajo pedido' : ''}</span>
         ${estadoSerieHTML(a)}
       </span>
@@ -434,10 +572,10 @@ function filaAnuncio(a) {
            </button>`
         : ''}
       <button type="button" class="btn-tabla" data-duplicar="${esc(a.id)}"
-        aria-label="Duplicar ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}">Duplicar</button>
+        aria-label="Duplicar ${esc(nombreDe(a))}">Duplicar</button>
       ${a.estado !== 'vendido' ? botonDisponibilidad(a) : ''}
       <button type="button" class="btn-tabla btn-tabla--borrar" data-borrar="${esc(a.id)}"
-        aria-label="Eliminar ${esc(`${a.anio} ${a.marca} ${a.modelo}`)}">Eliminar</button>
+        aria-label="Eliminar ${esc(nombreDe(a))}">Eliminar</button>
     </td>
   </tr>`;
 }
@@ -447,7 +585,11 @@ function pintarTabla() {
     ? ANUNCIOS
     : FILTRO === 'activos'
       ? ANUNCIOS.filter((a) => a.estado === 'activo')
-      : ANUNCIOS.filter((a) => a.estado !== 'activo');
+      // Un borrador no es un anuncio inactivo: nunca llegó a publicarse,
+      // así que tiene su propio filtro y no infla el de "Inactivos".
+      : FILTRO === 'borradores'
+        ? ANUNCIOS.filter((a) => a.estado === 'borrador')
+        : ANUNCIOS.filter((a) => a.estado !== 'activo' && a.estado !== 'borrador');
 
   // La fila del tren motriz se dibuja debajo de su anuncio y solo
   // cuando está abierta: la tabla no carga cuatro selectores por cada
@@ -458,18 +600,25 @@ function pintarTabla() {
 
   const vacia = $('#tablaVacia');
   vacia.hidden = lista.length > 0;
-  vacia.textContent = ANUNCIOS.length
-    ? 'Ningún anuncio en este estado.'
-    : 'Todavía no ha publicado ningún equipo.';
+  vacia.textContent = !ANUNCIOS.length
+    ? 'Todavía no ha publicado ningún equipo.'
+    : FILTRO === 'borradores'
+      ? 'No tiene borradores sin terminar.'
+      : 'Ningún anuncio en este estado.';
 }
 
 function pintarFiltros() {
   const activos = ANUNCIOS.filter((a) => a.estado === 'activo').length;
+  const borradores = ANUNCIOS.filter((a) => a.estado === 'borrador').length;
+  const inactivos = ANUNCIOS.length - activos - borradores;
   const opciones = [
     ['todos', `Todos (${ANUNCIOS.length})`],
     ['activos', `Activos (${activos})`],
-    ['inactivos', `Inactivos (${ANUNCIOS.length - activos})`],
+    ['inactivos', `Inactivos (${inactivos})`],
   ];
+  // Solo se enseña si hay alguno: quien nunca dejó un borrador a medias
+  // no necesita un filtro vacío.
+  if (borradores) opciones.push(['borradores', `Borradores (${borradores})`]);
   $('#filtrosPanel').innerHTML = opciones.map(([id, rotulo]) =>
     `<button type="button" class="filtro-panel${FILTRO === id ? ' filtro-panel--activo' : ''}" data-filtro="${id}">${esc(rotulo)}</button>`).join('');
 }
@@ -832,11 +981,19 @@ async function montarPanel() {
     pintarTabla();
   }
 
-  function avisoPlan(mensaje, error = true) {
+  // `enlace` es un atajo opcional a la vista, junto al aviso: lo usa
+  // «Marcar vendido» del particular para ofrecer «Publicar otro
+  // equipo» sin obligarlo a ir a buscarlo (D-15). `mensaje` pasa por
+  // esc() aquí porque el texto compuesto sale de datos del servidor
+  // (el nombre del anuncio, entre otros); antes se ponía con
+  // textContent, que ya era seguro por su cuenta.
+  function avisoPlan(mensaje, error = true, enlace = null) {
     const el = $('#avisoPlan');
     if (!el) return;
     el.hidden = !mensaje;
-    el.textContent = mensaje || '';
+    el.innerHTML = mensaje
+      ? esc(mensaje) + (enlace ? ` <a href="${esc(enlace.href)}">${esc(enlace.texto)}</a>` : '')
+      : '';
     el.classList.toggle('acceso__aviso--ok', !error);
   }
 
@@ -960,33 +1117,47 @@ async function montarPanel() {
 
   /* Duplicar un anuncio (MET-04). No crea nada aquí: solo abre el
      asistente en publicar.html con `?duplicar=<id>`, que es quien pide
-     la copia y la precarga. Publicar el nuevo anuncio sigue pasando
-     por el cupo, como cualquier otro. */
+     la copia y la precarga. A partir de ahí decide el asistente
+     (D-16): con capacidad libre el particular sigue el camino de
+     siempre; sin ella, la copia entra como un borrador nuevo y pasa
+     por su propio pago, sin ningún atajo por haber pagado ya el
+     original. El dealer sigue pasando por el cupo, como siempre. */
   $('#filasAnuncios').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-duplicar]');
     if (!btn) return;
     location.href = `publicar.html?duplicar=${encodeURIComponent(btn.dataset.duplicar)}`;
   });
 
-  /* Eliminar un anuncio.
+  /* Eliminar un anuncio o un borrador.
 
-     Se avisa de las dos cosas que importan y que no se pueden
-     deshacer: se van las fotos y se van las estadísticas. Quien solo
-     quiere dejar de venderlo tiene «Marcar vendido», que conserva
-     ambas, y se lo decimos aquí mismo para que no elija mal. */
+     Sobre un anuncio publicado se avisa de las dos cosas que importan
+     y que no se pueden deshacer: se van las fotos y se van las
+     estadísticas. Quien solo quiere dejar de venderlo tiene «Marcar
+     vendido», que conserva ambas, y se lo decimos aquí mismo para que
+     no elija mal. Un borrador no tiene nada de eso publicado todavía,
+     así que su aviso es más corto.
+
+     Un borrador con un pago pendiente responde 409 (D-12): el mensaje
+     del servidor ya trae a quién escribir para anularlo, y anteponerle
+     "No se pudo eliminar" taparía justo la parte que importa. */
   $('#filasAnuncios').addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-borrar]');
     if (!btn) return;
 
     const id = btn.dataset.borrar;
     const a = ANUNCIOS.find((x) => x.id === id);
-    const nombre = a ? `${a.anio} ${a.marca_nombre || a.marca} ${a.modelo}` : 'este anuncio';
+    const esBorrador = !!a && a.estado === 'borrador';
+    const nombre = a ? nombreDe(a) : 'este anuncio';
 
-    if (!confirm(
-      `¿Eliminar ${nombre}?\n\n`
-      + 'Se borran el anuncio, sus fotografías y sus estadísticas, y no se puede deshacer. '
-      + 'Su cupo queda libre para publicar otro equipo.\n\n'
-      + 'Si solo quiere dejar de venderlo, use «Marcar vendido»: conserva las visitas y los contactos.')) return;
+    const confirmacion = esBorrador
+      ? '¿Eliminar este borrador?\n\nSe borran sus datos y fotografías, y no se puede deshacer.'
+      : `¿Eliminar ${nombre}?\n\n`
+        + 'Se borran el anuncio, sus fotografías y sus estadísticas, y no se puede deshacer. '
+        + (esParticular()
+          ? 'Si estaba publicado, su plan vuelve a tener capacidad para otro equipo mientras dure.\n\n'
+          : 'Su cupo queda libre para publicar otro equipo.\n\n')
+        + 'Si solo quiere dejar de venderlo, use «Marcar vendido»: conserva las visitas y los contactos.';
+    if (!confirm(confirmacion)) return;
 
     btn.disabled = true;
     btn.textContent = 'Eliminando…';
@@ -1001,11 +1172,13 @@ async function montarPanel() {
       pintarFiltros();
       pintarPlan();
       pintarTabla();
-      avisoPlan(`${nombre} se eliminó. Su cupo vuelve a estar libre.`, false);
+      avisoPlan(esBorrador
+        ? 'Borrador eliminado.'
+        : `${nombre} se eliminó.${esParticular() ? '' : ' Su cupo vuelve a estar libre.'}`, false);
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Eliminar';
-      avisoPlan(`No se pudo eliminar: ${e.message}`);
+      avisoPlan(e.codigo === 409 ? e.message : `No se pudo eliminar: ${e.message}`);
     }
   });
 
@@ -1088,13 +1261,17 @@ async function montarPanel() {
     const idAnuncio = fila.dataset.id;
     const estado = btn.dataset.accion;
 
-    // Vender libera el cupo, que es medio motivo para hacerlo. Se dice
+    // Vender libera capacidad, que es medio motivo para hacerlo. Se dice
     // aquí para que nadie descubra después que podía haber publicado
-    // otro equipo sin pagar.
-    if (estado === 'vendido' && !confirm(
-      '¿Marcar este equipo como vendido?\n\n'
-      + 'El anuncio deja de aparecer en el catálogo y su cupo queda libre '
-      + 'para publicar otra máquina sin volver a pagar.')) return;
+    // otro equipo sin pagar. El particular no tiene "cupo": el mismo
+    // motivo se lo dice avisoPlan tras la respuesta, con el texto
+    // exacto de D-15 y un atajo para publicar otro equipo.
+    if (estado === 'vendido' && !confirm(esParticular()
+      ? '¿Marcar este equipo como vendido?\n\n'
+        + 'El anuncio deja de aparecer en el catálogo y queda en su historial con sus fotos, visitas y contactos.'
+      : '¿Marcar este equipo como vendido?\n\n'
+        + 'El anuncio deja de aparecer en el catálogo y su cupo queda libre '
+        + 'para publicar otra máquina sin volver a pagar.')) return;
 
     btn.disabled = true;
     const r = await api(`/anuncios/${encodeURIComponent(idAnuncio)}`, {
@@ -1107,6 +1284,14 @@ async function montarPanel() {
     pintarFiltros();
     pintarMetricas(datos.resumen || {});
     await refrescarCupos();
+
+    if (estado === 'vendido' && esParticular()) {
+      avisoPlan(
+        `Este equipo fue vendido. Ahora puedes publicar otro equipo${r.capacidadLibre ? ' con la capacidad disponible de tu plan.' : '.'}`,
+        false,
+        { href: 'publicar.html', texto: 'Publicar otro equipo' },
+      );
+    }
   });
 
   // En el país o bajo pedido. Se refleja en memoria y se repinta la

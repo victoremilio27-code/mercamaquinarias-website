@@ -40,7 +40,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
 - [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
 - [x] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
-- [ ] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
+- [x] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
 - [ ] **Phase 05.3: Renovación, vencimientos y alertas** (INSERTED) - Renovar sin rehacer el anuncio, suscripciones que vencen de verdad y avisos a 7, 3 y 1 día
 - [ ] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo
 - [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
@@ -175,9 +175,10 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **Plans**: 5 plans
 - [x] 05.2-01-PLAN.md — Migración 2026-09-borradores, borrador en la base, pago con `anuncio_id` y activación dentro de `aprobarPago`; arnés `publicacion:probar`
 - [x] 05.2-02-PLAN.md — Rutas del borrador y guardas: un borrador no se ve ni se activa por otro camino
-- [ ] 05.2-03-PLAN.md — Pedir el pago de un borrador y activarlo solo al confirmarse
-- [ ] 05.2-04-PLAN.md — Panel del particular: borradores recuperables y pagos en espera, sin «cupo»
-- [ ] 05.2-05-PLAN.md — Asistente de publicación en el orden nuevo: plan → borrador → resumen → pago
+- [x] 05.2-03-PLAN.md — Pedir el pago de un borrador y activarlo solo al confirmarse
+- [x] 05.2-04-PLAN.md — Panel del particular: borradores recuperables y pagos en espera, sin «cupo»
+- [x] 05.2-05-PLAN.md — Asistente de publicación en el orden nuevo: plan → borrador → resumen → pago
+- [x] 05.2-06-PLAN.md — Cierre del hueco D-08: limpieza diaria de borradores sin pago a los 30 días
 **UI hint**: yes
 **Notas**: Por dentro sigue la cadena Plan → Suscripción → Anuncio: cada publicación del particular es una suscripción de un cupo nacida con el pago (P6/P7 por defecto: el particular puede tener varias publicaciones pagadas, cada una con su pago; los cupos ya comprados se conservan hasta que venzan). El dealer no cambia en esta fase.
 

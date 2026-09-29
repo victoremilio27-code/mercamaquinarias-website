@@ -267,6 +267,39 @@ async function salir(p) {
             ok('la URL queda en publicar.html sin ?duplicar=');
           }
 
+          /* Fase 05.2, D-16: la copia es un borrador más y pasa por el
+             pago. Un particular sin capacidad libre —la cuenta sembrada
+             tiene sus cupos llenos— ya no cae directo en la ficha: cae
+             en el paso «Elige cómo publicar este equipo», con el aviso de
+             la copia, y la ficha se llena al elegir plan (el borrador
+             nuevo nace en el servidor con los datos de la copia). Con
+             capacidad libre, el recorrido de siempre. */
+          const pasoPlanVisible = await p.$eval('.paso[data-paso="plan"]', (el) => !el.hidden).catch(() => false);
+          if (pasoPlanVisible) {
+            ok('duplicar empieza por el paso del plan (la copia pasa por el pago)');
+
+            const avisoAntes = await p.$eval('#avisoBorrador span', (el) => el.textContent).catch(() => '');
+            if (!avisoAntes.startsWith('Copia de')) {
+              anota('publicar', 'ux', `en el paso del plan #avisoBorrador no avisa de la copia: "${avisoAntes}"`);
+            }
+
+            // La cuenta de demostración puede no tener aceptada la política
+            // de publicación: se acepta desde el aviso, como una persona.
+            const avisoLegal = await p.$('#btnAceptarLegal');
+            if (avisoLegal) {
+              await avisoLegal.click();
+              await p.waitForSelector('.aviso-legal', { hidden: true, timeout: 5000 }).catch(() => {});
+            }
+
+            // La etiqueta y no el radio: el círculo de las tarjetas no se ve.
+            await p.click('#planesPublicar li label');
+            await p.click('#btnSiguiente');
+            await p.waitForFunction(() => location.search.includes('borrador='), { timeout: 8000 })
+              .then(() => ok('al elegir plan la URL pasa a publicar.html?borrador=<id>'))
+              .catch(() => anota('publicar', 'flujo', 'al elegir plan tras duplicar no se creó el borrador (la URL no lleva ?borrador=)'));
+            await esperar(800);
+          }
+
           const modeloOtro = await p.$eval('#e-modelo-otro', (i) => i.value).catch(() => '');
           const modeloCargado = await p.$eval('#e-modelo', (s) => s.value).catch(() => '');
           if (modeloCargado !== propio.modelo && modeloOtro !== propio.modelo) {
@@ -292,6 +325,9 @@ async function salir(p) {
           // auditoría, que no vuelve a abrirse.
           const btnDescartar = await p.$('#btnDescartar');
           if (btnDescartar) {
+            // Descartar un borrador que ya vive en el servidor pide
+            // confirmación (borra sus datos y fotografías): se acepta.
+            p.once('dialog', (d) => d.accept());
             await Promise.all([
               p.waitForNavigation({ waitUntil: 'networkidle0' }),
               p.click('#btnDescartar'),

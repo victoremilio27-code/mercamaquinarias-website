@@ -478,6 +478,44 @@ function apagarPerfiles() {
   anotar('perfiles', `${apagados.length} perfil(es) retirados del directorio por plan vencido`);
 }
 
+/* Borradores del particular que nadie paga (D-08 de la fase 05.2).
+ *
+ * El borrador vive en el servidor desde que se elige plan. Quien se rinde
+ * lo deja ahí con sus fotos y videos, y a los 10 abiertos queda bloqueado
+ * por BORRADORES_ABIERTOS sin haber publicado nada. A los 30 días sin
+ * tocarlo y SIN pago se borra; con un pago pendiente o aprobado, nunca
+ * (`db.borradoresAbandonados` lo garantiza en la propia consulta).
+ *
+ * Como `eliminarAnuncio` de la API: la fila primero, los archivos después.
+ * Si se hiciera al revés y la transacción fallara, quedaría un borrador
+ * apuntando a fotos que ya no están. Un archivo que no se pueda borrar no
+ * detiene la tarea: lo recoge `huerfanos`, que por eso va justo después.
+ * Idempotente: lo borrado ya no aparece en la pasada siguiente. */
+const DIAS_BORRADOR_ABANDONADO = 30;
+
+function limpiarBorradores() {
+  const lista = db.borradoresAbandonados(DIAS_BORRADOR_ABANDONADO);
+  if (!lista.length) return anotar('borradores', 'sin borradores abandonados que limpiar');
+  if (SECO) return anotar('borradores', `borraría ${lista.length} borrador(es) abandonado(s)`);
+
+  const fotos = require('./fotos');
+  const videos = require('./videos');
+  let borrados = 0;
+  for (const b of lista) {
+    try {
+      const rutas = db.borrarAnuncio(b.id, b.organizacion_id);
+      if (!rutas) continue;
+      borrados++;
+      rutas.fotos.forEach((r) => { try { fotos.borrar(r); } catch (_) { /* ya no estaba */ } });
+      rutas.videos.forEach((r) => { try { videos.borrar(r); } catch (_) { /* ya no estaba */ } });
+    } catch (e) {
+      // Uno que falla no impide limpiar los demás.
+      console.error(`  ✗ no se pudo borrar el borrador ${b.id}: ${e.message}`);
+    }
+  }
+  anotar('borradores', `${borrados} borrador(es) abandonado(s) borrado(s)`);
+}
+
 const TAREAS = {
   caducar,
   perfiles: apagarPerfiles,
@@ -488,6 +526,7 @@ const TAREAS = {
   comprobantes: reenviarComprobantes,
   ncf: avisarNcf,
   limpiar,
+  borradores: limpiarBorradores,
   huerfanos: recogerHuerfanos,
   respaldo: respaldar,
   optimizar,

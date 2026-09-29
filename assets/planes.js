@@ -26,6 +26,17 @@ let NIVEL_ELEGIDO = '';
 let DIAS_PLAN = 30;
 let CUPOS_PEDIDOS = 1;
 
+/* 'capacidad': compra cupos para repartir entre varios equipos (el
+   dealer de siempre, y quien pulsa "¿Vende como empresa?"). 'publicacion':
+   paga la publicación de este equipo, uno a la vez (el particular y
+   cualquier visitante sin sesión, D-01, D-15). Una cuenta exenta ve
+   'capacidad' porque no paga nada de todos modos, y ahí sigue el
+   lenguaje de cupos que ya conocía. */
+let MODO_PLANES = 'publicacion';
+
+const decidirModoPlanes = () => (esDealer() || EXENTA_PLAN || params().get('modo') === 'empresa'
+  ? 'capacidad' : 'publicacion');
+
 /* Cómo se cobra, según el servidor (`metodosPago` de /api/planes).
    Lo decide él y no esta página: con la transferencia encendida `demo`
    deja de existir para el comprador, y un navegador que mandara otro
@@ -77,6 +88,56 @@ function avisar(mensaje, ok = false) {
 
 /* ── Lo que ya tiene ─────────────────────────────────────── */
 
+/* La tarjeta de siempre: cuánto tiene, cuánto le queda y el atajo para
+   ampliar. Es la del dealer, y la del particular exento o con
+   `modo=empresa` en la URL. */
+function tarjetaCupoCapacidad(m) {
+  const dias = m.fin ? diasRestantes(m.fin) : null;
+  const sig = m.anuncios_incluidos == null ? null : precioAmpliacion({
+    precioUnitario: m.precio_unitario,
+    cupoActual: m.anuncios_incluidos,
+    cupoNuevo: m.anuncios_incluidos + 1,
+    dias: m.dias_ciclo || 30,
+    diasRestantes: dias ?? (m.dias_ciclo || 30),
+  });
+
+  return `<li class="membresia${m.libres === 0 ? ' membresia--llena' : ''}">
+    <span class="membresia__cabeza">
+      <b class="membresia__nivel">${esc(m.plan_nombre)}</b>
+      <span class="membresia__vigencia">${m.fin ? `Quedan ${dias} ${dias === 1 ? 'día' : 'días'}` : 'Sin caducidad'}</span>
+    </span>
+    <span class="membresia__cupo num">${m.anuncios_incluidos == null
+      ? `${m.ocupados} publicados · sin límite`
+      : `${m.libres} ${m.libres === 1 ? 'cupo libre' : 'cupos libres'} de ${m.anuncios_incluidos}`}</span>
+    ${sig ? (sig.total === 0
+      ? '<span class="membresia__gratis">El siguiente cupo no le cuesta nada</span>'
+      : `<span class="membresia__siguiente">Un cupo más: ${pesos(sig.total)} hasta su renovación</span>`) : ''}
+    ${m.anuncios_incluidos == null ? '' : `
+      <button type="button" class="btn btn--linea btn--chico" data-ampliar="${esc(m.id)}">
+        Añadir cupos a ${esc(m.plan_nombre)}
+      </button>`}
+  </li>`;
+}
+
+/* Sin «Añadir cupos» ni «cupos libres»: el particular no reparte
+   capacidad entre equipos, así que ampliar un plan no es una acción
+   que se le pueda ofrecer aquí (D-15). Lo que le sobra de un plan ya
+   pagado se usa publicando otro equipo, no comprando más capacidad. */
+function tarjetaCupoPublicacion(m) {
+  const dias = m.fin ? diasRestantes(m.fin) : null;
+  const capacidad = m.anuncios_incluidos == null
+    ? `${m.ocupados} publicados · sin límite`
+    : `Capacidad para ${m.anuncios_incluidos} ${m.anuncios_incluidos === 1 ? 'equipo' : 'equipos'}, ${m.libres} ${m.libres === 1 ? 'disponible' : 'disponibles'}`;
+
+  return `<li class="membresia${m.libres === 0 ? ' membresia--llena' : ''}">
+    <span class="membresia__cabeza">
+      <b class="membresia__nivel">${esc(m.plan_nombre)}</b>
+      <span class="membresia__vigencia">${m.fin ? `Quedan ${dias} ${dias === 1 ? 'día' : 'días'}` : 'Sin caducidad'}</span>
+    </span>
+    <span class="membresia__cupo num">${esc(capacidad)}</span>
+  </li>`;
+}
+
 function pintarMisCupos() {
   const caja = $('#estadoCuenta');
   if (!haySesion() || !MIS_CUPOS.length) { caja.hidden = true; return; }
@@ -84,46 +145,30 @@ function pintarMisCupos() {
   caja.hidden = false;
   const libres = MIS_CUPOS.reduce((n, m) => (m.libres === null ? n : n + m.libres), 0);
   const sinLimite = MIS_CUPOS.some((m) => m.libres === null);
+  const capacidad = MODO_PLANES === 'capacidad';
 
-  $('#misCupos').innerHTML = MIS_CUPOS.map((m) => {
-    const dias = m.fin ? diasRestantes(m.fin) : null;
-    const sig = m.anuncios_incluidos == null ? null : precioAmpliacion({
-      precioUnitario: m.precio_unitario,
-      cupoActual: m.anuncios_incluidos,
-      cupoNuevo: m.anuncios_incluidos + 1,
-      dias: m.dias_ciclo || 30,
-      diasRestantes: dias ?? (m.dias_ciclo || 30),
-    });
+  $('#misCupos').innerHTML = MIS_CUPOS
+    .map(capacidad ? tarjetaCupoCapacidad : tarjetaCupoPublicacion).join('');
 
-    return `<li class="membresia${m.libres === 0 ? ' membresia--llena' : ''}">
-      <span class="membresia__cabeza">
-        <b class="membresia__nivel">${esc(m.plan_nombre)}</b>
-        <span class="membresia__vigencia">${m.fin ? `Quedan ${dias} ${dias === 1 ? 'día' : 'días'}` : 'Sin caducidad'}</span>
-      </span>
-      <span class="membresia__cupo num">${m.anuncios_incluidos == null
-        ? `${m.ocupados} publicados · sin límite`
-        : `${m.libres} ${m.libres === 1 ? 'cupo libre' : 'cupos libres'} de ${m.anuncios_incluidos}`}</span>
-      ${sig ? (sig.total === 0
-        ? '<span class="membresia__gratis">El siguiente cupo no le cuesta nada</span>'
-        : `<span class="membresia__siguiente">Un cupo más: ${pesos(sig.total)} hasta su renovación</span>`) : ''}
-      ${m.anuncios_incluidos == null ? '' : `
-        <button type="button" class="btn btn--linea btn--chico" data-ampliar="${esc(m.id)}">
-          Añadir cupos a ${esc(m.plan_nombre)}
-        </button>`}
-    </li>`;
-  }).join('');
-
-  /* Si le sobran cupos, lo primero que ve es el atajo para usarlos.
+  /* Si le sobra capacidad, lo primero que ve es el atajo para usarla.
      Enseñarle precios a quien ya pagó es justo lo que hacía pensar que
-     se le cobraba dos veces. */
+     se le cobraba dos veces.
+
+     T-05.2-19: antes `atajo.href` salía de `destino()` sin validar —
+     un `?destino=javascript:...` en la URL se pintaba tal cual en el
+     enlace. `destinoPropio()` solo deja pasar una página de este
+     sitio (cierra el pendiente que quedó anotado en STATE para esta
+     misma función). */
   const atajo = $('#btnVolverPublicar');
   if (libres > 0 || sinLimite) {
     atajo.hidden = false;
-    atajo.textContent = destino() ? 'Volver a mi anuncio' : 'Publicar un equipo';
-    atajo.href = destino() || 'publicar.html';
-    avisar(sinLimite
-      ? 'Su cuenta publica sin límite. No necesita contratar nada.'
-      : `Le ${libres === 1 ? 'queda' : 'quedan'} ${libres} ${libres === 1 ? 'cupo libre' : 'cupos libres'}: puede publicar sin pagar nada más.`, true);
+    atajo.textContent = destinoPropio() ? 'Volver a mi anuncio' : (capacidad ? 'Publicar un equipo' : 'Publicar otro equipo');
+    atajo.href = destinoPropio() || 'publicar.html';
+    avisar(capacidad
+      ? (sinLimite
+        ? 'Su cuenta publica sin límite. No necesita contratar nada.'
+        : `Le ${libres === 1 ? 'queda' : 'quedan'} ${libres} ${libres === 1 ? 'cupo libre' : 'cupos libres'}: puede publicar sin pagar nada más.`)
+      : 'Tiene capacidad disponible en su plan: puede publicar otro equipo sin pagar.', true);
   } else {
     atajo.hidden = true;
   }
@@ -169,7 +214,45 @@ function tarjetaNivel(n) {
   </li>`;
 }
 
+/* La misma tarjeta que tarjetaNivel, pero para quien paga UNA
+   publicación y no un cupo: sin radio (no arma un pedido de varios
+   niveles a la vez, D-01) y con un enlace que abre el asistente ya con
+   el plan y los días elegidos. Sin el rasgo de "página pública": esa
+   solo la usa un dealer aprobado, y aquí no hay ninguno. */
+function tarjetaNivelPublicacion(n) {
+  const total = precioCompra({ precioUnitario: unitario(n), cupo: 1, dias: DIAS_PLAN }).total;
+
+  const rasgos = [
+    `Hasta ${n.fotos_maximas} fotografías por equipo`,
+    n.videos_maximos
+      ? `${n.videos_maximos} ${n.videos_maximos === 1 ? 'video' : 'videos'} de 30 segundos por equipo`
+      : null,
+    n.destacado ? 'Distintivo Destacado y posición preferente' : 'Ficha técnica completa con horas y condición',
+    n.destacado ? 'Aparece en la portada' : 'Contacto directo por teléfono y WhatsApp',
+  ].filter(Boolean);
+
+  const href = `publicar.html?plan=${encodeURIComponent(n.id)}&dias=${DIAS_PLAN}`;
+
+  return `<li>
+    <div class="plan-op${n.destacado && !n.perfil_publico ? ' plan-op--sugerido' : ''}">
+      <span class="plan-op__cabeza">
+        ${n.destacado
+          ? '<span class="plan-op__cinta">Más contratado</span>'
+          : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
+        <span class="plan-op__nombre">Publicación ${esc(n.nombre)}</span>
+      </span>
+      <span class="plan-op__precio num">${total === 0 ? 'Sin costo' : pesos(total)}</span>
+      <span class="plan-op__periodo">${total === 0 ? `por publicación · ${DIAS_PLAN} días` : `por publicación · ${DIAS_PLAN} días · ITBIS incluido`}</span>
+      <ul class="plan-op__incluye">
+        ${rasgos.map((i) => `<li>${icono('i-check')} ${esc(i)}</li>`).join('')}
+      </ul>
+      <a class="btn btn--ambar plan-op__boton" href="${esc(href)}">Publicar con este plan</a>
+    </div>
+  </li>`;
+}
+
 function pintarTablaComparativa() {
+  const capacidad = MODO_PLANES === 'capacidad';
   const filas = [
     ['Fotografías por equipo', (n) => `${n.fotos_maximas}`],
     // Antes esta fila decía «Sí» para todo plan destacado, cuando el
@@ -180,7 +263,9 @@ function pintarTablaComparativa() {
     ['Aparece en la portada', (n) => (n.destacado ? 'Sí' : '—')],
     ['Página pública de la empresa', (n) => (n.perfil_publico ? 'Sí' : '—')],
     ['Estadísticas de visitas y contactos', () => 'Sí'],
-    ['Cupo reutilizable al vender', () => 'Sí'],
+    // Para el particular esto no es un cupo que se reutiliza: es que
+    // el plan sigue vivo y cubre otro equipo cuando venda el actual.
+    [capacidad ? 'Cupo reutilizable al vender' : 'Publicar otro equipo al vender, mientras dure el plan', () => 'Sí'],
   ];
 
   $('#tablaPlanes').innerHTML = `
@@ -273,11 +358,35 @@ function pintarRegla() {
     : `${icono('i-etiqueta')} <span>Uno gratis por cada ${CUPOS_POR_UNO_GRATIS}. Le ${faltan === 1 ? 'falta' : 'faltan'} <b>${faltan}</b> para que el siguiente no se cobre.</span>`;
 }
 
+/* Qué bloques de la página se ven, según MODO_PLANES. Se llama una
+   sola vez al montar: nada en esta página cambia de modo sin
+   recargarla (cambiar de modo es entrar por `?modo=empresa` o por
+   `planes.html` a secas, D-01). */
+function aplicarModo() {
+  const capacidad = MODO_PLANES === 'capacidad';
+  $$('[data-modo]').forEach((el) => { el.hidden = (el.dataset.modo === 'capacidad') !== capacidad; });
+
+  const titulo = $('#t-niveles');
+  if (titulo) titulo.innerHTML = capacidad ? '<em>Elija</em> su nivel' : 'Elige cómo publicar este equipo';
+
+  // El enlace «¿Es un particular?» es para quien todavía no decidió
+  // qué es: un dealer con sesión ya sabe que compra capacidad, y
+  // preguntárselo no pinta nada.
+  const inverso = $('#cambiarModoCapacidad');
+  if (inverso) inverso.hidden = !capacidad || haySesion();
+}
+
 function pintarTodo() {
-  $('#nivelesLista').innerHTML = NIVELES_PLAN.map(tarjetaNivel).join('');
-  $('#notaPremium').hidden = !(nivel(NIVEL_ELEGIDO) || {}).perfil_publico || esDealer();
-  pintarRegla();
-  pintarPedido();
+  const capacidad = MODO_PLANES === 'capacidad';
+  $('#nivelesLista').innerHTML = NIVELES_PLAN.map(capacidad ? tarjetaNivel : tarjetaNivelPublicacion).join('');
+  $('#notaPremium').hidden = !capacidad || !(nivel(NIVEL_ELEGIDO) || {}).perfil_publico || esDealer();
+  // La cantidad, la regla del quinto gratis y el resumen de cobro son
+  // del modo capacidad: el particular paga una sola publicación y ese
+  // pedido lo arma el asistente, no esta página (D-15).
+  if (capacidad) {
+    pintarRegla();
+    pintarPedido();
+  }
 }
 
 /* ── Pago en espera ──────────────────────────────────────── */
@@ -576,6 +685,12 @@ async function montarPlanes() {
     PAGOS_PENDIENTES = (mios && mios.pagosPendientes) || [];
     EXENTA_PLAN = !!(mios && mios.exenta);
   }
+
+  // Depende de EXENTA_PLAN y de la sesión, así que se decide después de
+  // cargar las dos: capacidad para el dealer, la cuenta exenta o quien
+  // pidió `?modo=empresa`; publicación para todos los demás (D-01).
+  MODO_PLANES = decidirModoPlanes();
+  aplicarModo();
 
   // Por defecto el nivel intermedio, que es el que contrata casi todo
   // el mundo, salvo que la URL pida otro.

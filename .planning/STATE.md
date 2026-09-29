@@ -3,18 +3,52 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Completado 05.2-02-PLAN.md (rutas del borrador, guardas de visibilidad/activación y textos sin «cupo» del particular)."
-last_updated: "2026-09-26T05:48:00.000Z"
-last_activity: "2026-09-26 — 05.2-02: validarCamposAnuncio compartida con publicar, POST/GET/PUT /api/borradores, un borrador es invisible e intocable para quien no es su dueño, capacidadLibre al vender; npm run publicacion:probar en verde (rama claude/fase-05.2-publicar-equipo)."
+stopped_at: "05.2 verificada y en el PR #38 (fusionar si el CI está en verde). Siguiente: ejecutar la 05.3, ya planificada."
+last_updated: "2026-09-29T17:00:00.000Z"
+last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 45
-  completed_plans: 46
+  completed_plans: 49
   percent: 50
 ---
 
 # Project State
+
+## Para retomar (actualizado 2026-09-29) — EMPIEZA AQUÍ
+
+**Forma de trabajar:** una rama y un PR por fase; se fusiona y despliega al cerrar la fase (verificación
+passed + CI en verde). Opus planifica con GSD y verifica; Sonnet ejecuta; un plan que toca ITBIS,
+comprobante o NCF lo ejecuta Opus. Hasta 2-3 agentes si no tocan los mismos archivos. Detalle en «Decisions».
+
+**Hecho y en producción:**
+- PR #33 (reactivar un vendido exige cupo libre), #34 (renders en alquiler), #35 (fase 05.1: precio único
+  con el 3 % dentro e ITBIS incluido, 1.800/3.200, condiciones v2.1), #36 y #37 (05.2-01 y 05.2-02).
+
+**Fase 05.2 terminada y verificada (passed), en el PR #38** (rama `claude/fase-05.2-publicar-equipo`):
+planes 03 a 06 (pago del borrador, panel y planes sin «cupo», asistente de publicar, limpieza de
+borradores a los 30 días). **Si al leer esto el PR #38 sigue abierto:** mirar su CI; si `pruebas` y
+`navegador` están en verde, fusionarlo, comprobar «Sitio arriba» en el job `desplegar` de `main` y marcar
+aquí que la 05.2 está en producción. Si está rojo, arreglarlo en esa rama.
+
+**Siguiente paso: ejecutar la fase 05.3** (renovación manual, vencimientos y alertas 7/3/1).
+- Planes ya escritos y validados: `.planning/phases/05.3-renovaci-n-manual-vencimientos-y-alertas-de-7-3-y-1-d-a/`
+  05.3-01 a 05.3-05 (4 olas; 02 y 03 en paralelo). **01 y 02 tocan el camino del comprobante → Opus**;
+  03, 04 y 05 → Sonnet (campo `comprobante_ncf` del frontmatter).
+- Crear la rama `claude/fase-05.3-renovacion` desde `main` **después** de fusionar el PR #38 (la rama
+  remota con ese nombre existe pero está vieja: recrearla desde `main`, sin commits propios).
+- Luego: 05.4 (dealer con capacidad de publicaciones activas y consola), sin planificar todavía.
+  Después, replanificar la fase 6 (CardNet) desde el 06-02 contra el modelo nuevo; su migración
+  `2026-10-cardnet` no debe volver a crear las columnas `renovacion_*` que crea la 05.3.
+
+**Pendiente de Victor (además de lo de más abajo):**
+- NCF: pedir la secuencia **B02** a la DGII (hoy no está cargada: el que compra sin RNC recibe un recibo no
+  fiscal), fechas de vencimiento de B01 y B04, y un rango de B01 mayor (quedan 15). Preguntar al contador por
+  la facturación electrónica (e-CF).
+- Revisar la redacción de las Condiciones v2.1 (cláusula 2.1). La 05.3 las subirá a 2.2.
+- Confirmar en supercarros.com/vender los precios del estudio (`research/precios-mercado.md`).
+- Revisión visual de la 05.1 y la 05.2 (listas en sus VERIFICATION/SUMMARY).
 
 ## Project Reference
 
@@ -31,7 +65,10 @@ hecho (borrador en la base, `pagos.anuncio_id` con un solo pendiente por anuncio
 `npm run publicacion:probar` en CI); 05.2-02 hecho (`validarCamposAnuncio` compartida con `publicar`;
 `POST/GET/PUT /api/borradores`; `verAnuncio`, `cambiarEstado`, `cambiarPlanDeAnuncio` y `eliminarAnuncio`
 niegan un borrador ajeno o su activación por otra puerta; `capacidadLibre` al marcar vendido; el
-particular no exento deja de leer «cupo» en el 402/409 de `publicar`). Siguen 05.2-03 a 05.2-05.
+particular no exento deja de leer «cupo» en el 402/409 de `publicar`); 05.2-03 hecho
+(`POST /api/borradores/:id/pago` con el importe del servidor; activa solo `confirmarPago` o el importe
+cero; pendiente devuelto sin duplicar; la consola rechaza la transferencia huérfana con
+`PUBLICACION_HUERFANA`; secciones 9-12 del arnés). 05.2-04 hecho (panel y planes sin «cupo»); 05.2-05 hecho (asistente en el orden nuevo, auditorías de navegador al día); 05.2-06 hecho (tarea diaria `borradores`: borra a los 30 días los borradores sin pago pendiente ni aprobado, con sus archivos). Falta re-verificar la fase.
 
 **Fase 05.1 (precio único) terminada** en la rama `claude/fase-05.1-precio-unico`: 05.1-01 hecho
 (fórmula única en `desglose`, `AJUSTE = 0.03`, `npm run precios:probar` en CI), 05.1-02 hecho (desglose
@@ -131,6 +168,8 @@ Progress: [█████░░░░░] 50%
 
 ### Decisions
 
+- **05.2-05:** el guardado del borrador en el servidor cuelga de `guardarBorrador()` (un temporizador de 1,5 s); Chrome se lanza en la nube con `chrome-headless-shell` y `--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu` (`PUPPETEER_EXECUTABLE_PATH`), así que las auditorías sí corren aquí. Los anuncios del seed con la subcategoría escrita como nombre (no id) no pasan `validarCadena`: el asistente la manda vacía al duplicar.
+
 **Modelos, desde el 2026-09-26 (Victor, cerca del límite semanal):**
 - Perfil de GSD `balanced` (`.planning/config.json`). Opus solo para planificar, revisar y verificar
   (el verificador y la revisión del cierre se lanzan con Opus explícito, porque `balanced` los pone en
@@ -138,11 +177,11 @@ Progress: [█████░░░░░] 50%
 - Excepción: un plan que toca el cálculo de ITBIS, el comprobante o los NCF lo ejecuta Opus, y se dice
   en una línea al lanzarlo. En la 05.1 eso es el 05.1-02; el 05.1-01 terminó con Opus porque ya corría.
 - Investigación, estudios de mercado, resúmenes y mapeos: Sonnet.
-- Máximo 2 agentes a la vez. Sin revisiones extra fuera de la del cierre de cada fase.
-- **Desplegar por plan (Victor, 2026-09-26):** cada plan terminado sale a producción en cuanto el CI
-  está en verde, sin esperar al cierre de la fase, siempre que no deje un flujo del usuario a medias
-  (lo de base de datos y API sale solo; las pantallas de un mismo flujo salen juntas). Un PR por tramo
-  desde la rama de la fase.
+- **Forma de trabajar habitual, restaurada por Victor el 2026-09-29:** una rama y **un PR por fase**, y se
+  fusiona y despliega **al cerrar la fase** (verificación en verde + CI en verde), no plan a plan. Hasta 2 o
+  3 agentes a la vez si no tocan los mismos archivos (regla de `CLAUDE.md`). Se retiran el «desplegar por
+  plan» y el tope de 2 agentes que se pusieron el 2026-09-26. Se mantiene el reparto de modelos de arriba.
+  (Los PR #36 y #37 salieron por tramos antes de este cambio; el resto de la 05.2 sale ya junto.)
 
 Las decisiones se registran en la tabla Key Decisions de `PROJECT.md`.
 Decisiones que afectan al trabajo actual:
@@ -151,6 +190,8 @@ Decisiones que afectan al trabajo actual:
 - 05.2-02: una sola `validarCamposAnuncio(c, plan, { completo })` para publicar y el borrador (completa
   exigirá lo mismo al pedir el pago en 05.2-03); un borrador responde el mismo 404 a quien no es su
   dueño y a un id inexistente, y ninguna ruta existente lo activa sin pasar por el pago.
+- 05.2-03: el correo «ya está publicado» sale de `confirmarPago` (y de la ruta del importe cero con la
+  misma función), no de la ruta que pide el pago: así lo reciben igual la transferencia y CardNet.
 
 - **Regla de Victor, 2026-09-25 (modelos y ritmo):** fases 5 y 6 con perfil GSD «quality» (Opus en todo) y revisión completa al cerrar cada una. En cuanto se publique la fase 6: `model_profile` a «balanced» en `.planning/config.json` (Opus planifica, revisa y verifica; Sonnet ejecuta), commit, y avisar a Victor en una línea para que baje el chat principal de High a Medium. De la fase 7 en adelante, «balanced»; una fase que toque cobros, facturación o NCF vuelve a «quality» solo mientras dure. Nunca Haiku. Para ahorrar crédito: no releer ni reexplorar `.planning/` ya escrito, la revisión al cerrar una fase cubre solo lo que cambió esa fase, y nada de agentes para lo que se resuelve con unas pocas búsquedas.
 - **Regla de Victor, 2026-09-25 (paralelismo):** ejecución automática sin luz verde entre tareas, planes ni fases. Se planifica por adelantado todo lo que se pueda contra las interfaces de las fases previas; dos fases independientes se ejecutan a la vez, cada una en su git worktree y su rama; nunca dos agentes ejecutores en la misma copia de trabajo. Se fusiona en orden del ROADMAP. Cada fase, antes de su PR: verificación GSD, revisión de código de lo que cambió, correcciones y todas las pruebas. Un PR por fase, fusión a `main` solo con CI en verde y comprobación del sitio en vivo.
@@ -177,6 +218,7 @@ Decisiones que afectan al trabajo actual:
 - **[05.1-02]** `precio_pactado` es la BASE antes del ajuste (en pagos viejos, con `base` NULL, el subtotal): así renovar o ampliar al pactado no cobra el 3 % dos veces. `registrarCobro` lanza 500 si el cobro no sale entero de `precios.desglose`. El seed de planes se queda en 2000/3500; lo baja la migración `2026-09-precios-base`.
 - **[05.1-04]** La sección 33 de `tools/probar-transferencia.js` demuestra los cuatro criterios de éxito de la fase 05.1 juntos en el camino de cobro real (transferencia): 1 Destacado de 30 días deja un pendiente de 3.889 con el desglose guardado, el correo dice el final sin nombrar base ni ajuste, marcar recibido emite un B02 que cuadra y anular un Premium (6.685) no gasta NCF. Solo se añadieron pruebas: no se tocó `tools/facturas.js` ni el cálculo de ITBIS/NCF.
 - **[05.1-03]** Planes, panel, asistente y condiciones enseñan un único precio final «ITBIS incluido», sacado de `precioCompra`/`precios.desglose` (nunca una multiplicación aparte); el 3 % no se nombra en esas pantallas. La contratación sube a v2.1 (vigente 2026-09-26) para que se acepte de nuevo antes de pagar. La consola de pagos sí enseña base, ajuste, ITBIS y total; un pago anterior al desglose guardado sale «sin ajuste».
+- **[05.2-06]** La tarea diaria `borradores` borra a los 30 días (valor por defecto, reversible: `DIAS_BORRADOR_ABANDONADO` en `tools/tareas.js`) los borradores sin pago `pendiente` ni `aprobado`, contando desde `COALESCE(actualizado, creado)`; la fila primero y los archivos después, y va antes de `huerfanos`. La prueba corre la tarea real en un proceso aparte porque `tareas.js` se ejecuta al requerirlo.
 - [Phase 02]: .aviso__fotos entra en EXCEPCIONES de check-contraste (va sobre la foto, 9.01:1 a 18.91:1); .foto__sello sale por razón falsa
 
 ### Pending Todos
@@ -212,6 +254,6 @@ Todavía no hay hitos cerrados, así que no hay nada arrastrado.
 
 ## Session Continuity
 
-Last session: 2026-09-26 (nube)
-Stopped at: Completado 05.1-04-PLAN.md
-Resume file: None
+Last session: 2026-09-29 (nube)
+Stopped at: fase 05.2 verificada, PR #38 abierto; siguiente, ejecutar la 05.3
+Resume file: .planning/STATE.md, sección «Para retomar»

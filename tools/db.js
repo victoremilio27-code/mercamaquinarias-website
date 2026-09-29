@@ -3937,6 +3937,31 @@ const contarBorradores = (idOrg) =>
   abrir().prepare(`SELECT COUNT(*) AS n FROM anuncios
                     WHERE organizacion_id = ? AND estado = 'borrador'`).get(idOrg).n;
 
+/* Borradores que nadie está pagando ni tocando (D-08 de la fase 05.2).
+
+   Existe porque el borrador vive en el servidor: el particular que
+   elige plan y se rinde deja la fila con sus fotos y videos para
+   siempre, y a los 10 borradores abiertos `BORRADORES_ABIERTOS` lo
+   bloquea sin que haya publicado nada. La tarea diaria los recoge.
+
+   SOLO SIN PAGO. Un borrador con un pago `pendiente` o `aprobado` es
+   dinero de alguien esperando o ya cobrado: borrarlo dejaría un cobro
+   sin anuncio. Esos los resuelve soporte, nunca la limpieza. La
+   antigüedad se cuenta desde la última actualización (guardar el
+   asistente por partes la renueva), con `creado` si nunca se tocó.
+   Mismo formato ISO que `ahora()`, así que la comparación de texto
+   ordena igual que las fechas. */
+function borradoresAbandonados(dias = 30, limite = 200) {
+  const corte = new Date(Date.now() - Number(dias) * 86400000).toISOString();
+  return abrir().prepare(`SELECT id, organizacion_id FROM anuncios
+      WHERE estado = 'borrador'
+        AND COALESCE(actualizado, creado) < ?
+        AND NOT EXISTS (SELECT 1 FROM pagos p
+                         WHERE p.anuncio_id = anuncios.id
+                           AND p.estado IN ('pendiente', 'aprobado'))
+      ORDER BY creado LIMIT ?`).all(corte, Number(limite));
+}
+
 /* Motor y transmisión de un anuncio ya publicado. La API valida las
    marcas y los modelos contra la taxonomía antes de llamar aquí. */
 const guardarTrenMotriz = (idAnuncio, idOrg, t) =>
@@ -4748,6 +4773,6 @@ module.exports = {
   /* Fase 8: moneda y disponibilidad en el catálogo. */
   tasaUsd, DISPONIBILIDADES, guardarDisponibilidad,
   /* Fase 05.2: el borrador del particular vive en el servidor. */
-  ANIO_SIN_DEFINIR, crearBorrador, guardarBorrador, borradorDe, contarBorradores, pagoPendienteDeAnuncio,
+  ANIO_SIN_DEFINIR, crearBorrador, guardarBorrador, borradorDe, contarBorradores, borradoresAbandonados, pagoPendienteDeAnuncio,
   publicarBorradorSinCosto,
 };

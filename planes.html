@@ -58,7 +58,12 @@
   <header class="pagina">
     <nav class="miga" aria-label="Ruta"><a href="index.html">Inicio</a> &rsaquo; <span>Planes</span></nav>
     <h1 class="pagina__titulo"><em>Planes</em> para publicar</h1>
-    <p class="pagina__sub">No se paga por anuncio: se contratan <b>cupos</b>. Un cupo es el sitio que ocupa un equipo publicado, y es suyo mientras dure el plan: cuando venda una máquina, ese cupo queda libre y publica otra sin volver a pagar.</p>
+    <!-- Dos textos de cabecera, uno por modo (D-01, D-15): al dealer se
+         le sigue hablando de cupos; al particular y al visitante sin
+         sesión, de la publicación de un equipo. planes.js decide cuál
+         de los dos queda visible antes de que se vea ninguno. -->
+    <p class="pagina__sub" data-modo="capacidad">No se paga por anuncio: se contratan <b>cupos</b>. Un cupo es el sitio que ocupa un equipo publicado, y es suyo mientras dure el plan: cuando venda una máquina, ese cupo queda libre y publica otra sin volver a pagar.</p>
+    <p class="pagina__sub" data-modo="publicacion" hidden>Cada equipo se publica con su propio plan. Elija el nivel, complete el anuncio y pague solo esa publicación: se activa en cuanto se confirma el pago.</p>
   </header>
 
   <!-- Estado de la cuenta. Lo pinta planes.js: a quien ya tiene cupos
@@ -86,12 +91,27 @@
          temporal ni hasta cuándo: alguien podía contratar creyendo que
          ese es el precio de siempre. La fecha sale de /api/planes, la
          misma que se aplica al cobrar, y cuando la promoción termine
-         montarPromo() retira el aviso solo. -->
-    <p class="realce" data-promo-aviso hidden>
-      <svg class="ico" aria-hidden="true"><use href="#i-etiqueta"/></svg>
-      <span>Por la <b>oferta de lanzamiento</b>, los cupos del nivel Estándar no se cobran hasta el
-        <b data-promo-hasta>fecha por definir</b>. <b data-promo-quedan hidden></b></span>
-    </p>
+         montarPromo() retira el aviso solo.
+
+         OJO: montarPromo() de app.js recorre TODO [data-promo-hasta] y
+         hace visible su [data-promo-aviso] más cercano, así que el
+         data-modo no puede ir en el propio aviso: lo volvería a
+         enseñar en el modo que no toca. Va en un envoltorio aparte, que
+         es el que aplicarModo() de planes.js oculta o muestra. -->
+    <div data-modo="capacidad">
+      <p class="realce" data-promo-aviso hidden>
+        <svg class="ico" aria-hidden="true"><use href="#i-etiqueta"/></svg>
+        <span>Por la <b>oferta de lanzamiento</b>, los cupos del nivel Estándar no se cobran hasta el
+          <b data-promo-hasta>fecha por definir</b>. <b data-promo-quedan hidden></b></span>
+      </p>
+    </div>
+    <div data-modo="publicacion" hidden>
+      <p class="realce" data-promo-aviso hidden>
+        <svg class="ico" aria-hidden="true"><use href="#i-etiqueta"/></svg>
+        <span>Por la <b>oferta de lanzamiento</b>, la publicación Estándar no se cobra hasta el
+          <b data-promo-hasta>fecha por definir</b>. <b data-promo-quedan hidden></b></span>
+      </p>
+    </div>
 
     <ul class="planes-op planes-op--pagina" id="nivelesLista"></ul>
 
@@ -103,10 +123,22 @@
         <a href="panel.html">Registre el RNC</a> desde su panel.
       </span>
     </p>
+
+    <!-- Atajo entre los dos modos. Nunca los dos a la vez: el de
+         "capacidad" solo tiene sentido para quien todavía no inició
+         sesión (un dealer con sesión ya sabe que compra capacidad), y
+         eso lo decide planes.js, no data-modo por sí solo. -->
+    <p class="panel__texto" id="cambiarModoPublicacion" data-modo="publicacion" hidden>
+      <a href="planes.html?modo=empresa">¿Vende como empresa? Vea la capacidad para su inventario</a>
+    </p>
+    <p class="panel__texto" id="cambiarModoCapacidad" data-modo="capacidad" hidden>
+      <a href="planes.html">¿Es un particular? Publique un solo equipo</a>
+    </p>
   </section>
 
-  <!-- Cantidad y cobro -->
-  <section class="panel" aria-labelledby="t-cuantos">
+  <!-- Cantidad y cobro. Compra CAPACIDAD (cupos): solo el dealer. El
+       particular paga la publicación desde el asistente, no aquí. -->
+  <section class="panel" aria-labelledby="t-cuantos" data-modo="capacidad">
     <h2 class="panel__titulo panel__titulo--limpio" id="t-cuantos"><em>¿Cuántos</em> equipos quiere publicar?</h2>
 
     <div class="compra-cupos compra-cupos--pagina">
@@ -179,7 +211,7 @@
     </div>
   </section>
 
-  <section class="panel" aria-labelledby="t-dudas">
+  <section class="panel" aria-labelledby="t-dudas" data-modo="capacidad">
     <h2 class="panel__titulo panel__titulo--limpio" id="t-dudas"><em>Cómo</em> funcionan los cupos</h2>
     <dl class="faq">
       <div>
@@ -193,6 +225,28 @@
       <div>
         <dt>¿Y si necesito un cupo más a mitad de mes?</dt>
         <dd>Lo añade desde su panel y solo paga los días que le queden hasta su renovación, no un ciclo entero.</dd>
+      </div>
+      <div>
+        <dt>¿Qué pasa al terminar el plazo?</dt>
+        <dd>Los anuncios se pausan, no se borran. Vuelven a estar activos en cuanto renueve, con sus fotos y sus estadísticas.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="panel" aria-labelledby="t-dudas-publicacion" data-modo="publicacion" hidden>
+    <h2 class="panel__titulo panel__titulo--limpio" id="t-dudas-publicacion"><em>Cómo</em> funciona la publicación de un equipo</h2>
+    <dl class="faq">
+      <div>
+        <dt>¿Qué pasa cuando vendo el equipo?</dt>
+        <dd>Lo marca como vendido en su panel: el anuncio sale del catálogo y queda en su historial. Mientras dure el plan que pagó, puede publicar otro equipo en su lugar sin volver a pagar.</dd>
+      </div>
+      <div>
+        <dt>¿Puedo dejar el anuncio a medias?</dt>
+        <dd>Sí. Se guarda como borrador en su cuenta y lo retoma desde su panel cuando quiera; no se publica ni se cobra hasta que usted pague.</dd>
+      </div>
+      <div>
+        <dt>¿Cómo pago?</dt>
+        <dd>Con el método que se le indique al final del anuncio. Si es por transferencia, el anuncio se publica cuando confirmamos el ingreso.</dd>
       </div>
       <div>
         <dt>¿Qué pasa al terminar el plazo?</dt>
