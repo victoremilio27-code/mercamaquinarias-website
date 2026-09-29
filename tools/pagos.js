@@ -131,7 +131,7 @@ function emitir(pago, intencion, membresia) {
  * documento fiscal de algo que no ocurrió, y ese no se borra. Solo se
  * emite cuando la aprobación ya quedó escrita. */
 function confirmarPago(idPago, { envolver } = {}) {
-  const { pago, membresia, yaEstaba } = (envolver || ((f) => f()))(() => db.aprobarPago(idPago));
+  const { pago, membresia, yaEstaba, periodo } = (envolver || ((f) => f()))(() => db.aprobarPago(idPago));
 
   // Rechazado o devuelto: no hay nada que otorgar ni que emitir.
   if (pago.estado !== 'aprobado') {
@@ -139,7 +139,17 @@ function confirmarPago(idPago, { envolver } = {}) {
   }
 
   const intencion = leerIntencion(pago);
-  const comprobante = emitir(pago, intencion, membresia);
+  /* La línea del comprobante de una renovación dice el periodo PAGADO
+     (del fin anterior, o de hoy si ya venció, al fin nuevo), no la vida
+     entera de la membresía: con `membresia.inicio` un segundo mes se
+     facturaría como si cubriera también el primero.
+
+     `periodo` solo llega en la aprobación que renovó. En un reintento
+     (`yaEstaba`) ya no se sabe y cae al de la membresía, pero ese caso
+     solo emite si la primera emisión falló; la que salió bien ya tiene
+     su factura y `emitir` la devuelve sin volver a imprimir nada. */
+  const comprobante = emitir(pago, intencion,
+    periodo && membresia ? { ...membresia, inicio: periodo.inicio, fin: periodo.fin } : membresia);
 
   /* El aviso «ya está publicado» va aquí y no en la ruta que pide el
      pago: la transferencia se confirma desde la consola y CardNet lo

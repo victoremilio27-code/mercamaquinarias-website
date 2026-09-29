@@ -514,7 +514,13 @@ CREATE TABLE IF NOT EXISTS suscripciones (
   fin             TEXT,                    -- NULL en membresía viva
   proximo_cargo   TEXT,
   cancelada       TEXT,
-  creada          TEXT NOT NULL
+  creada          TEXT NOT NULL,
+  -- Renovación automática (migración 2026-09-renovacion): guardada y
+  -- nunca marcada por defecto; el cobro llega con CardNet (fase 6).
+  -- Al desactivarla se conservan fecha y texto como historial.
+  renovacion_automatica INTEGER NOT NULL DEFAULT 0,
+  renovacion_aceptada   TEXT,             -- cuándo aceptó el texto
+  renovacion_texto      TEXT              -- el texto aceptado, tal cual
 );
 
 CREATE INDEX IF NOT EXISTS ix_susc_org ON suscripciones (organizacion_id, estado);
@@ -652,6 +658,22 @@ CREATE INDEX IF NOT EXISTS ix_anuncios_anio ON anuncios (estado, anio, publicado
 CREATE INDEX IF NOT EXISTS ix_anuncios_usuario ON anuncios (usuario_id);
 CREATE INDEX IF NOT EXISTS ix_anuncios_sucursal ON anuncios (sucursal_id);
 CREATE INDEX IF NOT EXISTS ix_anuncios_suscripcion ON anuncios (suscripcion_id);
+
+-- Recordatorios de vencimiento: 7 días, 3 días y 1 día (migración
+-- 2026-09-renovacion). Una fila por anuncio + tipo + ciclo; el ciclo es
+-- el `vence` del anuncio cuando se avisó, así que renovar (que cambia
+-- `vence`) deja los del ciclo viejo como historial y abre los nuevos.
+-- El UNIQUE impide dos correos del mismo aviso aunque la tarea corra
+-- dos veces. Sustituye a `anuncios.aviso_por_vencer`, que se deja.
+CREATE TABLE IF NOT EXISTS recordatorios (
+  id         TEXT PRIMARY KEY,
+  anuncio_id TEXT NOT NULL REFERENCES anuncios(id) ON DELETE CASCADE,
+  tipo       TEXT NOT NULL CHECK (tipo IN ('7d', '3d', '1d')),
+  vence      TEXT NOT NULL,
+  enviado    TEXT,                          -- cuándo se reservó o se envió
+  resultado  TEXT,                          -- 'enviando' | 'enviado' | 'fallido' | …
+  UNIQUE (anuncio_id, tipo, vence)
+);
 
 -- Rangos con sentido para precio y año.
 --

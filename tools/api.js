@@ -1512,6 +1512,14 @@ const AMPLIACION_HUERFANA = 'La membresía que ampliaba este pago ya no existe. 
 const PUBLICACION_HUERFANA = 'El borrador de esta publicación ya no existe o ya se publicó. No se '
   + 'publicó nada ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
 
+/* Y para la renovación (05.3-02): mientras la transferencia esperaba,
+   la membresía se canceló o dejó de poder renovarse. Renovarla ahora
+   resucitaría algo que se dio de baja, y convertir el pago en una
+   compra nueva sería decidir por el cliente qué compra. Como con las
+   dos anteriores, la salida es anular y devolver el dinero. */
+const RENOVACION_HUERFANA = 'La membresía que renovaba este pago ya no existe o ya no se puede renovar. '
+  + 'No se renovó nada ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
+
 const SOLO_TRANSFERENCIAS = 'Este pago no es por transferencia: lo resuelve su pasarela, no la consola.';
 
 /* Lo que se comprueba ANTES de escribir, común a marcar y anular. Un
@@ -1558,6 +1566,11 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
       return fallo(res, 409, PUBLICACION_HUERFANA);
     }
   }
+  const esRenovacion = intencion.tipo === 'renovacion';
+  if (pago.estado === 'pendiente' && esRenovacion
+    && !(intencion.idSusc && db.suscripcionRenovable(intencion.idSusc, pago.organizacion_id))) {
+    return fallo(res, 409, RENOVACION_HUERFANA);
+  }
 
   let r;
   try {
@@ -1592,6 +1605,14 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
     if (esPublicacion && (e.codigo === 404
       || (e.codigo === 409 && (db.anuncio(intencion.idAnuncio) || {}).estado !== 'borrador'))) {
       return fallo(res, 409, PUBLICACION_HUERFANA);
+    }
+    /* Y con la renovación: la membresía se canceló o se borró (409 o
+       404 de aplicarRenovacion) entre la comprobación y la aprobación.
+       El SAVEPOINT de aprobarPago ya deshizo todo. Un 409 con la
+       membresía todavía renovable es otra carrera y se dice tal cual. */
+    if (esRenovacion && (e.codigo === 404 || e.codigo === 409)
+      && !(intencion.idSusc && db.suscripcionRenovable(intencion.idSusc, pago.organizacion_id))) {
+      return fallo(res, 409, RENOVACION_HUERFANA);
     }
     return falloInterno(res, e);
   }
@@ -2456,6 +2477,35 @@ const misPlanes = conSesion((req, res, ctx) => {
         diasRestantes: precios.diasRestantes(s.fin) ?? (s.dias_ciclo || 30),
       })),
     })),
+    /* `membresias` ya no trae las vencidas (05.3-01: dejan de contar en
+       cuanto pasa su fin), y el panel necesita verlas justo para
+       ofrecer «Renovar». Van aparte, con lo que costaría renovarlas hoy
+       (D-02) y sin base ni ajuste. Un plan que ya no se ofrece no tiene
+       precio: se renueva hablando con nosotros. */
+    renovables: db.suscripcionesRenovablesDe(ctx.organizacion.id).map((s) => {
+      const dias = s.dias_ciclo === 60 ? 60 : 30;
+      return {
+        id: s.id,
+        plan_id: s.plan_id,
+        plan_nombre: s.plan_nombre,
+        estado: s.estado,
+        fin: s.fin,
+        vencida: s.fin <= new Date().toISOString(),
+        cupo: s.anuncios_incluidos,
+        ocupados: s.ocupados,
+        dias,
+        renovacion_automatica: !!s.renovacion_automatica,
+        renovacion_pendiente: s.renovacion_pendiente,
+        precio: s.plan_activo
+          ? cobroPublico(precios.precioRenovacion({ precioUnitario: s.precio_vigente, cupo: s.anuncios_incluidos, dias }))
+          : null,
+      };
+    }),
+    metodosPago: pagos.metodosDeCobro(),
+    // Apagada, el panel no recibe ni el texto: no hay casilla que enseñar (D-12).
+    renovacionAutomatica: renovacionAutomaticaDisponible()
+      ? { disponible: true, texto: TEXTO_RENOVACION_AUTOMATICA }
+      : { disponible: false },
     exenta: esExenta(ctx.usuario.id),
   });
 });
@@ -3540,6 +3590,247 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
   });
 });
 
+/* ── Renovar (fase 05.3) ─────────────────────────────────────
+   Hasta la 05.3 renovar no existía: quien quería seguir publicado tenía
+   que publicar otra vez, con OTRO anuncio, y perdía fotos, historial y
+   métricas. Renovar es pedir un cobro nuevo con intención 'renovacion'
+   que solo aplica `pagos.confirmarPago` (la única transición), por el
+   mismo camino de importe cero, tarjeta y transferencia que
+   `pagarBorrador`. El anuncio es siempre el mismo.
+
+   Textos propios, sin la palabra «cupo»: al particular no se le habla
+   de cupos (D-15 de la 05.2), y lo que le importa es su anuncio. */
+const NO_APROBADO_RENOVACION = 'El pago no fue aprobado. No se le cobró nada y su anuncio sigue como estaba.';
+const EN_PROCESO_RENOVACION = 'Su pago está en proceso. La renovación se aplica cuando se confirme.';
+const EN_ESPERA_RENOVACION = 'Transfiera el importe con la referencia indicada. La renovación se aplica '
+  + 'cuando confirmemos el ingreso.';
+
+/* La renovación automática (MOD-12, D-11 y D-12) solo se ofrece con
+   CardNet encendido: sin tarjeta guardada no hay con qué cobrarla, y
+   ofrecer algo que no se va a cobrar engaña (el anunciante creería que
+   su anuncio sigue solo y vencería igual). Se lee el entorno en cada
+   llamada para que las pruebas lo cambien en caliente. Los valores son
+   los de research/cardnet.md (apagado | lab | produccion); cualquier
+   otro cuenta como apagado, igual que hará `cardnet.activo()` de la
+   fase 6, que sustituirá a esta función. */
+const renovacionAutomaticaDisponible = () =>
+  ['lab', 'produccion'].includes(String(process.env.MERCA_CARDNET || '').trim());
+
+/* El texto que acepta quien activa la casilla: sección 21 del modelo
+   comercial, tal cual. Se guarda ESTE, nunca uno que llegue del
+   navegador (T-05.3-10): es la prueba del consentimiento para cobros
+   futuros y no puede decir lo que el cliente quiera. */
+const TEXTO_RENOVACION_AUTOMATICA = 'Al activar esta opción, '
+  + 'autorizas la renovación de este anuncio al finalizar su período con el método de pago autorizado, '
+  + 'según las condiciones y el precio vigente de renovación.';
+
+/* Una renovación que ya espera (D-05): se devuelve esa, sin crear otro
+   pago ni volver a avisar a facturación. La misma forma que
+   `responderPagoEnEspera`, con los textos de renovar. */
+function responderRenovacionEnEspera(res, pago, membresia = null) {
+  const porTransferencia = pago.procesador === 'transferencia';
+  const cuenta = porTransferencia ? datosDeCuenta() : null;
+  return responder(res, 202, {
+    anuncio: null,
+    membresia,
+    cobro: { total: pago.total, referencia: pago.referencia },
+    comprobante: null,
+    pago: pagoPublico(pago),
+    aviso: porTransferencia ? EN_ESPERA_RENOVACION : EN_PROCESO_RENOVACION,
+    ...(cuenta ? { transferencia: cuenta } : {}),
+    ...(porTransferencia && !cuenta ? { avisoTransferencia: SIN_DATOS_TRANSFERENCIA } : {}),
+  });
+}
+
+/* El núcleo que comparten «renovar anuncio» y «renovar plan». `s` es la
+   fila de `db.suscripcionRenovable`, ya comprobada como de la sesión. */
+async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
+  const c = await leerCuerpo(req);
+  const org = ctx.organizacion;
+
+  const enEspera = db.pagoPendienteDeRenovacion(s.id);
+  if (enEspera) return responderRenovacionEnEspera(res, enEspera);
+
+  if (!s.plan_activo) {
+    return fallo(res, 409, 'El plan de esta publicación ya no se ofrece, así que no se puede renovar tal '
+      + 'cual. Escríbanos por correo o por el asistente del sitio.');
+  }
+
+  /* T-05.3-07 y D-02: el importe sale del precio VIGENTE del plan, del
+     cupo y del ciclo guardados en la suscripción, con la fórmula única.
+     Se renueva el mismo ciclo que se contrató. Del cuerpo solo se leen
+     el método de pago y los datos fiscales: un importe, cupo, plan o
+     número de días que mande el navegador no se mira, ni para
+     rechazarlo. */
+  const dias = s.dias_ciclo === 60 ? 60 : 30;
+  const cupo = s.anuncios_incluidos;
+  const cobro = {
+    ...precios.precioRenovacion({ precioUnitario: s.precio_vigente, cupo, dias }),
+    referencia: referenciaCobro(),
+  };
+
+  const fiscal = clienteDeCompra(c, ctx);
+  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  const { cliente } = fiscal;
+
+  /* La casilla del pago (D-12): solo con CardNet encendido y solo el
+     propietario, que es quien autoriza cobros futuros. Apagada, lo que
+     mande el navegador no hace nada. */
+  if (c.renovacionAutomatica === true && renovacionAutomaticaDisponible() && org.rol === 'propietario') {
+    db.guardarRenovacionAutomatica({ idSusc: s.id, idOrg: org.id, activar: true, texto: TEXTO_RENOVACION_AUTOMATICA });
+  }
+
+  // Importe cero (promoción): aprobado al instante y sin comprobante.
+  if (!(cobro.total > 0)) {
+    let r;
+    try {
+      r = db.renovarSinCosto({ idOrg: org.id, idSusc: s.id, idAnuncio, dias, cobro });
+    } catch (e) {
+      return falloInterno(res, e);
+    }
+    return responder(res, 201, {
+      anuncio: r.anuncio,
+      membresia: r.membresia,
+      cobro: cobroPublico(cobro),
+      comprobante: null,
+      pago: pagoPublico(db.pagoPorReferencia(cobro.referencia)),
+    });
+  }
+
+  // El procesador lo elige el servidor; un método que no vale, 400 antes de anotar nada.
+  try {
+    cobro.procesador = pagos.procesadorDeCobro(c.metodo);
+  } catch (e) {
+    return fallo(res, e.codigo || 400, e.message);
+  }
+
+  const concepto = idAnuncio
+    ? `Renovación ${s.plan_nombre} · ${pagos.nombreDeEquipo(db.anuncio(idAnuncio) || {})} · ${dias} días`
+    : `Renovación ${s.plan_nombre} · ${cupo} publicaciones · ${dias} días`;
+  let pago;
+  try {
+    pago = db.registrarCobro({
+      idOrg: org.id,
+      idSusc: s.id,
+      idAnuncio,
+      cobro,
+      intencion: {
+        tipo: 'renovacion', idSusc: s.id, idAnuncio, idPlan: s.plan_id, cupo, dias,
+        concepto,
+        cliente,
+        correoCliente: ctx.usuario.correo,
+      },
+    });
+  } catch (e) {
+    /* La carrera: otra petición anotó la renovación entre la lectura y
+       aquí, y `ux_pagos_renovacion_pendiente` frenó la segunda. Se
+       contesta con la que ganó, igual que si se hubiera visto antes. */
+    const ganador = e.codigo === 409 && db.pagoPendienteDeRenovacion(s.id);
+    if (ganador) return responderRenovacionEnEspera(res, ganador);
+    return falloInterno(res, e);
+  }
+
+  const r = await pagos.cobrar(pago);
+
+  if (r.estado === 'rechazado') {
+    return fallo(res, 402, NO_APROBADO_RENOVACION, { pago: pagoPublico(r.pago) });
+  }
+  if (r.estado !== 'aprobado') {
+    if (pago.procesador === 'transferencia') {
+      responder(res, 202, {
+        anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
+        aviso: EN_ESPERA_RENOVACION, transferencia: datosDeCuenta(),
+      });
+      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto });
+    }
+    return responder(res, 202, {
+      anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
+      aviso: EN_PROCESO_RENOVACION,
+    });
+  }
+  return responder(res, 201, {
+    anuncio: idAnuncio ? db.anuncio(idAnuncio) : null,
+    membresia: r.membresia,
+    cobro: cobroPublico(cobro),
+    comprobante: comprobantePublico(r.comprobante),
+    pago: pagoPublico(r.pago),
+  });
+}
+
+/* Lo que comparten las dos rutas antes de mirar nada: las condiciones
+   de pago y el tope de peticiones, el MISMO que `pagarBorrador`
+   (T-05.3-12): renovar en bucle no abre otro cupo de intentos. */
+function puedePedirRenovacion(res, ctx) {
+  if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return false;
+  if (!db.permitir(`pedir-pago:${ctx.usuario.id}`, 20, 60)) {
+    fallo(res, 429, 'Ha pedido muchos pagos seguidos. Inténtelo en un rato.');
+    return false;
+  }
+  return true;
+}
+
+const renovarAnuncio = conSesion(async (req, res, ctx, idAnuncio) => {
+  if (!puedePedirRenovacion(res, ctx)) return undefined;
+  const org = ctx.organizacion;
+
+  // T-05.3-08: ajeno e inexistente, el mismo 404 con el mismo texto.
+  const a = db.anuncio(idAnuncio);
+  if (!a || a.organizacion_id !== org.id) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
+  if (a.estado === 'borrador') return fallo(res, 409, 'Un borrador se publica, no se renueva.');
+  if (a.estado === 'vendido' || a.estado === 'retirado') {
+    return fallo(res, 409, 'Este equipo ya no está publicado: no hay nada que renovar. Puede publicar otro equipo.');
+  }
+  if (!a.suscripcion_id) {
+    return fallo(res, 409, 'Este anuncio es del sistema anterior y no tiene un plan que renovar. '
+      + 'Duplíquelo para publicarlo de nuevo.');
+  }
+  const s = db.suscripcionRenovable(a.suscripcion_id, org.id);
+  if (!s) return fallo(res, 409, 'Este anuncio no tiene un plan que se pueda renovar.');
+  /* D-04: una suscripción de varios cupos se renueva entera. Renovar un
+     anuncio suelto extendería también a sus compañeros (el fin es de la
+     suscripción) cobrando solo uno. Se devuelve el id para que el panel
+     ofrezca renovar el plan. */
+  if (s.anuncios_incluidos !== 1) {
+    return fallo(res, 409, `Este anuncio es parte de un plan con capacidad para ${s.anuncios_incluidos} `
+      + 'equipos: renueve el plan completo.', { idSusc: s.id });
+  }
+  return pedirRenovacion(req, res, ctx, { s, idAnuncio });
+});
+
+const renovarMembresia = conSesion(async (req, res, ctx, idSusc) => {
+  if (!puedePedirRenovacion(res, ctx)) return undefined;
+  const s = db.suscripcionRenovable(idSusc, ctx.organizacion.id);
+  if (!s) return fallo(res, 404, 'Esa membresía no es suya, no existe o no se renueva');
+  return pedirRenovacion(req, res, ctx, { s, idAnuncio: null });
+});
+
+/* La casilla de renovación automática (D-11, D-12). Solo el
+   propietario: activarla autoriza cobros futuros, y eso no lo decide un
+   vendedor ni un administrador de la cuenta. Activar exige CardNet
+   encendido y las condiciones de pago; desactivar funciona SIEMPRE,
+   también con CardNet apagado: nadie puede quedarse atado a un cobro
+   que no sabe cómo quitar. El texto guardado es el del servidor. */
+const cambiarRenovacionAutomatica = conSesion(async (req, res, ctx, idSusc) => {
+  const org = ctx.organizacion;
+  if (!org || org.rol !== 'propietario') {
+    return fallo(res, 403, 'Solo el propietario de la cuenta puede cambiar la renovación automática');
+  }
+  const c = await leerCuerpo(req);
+  const activar = c.activar === true;
+
+  if (!db.suscripcionRenovable(idSusc, org.id)) {
+    return fallo(res, 404, 'Esa membresía no es suya, no existe o no se renueva');
+  }
+  if (activar) {
+    if (!renovacionAutomaticaDisponible()) {
+      return fallo(res, 409, 'La renovación automática todavía no está disponible. Puede renovar a mano cuando quiera.');
+    }
+    if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
+  }
+  db.guardarRenovacionAutomatica({ idSusc, idOrg: org.id, activar, texto: TEXTO_RENOVACION_AUTOMATICA });
+  return responder(res, 200, { renovacionAutomatica: activar, membresia: db.suscripcionRenovable(idSusc, org.id) });
+});
+
 /* Los contactos atribuibles de la organización: qué anuncio y cuándo
    (MET-03). Solo los suyos, siempre: la organización sale de la sesión
    y nunca de la petición. Lo que llega por la consulta se valida antes
@@ -3575,6 +3866,11 @@ const cambiarEstado = conSesion(async (req, res, ctx, idAnuncio) => {
   }
 
   const r = db.cambiarEstadoAnuncio(idAnuncio, ctx.organizacion.id, c.estado);
+  // Sin esta rama, el vencido que se niega a reactivar caía en el 404
+  // de abajo y el panel decía «no es suyo» de un anuncio que sí lo es.
+  if (r.vencido) {
+    return fallo(res, 409, 'Este anuncio venció: renuévelo para volver a publicarlo.');
+  }
   if (r.sinCupo) {
     return fallo(res, 409, 'Su cupo lo ocupa ya otro equipo. Retire o marque vendido uno de los publicados, '
       + 'o amplíe su plan, y vuelva a intentarlo.');
@@ -4055,6 +4351,8 @@ const RUTAS = [
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/plan$/, cambiarPlanDeAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/disponibilidad$/, editarDisponibilidad],
+  // Renovar el MISMO anuncio (05.3). Subruta: va antes que las genéricas de /api/anuncios/:id.
+  ['POST', /^\/api\/anuncios\/([\w-]+)\/renovar$/, renovarAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)$/, cambiarEstado],
   ['DELETE', /^\/api\/anuncios\/([\w-]+)$/, eliminarAnuncio],
 
@@ -4067,6 +4365,8 @@ const RUTAS = [
   ['GET',  /^\/api\/membresias$/,                    misPlanes],
   ['POST', /^\/api\/membresias$/,                    comprarMembresia],
   ['POST', /^\/api\/membresias\/([\w-]+)\/ampliar$/, ampliarMembresia],
+  ['POST', /^\/api\/membresias\/([\w-]+)\/renovar$/, renovarMembresia],
+  ['PUT',  /^\/api\/membresias\/([\w-]+)\/renovacion-automatica$/, cambiarRenovacionAutomatica],
   ['POST', /^\/api\/eventos$/,           evento],
   ['POST', /^\/api\/fotos$/,             subirFoto],
   ['POST', /^\/api\/videos$/,            subirVideo],

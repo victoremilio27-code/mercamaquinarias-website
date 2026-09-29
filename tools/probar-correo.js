@@ -69,9 +69,17 @@ const MUESTRAS = [
     para: destino, nombre: 'Prueba', equipo: '2021 Caterpillar 320',
     idAnuncio: 'demo', vence: new Date(Date.now() + 30 * 86400000).toISOString(), plan: 'Destacado',
   })],
-  ['aviso de vencimiento', () => correo.enviarAnuncioPorVencer({
-    para: destino, nombre: 'Prueba', equipo: '2021 Caterpillar 320',
-    idAnuncio: 'demo', vence: new Date(Date.now() + 5 * 86400000).toISOString(), dias: 5,
+  ['aviso de vencimiento (7 días)', () => correo.enviarRecordatorioVencimiento({
+    para: destino, nombre: 'Prueba', equipo: '2021 Caterpillar 320', idAnuncio: 'demo',
+    vence: new Date(Date.now() + 7 * 86400000).toISOString(), tipo: '7d', plan: 'Destacado',
+  })],
+  ['aviso de vencimiento (3 días)', () => correo.enviarRecordatorioVencimiento({
+    para: destino, nombre: 'Prueba', equipo: '2021 Caterpillar 320', idAnuncio: 'demo',
+    vence: new Date(Date.now() + 3 * 86400000).toISOString(), tipo: '3d', plan: 'Destacado',
+  })],
+  ['aviso de vencimiento (mañana)', () => correo.enviarRecordatorioVencimiento({
+    para: destino, nombre: 'Prueba', equipo: '2021 Caterpillar 320', idAnuncio: 'demo',
+    vence: new Date(Date.now() + 86400000).toISOString(), tipo: '1d', plan: 'Destacado',
   })],
   ['anuncio vencido', () => correo.enviarAnuncioVencido({
     para: destino, nombre: 'Prueba', equipo: '2021 Caterpillar 320', idAnuncio: 'demo',

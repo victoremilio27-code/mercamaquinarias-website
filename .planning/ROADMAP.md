@@ -41,7 +41,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
 - [x] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
 - [x] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
-- [ ] **Phase 05.3: Renovación, vencimientos y alertas** (INSERTED) - Renovar sin rehacer el anuncio, suscripciones que vencen de verdad y avisos a 7, 3 y 1 día
+- [x] **Phase 05.3: Renovación, vencimientos y alertas** (INSERTED) - Renovar sin rehacer el anuncio, suscripciones que vencen de verdad y avisos a 7, 3 y 1 día
 - [ ] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo
 - [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
 - [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
@@ -192,7 +192,12 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. Los avisos de 7 días, 3 días y 24 horas salen una sola vez por anuncio y ciclo aunque la tarea corra dos veces, y no salen si el anuncio se vendió, venció o se renovó.
   4. La casilla «Activar renovación automática» se guarda (nunca marcada por defecto) y se desactiva desde el panel; el cobro automático queda para la Fase 6, apagado. El panel enseña «Vence el…» y el aviso visual a 7, 3 y 1 día.
   5. Si cambian las condiciones de pago o renovación de `legal.html`, su versión sube por el mecanismo que ya existe.
-**Plans**: sin planificar
+**Plans**: 5 planes (verificada 2026-09-29, human_needed solo por revisión visual)
+- [x] 05.3-01-PLAN.md — Migración 2026-09-renovacion, vencer de verdad, renovación como intención de `aprobarPago`, registro de recordatorios
+- [x] 05.3-02-PLAN.md — Rutas de renovar (anuncio y plan), consola y casilla de renovación automática apagada
+- [x] 05.3-03-PLAN.md — Tarea diaria: vencer suscripciones y avisos de 7, 3 y 1 día una sola vez
+- [x] 05.3-04-PLAN.md — Panel: «Vence el…», aviso visual y sección de renovar
+- [x] 05.3-05-PLAN.md — Condiciones de contratación 2.2 y batería final
 **UI hint**: yes
 **Notas**: Usa `tools/tareas.js` y sus temporizadores; nada de infraestructura nueva. Renovar cuesta lo mismo que publicar ese plan hoy (P8 por defecto).
 

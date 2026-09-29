@@ -85,6 +85,56 @@
 
     <section class="panel" id="panelPlan" aria-labelledby="t-plan"></section>
 
+    <!-- Renovar un anuncio o un plan sin rehacerlo (05.3). Oculta hasta que
+         panel.js la abre; el importe lo decide el servidor, aquí solo se
+         enseña y se elige cómo pagar. -->
+    <section class="panel" id="panelRenovar" aria-labelledby="t-renovar" hidden>
+      <h2 class="panel__titulo" id="t-renovar" tabindex="-1">Renovar</h2>
+      <div id="renovarResumen"></div>
+
+      <fieldset class="renovar-metodos" id="renovarMetodos"></fieldset>
+
+      <div class="comprobante" id="bloqueComprobanteRen">
+        <p class="comprobante__titulo">¿Necesita comprobante fiscal con RNC?</p>
+        <div class="comprobante__ops" role="radiogroup" aria-label="Tipo de comprobante">
+          <label class="opcion opcion--chica">
+            <input type="radio" name="tipoComprobanteRen" value="no" checked>
+            <span class="opcion__cuerpo">
+              <b class="opcion__nombre">No</b>
+              <span class="opcion__detalle">Recibo a su nombre, como consumidor final</span>
+            </span>
+          </label>
+          <label class="opcion opcion--chica">
+            <input type="radio" name="tipoComprobanteRen" value="si">
+            <span class="opcion__cuerpo">
+              <b class="opcion__nombre">Sí, con RNC</b>
+              <span class="opcion__detalle">Factura de crédito fiscal para su contabilidad</span>
+            </span>
+          </label>
+        </div>
+        <div class="campos campos--uno" id="camposFiscalesRen" hidden>
+          <label class="campo-v"><span>Razón social *</span>
+            <input type="text" id="ren-razon" autocomplete="organization" placeholder="Ej. Constructora del Este, SRL">
+          </label>
+          <label class="campo-v"><span>RNC *</span>
+            <input type="text" id="ren-rnc" inputmode="numeric" maxlength="9" placeholder="9 dígitos">
+          </label>
+          <label class="campo-v"><span>Dirección fiscal *</span>
+            <input type="text" id="ren-direccion" autocomplete="street-address" placeholder="Calle, número, sector, ciudad">
+          </label>
+        </div>
+      </div>
+
+      <div id="renovarAutomatica" hidden></div>
+
+      <p class="acceso__aviso" id="avisoRenovar" role="alert" hidden></p>
+
+      <div class="acciones acciones--pie">
+        <button class="btn btn--ambar" type="button" id="btnPagarRenovacion">Pagar y renovar</button>
+        <button class="btn btn--linea" type="button" id="btnCancelarRenovacion">Cancelar</button>
+      </div>
+    </section>
+
     <h2 class="visualmente-oculto" id="t-metricas">Métricas</h2>
     <ul class="tarjetas-metrica" id="metricas" aria-labelledby="t-metricas"></ul>
 

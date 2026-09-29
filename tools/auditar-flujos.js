@@ -316,6 +316,122 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
   await esperar(500);
 
+  /* ── Renovar desde el panel (05.3-04) ──────────────────────
+     Comprueba en un navegador real lo que el particular ve: cuándo vence
+     su anuncio, el botón «Renovar ahora», el precio final sin «cupo» ni
+     «3 %», la casilla de renovación automática AUSENTE (el CI no enciende
+     MERCA_CARDNET, D-12) y el enlace ?renovar= de los avisos por correo.
+     No se paga nada. Chrome no arranca en la nube de Victor: esto corre
+     en el trabajo `navegador` del CI.
+
+     El anuncio se publica por dentro de la página con las mismas rutas
+     del borrador que usa el asistente; el Estándar sale a importe cero
+     (promoción) y se publica al instante, sin ingreso que confirmar. */
+  console.log('\n  Renovación desde el panel');
+  const idRenovable = await p.evaluate(async () => {
+    const pedir = async (ruta, metodo, cuerpo) => {
+      const r = await fetch(`/api${ruta}`, {
+        method: metodo, credentials: 'same-origin',
+        headers: cuerpo ? { 'Content-Type': 'application/json' } : undefined,
+        body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+      });
+      let d = null;
+      try { d = await r.json(); } catch (_) { /* sin cuerpo */ }
+      return { ok: r.ok, estado: r.status, d };
+    };
+    const ses = await pedir('/sesion', 'GET');
+    const faltan = (((ses.d || {}).legales || {}).faltan || {});
+    const docs = [...new Set([...(faltan.publicar || []), ...(faltan.pagar || [])])];
+    if (docs.length) await pedir('/legales/aceptar', 'POST', { documentos: docs });
+
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+      + 'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const fotos = [];
+    for (let i = 0; i < 3; i++) {
+      const f = await pedir('/fotos', 'POST', { completa: PNG });
+      if (!f.ok) return { error: `foto ${f.estado}: ${JSON.stringify(f.d)}` };
+      fotos.push({ url: f.d.completa, miniatura: f.d.miniatura || null });
+    }
+    const nuevo = await pedir('/borradores', 'POST', { plan: 'estandar', dias: 30 });
+    if (!nuevo.ok) return { error: `borrador ${nuevo.estado}: ${JSON.stringify(nuevo.d)}` };
+    const id = nuevo.d.borrador.id;
+    const guardado = await pedir(`/borradores/${id}`, 'PUT', {
+      categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt',
+      modelo: '567', anio: 2019, precio: 2500000, provincia: 'Santo Domingo',
+      fotos, telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+    });
+    if (!guardado.ok) return { error: `guardar ${guardado.estado}: ${JSON.stringify(guardado.d)}` };
+    const pago = await pedir(`/borradores/${id}/pago`, 'POST', {});
+    if (pago.estado !== 201) return { error: `pago ${pago.estado}: ${JSON.stringify(pago.d)}` };
+    return { id };
+  });
+
+  if (!idRenovable || idRenovable.error) {
+    anota('renovar', 'flujo', `no se pudo dejar un anuncio publicado: ${idRenovable && idRenovable.error}`);
+  } else {
+    const id = idRenovable.id;
+    await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+    await esperar(900);
+
+    const fila = await p.$$eval('#filasAnuncios tr', (filas, ident) => {
+      const f = filas.find((tr) => tr.dataset.id === ident);
+      if (!f) return null;
+      return {
+        texto: f.innerText,
+        renovar: [...f.querySelectorAll('button')].some((b) => /Renovar ahora/.test(b.textContent)),
+      };
+    }, id);
+    if (fila && /Vence el/.test(fila.texto) && fila.renovar) ok('la fila enseña «Vence el…» y el botón «Renovar ahora»');
+    else anota('renovar', 'flujo', `la fila del anuncio publicado no tiene «Vence el» y «Renovar ahora» (${fila ? fila.texto.replace(/\s+/g, ' ').slice(0, 120) : 'sin fila'})`);
+
+    // Pulsar «Renovar ahora» abre la sección con el precio final.
+    await p.evaluate((ident) => {
+      const f = [...document.querySelectorAll('#filasAnuncios tr')].find((tr) => tr.dataset.id === ident);
+      const b = f && [...f.querySelectorAll('button')].find((x) => /Renovar ahora/.test(x.textContent));
+      if (b) b.click();
+    }, id);
+    await esperar(500);
+    const seccion = await p.$eval('#panelRenovar', (el) => ({ visible: !el.hidden, texto: el.innerText })).catch(() => null);
+    if (!seccion || !seccion.visible) {
+      anota('renovar', 'flujo', '«Renovar ahora» no abre #panelRenovar');
+    } else {
+      if (/ITBIS incluido|Sin costo durante la promoción/.test(seccion.texto)) ok('la renovación enseña el precio final «ITBIS incluido»');
+      else anota('renovar', 'ux', 'la sección de renovar no dice «ITBIS incluido» ni «Sin costo durante la promoción»');
+      if (/cupo|3 ?%/i.test(seccion.texto)) anota('renovar', 'ux', 'la sección de renovar dice «cupo» o «3 %» al particular');
+      else ok('la renovación no dice «cupo» ni «3 %»');
+    }
+
+    // D-12: sin CardNet no existe la casilla, ni desactivada.
+    const auto = await p.$eval('#renovarAutomatica', (el) => ({ oculto: el.hidden, vacio: el.innerHTML.trim() === '' })).catch(() => null);
+    if (auto && auto.oculto && auto.vacio) ok('la casilla de renovación automática no aparece con CardNet apagado');
+    else anota('renovar', 'flujo', 'la casilla de renovación automática aparece con CardNet apagado');
+
+    // «Cancelar» la oculta. No se paga nada.
+    await p.click('#btnCancelarRenovacion').catch(() => {});
+    await esperar(200);
+    const cerrada = await p.$eval('#panelRenovar', (el) => el.hidden).catch(() => false);
+    if (cerrada) ok('«Cancelar» oculta la sección de renovar');
+    else anota('renovar', 'flujo', '«Cancelar» no oculta la sección de renovar');
+
+    // El enlace del correo abre la renovación de ese anuncio, y solo de ese.
+    await p.goto(`${BASE}/panel.html?renovar=${encodeURIComponent(id)}`, { waitUntil: 'networkidle0' });
+    await esperar(900);
+    const abre = await p.$eval('#panelRenovar', (el) => !el.hidden).catch(() => false);
+    if (abre) ok('panel.html?renovar=<id> abre la renovación de ese anuncio');
+    else anota('renovar', 'flujo', 'panel.html?renovar=<id> no abre la renovación');
+
+    const antesErrores = fallos.length;
+    await p.goto(`${BASE}/panel.html?renovar=${encodeURIComponent('<script>alert(1)</script>')}`, { waitUntil: 'networkidle0' });
+    await esperar(900);
+    const abreMalo = await p.$eval('#panelRenovar', (el) => !el.hidden).catch(() => false);
+    const pintado = await p.evaluate(() => document.body.innerHTML.includes('<script>alert(1)'));
+    if (!abreMalo && !pintado && fallos.length === antesErrores) ok('panel.html?renovar=<script> no abre nada ni lanza errores');
+    else anota('renovar', 'SEGURIDAD', 'panel.html?renovar=<script> abre la renovación, se pinta o lanza errores');
+
+    await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+    await esperar(500);
+  }
+
   // El particular no debe ver el panel de administración
   await p.goto(`${BASE}/admin.html`, { waitUntil: 'networkidle0' });
   await esperar(800);

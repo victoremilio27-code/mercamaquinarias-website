@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05.2 verificada y en el PR #38 (fusionar si el CI está en verde). Siguiente: ejecutar la 05.3, ya planificada."
-last_updated: "2026-09-29T17:00:00.000Z"
+stopped_at: "05.3 ejecutada y verificada (human_needed, solo visual), en su PR. Siguiente: planificar la 05.4."
+last_updated: "2026-09-29T22:00:00.000Z"
 last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
@@ -26,27 +26,35 @@ comprobante o NCF lo ejecuta Opus. Hasta 2-3 agentes si no tocan los mismos arch
 - PR #33 (reactivar un vendido exige cupo libre), #34 (renders en alquiler), #35 (fase 05.1: precio único
   con el 3 % dentro e ITBIS incluido, 1.800/3.200, condiciones v2.1), #36 y #37 (05.2-01 y 05.2-02).
 
-**Fase 05.2 terminada y verificada (passed), en el PR #38** (rama `claude/fase-05.2-publicar-equipo`):
-planes 03 a 06 (pago del borrador, panel y planes sin «cupo», asistente de publicar, limpieza de
-borradores a los 30 días). **Si al leer esto el PR #38 sigue abierto:** mirar su CI; si `pruebas` y
-`navegador` están en verde, fusionarlo, comprobar «Sitio arriba» en el job `desplegar` de `main` y marcar
-aquí que la 05.2 está en producción. Si está rojo, arreglarlo en esa rama.
+**Fase 05.2 en producción** (PR #38 fusionado).
 
-**Siguiente paso: ejecutar la fase 05.3** (renovación manual, vencimientos y alertas 7/3/1).
-- Planes ya escritos y validados: `.planning/phases/05.3-renovaci-n-manual-vencimientos-y-alertas-de-7-3-y-1-d-a/`
-  05.3-01 a 05.3-05 (4 olas; 02 y 03 en paralelo). **01 y 02 tocan el camino del comprobante → Opus**;
-  03, 04 y 05 → Sonnet (campo `comprobante_ncf` del frontmatter).
-- Crear la rama `claude/fase-05.3-renovacion` desde `main` **después** de fusionar el PR #38 (la rama
-  remota con ese nombre existe pero está vieja: recrearla desde `main`, sin commits propios).
-- Luego: 05.4 (dealer con capacidad de publicaciones activas y consola), sin planificar todavía.
-  Después, replanificar la fase 6 (CardNet) desde el 06-02 contra el modelo nuevo; su migración
-  `2026-10-cardnet` no debe volver a crear las columnas `renovacion_*` que crea la 05.3.
+**Fase 05.3 terminada y verificada** (rama `claude/fase-05-3-renovacion-ijucqj`, en su PR): los 5 planes
+hechos; `05.3-VERIFICATION.md` da human_needed solo por la revisión visual (5 criterios y 26 verdades
+comprobados en el código). Migración `2026-09-renovacion`, renovar anuncio o plan por `confirmarPago`,
+tarea `suscripciones` que vence de verdad, avisos 7/3/1 con registro idempotente, panel con «Vence el…»
+y renovar, casilla de renovación automática construida y **apagada** (`MERCA_CARDNET`), condiciones 2.2.
+Arneses nuevos: `renovacion:probar` (150) y `recordatorios:probar` (32), ambos en CI.
+**Si al leer esto el PR de la 05.3 sigue abierto:** mirar su CI; si `pruebas` y `navegador` están en verde,
+fusionarlo, comprobar «Sitio arriba» en `desplegar` y marcar aquí que la 05.3 está en producción.
+- Anotado para la fase de deuda técnica (no bloquea): `tipoRecordatorio` redondea hacia arriba, así que
+  «vence mañana» puede llegar el mismo día del corte; `fechaCorta` de `assets/panel.js` pinta la fecha en
+  UTC (un corte entre 00:00 y 04:00 UTC sale un día después que en hora dominicana); la rama `ampliacion`
+  de `aprobarPago` no mira `fin` (hoy la frena `membresiaViva` en la consola).
+- En la nube, puppeteer como root necesita `--no-sandbox` y el proxy del entorno: los ejecutores usaron un
+  envoltorio en el scratchpad vía `PUPPETEER_EXECUTABLE_PATH`, sin tocar el repo.
+
+**Siguiente paso: planificar la 05.4** (dealer con capacidad de publicaciones activas y consola).
+Después, replanificar la fase 6 (CardNet) desde el 06-02 contra el modelo nuevo; su migración
+`2026-10-cardnet` no debe volver a crear las columnas `renovacion_*` que ya crea la 05.3.
 
 **Pendiente de Victor (además de lo de más abajo):**
 - NCF: pedir la secuencia **B02** a la DGII (hoy no está cargada: el que compra sin RNC recibe un recibo no
   fiscal), fechas de vencimiento de B01 y B04, y un rango de B01 mayor (quedan 15). Preguntar al contador por
   la facturación electrónica (e-CF).
-- Revisar la redacción de las Condiciones v2.1 (cláusula 2.1). La 05.3 las subirá a 2.2.
+- Revisar la redacción de las Condiciones, ya en la 2.2 (cláusula 2.1 y las nuevas 4.4-4.6 de renovación).
+- Revisión visual de la 05.3 (lista en `05.3-VERIFICATION.md`): «Vence el…» y avisos en el panel, sección
+  «Renovar», renovar un vencido tras el despliegue, los tres correos de aviso en un cliente real, y decidir
+  si vale «vence mañana» cuando el corte es ese mismo día.
 - Confirmar en supercarros.com/vender los precios del estudio (`research/precios-mercado.md`).
 - Revisión visual de la 05.1 y la 05.2 (listas en sus VERIFICATION/SUMMARY).
 
@@ -55,7 +63,7 @@ aquí que la 05.2 está en producción. Si está rojo, arreglarlo en esa rama.
 Ver: `.planning/PROJECT.md` (actualizado 2026-09-25)
 
 **Core value:** Ser el punto de referencia de República Dominicana para quien tenga, necesite o trabaje con maquinaria pesada — el vacío que hoy no ocupa nadie.
-**Current focus:** Cambio del modelo comercial (`.planning/research/modelo-comercial.md`), a la espera del visto bueno de Victor. **No se ejecuta nada hasta que él lo diga.**
+**Current focus:** Cambio del modelo comercial (`.planning/research/modelo-comercial.md`, autorizado 2026-09-25): 05.1, 05.2 y 05.3 hechas; falta la 05.4.
 
 ## Current Position
 

@@ -12,7 +12,7 @@
  *
  * Toda tarea es idempotente. Correrlo dos veces seguidas no manda dos
  * correos ni hace dos respaldos del mismo minuto: lo que ya se hizo
- * queda anotado en la base.
+ * queda anotado en la base (los avisos de vencimiento, en `recordatorios`).
  */
 
 require('./entorno');
@@ -27,7 +27,6 @@ const facturas = require('./facturas');
 const RAIZ = path.resolve(__dirname, '..');
 
 const SECO = process.argv.includes('--seco');
-const DIAS_AVISO = Number(process.env.MERCA_DIAS_AVISO) || 5;
 const RESPALDOS = process.env.MERCA_RESPALDOS || path.join(RAIZ, '.tmp', 'respaldos');
 const RESPALDOS_MAX = Number(process.env.MERCA_RESPALDOS_MAX) || 14;
 
@@ -54,29 +53,66 @@ function caducar() {
   anotar('caducar', `${r.changes} anuncio(s) marcados como vencidos`);
 }
 
-/* Aviso antes del corte. Se manda una sola vez por anuncio: la marca
-   se pone solo si el correo salió, así un fallo del proveedor no
-   consume el aviso y el intento se repite mañana. */
-async function avisarPorVencer() {
-  const pendientes = db.anunciosPorVencer(DIAS_AVISO);
+/* Pasa a 'vencida' toda membresía cuyo `fin` ya pasó.
+ *
+ * Antes nada lo hacía (auditoría §1.9): un plan pagado una vez seguía
+ * «activo» para siempre y sostenía anuncios y la página del dealer. Va
+ * PRIMERA en la tanda para que `caducar` y `perfiles` vean el estado de
+ * hoy: en la misma pasada los anuncios dejan de publicarse y la página se
+ * apaga. Nada se borra y repetirla no cambia nada. */
+function vencerMembresias() {
+  if (SECO) {
+    const n = db.abrir().prepare(
+      "SELECT COUNT(*) AS n FROM suscripciones WHERE estado = 'activa' AND fin IS NOT NULL AND fin < ?")
+      .get(db.ahora()).n;
+    return anotar('suscripciones', `${n} membresía(s) pasarían a vencidas`);
+  }
+  const { vencidas } = db.vencerSuscripciones();
+  anotar('suscripciones', `${vencidas} membresía(s) vencidas`);
+}
+
+/* Avisos de 7 días, 3 días y 24 horas antes del corte, una sola vez por
+ * anuncio y ciclo de `vence` (sustituyen al aviso único de 5 días, D-08).
+ *
+ * Reservar ANTES de enviar es lo que impide dos correos si dos pasadas
+ * coinciden: la reserva es síncrona y el UNIQUE de `recordatorios` hace el
+ * resto, así que la segunda pasada ya no ve el aviso como pendiente. Un
+ * correo que falla queda 'fallido' y se reintenta en la pasada siguiente.
+ * No hay preferencia de «no quiero avisos» en la base y no se inventa
+ * (D-10). */
+async function avisarRecordatorios() {
+  const pendientes = db.recordatoriosPendientes();
   if (!pendientes.length) return anotar('por-vencer', 'sin anuncios próximos a vencer');
 
   let enviados = 0;
+  const porTipo = { '7d': 0, '3d': 0, '1d': 0 };
   for (const a of pendientes) {
-    const dias = Math.max(1, Math.ceil((new Date(a.vence) - Date.now()) / 86400000));
-    if (SECO) { enviados++; continue; }
+    if (SECO) { enviados++; porTipo[a.tipo]++; continue; }
 
-    const r = await correo.enviarAnuncioPorVencer({
-      para: a.correo,
-      nombre: a.nombre,
-      equipo: `${a.anio} ${a.marca} ${a.modelo}`,
-      idAnuncio: a.id,
-      vence: a.vence,
-      dias,
-    });
-    if (r && r.entregado) { db.marcarAviso(a.id, 'por-vencer'); enviados++; }
+    const idRec = db.reservarRecordatorio({ idAnuncio: a.id, tipo: a.tipo, vence: a.vence });
+    if (!idRec) continue;
+
+    let entregado = false;
+    try {
+      const r = await correo.enviarRecordatorioVencimiento({
+        para: a.correo,
+        nombre: a.nombre,
+        equipo: `${a.anio} ${a.marca_nombre || a.marca} ${a.modelo}`,
+        idAnuncio: a.id,
+        vence: a.vence,
+        tipo: a.tipo,
+        plan: a.plan_nombre,
+      });
+      entregado = !!(r && r.entregado);
+    } catch (e) {
+      // Un fallo del proveedor no detiene a los demás avisos.
+      console.error(`  ✗ aviso de ${a.id}: ${e.message}`);
+    }
+    db.anotarRecordatorio(idRec, entregado ? 'enviado' : 'fallido');
+    if (entregado) { enviados++; porTipo[a.tipo]++; }
   }
-  anotar('por-vencer', `${enviados} de ${pendientes.length} aviso(s) de vencimiento`);
+  anotar('por-vencer', `${enviados} de ${pendientes.length} aviso(s) de vencimiento `
+    + `(7d: ${porTipo['7d']}, 3d: ${porTipo['3d']}, 1d: ${porTipo['1d']})`);
 }
 
 async function avisarVencidos() {
@@ -517,11 +553,12 @@ function limpiarBorradores() {
 }
 
 const TAREAS = {
+  suscripciones: vencerMembresias,
   caducar,
   perfiles: apagarPerfiles,
   'informe-semanal': informeSemanal,
   'informe-mensual': informeMensual,
-  'por-vencer': avisarPorVencer,
+  'por-vencer': avisarRecordatorios,
   vencidos: avisarVencidos,
   comprobantes: reenviarComprobantes,
   ncf: avisarNcf,
@@ -532,7 +569,7 @@ const TAREAS = {
   optimizar,
 };
 
-(async () => {
+async function principal() {
   const pedidas = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 
   /* Sin argumentos se ejecuta el mantenimiento DIARIO, que no es todo.
@@ -569,4 +606,11 @@ const TAREAS = {
 
   console.log(`\n${aEjecutar.length - fallos}/${aEjecutar.length} tarea(s) completadas\n`);
   process.exit(fallos ? 1 : 0);
-})();
+}
+
+/* Se ejecuta solo si es el punto de entrada: el arnés de pruebas hace
+   `require('./tareas')` para llamar a las tareas y no debe arrancar la
+   tanda ni terminar el proceso. */
+if (require.main === module) principal();
+
+module.exports = { TAREAS, vencerMembresias, avisarRecordatorios };
