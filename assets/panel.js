@@ -334,7 +334,7 @@ function pagosEnEsperaHTML() {
     <h3 class="transferencia__titulo" id="t-pagos-espera">Pagos en espera de confirmación</h3>
     <p class="panel__texto">${esParticular()
       ? 'Su anuncio se publica cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'
-      : 'Sus cupos aparecerán aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'}</p>
+      : 'Lo contratado aparecerá aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'}</p>
     ${PAGOS_PENDIENTES.map(tarjetaPagoEnEspera).join('')}
   </section>`;
 }
@@ -469,8 +469,8 @@ function pintarPlan() {
 
   if (!MEMBRESIAS.length) {
     caja.innerHTML = `
-      <h2 class="panel__titulo" id="t-plan"><em>Sin</em> cupos contratados</h2>
-      <p class="panel__texto">Un cupo es el sitio que ocupa un equipo publicado. Elija el nivel y cuántos equipos quiere publicar; después reparte los cupos entre sus máquinas y los reutiliza cuando venda alguna.</p>
+      <h2 class="panel__titulo" id="t-plan"><em>Sin</em> publicaciones activas contratadas</h2>
+      <p class="panel__texto">Una publicación activa es cada equipo que tiene a la vista en el catálogo. Elija el nivel y cuántas publicaciones activas quiere tener a la vez; cuando venda un equipo, esa capacidad queda libre para publicar otro.</p>
       ${pagosEnEsperaHTML()}
       ${planesVencidosHTML()}
       <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
@@ -514,7 +514,7 @@ function pintarPlan() {
     </dl>
 
     ${totalLibres === 0 && !sinLimite
-      ? `<p class="realce">${icono('i-aviso')} <span>No le quedan cupos libres. Añada cupos a una membresía —solo paga los días que le quedan— o marque un equipo como vendido para liberar el suyo.</span></p>`
+      ? `<p class="realce">${icono('i-aviso')} <span>No le queda capacidad disponible. Agregue publicaciones activas a su plan —solo paga los días que le quedan— o marque un equipo como vendido para liberar capacidad.</span></p>`
       : ''}
 
     <div class="acciones acciones--pie">
@@ -602,7 +602,7 @@ function selectorPlan(a) {
     const suya = actual && m.id === actual.id;
     const lleno = m.libres === 0 && !suya;
     const pocas = (a.fotos || a.total_fotos || 0) > m.fotos_maximas;
-    const motivo = lleno ? (esParticular() ? ' · sin capacidad libre' : ' · sin cupos libres')
+    const motivo = lleno ? ' · sin capacidad disponible'
       : pocas ? ` · admite ${m.fotos_maximas} fotos` : '';
     return `<option value="${esc(m.id)}"${suya ? ' selected' : ''}${lleno || pocas ? ' disabled' : ''}>${esc(m.plan_nombre)}${motivo}</option>`;
   }).join('');
@@ -810,7 +810,7 @@ function pintarEmpresa() {
       aprobada: {
         clase: 'pastilla--verde',
         rotulo: 'Aprobada',
-        nota: 'Su empresa está aprobada. La página pública aparece en el directorio mientras tenga cupos Premium activos.',
+        nota: 'Su empresa está aprobada. La página pública aparece en el directorio mientras tenga el nivel Premium contratado.',
       },
       rechazada: {
         clase: 'pastilla--roja',
@@ -832,7 +832,7 @@ function pintarEmpresa() {
           ? `<a href="dealer.html?d=${encodeURIComponent(org.slug)}">/dealer.html?d=${esc(org.slug)}</a>`
           : 'Al aprobarse la cuenta'}</dd></div>
         <div><dt>Visible en el directorio</dt><dd>${aprobada
-          ? (org.perfilPublico ? 'Sí' : 'Al contratar cupos Premium')
+          ? (org.perfilPublico ? 'Sí' : 'Al contratar el nivel Premium')
           : 'No, hasta que se apruebe'}</dd></div>
       </dl>
       <p class="panel__nota">${revision.nota}</p>
@@ -843,7 +843,7 @@ function pintarEmpresa() {
 
   caja.innerHTML = `
     <h2 class="panel__titulo" id="t-empresa"><em>¿Comercializa</em> maquinaria de forma habitual?</h2>
-    <p class="panel__texto">Solicite la cuenta de empresa: revisamos los datos y, una vez aprobada, se genera su página pública con todo el inventario y aparece en el directorio al contratar cupos del nivel Premium. Los equipos que ya publicó se mantienen.</p>
+    <p class="panel__texto">Solicite la cuenta de empresa: revisamos los datos y, una vez aprobada, se genera su página pública con todo el inventario y aparece en el directorio al contratar el nivel Premium. Los equipos que ya publicó se mantienen.</p>
     <form class="form-rnc solicitud" id="formRnc" novalidate>
       <fieldset class="solicitud__bloque">
         <legend class="solicitud__titulo">La empresa</legend>
@@ -1134,7 +1134,7 @@ async function montarPanel() {
 
   /* Vuelve a pedir las membresías y repinta. Se llama después de todo
      lo que mueve un cupo —publicar no, que eso recarga la página, pero
-     sí vender, mover o ampliar—, porque los cupos libres cambian y la
+     sí vender, mover o ampliar—, porque la capacidad disponible cambia y la
      tabla tiene que reflejarlo al momento. */
   async function refrescarCupos() {
     const r = await api('/membresias', { silencioso: true });
@@ -1264,7 +1264,7 @@ async function montarPanel() {
         + 'Se borran el anuncio, sus fotografías y sus estadísticas, y no se puede deshacer. '
         + (esParticular()
           ? 'Si estaba publicado, su plan vuelve a tener capacidad para otro equipo mientras dure.\n\n'
-          : 'Su cupo queda libre para publicar otro equipo.\n\n')
+          : 'Esa capacidad queda libre para publicar otro equipo.\n\n')
         + 'Si solo quiere dejar de venderlo, use «Marcar vendido»: conserva las visitas y los contactos.';
     if (!confirm(confirmacion)) return;
 
@@ -1283,7 +1283,7 @@ async function montarPanel() {
       pintarTabla();
       avisoPlan(esBorrador
         ? 'Borrador eliminado.'
-        : `${nombre} se eliminó.${esParticular() ? '' : ' Su cupo vuelve a estar libre.'}`, false);
+        : `${nombre} se eliminó.${esParticular() ? '' : ' Esa capacidad vuelve a estar libre.'}`, false);
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Eliminar';
