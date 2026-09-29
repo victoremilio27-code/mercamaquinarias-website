@@ -1501,8 +1501,8 @@ const listarPagosAdmin = conAdmin((req, res, ctx, consulta) => {
    una membresía vencida los regalaría sin plazo, y convertir la
    ampliación en una compra nueva sería decidir por el cliente qué
    compra. La única salida es anular y devolver el dinero en el banco. */
-const AMPLIACION_HUERFANA = 'La membresía que ampliaba este pago ya no existe. No se añadió ningún '
-  + 'cupo ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
+const AMPLIACION_HUERFANA = 'La membresía que ampliaba este pago ya no existe o ya venció. No se añadió '
+  + 'capacidad ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
 
 /* Lo mismo para la publicación del particular (05.2-03): mientras la
    transferencia esperaba, el borrador se eliminó o dejó de serlo. Pasarlo
@@ -1628,7 +1628,7 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
      ingreso que entró. El comprobante sale en «pendientes» de Facturas
      y pulsar «recibido» otra vez lo emite (recuperación de la fase 3). */
   if (!r.comprobante && r.pago.estado === 'aprobado' && r.pago.total > 0) {
-    cuerpo.aviso = 'El pago quedó aprobado y los cupos otorgados, pero el comprobante no se pudo '
+    cuerpo.aviso = 'El pago quedó aprobado y lo comprado quedó activado, pero el comprobante no se pudo '
       + 'emitir. Aparece en los pendientes de Facturas; vuelva a marcarlo como recibido para emitirlo.';
   }
   return responder(res, 200, cuerpo);
@@ -1998,7 +1998,7 @@ function reglasDePagina(org, pagina) {
       id: 'plan',
       titulo: 'Tiene un plan que incluye página propia',
       cumple: !!org.perfil_publico,
-      falta: 'La página propia va incluida en el nivel Premium. Se activa al contratar cupos de ese nivel.',
+      falta: 'La página propia va incluida en el nivel Premium. Se activa al contratar ese nivel.',
       paraCrear: true,
     },
     {
@@ -2538,13 +2538,13 @@ function datosFiscalesDe(ctx) {
  * el anunciante necesita saber. Pendiente: 202, sin cupos ni
  * comprobante todavía; aparecerán cuando el pago se confirme. El
  * navegador de hoy nunca ve un 202 porque `demo` aprueba siempre. */
-const NO_APROBADO = 'El pago no fue aprobado. No se le cobró nada, no se añadió ningún cupo '
-  + 'y no se emitió comprobante.';
-const EN_PROCESO = 'Su pago está en proceso. Los cupos y el comprobante aparecerán cuando se confirme.';
+const NO_APROBADO = 'El pago no fue aprobado. No se le cobró nada, lo que tiene contratado '
+  + 'no cambió y no se emitió comprobante.';
+const EN_PROCESO = 'Su pago está en proceso. Lo contratado y el comprobante aparecerán cuando se confirme.';
 
 /* Sin plazo prometido: lo confirma una persona mirando el banco, y un
    «en 24 horas» que no se cumple un viernes por la tarde es un reclamo. */
-const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicada. Los cupos y el '
+const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicada. Lo contratado y el '
   + 'comprobante fiscal llegan cuando confirmemos el ingreso.';
 
 const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
@@ -2599,7 +2599,7 @@ function avisarTransferenciaPedida(ctx, { referencia, total, concepto }) {
     asunto: `Transferencia en espera ${referencia} · ${empresa} · ${dinero}`,
     texto: [
       'Un cliente pidió pagar por transferencia. Cuando el ingreso aparezca en el banco,',
-      'márquelo como recibido en la consola (Pagos): eso otorga los cupos y emite el comprobante.',
+      'márquelo como recibido en la consola (Pagos): eso activa lo comprado y emite el comprobante.',
       '',
       `Referencia: ${referencia}`,
       `Empresa:    ${empresa}`,
@@ -2698,7 +2698,11 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     cobro,
     intencion: {
       tipo: 'compra', idPlan: plan.id, cupo, dias,
-      concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'cupo' : 'cupos'} · ${dias} días`,
+      /* El concepto es lo que imprime el comprobante. Con el vocabulario
+         nuevo cambia solo para lo que se emita desde ahora: lo ya emitido
+         y las intenciones ya guardadas conservan su texto, porque un
+         comprobante emitido nunca se reescribe (fiscal). */
+      concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'publicación activa' : 'publicaciones activas'} · ${dias} días`,
       cliente,
       correoCliente: ctx.usuario.correo,
     },
@@ -2813,8 +2817,10 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
     cobro,
     intencion: {
       tipo: 'ampliacion', idSusc, cupoAnterior: s.anuncios_incluidos, cupoNuevo, anadidos: cuantos,
+      /* Lo que imprime el comprobante: vocabulario nuevo solo hacia
+         adelante; lo ya emitido no se toca nunca (fiscal). */
       concepto: `Ampliación de ${s.plan_nombre || 'membresía'} · ${cuantos} `
-        + `${cuantos === 1 ? 'cupo' : 'cupos'} más · hasta ${cupoNuevo}`,
+        + `${cuantos === 1 ? 'publicación activa' : 'publicaciones activas'} más · hasta ${cupoNuevo}`,
       /* Los mismos datos fiscales de la compra original: quien facturó
          con RNC espera que la ampliación de esa misma membresía salga
          igual, no a nombre de otro. */
@@ -2873,7 +2879,7 @@ const cambiarPlanDeAnuncio = conSesion(async (req, res, ctx, idAnuncio) => {
   // El cupo tiene que estar libre. Cuenta solo lo que ocupa sitio, así
   // que un equipo vendido no bloquea el suyo.
   if (destino.libres !== null && destino.libres < 1) {
-    return fallo(res, 409, `Su membresía ${destino.plan_nombre} no tiene cupos libres. Amplíela o libere uno marcando un equipo como vendido.`);
+    return fallo(res, 409, `Su plan ${destino.plan_nombre} no tiene capacidad disponible. Agregue publicaciones activas o libere capacidad marcando un equipo como vendido.`);
   }
 
   // Bajar de nivel puede dejar fuera fotografías ya publicadas. Se
@@ -3245,15 +3251,15 @@ const publicar = conSesion(async (req, res, ctx) => {
     }
     const tiene = db.suscripcionesDe(org.id).length;
     return fallo(res, 402, tiene
-      ? 'Sus cupos están ocupados. Añada cupos desde su panel —solo paga los días que le queden— o libere uno marcando un equipo como vendido.'
-      : 'Todavía no tiene cupos. Contrate un plan para publicar este equipo.');
+      ? 'Toda su capacidad está en uso. Agregue publicaciones activas desde su panel —solo paga los días que le queden— o libere capacidad marcando un equipo como vendido.'
+      : 'Todavía no tiene publicaciones activas contratadas. Contrate un plan para publicar este equipo.');
   }
   if (membresia.libres !== null && membresia.libres < 1) {
     if (esParticularQuePaga) {
       return fallo(res, 409, 'Su plan no tiene capacidad libre para otro equipo. Elija cómo publicar este equipo y '
         + 'pague su publicación, o marque como vendido uno de los publicados.');
     }
-    return fallo(res, 409, `Su membresía ${membresia.plan_nombre} no tiene cupos libres. Amplíela o libere uno marcando un equipo como vendido.`);
+    return fallo(res, 409, `Su plan ${membresia.plan_nombre} no tiene capacidad disponible. Agregue publicaciones activas o libere capacidad marcando un equipo como vendido.`);
   }
 
   const plan = db.planPorId(membresia.plan_id);
@@ -3909,8 +3915,8 @@ const cambiarEstado = conSesion(async (req, res, ctx, idAnuncio) => {
     return fallo(res, 409, 'Este anuncio venció: renuévelo para volver a publicarlo.');
   }
   if (r.sinCupo) {
-    return fallo(res, 409, 'Su cupo lo ocupa ya otro equipo. Retire o marque vendido uno de los publicados, '
-      + 'o amplíe su plan, y vuelva a intentarlo.');
+    return fallo(res, 409, 'Esa capacidad ya la ocupa otro equipo. Retire o marque vendido uno de los publicados, '
+      + 'o agregue publicaciones activas a su plan, y vuelva a intentarlo.');
   }
   if (!r.changes) return fallo(res, 404, 'Ese anuncio no es suyo o no existe');
 

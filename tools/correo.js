@@ -1173,7 +1173,7 @@ function enviarDatosTransferencia({ para, nombre, referencia, total, concepto, d
 }
 
 /* La transferencia anulada, al comprador, con el motivo. No hubo
-   cupos ni comprobante; si llegó a transferir, la devolución se hace en
+   capacidad ni comprobante; si llegó a transferir, la devolución se hace en
    el banco y se coordina por correo con facturación. */
 function enviarTransferenciaAnulada({ para, nombre, referencia, motivo }) {
   const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
@@ -1185,7 +1185,7 @@ function enviarTransferenciaAnulada({ para, nombre, referencia, motivo }) {
       saludo, '',
       `Anulamos el pago por transferencia con la referencia ${referencia}.`, '',
       `Motivo: ${motivo}`, '',
-      'No se añadió ningún cupo ni se emitió comprobante fiscal por este pago.',
+      'No se activó nada de lo pedido ni se emitió comprobante fiscal por este pago.',
       'Si ya había transferido el importe, escríbanos respondiendo a este correo o a',
       `${BUZONES.facturacion} y coordinamos la devolución.`, '',
       'MercaMaquinarias',
@@ -1196,7 +1196,7 @@ function enviarTransferenciaAnulada({ para, nombre, referencia, motivo }) {
       responderA: BUZONES.facturacion,
       parrafos: [
         `Anulamos el pago por transferencia con la referencia <b style="color:${AZUL}">${esc(referencia)}</b>.`,
-        'No se añadió ningún cupo ni se emitió comprobante fiscal por este pago.',
+        'No se activó nada de lo pedido ni se emitió comprobante fiscal por este pago.',
       ],
       extra: tarjeta(`
         <div style="font-family:${TIPO};font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:${GRIS_CLARO}">Motivo</div>
