@@ -140,8 +140,48 @@ function guardarPagos(r) {
 const membresiaDe = (a) => MEMBRESIAS.find((m) => m.id === a.suscripcion_id) || null;
 
 const cupoTexto = (m) => (m.anuncios_incluidos == null
-  ? `${m.ocupados} publicados · sin límite`
-  : `${m.ocupados} de ${m.anuncios_incluidos} ${m.anuncios_incluidos === 1 ? 'cupo' : 'cupos'}`);
+  ? 'Sin límite de publicaciones activas'
+  : `${m.ocupados} de ${m.anuncios_incluidos} publicaciones activas permitidas`);
+
+/* Resumen del dealer (D-04): se calcula en el navegador con lo que ya
+   llega de /api/mis-anuncios, sin ruta nueva. Vale también para la cuenta
+   exenta, que comparte la rama del dealer. Pausadas y vencidas se cuentan
+   aparte de las activas: una pausada sigue ocupando capacidad. */
+function resumenDealer(anuncios, membresias) {
+  const cuenta = (estado) => anuncios.filter((a) => a.estado === estado).length;
+  const sinLimite = membresias.some((m) => m.libres === null || m.libres === undefined);
+  const disponible = membresias.reduce((n, m) => n + (Number(m.libres) || 0), 0);
+  const planes = [...new Set(membresias.map((m) => m.plan_nombre).filter(Boolean))];
+  const fines = membresias.map((m) => m.fin).filter(Boolean).sort();
+  return {
+    activas: cuenta('activo'),
+    pausadas: cuenta('pausado'),
+    vendidas: cuenta('vendido'),
+    vencidas: cuenta('vencido'),
+    retiradas: cuenta('retirado'),
+    disponible,
+    sinLimite,
+    planes,
+    vence: fines.length ? fines[0] : null,
+  };
+}
+
+function resumenDealerHTML(res) {
+  const activas = res.pausadas
+    ? `${res.activas} activas · ${res.pausadas} pausadas ocupan capacidad`
+    : `${res.activas} activas`;
+  const capacidad = res.sinLimite
+    ? 'Sin límite de publicaciones activas'
+    : `${res.disponible} ${res.disponible === 1 ? 'publicación' : 'publicaciones'}`;
+  return `<dl class="plan-estado resumen-dealer">
+      <div><dt>Publicaciones activas</dt><dd>${esc(activas)}</dd></div>
+      <div><dt>Vendidas</dt><dd>${res.vendidas}</dd></div>
+      <div><dt>Vencidas</dt><dd>${res.vencidas}</dd></div>
+      <div><dt>Capacidad disponible</dt><dd>${esc(capacidad)}</dd></div>
+      <div><dt>Plan</dt><dd>${esc(res.planes.join(' · ') || '—')}</dd></div>
+      <div><dt>Vence el</dt><dd>${res.vence ? esc(fechaCorta(res.vence)) : 'Sin vencimiento'}</dd></div>
+    </dl>`;
+}
 
 /* Una barra que se lee de un vistazo: cuánto de lo pagado está en uso.
    Sin límite no tiene barra, porque no hay nada que llenar. */
@@ -149,7 +189,7 @@ function barraCupos(m) {
   if (m.anuncios_incluidos == null) return '';
   const pct = Math.min(100, Math.round((m.ocupados / m.anuncios_incluidos) * 100));
   const lleno = m.libres === 0;
-  return `<span class="cupos" role="img" aria-label="${m.ocupados} de ${m.anuncios_incluidos} cupos en uso">
+  return `<span class="cupos" role="img" aria-label="${m.ocupados} de ${m.anuncios_incluidos} publicaciones activas en uso">
     <span class="cupos__barra${lleno ? ' cupos__barra--lleno' : ''}" style="--uso:${pct}%"></span>
   </span>`;
 }
@@ -209,8 +249,8 @@ function tarjetaMembresia(m) {
   const sig = m.siguiente;
   const nota = !sig ? ''
     : sig.gratuito
-      ? '<span class="membresia__gratis">El siguiente cupo no le cuesta nada</span>'
-      : `<span class="membresia__siguiente">Un cupo más: ${pesos(sig.total)} hasta su renovación</span>`;
+      ? '<span class="membresia__gratis">La siguiente publicación activa no le cuesta nada</span>'
+      : `<span class="membresia__siguiente">Una publicación activa más: ${pesos(sig.total)} hasta su vencimiento</span>`;
 
   return `<li class="membresia${m.libres === 0 ? ' membresia--llena' : ''}" data-membresia="${esc(m.id)}">
     <span class="membresia__cabeza">
@@ -222,7 +262,7 @@ function tarjetaMembresia(m) {
     ${nota}
     ${m.anuncios_incluidos == null ? '' : `
       <button type="button" class="btn btn--linea btn--chico" data-ampliar="${esc(m.id)}">
-        Añadir cupos
+        Agregar publicaciones activas
       </button>`}
     ${pieRenovarPlan(m)}
   </li>`;
@@ -333,10 +373,15 @@ function pintarMetricas(resumen) {
       ? `Sobre ${miles(t.vistas)} ${t.vistas === 1 ? 'visita' : 'visitas'}`
       : `${Math.round((contactos / t.vistas) * 100)} % de quienes vieron sus anuncios`;
 
+  const pausados = ANUNCIOS.filter((a) => a.estado === 'pausado').length;
+  const tarjetaActivos = esParticular()
+    ? tarjetaMetrica('i-grafico', miles(activos), 'Anuncios activos', `${inactivos} inactivo${inactivos === 1 ? '' : 's'}`)
+    : tarjetaMetrica('i-grafico', miles(activos), 'Publicaciones activas', `${pausados} pausadas ocupan capacidad`);
+
   $('#metricas').innerHTML = [
     tarjetaMetrica('i-ojo', miles(t.vistas || 0), 'Visualizaciones', 'Últimos 30 días'),
     tarjetaMetrica('i-telefono', miles(contactos), 'Contactos', tasa),
-    tarjetaMetrica('i-grafico', miles(activos), 'Anuncios activos', `${inactivos} inactivo${inactivos === 1 ? '' : 's'}`),
+    tarjetaActivos,
     tarjetaMetrica('i-estrella', miles(t.favoritos || 0), 'Guardados',
       `Compradores que lo guardaron · ${miles(t.compartidos || 0)} ${t.compartidos === 1 ? 'compartido' : 'compartidos'}`),
   ].join('');
@@ -435,19 +480,22 @@ function pintarPlan() {
 
   const totalLibres = MEMBRESIAS.reduce((n, m) => (m.libres === null ? n : n + m.libres), 0);
   const sinLimite = MEMBRESIAS.some((m) => m.libres === null);
+  const resumen = resumenDealer(ANUNCIOS, MEMBRESIAS);
 
   caja.innerHTML = `
     <div class="panel__cabeza">
       <h2 class="panel__titulo panel__titulo--limpio" id="t-plan">
-        <em>Sus</em> cupos
+        <em>Sus</em> publicaciones activas
       </h2>
       <p class="panel__meta">
-        ${sinLimite ? 'Puede publicar sin límite'
+        ${sinLimite ? 'Sin límite de publicaciones activas'
           : totalLibres > 0
-            ? `${totalLibres} ${totalLibres === 1 ? 'cupo libre' : 'cupos libres'} para publicar`
-            : 'Sin cupos libres'}
+            ? `Capacidad disponible: ${totalLibres}`
+            : 'Sin capacidad disponible'}
       </p>
     </div>
+
+    ${resumenDealerHTML(resumen)}
 
     ${pagosEnEsperaHTML()}
 
