@@ -1593,10 +1593,11 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
     });
   } catch (e) {
     /* La carrera: la membresía existía al comprobarlo y ya no al
-       aprobar. aprobarPago lanza 404 dentro del SAVEPOINT, que se
-       deshace entero (ni cupos ni fila), y al personal se le dice lo
-       mismo que si se hubiera visto antes. */
-    if (e.codigo === 404 && esAmpliacion) return fallo(res, 409, AMPLIACION_HUERFANA);
+       aprobar. aprobarPago lanza 404 (no existe) o, desde la 05.4-01,
+       409 (ya no está viva: venció o cambió de estado) dentro del
+       SAVEPOINT, que se deshace entero (ni cupos ni fila), y al
+       personal se le dice lo mismo que si se hubiera visto antes. */
+    if ((e.codigo === 404 || e.codigo === 409) && esAmpliacion) return fallo(res, 409, AMPLIACION_HUERFANA);
     /* La misma carrera con la publicación: el borrador se eliminó (404)
        o se publicó/retiró (409) entre la comprobación y la aprobación.
        El SAVEPOINT ya deshizo suscripción y activación, y la fila de la

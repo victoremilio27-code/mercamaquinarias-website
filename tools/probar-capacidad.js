@@ -207,6 +207,15 @@ const renovar = (idSusc, quien, cuerpo = {}) =>
   pedir({ metodo: 'POST', url: `/api/membresias/${idSusc}/renovar`, cuerpo, cabeceras: quien.cabeceras });
 const errorDe = (r) => ((r && r.datos) || {}).error || '';
 
+/* Abrir la base aplica el esquema y las migraciones. Sin una secuencia
+   activa el sitio emite recibos sin valor fiscal y no se consume NCF, y
+   la prueba de «el NCF no avanzó» no diría nada. */
+db.secuenciasNcf();
+db.cargarSecuencia({
+  tipo: 'B02', nombre: 'Consumidor final', desde: 1, hasta: 500,
+  vence: '2027-12-31', usaSitio: true,
+});
+
 (async () => {
   const PRECIO_LISTA = db.planPorId('destacado').precio;
 

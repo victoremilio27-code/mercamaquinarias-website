@@ -2743,6 +2743,12 @@ function anotarRevisionSerie(idAnuncio, { resultado, nota, nombreAdmin }) {
       idAnuncio).changes > 0;
 }
 
+/* Punto aislado P14: la página pública depende hoy de un plan con
+   `perfil_publico` (solo Premium). Si Victor contesta que cualquier
+   nivel con capacidad viva enciende la página, se cambia esta condición
+   (y `encenderPerfilSiProcede`, más abajo) junto con los textos «nivel
+   Premium» de assets/panel.js, el `falta` de tools/api.js, dealers.html
+   y mi-pagina.html. */
 function apagarPerfilesSinPlan() {
   const d = abrir();
   const sinPlan = d.prepare(`
@@ -2879,6 +2885,8 @@ const ESTADOS_QUE_OCUPAN = "('activo', 'pausado')";
    llena lo vencido: primero se renueva. */
 function suscripcionesDe(idOrg) {
   return abrir().prepare(`
+    -- punto aislado P9: si Victor elige el precio vigente o el pactado para
+    -- ampliar, se cambia aquí; hoy es el de LISTA (p.precio).
     SELECT s.*, p.nombre AS plan_nombre, p.nivel, p.precio AS precio_unitario,
            p.perfil_publico, p.fotos_maximas, p.videos_maximos, p.destacado,
            (SELECT COUNT(*) FROM anuncios a
@@ -2960,7 +2968,10 @@ function anotarPago(d, { idOrg, idSusc, idAnuncio = null, cobro, t }) {
 /* La página pública de la empresa la trae el nivel Premium, pero solo
    se enciende si el RNC ya pasó por revisión. Pagar no salta la
    comprobación: el directorio dejaría de significar nada si bastara
-   con contratar para aparecer en él. */
+   con contratar para aparecer en él.
+
+   Punto aislado P14: la condición `perfil_publico` del plan se cambia
+   aquí y en `apagarPerfilesSinPlan` (ver su comentario). */
 function encenderPerfilSiProcede(d, idOrg, plan, t) {
   if (!plan.perfil_publico) return false;
   const org = d.prepare('SELECT tipo, estado_revision FROM organizaciones WHERE id = ?').get(idOrg);
@@ -3174,6 +3185,17 @@ const pagoPendienteDeRenovacion = (idSusc) =>
                       AND ${TIPO_INTENCION('intencion')} = 'renovacion'
                     ORDER BY creado DESC LIMIT 1`).get(idSusc) || null;
 
+/* El pago de ampliación que espera para una suscripción, o null. Como
+   con la renovación, la ruta de ampliar lo consulta ANTES de anotar
+   nada y devuelve este en vez de aceptar otra operación de capacidad
+   (05.4 D-12). No hay índice único: uno sobre datos que ya pudieran
+   tener duplicados tumbaría el arranque. */
+const pagoPendienteDeAmpliacion = (idSusc) =>
+  abrir().prepare(`SELECT * FROM pagos
+                    WHERE suscripcion_id = ? AND estado = 'pendiente'
+                      AND ${TIPO_INTENCION('intencion')} = 'ampliacion'
+                    ORDER BY creado DESC LIMIT 1`).get(idSusc) || null;
+
 /* Las membresías que se pueden renovar: activas o vencidas, con fecha
    de fin y con cupo (las internas, sin fin ni límite, no vencen). A
    diferencia de `suscripcionesDe`, incluye las de fin pasado: son
@@ -3336,6 +3358,18 @@ function aprobarPago(idPago) {
          compra y la confirmación el cupo cambió, fijar el absoluto
          regalaría o quitaría cupos. `anadidos` es justo lo cobrado. */
       idSusc = intencion.idSusc;
+      /* Solo se amplía una membresía viva. La consola ya lo frenaba con
+         `membresiaViva`, pero CardNet (fase 6) y cualquier otra llamada
+         a `confirmarPago` no: sumar capacidad a lo vencido, y emitir un
+         comprobante por ello, no se deshace (lo anotó la 05.3-01). El
+         SAVEPOINT deshace todo: ni cupos, ni comprobante, ni NCF. */
+      const viva = d.prepare(`SELECT 1 FROM suscripciones
+                               WHERE id = ? AND organizacion_id = ? AND estado = 'activa'
+                                 AND (fin IS NULL OR fin > ?)`)
+        .get(idSusc, pago.organizacion_id, t);
+      if (!viva) {
+        throw Object.assign(new Error('Esa membresía ya venció: no se le suma capacidad'), { codigo: 409 });
+      }
       const r = d.prepare(`UPDATE suscripciones SET anuncios_incluidos = anuncios_incluidos + ?
                             WHERE id = ? AND organizacion_id = ?`)
         .run(Math.trunc(intencion.anadidos), idSusc, pago.organizacion_id);
@@ -5144,7 +5178,7 @@ module.exports = {
   registrarCobro, aprobarPago, rechazarPago, pagosPendientesDe, pagosParaConsola,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
   /* Renovación y vencimientos (fase 05.3). */
-  vencerSuscripciones, renovarSinCosto, pagoPendienteDeRenovacion,
+  vencerSuscripciones, renovarSinCosto, pagoPendienteDeRenovacion, pagoPendienteDeAmpliacion,
   suscripcionesRenovablesDe, suscripcionRenovable, guardarRenovacionAutomatica,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
