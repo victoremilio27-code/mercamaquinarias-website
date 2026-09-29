@@ -1102,7 +1102,11 @@ const MIGRACIONES = [
      - El índice único parcial de pagos: un solo pago de renovación
        pendiente por suscripción (D-05), EN LA BASE, como el de los
        borradores. Mira la intención porque una renovación de varios
-       cupos no tiene `anuncio_id` que la frene.
+       cupos no tiene `anuncio_id` que la frene. La intención se lee con
+       `json_valid` delante: `json_extract` LANZA ante un JSON roto, y
+       una sola fila vieja con la intención estropeada haría fallar esta
+       migración en producción (y el sitio no volvería a arrancar) o
+       cualquier escritura posterior sobre esa fila.
      - `ix_suscripciones_fin`: la tarea diaria busca las activas con fin
        pasado; parcial para que solo contenga las que pueden vencer.
 
@@ -1122,7 +1126,7 @@ const MIGRACIONES = [
     'ALTER TABLE suscripciones ADD COLUMN renovacion_texto TEXT',
     `CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_renovacion_pendiente ON pagos (suscripcion_id)
        WHERE suscripcion_id IS NOT NULL AND estado = 'pendiente'
-         AND json_extract(intencion, '$.tipo') = 'renovacion'`,
+         AND CASE WHEN json_valid(intencion) THEN json_extract(intencion, '$.tipo') END = 'renovacion'`,
     `CREATE INDEX IF NOT EXISTS ix_suscripciones_fin ON suscripciones (fin)
        WHERE estado = 'activa' AND fin IS NOT NULL`,
   ]],
@@ -3059,6 +3063,161 @@ function publicarBorradorSinCosto({ idAnuncio, idOrg, idPlan, dias, cobro }) {
   return { membresia: suscripcion(idSusc, idOrg), anuncio: anuncio(idAnuncio) };
 }
 
+/* El `tipo` de la intención de un pago, en SQL. Con `json_valid`
+   delante porque `json_extract` lanza ante un JSON roto, y una sola
+   intención estropeada tumbaría con un 500 el panel entero de esa
+   cuenta. Roto o NULL da NULL: «no es una renovación». */
+const TIPO_INTENCION = (col) => `CASE WHEN json_valid(${col}) THEN json_extract(${col}, '$.tipo') END`;
+
+/* ── Renovar (fase 05.3) ────────────────────────────────────
+   Extiende una suscripción que ya existe. Es el ÚNICO sitio que lo
+   hace: lo llaman la aprobación de un pago de renovación (`aprobarPago`,
+   desde `pagos.confirmarPago`) y el importe cero (`renovarSinCosto`),
+   nunca una ruta. Va dentro de la transacción de quien llama.
+
+   Antes no había renovación: el anunciante volvía a publicar y nacía
+   OTRO anuncio, sin sus fotos, su historial ni sus métricas. Aquí
+   nunca se inserta un anuncio: el vencido vuelve a activo en la misma
+   fila (D-03).
+
+   El periodo se suma al final del actual (D-03, por defecto y
+   reversible): renovar antes de tiempo no hace perder días. Si ya
+   venció, cuenta desde ahora; no se cobra el hueco en que no estuvo
+   publicado.
+
+   NO toca `precio_pactado`: qué precio pactar en una renovación lo
+   decide la 05.4 con el hallazgo 2 de la auditoría. */
+function aplicarRenovacion(d, { idOrg, idSusc, idAnuncio = null, dias, t }) {
+  const s = d.prepare(`SELECT s.*, p.destacado, p.perfil_publico
+                         FROM suscripciones s JOIN planes p ON p.id = s.plan_id
+                        WHERE s.id = ? AND s.organizacion_id = ?`).get(idSusc, idOrg);
+  if (!s) throw Object.assign(new Error('Esa membresía no existe'), { codigo: 404 });
+  if (s.estado !== 'activa' && s.estado !== 'vencida') {
+    throw Object.assign(new Error('Esa membresía está cancelada: no se renueva'), { codigo: 409 });
+  }
+  if (!s.fin) throw Object.assign(new Error('Esa membresía no vence: no hay nada que renovar'), { codigo: 409 });
+
+  // ISO contra ISO: se comparan como texto.
+  const desde = s.fin > t ? s.fin : t;
+  const hasta = sumarDias(Number(dias) === 60 ? 60 : 30, desde);
+
+  /* Vuelven los vencidos que quepan. Primero el de la intención (el que
+     el anunciante pulsó), luego los más recientes. NUNCA lanza por
+     capacidad: el pago ya entró y lo pagado es el periodo; lo que no
+     quepa sigue vencido y el anunciante decide cuál publicar.
+     `aviso_vencido` se limpia para que el aviso de corte del ciclo
+     siguiente vuelva a salir.
+
+     La lista se lee ANTES de `refrescarAnunciosDe`, que pone
+     `actualizado` a ahora en todos: leída después, «los más recientes»
+     sería un orden al azar. */
+  const vencidos = d.prepare(`SELECT id FROM anuncios
+                               WHERE suscripcion_id = ? AND organizacion_id = ? AND estado = 'vencido'
+                               ORDER BY (id = ?) DESC, actualizado DESC`).all(idSusc, idOrg, idAnuncio || '');
+
+  d.prepare(`UPDATE suscripciones SET fin = ?, estado = 'activa'
+              WHERE id = ? AND organizacion_id = ?`).run(hasta, idSusc, idOrg);
+  refrescarAnunciosDe(idSusc);
+
+  const ocupados = d.prepare(`SELECT COUNT(*) AS n FROM anuncios
+                               WHERE suscripcion_id = ? AND estado IN ${ESTADOS_QUE_OCUPAN}`).get(idSusc).n;
+  let libres = s.anuncios_incluidos == null ? Infinity : Math.max(0, s.anuncios_incluidos - ocupados);
+  const reactivar = d.prepare(`UPDATE anuncios SET estado = 'activo', aviso_vencido = NULL, actualizado = ?
+                                WHERE id = ? AND estado = 'vencido'`);
+  const reactivados = [];
+  for (const a of vencidos) {
+    if (libres <= 0) break;
+    if (reactivar.run(t, a.id).changes === 1) {
+      reactivados.push(a.id);
+      libres--;
+    }
+  }
+
+  // Una Premium renovada vuelve a encender la página, con la misma
+  // comprobación de siempre (dealer con el RNC aprobado).
+  encenderPerfilSiProcede(d, idOrg, { perfil_publico: s.perfil_publico }, t);
+
+  return { idSusc, periodo: { inicio: desde, fin: hasta }, reactivados };
+}
+
+/* El importe cero de una renovación (promoción, D-02): la misma forma
+   que `publicarBorradorSinCosto`. Renovación, pago 'sin-costo' sin NCF
+   y reactivación en una sola transacción; `soloCero` impide colar un
+   importe por aquí. */
+function renovarSinCosto({ idOrg, idSusc, idAnuncio = null, dias, cobro }) {
+  soloCero(cobro);
+  const d = abrir();
+  const t = ahora();
+  let periodo;
+  d.prepare('BEGIN').run();
+  try {
+    ({ periodo } = aplicarRenovacion(d, { idOrg, idSusc, idAnuncio, dias, t }));
+    anotarPago(d, { idOrg, idSusc, idAnuncio, cobro, t });
+    d.prepare('COMMIT').run();
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+  return {
+    membresia: suscripcion(idSusc, idOrg),
+    anuncio: idAnuncio ? anuncio(idAnuncio) : null,
+    periodo,
+  };
+}
+
+/* El pago de renovación que espera para una suscripción, o null. Solo
+   puede haber uno (índice único parcial de la migración
+   2026-09-renovacion): la ruta devuelve este en vez de pedir otro. */
+const pagoPendienteDeRenovacion = (idSusc) =>
+  abrir().prepare(`SELECT * FROM pagos
+                    WHERE suscripcion_id = ? AND estado = 'pendiente'
+                      AND ${TIPO_INTENCION('intencion')} = 'renovacion'
+                    ORDER BY creado DESC LIMIT 1`).get(idSusc) || null;
+
+/* Las membresías que se pueden renovar: activas o vencidas, con fecha
+   de fin y con cupo (las internas, sin fin ni límite, no vencen). A
+   diferencia de `suscripcionesDe`, incluye las de fin pasado: son
+   justo las que más necesitan el botón.
+
+   `precio_vigente` es el del plan HOY (D-02): renovar cuesta lo que
+   costaría publicar hoy, no lo pactado entonces. `renovacion_pendiente`
+   es la referencia del pago que espera (sin referencia, su id: un
+   pendiente nunca puede leerse como «no hay»). */
+function suscripcionesRenovablesDe(idOrg) {
+  const d = abrir();
+  const plan = d.prepare('SELECT * FROM planes WHERE id = ?');
+  return d.prepare(`
+    SELECT s.*, p.nombre AS plan_nombre, p.activo AS plan_activo, p.destacado,
+           (SELECT COUNT(*) FROM anuncios a
+             WHERE a.suscripcion_id = s.id AND a.estado IN ${ESTADOS_QUE_OCUPAN}) AS ocupados,
+           (SELECT COALESCE(pg.referencia, pg.id) FROM pagos pg
+             WHERE pg.suscripcion_id = s.id AND pg.estado = 'pendiente'
+               AND ${TIPO_INTENCION('pg.intencion')} = 'renovacion' LIMIT 1) AS renovacion_pendiente
+      FROM suscripciones s JOIN planes p ON p.id = s.plan_id
+     WHERE s.organizacion_id = ? AND s.estado IN ('activa', 'vencida')
+       AND s.fin IS NOT NULL AND s.anuncios_incluidos IS NOT NULL
+     ORDER BY s.fin`).all(idOrg)
+    .map((s) => ({ ...s, precio_vigente: conPrecioVigente(plan.get(s.plan_id)).precio_vigente }));
+}
+
+const suscripcionRenovable = (idSusc, idOrg) =>
+  suscripcionesRenovablesDe(idOrg).find((s) => s.id === idSusc) || null;
+
+/* La casilla de renovación automática (D-11). Se guarda y nunca se
+   marca por defecto; el cobro llega con CardNet (fase 6). Al activarla
+   queda la fecha y el texto aceptado TAL CUAL: es la prueba del
+   consentimiento. Al desactivarla se conservan como historial. Solo el
+   dueño: filtra por organización. */
+function guardarRenovacionAutomatica({ idSusc, idOrg, activar, texto }) {
+  const d = abrir();
+  const r = activar
+    ? d.prepare(`UPDATE suscripciones SET renovacion_automatica = 1, renovacion_aceptada = ?, renovacion_texto = ?
+                  WHERE id = ? AND organizacion_id = ?`).run(ahora(), texto || null, idSusc, idOrg)
+    : d.prepare(`UPDATE suscripciones SET renovacion_automatica = 0
+                  WHERE id = ? AND organizacion_id = ?`).run(idSusc, idOrg);
+  return r.changes > 0;
+}
+
 /* ── Cobros con importe: pendiente → aprobado | rechazado ────
    Un cobro con importe no se da por cobrado al anotarlo. Nace
    'pendiente' con lo que se compró guardado en `intencion`, y solo la
@@ -3100,6 +3259,12 @@ function registrarCobro({ idOrg, idSusc = null, idAnuncio = null, cobro, intenci
         cobro.referencia || null, cobro.procesador || 'demo', t, JSON.stringify(intencion || null), t,
         cobro.base, cobro.ajuste, cobro.ajusteTasa ?? null, cobro.itbisTasa ?? null, idAnuncio || null);
   } catch (e) {
+    /* La renovación primero: con anuncio chocan los dos índices y el
+       que salte es cuestión de orden; lo que el anunciante tiene que
+       saber es que la membresía ya espera un pago. */
+    if (intencion && intencion.tipo === 'renovacion' && /UNIQUE constraint failed/i.test(e.message)) {
+      throw Object.assign(new Error('Esa membresía ya tiene una renovación en espera'), { codigo: 409 });
+    }
     if (idAnuncio && /UNIQUE constraint failed/i.test(e.message)) {
       throw Object.assign(new Error('Ese anuncio ya tiene un pago en espera'), { codigo: 409 });
     }
@@ -3130,6 +3295,9 @@ function aprobarPago(idPago) {
   const d = abrir();
   const t = ahora();
   let membresia = null;
+  // Solo en una renovación: el tramo PAGADO, que es lo que imprime el
+  // comprobante (la membresía entera empezó mucho antes).
+  let periodo = null;
 
   d.prepare('SAVEPOINT aprobar_pago').run();
   try {
@@ -3142,6 +3310,7 @@ function aprobarPago(idPago) {
         pago,
         membresia: pago.suscripcion_id ? suscripcion(pago.suscripcion_id, pago.organizacion_id) : null,
         yaEstaba: true,
+        periodo: null,
       };
     }
 
@@ -3193,6 +3362,26 @@ function aprobarPago(idPago) {
       });
       d.prepare('UPDATE pagos SET suscripcion_id = ? WHERE id = ?').run(idSusc, idPago);
       activarBorrador(d, { idAnuncio: intencion.idAnuncio, idOrg: pago.organizacion_id, idSusc, t });
+    } else if (intencion.tipo === 'renovacion') {
+      /* Renovar extiende la suscripción que el pago nombra (fase 05.3).
+         El pago nace con `suscripcion_id` y la intención lo repite: si
+         no coinciden, algo armó mal el cobro y no se adivina cuál de
+         las dos se pagó. `aplicarRenovacion` filtra además por la
+         organización del pago: nadie renueva una membresía ajena.
+
+         Si el anuncio de la intención se vendió o se movió entre tanto,
+         la suscripción se renueva igual: es lo que se pagó. Todo va en
+         este SAVEPOINT; confirmar dos veces el mismo pago cae en
+         `yaEstaba` arriba y no suma dos periodos. */
+      if (!intencion.idSusc || pago.suscripcion_id !== intencion.idSusc) {
+        throw Object.assign(new Error('El pago no apunta a la membresía que renueva'), { codigo: 500 });
+      }
+      const renovada = aplicarRenovacion(d, {
+        idOrg: pago.organizacion_id, idSusc: intencion.idSusc,
+        idAnuncio: intencion.idAnuncio || null, dias: intencion.dias, t,
+      });
+      idSusc = renovada.idSusc;
+      periodo = renovada.periodo;
     } else {
       throw Object.assign(new Error(`Tipo de compra desconocido: ${intencion.tipo}`), { codigo: 500 });
     }
@@ -3209,7 +3398,7 @@ function aprobarPago(idPago) {
     throw e;
   }
 
-  return { pago: pagoPorId(idPago), membresia, yaEstaba: false };
+  return { pago: pagoPorId(idPago), membresia, yaEstaba: false, periodo };
 }
 
 /* ── Pagos pendientes: lo que ve el comprador y lo que ve la consola ── */
@@ -3775,8 +3964,20 @@ function anunciosDeOrganizacion(idOrg) {
            a.plan_elegido, a.dias_elegidos, a.creado,
            (SELECT nombre FROM planes WHERE id = a.plan_elegido) AS plan_elegido_nombre,
            -- Sin referencia sale el id: un pendiente nunca puede leerse como «no hay».
+           -- Las renovaciones van aparte: un anuncio activo con su
+           -- renovación en espera no está «pendiente de pago».
            (SELECT COALESCE(p.referencia, p.id) FROM pagos p
-             WHERE p.anuncio_id = a.id AND p.estado = 'pendiente' LIMIT 1) AS pago_pendiente,
+             WHERE p.anuncio_id = a.id AND p.estado = 'pendiente'
+               AND ${TIPO_INTENCION('p.intencion')} IS NOT 'renovacion' LIMIT 1) AS pago_pendiente,
+           -- Lo que el panel necesita para ofrecer renovar (fase 05.3):
+           -- de un cupo se renueva el anuncio; de varios, el plan (D-04).
+           (SELECT anuncios_incluidos FROM suscripciones WHERE id = a.suscripcion_id) AS suscripcion_cupo,
+           (SELECT fin FROM suscripciones WHERE id = a.suscripcion_id) AS suscripcion_fin,
+           (SELECT pl.nombre FROM suscripciones s JOIN planes pl ON pl.id = s.plan_id
+             WHERE s.id = a.suscripcion_id) AS suscripcion_plan,
+           (SELECT COALESCE(p.referencia, p.id) FROM pagos p
+             WHERE p.suscripcion_id = a.suscripcion_id AND p.estado = 'pendiente'
+               AND ${TIPO_INTENCION('p.intencion')} = 'renovacion' LIMIT 1) AS renovacion_pendiente,
            -- El panel avisa cuando un camión no los tiene declarados y
            -- deja rellenarlos ahí mismo.
            a.motor_marca, a.motor_modelo, a.transmision_marca, a.transmision_modelo,
@@ -3797,7 +3998,7 @@ function anunciosDeOrganizacion(idOrg) {
     WHERE a.organizacion_id = ?
     GROUP BY a.id
     ORDER BY CASE a.estado WHEN 'activo' THEN 0 ELSE 1 END, a.publicado DESC`)
-    .all(idOrg).map((a) => ({ ...conNombres(a), pendiente_pago: !!a.pago_pendiente }));
+    .all(idOrg).map((a) => ({ ...conNombres(a), pendiente_pago: a.estado === 'borrador' && !!a.pago_pendiente }));
 }
 
 /* Borra un anuncio y todo lo que cuelga de él.
@@ -4858,7 +5059,8 @@ module.exports = {
   registrarCobro, aprobarPago, rechazarPago, pagosPendientesDe, pagosParaConsola,
   moverAnuncioDeSuscripcion, refrescarAnunciosDe,
   /* Renovación y vencimientos (fase 05.3). */
-  vencerSuscripciones,
+  vencerSuscripciones, renovarSinCosto, pagoPendienteDeRenovacion,
+  suscripcionesRenovablesDe, suscripcionRenovable, guardarRenovacionAutomatica,
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosPorVencer, anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,

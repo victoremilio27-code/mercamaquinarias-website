@@ -515,6 +515,12 @@ db.cargarSecuencia({
     `viva: ${viva ? `${viva.plan_nombre} ocupados=${viva.ocupados} vigente=${viva.precio_vigente} días=${viva.dias_ciclo} auto=${viva.renovacion_automatica} pendiente=${viva.renovacion_pendiente}` : 'NO sale'}`);
     ok(!!vencida && vencida.renovacion_pendiente === pend.referencia && vencida.plan_activo === 1,
       `vencida: pendiente=${vencida && vencida.renovacion_pendiente === pend.referencia ? 'la referencia' : vencida && vencida.renovacion_pendiente} plan_activo=${vencida && vencida.plan_activo}`);
+    // Una intención rota (hay pagos viejos así) no tumba el panel ni la
+    // lista: json_extract lanza ante JSON roto si no va json_valid delante.
+    ejecuta(`INSERT INTO pagos (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, creado, intencion)
+             VALUES (?, ?, ?, 100, 18, 118, 'pendiente', ?, '{roto')`, nuevoId('pago-roto'), L.idOrg, idViva, new Date().toISOString());
+    const eRoto = lanza(() => { db.anunciosDeOrganizacion(L.idOrg); db.suscripcionesRenovablesDe(L.idOrg); });
+    ok(!eRoto, `intención rota: ${eRoto ? `lanzó ${eRoto.message}` : 'el panel y la lista siguen'}`);
     ok(!!db.suscripcionRenovable(idVencida, L.idOrg) && db.suscripcionRenovable(idVencida, R.idOrg) === null
       && db.suscripcionRenovable(idInterna, L.idOrg) === null,
     'suscripcionRenovable: la suya sí, ajena o sin fin → null');
