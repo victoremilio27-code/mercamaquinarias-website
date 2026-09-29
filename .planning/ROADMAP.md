@@ -212,11 +212,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 **Plans**: 8 planes en 4 olas
 - [x] 05.4-01-PLAN.md — Guardas del servidor y prorrateo: días reales (P13), una operación de capacidad pendiente por membresía, `aprobarPago` que no amplía lo vencido, `PARA_PAGAR` al ampliar y `capacidad:probar` en CI
 - [x] 05.4-02-PLAN.md — Panel: sección «Agregar publicaciones activas» con prorrateo y regla, sin `prompt()`, y `?ampliar=` validado
-- [ ] 05.4-03-PLAN.md — Panel del dealer: resumen, inventario por estado, aviso de vendido y textos sin «cupo»
+- [x] 05.4-03-PLAN.md — Panel del dealer: resumen, inventario por estado, aviso de vendido y textos sin «cupo»
 - [x] 05.4-04-PLAN.md — Planes, publicar, portada, directorio, cuenta, mi página y pie común sin «cupo»; ampliar lleva al panel
 - [x] 05.4-05-PLAN.md — Mensajes de la API y correos sin «cupo» y concepto del comprobante solo hacia adelante, con las pruebas invertidas
 - [x] 05.4-06-PLAN.md — Asistente con los dos caminos y contratación 2.3
-- [ ] 05.4-07-PLAN.md — Consola de solo lectura: publicaciones por estado, pagos de todos los métodos con desglose, renovaciones y dealers con capacidad
+- [x] 05.4-07-PLAN.md — Consola de solo lectura: publicaciones por estado, pagos de todos los métodos con desglose, renovaciones y dealers con capacidad
 - [ ] 05.4-08-PLAN.md — Recorrido de la sección 39, auditorías de navegador y batería completa
 **UI hint**: yes
 **Notas**: Queda por decidir (P9) si ampliar se cobra al precio pactado o al vigente; por defecto al precio de lista del plan, que es lo que ya hace hoy.
