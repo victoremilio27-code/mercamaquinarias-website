@@ -1471,6 +1471,7 @@ function montarPasoPlan() {
       const marcado = dur.querySelector('input:checked');
       estado.diasElegidos = marcado && Number(marcado.value) === 60 ? 60 : 30;
       pintarPlanesPublicar();
+      pintarResumenPedido();
       guardarBorrador();
     });
   }
@@ -1481,6 +1482,8 @@ function montarPasoPlan() {
       if (e.target.name !== 'planPublicar') return;
       estado.planElegido = e.target.value;
       pintarPlanesPublicar();
+      pintarResumenPedido();
+      pintarVistaPrevia();
       guardarBorrador();
     });
   }
@@ -1521,6 +1524,7 @@ function montarBloqueFiscalPublicar() {
    eligieron en el primer paso. */
 function cuerpoParaBorrador() {
   const { membresia, ...resto } = anuncioParaApi();
+  const e = estado.equipo;
 
   /* `anuncioParaApi()` está hecho para publicar, donde todo está
      completo: manda `anio: 0` y `precio: null` cuando el campo está
@@ -1532,13 +1536,27 @@ function cuerpoParaBorrador() {
      los guardaría como 0, y al retomar el borrador el campo diría «0». */
   const cuerpo = {
     ...resto,
-    anio: String(estado.equipo.anio || ''),
+    anio: String(e.anio || ''),
     precio: soloDigitos(estado.precio.monto),
     plan: estado.planElegido,
     dias: estado.diasElegidos,
   };
   if (!cuerpo.usoValor) delete cuerpo.usoValor;
   if (!cuerpo.precioMinimo) delete cuerpo.precioMinimo;
+
+  /* Un anuncio antiguo puede traer la subcategoría escrita con su
+     NOMBRE en vez de con su id («Cargador de oruga» en lugar de
+     «car-oruga»): así están varios de los anuncios de demostración, y
+     lo mismo pudo pasar en datos de antes de la taxonomía. Al duplicarlo,
+     el servidor rechazaba el borrador entero con «La subcategoría no
+     pertenece a esa categoría» y el particular no pasaba del paso del
+     plan por un dato que ni siquiera se ve —el desplegable no tiene esa
+     opción y queda en «Elija…»—. Se manda vacía y se vuelve a elegir en
+     el paso del equipo, que es lo que ya pedía el formulario. */
+  if (e.categoria && e.subcategoria && e.marca
+      && validarCadena({ categoria: e.categoria, subcategoria: e.subcategoria, marca: e.marca })) {
+    cuerpo.subcategoria = '';
+  }
   return cuerpo;
 }
 
@@ -1603,6 +1621,17 @@ async function guardarEnServidor(inmediato) {
   }
 }
 
+/* El servidor no crea ni cobra un borrador si faltan condiciones por
+   aceptar (409 con «Debe aceptar …»). El aviso con su botón ya está
+   arriba de la página desde que se abrió el asistente, pero el mensaje
+   sale en el paso, más abajo: se lleva la vista hasta el aviso para que
+   quien lee «Debe aceptar» vea también dónde. */
+function irAlAvisoLegal(e) {
+  if (!e || e.codigo !== 409 || !/aceptar/i.test(e.message || '')) return;
+  const aviso = $('.aviso-legal');
+  if (aviso) aviso.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 /* Crea o retoma el borrador en el servidor al salir del paso del plan
    (D-01, D-02, D-03). Devuelve true si se puede avanzar al paso
    siguiente; false si hay que quedarse (error del servidor, o porque
@@ -1639,6 +1668,7 @@ async function asegurarBorrador() {
     return true;
   } catch (e) {
     avisoPaso(seccion, e.message);
+    irAlAvisoLegal(e);
     return false;
   }
 }
@@ -2090,7 +2120,7 @@ function pintarConfirmacionPublicacion(r) {
   const anuncio = r.anuncio;
   const cobro = r.cobro || {};
   const total = Number(cobro.total) || 0;
-  const equipo = esc(`${anuncio.anio} ${anuncio.marca} ${anuncio.modelo}`);
+  const equipo = esc(`${anuncio.anio} ${nombreMarca(anuncio.marca)} ${anuncio.modelo}`);
 
   const sinVerificar = (anuncio.telefonos || []).filter((t) => !t.verificado).length;
   const avisoTelefonos = sinVerificar
@@ -2099,6 +2129,10 @@ function pintarConfirmacionPublicacion(r) {
       : `${sinVerificar} teléfonos de este anuncio están sin verificar y no se muestran.`}
       Verifíquelos desde <a href="panel.html#panelContactos">su panel</a>: tarda un minuto y aparecen al momento.</span></p>`
     : '';
+
+  /* El borrador ya es un anuncio: recargar con `?borrador=<id>` daría
+     «ese borrador ya no existe». Se deja la URL limpia. */
+  history.replaceState(null, '', 'publicar.html');
 
   $('#publicar').hidden = true;
   const caja = $('#publicado');
@@ -2318,6 +2352,7 @@ async function pagarPublicacion() {
     pintarConfirmacionPublicacion(r);
   } catch (e) {
     restaurar(e.message);
+    irAlAvisoLegal(e);
     if (/fotograf|video/i.test(e.message)) {
       const aviso = seccion.querySelector('.paso__aviso');
       if (aviso && !aviso.querySelector('[data-ir-fotos]')) {
