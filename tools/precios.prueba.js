@@ -123,6 +123,51 @@ test('de 4 a 5 cupos no cuesta nada: el quinto es el gratis', () => {
   assert.equal(s.gratuito, true);
 });
 
+test('la ampliación cobra los días que de verdad quedan (D-13)', () => {
+  // La fórmula de antes, con el tope de un ciclo, para comparar donde no debe cambiar nada.
+  const precioAntes = (p) => {
+    const d = precios.duracion(p.dias);
+    const restantes = Math.max(0, Math.min(Number(p.diasRestantes), d.dias));
+    const dif = precios.cuposCobrados(p.cupoNuevo) - precios.cuposCobrados(p.cupoActual);
+    const base = dif <= 0 ? 0 : Math.round(Number(p.precioUnitario) * dif * d.factor * (restantes / d.dias));
+    return desglose(base).total;
+  };
+  const amplia = [[1, 2], [3, 7], [4, 5], [4, 6], [9, 10]];
+  const restantes = { 30: [0, 1, 15, 29, 30], 60: [0, 1, 45, 60] };
+  for (const dias of [30, 60]) {
+    for (const [cupoActual, cupoNuevo] of amplia) {
+      for (const diasRestantes of restantes[dias]) {
+        const p = { precioUnitario: 3200, cupoActual, cupoNuevo, dias, diasRestantes };
+        assert.equal(precioAmpliacion(p).total, precioAntes(p), JSON.stringify(p));
+      }
+    }
+  }
+
+  // Más días que el ciclo (renovación anticipada): se cobra la proporción real.
+  const a = precioAmpliacion({ precioUnitario: 3200, cupoActual: 3, cupoNuevo: 4, dias: 30, diasRestantes: 50 });
+  assert.equal(a.base, Math.round(3200 * 1 * 1 * 50 / 30));
+  assert.equal(a.base, 5333);
+  assert.equal(a.diasRestantes, 50);
+  assert.equal(a.proporcion, 50 / 30);
+  const b = precioAmpliacion({ precioUnitario: 3200, cupoActual: 3, cupoNuevo: 4, dias: 60, diasRestantes: 100 });
+  assert.equal(b.base, Math.round(3200 * 1 * 1.8 * 100 / 60));
+
+  // La regla de uno gratis por cada cinco no cambia.
+  for (const diasRestantes of [10, 30, 50]) {
+    const c = precioAmpliacion({ precioUnitario: 3200, cupoActual: 4, cupoNuevo: 5, dias: 30, diasRestantes });
+    assert.equal(c.total, 0);
+    assert.equal(c.gratis, 1);
+  }
+  const e = precioAmpliacion({ precioUnitario: 3200, cupoActual: 3, cupoNuevo: 7, dias: 30, diasRestantes: 30 });
+  assert.equal(e.cobrados, 3);
+  assert.equal(e.gratis, 1);
+
+  // Los días en contra no se cobran.
+  for (const diasRestantes of [-5, NaN]) {
+    assert.equal(precioAmpliacion({ precioUnitario: 3200, cupoActual: 1, cupoNuevo: 2, dias: 30, diasRestantes }).total, 0);
+  }
+});
+
 test('la renovación cuesta lo mismo que la compra', () => {
   for (const datos of [
     { precioUnitario: 1800, cupo: 1, dias: 30 },

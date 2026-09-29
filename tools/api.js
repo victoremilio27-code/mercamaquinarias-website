@@ -1593,10 +1593,11 @@ const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recib
     });
   } catch (e) {
     /* La carrera: la membresía existía al comprobarlo y ya no al
-       aprobar. aprobarPago lanza 404 dentro del SAVEPOINT, que se
-       deshace entero (ni cupos ni fila), y al personal se le dice lo
-       mismo que si se hubiera visto antes. */
-    if (e.codigo === 404 && esAmpliacion) return fallo(res, 409, AMPLIACION_HUERFANA);
+       aprobar. aprobarPago lanza 404 (no existe) o, desde la 05.4-01,
+       409 (ya no está viva: venció o cambió de estado) dentro del
+       SAVEPOINT, que se deshace entero (ni cupos ni fila), y al
+       personal se le dice lo mismo que si se hubiera visto antes. */
+    if ((e.codigo === 404 || e.codigo === 409) && esAmpliacion) return fallo(res, 409, AMPLIACION_HUERFANA);
     /* La misma carrera con la publicación: el borrador se eliminó (404)
        o se publicó/retiró (409) entre la comprobación y la aprobación.
        El SAVEPOINT ya deshizo suscripción y activación, y la fila de la
@@ -2729,6 +2730,9 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
 });
 
 const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
+  // Como comprar: ampliar es un cobro y exige la contratación vigente (05.4 D-12).
+  if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
+
   const c = await leerCuerpo(req);
   const org = ctx.organizacion;
 
@@ -2736,6 +2740,30 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
   if (!s) return fallo(res, 404, 'Esa membresía no es suya o no existe');
   if (s.anuncios_incluidos == null) {
     return fallo(res, 400, 'Esa membresía ya no tiene límite de equipos');
+  }
+
+  /* Una sola operación de capacidad pendiente por membresía (D-12). Dos
+     ampliaciones pendientes sumarían capacidad dos veces sobre el mismo
+     ciclo, y una de importe cero fija el cupo absoluto y pisaría a la
+     pendiente. Vale también para el importe cero y para la cuenta
+     exenta. La comprobación es síncrona y, entre ella y
+     `registrarCobro`/`ampliarCupos`, no hay ningún `await`: Node no
+     intercala otra petición sin un `await` en medio, por eso no hace
+     falta un índice único. Si alguien añade un `await` aquí abajo, esta
+     garantía se pierde. */
+  const ampliando = db.pagoPendienteDeAmpliacion(s.id);
+  if (ampliando) {
+    return fallo(res, 409,
+      `Esa membresía ya tiene una ampliación en espera (ref. ${ampliando.referencia || ampliando.id}). `
+      + 'Cuando se confirme o se anule podrá agregar más publicaciones activas.',
+      { pago: pagoPublico(ampliando) });
+  }
+  const renovando = db.pagoPendienteDeRenovacion(s.id);
+  if (renovando) {
+    return fallo(res, 409,
+      `Esa membresía tiene una renovación en espera (ref. ${renovando.referencia || renovando.id}). `
+      + 'Cuando se confirme o se anule podrá agregar publicaciones activas.',
+      { pago: pagoPublico(renovando) });
   }
 
   const cupoNuevo = Math.min(Math.max(entero(c.cupo) || 0, 1), precios.CUPO_MAXIMO);
@@ -3650,6 +3678,15 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
 
   const enEspera = db.pagoPendienteDeRenovacion(s.id);
   if (enEspera) return responderRenovacionEnEspera(res, enEspera);
+
+  // Y con una ampliación esperando no se renueva: una sola operación de capacidad a la vez (05.4 D-12).
+  const ampliacion = db.pagoPendienteDeAmpliacion(s.id);
+  if (ampliacion) {
+    return fallo(res, 409,
+      `Esa membresía tiene una ampliación en espera (ref. ${ampliacion.referencia || ampliacion.id}). `
+      + 'Cuando se confirme o se anule podrá renovarla.',
+      { pago: pagoPublico(ampliacion) });
+  }
 
   if (!s.plan_activo) {
     return fallo(res, 409, 'El plan de esta publicación ya no se ofrece, así que no se puede renovar tal '
