@@ -51,6 +51,8 @@ for (const k of Object.keys(process.env)) {
 }
 
 const db = require('./db');
+const pagos = require('./pagos');
+const precios = require('../assets/precios.js');
 
 const SELLO = Date.now().toString(36);
 const DIA = 86400000;
@@ -140,8 +142,52 @@ const filaSusc = (idSusc) => consulta('SELECT * FROM suscripciones WHERE id = ?'
 const filaAnuncio = (idAnuncio) => consulta('SELECT * FROM anuncios WHERE id = ?', idAnuncio);
 const totalSuscripciones = () => consulta('SELECT COUNT(*) AS n FROM suscripciones').n;
 
+const anunciosDeOrg = (idOrg) =>
+  consulta('SELECT COUNT(*) AS n FROM anuncios WHERE organizacion_id = ?', idOrg).n;
+const fotosDe = (idAnuncio) =>
+  consulta('SELECT COUNT(*) AS n FROM anuncio_fotos WHERE anuncio_id = ?', idAnuncio).n;
+const facturasTotales = () => consulta('SELECT COUNT(*) AS n FROM facturas').n;
+const facturaDe = (idPago) =>
+  consulta("SELECT * FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'", idPago);
+const siguienteB02 = () => {
+  const s = consulta("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B02' AND activa = 1");
+  return s ? s.siguiente : null;
+};
+
+/* El cobro sale de la fórmula única, como en las rutas: la prueba no
+   puede inventarse el subtotal. */
+const cobroRenovacion = ({ precioUnitario = 1800, cupo = 1, dias = 30, etiqueta }) => ({
+  ...precios.precioRenovacion({ precioUnitario, cupo, dias }),
+  referencia: `RENOV-${etiqueta}-${SELLO}-${++contador}`, procesador: 'demo',
+});
+const cobroCero = (etiqueta) => ({ ...precios.desglose(0), referencia: `CERO-${etiqueta}-${SELLO}-${++contador}` });
+
+const CLIENTE = { razonSocial: 'Cliente de prueba', correo: 'cliente@prueba.invalid' };
+const intencionRenovacion = ({ idSusc, idAnuncio = null, idPlan = 'estandar', cupo = 1, dias = 30 }) => ({
+  tipo: 'renovacion', idSusc, idAnuncio, idPlan, cupo, dias,
+  concepto: `Renovación ${idPlan} · ${dias} días`,
+  cliente: CLIENTE, correoCliente: CLIENTE.correo,
+});
+
+/* Pide y confirma una renovación, como hará la ruta de la 05.3-02. */
+function renovarPagando({ idOrg, idSusc, idAnuncio = null, idPlan = 'estandar', cupo = 1, dias = 30, precioUnitario = 1800, etiqueta }) {
+  const pago = db.registrarCobro({
+    idOrg, idSusc, idAnuncio,
+    cobro: cobroRenovacion({ precioUnitario, cupo, dias, etiqueta }),
+    intencion: intencionRenovacion({ idSusc, idAnuncio, idPlan, cupo, dias }),
+  });
+  return { pago, r: pagos.confirmarPago(pago.id) };
+}
+
+/* El periodo tal como lo imprime la línea del comprobante. */
+const periodoImpreso = (inicio, fin) => pagos.lineaDeCupos({ cupo: 1, subtotal: 1, inicio, fin }).periodo;
+
 /* Abrir la base aplica el esquema y las migraciones. */
 db.secuenciasNcf();
+db.cargarSecuencia({
+  tipo: 'B02', nombre: 'Consumidor final', desde: 1, hasta: 200,
+  vence: '2027-12-31', usaSitio: true,
+});
 
 (async () => {
   console.log('\n1 · vencer de verdad');
@@ -239,6 +285,252 @@ db.secuenciasNcf();
     db.refrescarAnunciosDe(idS);
     ok(filaAnuncio(idVendido).vence === venceViejo, `vendido conserva su vence (${filaAnuncio(idVendido).vence === venceViejo ? 'igual' : 'CAMBIÓ'})`);
     ok(filaAnuncio(idActivo).vence === filaSusc(idS).fin, 'activo toma el fin de su suscripción');
+  }
+
+  console.log('\n2 · renovar en la base');
+  const R = cuenta('renueva');
+  const OTRA = cuenta('ajena');
+
+  // 2a. Activa a 5 días de vencer: suma al final, mismo anuncio.
+  const finActiva = enDias(5);
+  const idSuscA = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'estandar', cupo: 1, fin: finActiva });
+  const idAnuncioA = nuevoAnuncio({ idOrg: R.idOrg, idSusc: idSuscA, estado: 'activo', vence: finActiva, fotos: 3 });
+  let pagoA = null;
+  {
+    pagoA = db.registrarCobro({
+      idOrg: R.idOrg, idSusc: idSuscA, idAnuncio: idAnuncioA,
+      cobro: cobroRenovacion({ etiqueta: 'A' }),
+      intencion: intencionRenovacion({ idSusc: idSuscA, idAnuncio: idAnuncioA }),
+    });
+    ok(pagoA.estado === 'pendiente' && pagoA.suscripcion_id === idSuscA && pagoA.anuncio_id === idAnuncioA,
+      `pago pendiente de la suscripción y el anuncio (${pagoA.estado})`);
+    const pp = db.pagoPendienteDeRenovacion(idSuscA);
+    ok(!!pp && pp.id === pagoA.id, `pagoPendienteDeRenovacion: ${pp ? (pp.id === pagoA.id ? 'ese pago' : pp.id) : 'null'}`);
+
+    const enPanel = db.anunciosDeOrganizacion(R.idOrg).find((x) => x.id === idAnuncioA);
+    ok(!!enPanel && enPanel.renovacion_pendiente === pagoA.referencia && enPanel.pendiente_pago === false
+      && !enPanel.pago_pendiente,
+    `panel: renovacion_pendiente=${enPanel && enPanel.renovacion_pendiente === pagoA.referencia ? 'la referencia' : enPanel && enPanel.renovacion_pendiente} pendiente_pago=${enPanel && enPanel.pendiente_pago} pago_pendiente=${enPanel && enPanel.pago_pendiente}`);
+    ok(!!enPanel && enPanel.suscripcion_cupo === 1 && enPanel.suscripcion_fin === finActiva && enPanel.suscripcion_plan === 'Estándar',
+      `panel: cupo=${enPanel && enPanel.suscripcion_cupo} fin=${enPanel && enPanel.suscripcion_fin === finActiva ? 'el de la suscripción' : enPanel && enPanel.suscripcion_fin} plan=${enPanel && enPanel.suscripcion_plan}`);
+
+    // Un segundo pendiente para la misma suscripción, con y sin anuncio.
+    const conAnuncio = lanza(() => db.registrarCobro({
+      idOrg: R.idOrg, idSusc: idSuscA, idAnuncio: idAnuncioA, cobro: cobroRenovacion({ etiqueta: 'A2' }),
+      intencion: intencionRenovacion({ idSusc: idSuscA, idAnuncio: idAnuncioA }),
+    }));
+    ok(!!conAnuncio && conAnuncio.codigo === 409 && /renovación en espera/.test(conAnuncio.message),
+      `segundo pendiente con anuncio: ${conAnuncio ? `${conAnuncio.codigo} ${conAnuncio.message}` : 'NO lanzó'}`);
+    const sinAnuncio = lanza(() => db.registrarCobro({
+      idOrg: R.idOrg, idSusc: idSuscA, cobro: cobroRenovacion({ etiqueta: 'A3' }),
+      intencion: intencionRenovacion({ idSusc: idSuscA }),
+    }));
+    ok(!!sinAnuncio && sinAnuncio.codigo === 409 && /renovación en espera/.test(sinAnuncio.message),
+      `segundo pendiente sin anuncio: ${sinAnuncio ? `${sinAnuncio.codigo} ${sinAnuncio.message}` : 'NO lanzó'}`);
+
+    const b02 = siguienteB02();
+    let r = null;
+    const e = lanza(() => { r = pagos.confirmarPago(pagoA.id); });
+    ok(!e && !!r && r.pago.estado === 'aprobado', e ? `confirmarPago lanzó: ${e.message}` : `pago ${r && r.pago.estado}`);
+    const s = filaSusc(idSuscA);
+    const esperado = new Date(new Date(finActiva).getTime()).toISOString();
+    const finEsperado = (() => { const d = new Date(esperado); d.setDate(d.getDate() + 30); return d.toISOString(); })();
+    ok(s.fin === finEsperado && s.estado === 'activa', `fin = fin anterior + 30 (${s.fin === finEsperado ? 'sí' : `${s.fin} ≠ ${finEsperado}`}) estado=${s.estado}`);
+    ok(s.precio_pactado === 1800, `precio_pactado no se toca (${s.precio_pactado})`);
+    const a = filaAnuncio(idAnuncioA);
+    ok(a.estado === 'activo' && a.vence === s.fin && fotosDe(idAnuncioA) === 3,
+      `mismo anuncio: ${a.estado} vence=${a.vence === s.fin ? 'el fin nuevo' : a.vence} fotos=${fotosDe(idAnuncioA)}`);
+    ok(!!r && !!r.membresia && r.membresia.fin === s.fin, `confirmarPago devuelve la membresía renovada (${r && r.membresia && r.membresia.fin})`);
+    const f = facturaDe(pagoA.id);
+    ok(!!f && /^B02/.test(f.ncf || '') && f.subtotal + f.itbis === f.total && f.total === pagoA.total,
+      `factura: ${f ? `${f.ncf} ${f.subtotal}+${f.itbis}=${f.total} (pago ${pagoA.total})` : 'NO hay'}`);
+    const periodo = periodoImpreso(finActiva, s.fin);
+    ok(!!f && f.periodo_servicio === periodo, `periodo del comprobante: ${f && f.periodo_servicio} (se esperaba ${periodo})`);
+    ok(siguienteB02() === b02 + 1, `B02 avanzó ${siguienteB02() - b02} (se esperaba 1)`);
+
+    // Confirmar otra vez: nada se mueve.
+    const factAntes = facturasTotales();
+    const b02b = siguienteB02();
+    let r2 = null;
+    const e2 = lanza(() => { r2 = pagos.confirmarPago(pagoA.id); });
+    ok(!e2 && !!r2 && r2.yaEstaba === true && filaSusc(idSuscA).fin === s.fin
+      && facturasTotales() === factAntes && siguienteB02() === b02b,
+    e2 ? `repetir lanzó: ${e2.message}` : `repetir: yaEstaba=${r2 && r2.yaEstaba} fin ${filaSusc(idSuscA).fin === s.fin ? 'igual' : 'CAMBIÓ'} facturas +${facturasTotales() - factAntes} B02 +${siguienteB02() - b02b}`);
+
+    // Un segundo pago aprobado distinto suma otro periodo (60 días).
+    const finAntes = filaSusc(idSuscA).fin;
+    const { r: r3 } = renovarPagando({ idOrg: R.idOrg, idSusc: idSuscA, idAnuncio: idAnuncioA, dias: 60, etiqueta: 'A60' });
+    const fin60 = (() => { const d = new Date(finAntes); d.setDate(d.getDate() + 60); return d.toISOString(); })();
+    ok(r3.pago.estado === 'aprobado' && filaSusc(idSuscA).fin === fin60,
+      `segundo pago: +60 (${filaSusc(idSuscA).fin === fin60 ? 'sí' : filaSusc(idSuscA).fin})`);
+  }
+
+  // 2b. Vencida hace 3 días con su anuncio vencido: vuelve el MISMO.
+  {
+    const idSusc = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'destacado', cupo: 1, fin: enDias(-3), estado: 'vencida', precio: 3200 });
+    const idAnuncio = nuevoAnuncio({ idOrg: R.idOrg, idSusc, estado: 'vencido', vence: enDias(-3), fotos: 2 });
+    ejecuta('UPDATE anuncios SET aviso_vencido = ? WHERE id = ?', enDias(-2), idAnuncio);
+    const totalAntes = anunciosDeOrg(R.idOrg);
+    const antes = Date.now();
+    const { pago, r } = renovarPagando({
+      idOrg: R.idOrg, idSusc, idAnuncio, idPlan: 'destacado', precioUnitario: 3200, etiqueta: 'VENCIDA',
+    });
+    const s = filaSusc(idSusc);
+    const objetivo = antes + 30 * DIA;
+    ok(r.pago.estado === 'aprobado' && s.estado === 'activa' && Math.abs(new Date(s.fin).getTime() - objetivo) < 60000,
+      `vencida → ${s.estado}, fin ≈ ahora + 30 (desvío ${Math.round((new Date(s.fin).getTime() - objetivo) / 1000)} s)`);
+    const a = filaAnuncio(idAnuncio);
+    ok(a.estado === 'activo' && a.aviso_vencido === null && a.vence === s.fin && a.destacado_hasta === s.fin && fotosDe(idAnuncio) === 2,
+      `anuncio: ${a.estado} aviso_vencido=${a.aviso_vencido} vence=${a.vence === s.fin ? 'fin nuevo' : a.vence} destacado=${a.destacado_hasta === s.fin} fotos=${fotosDe(idAnuncio)}`);
+    ok(anunciosDeOrg(R.idOrg) === totalAntes, `anuncios de la organización ${totalAntes} → ${anunciosDeOrg(R.idOrg)} (ninguno nuevo)`);
+    const f = facturaDe(pago.id);
+    const inicio = f && f.periodo_servicio ? f.periodo_servicio.split(' al ')[0] : null;
+    const hoyImpreso = periodoImpreso(new Date().toISOString(), s.fin).split(' al ')[0];
+    ok(!!f && f.subtotal + f.itbis === f.total && inicio === hoyImpreso,
+      `comprobante de la vencida: ${f ? `${f.subtotal}+${f.itbis}=${f.total}, periodo ${f.periodo_servicio}` : 'NO hay'} (empieza hoy: ${hoyImpreso})`);
+  }
+
+  // 2c. Rechazo: nada cambia, no hay factura; después se puede volver a pedir.
+  {
+    const fin = enDias(4);
+    const idSusc = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'estandar', cupo: 1, fin });
+    const idAnuncio = nuevoAnuncio({ idOrg: R.idOrg, idSusc, estado: 'activo', vence: fin });
+    const pago = db.registrarCobro({
+      idOrg: R.idOrg, idSusc, idAnuncio, cobro: cobroRenovacion({ etiqueta: 'RECH' }),
+      intencion: intencionRenovacion({ idSusc, idAnuncio }),
+    });
+    const b02 = siguienteB02();
+    const r = pagos.rechazarPago(pago.id, { motivo: 'fondos' });
+    ok(r.cambiado && r.pago.estado === 'rechazado' && filaSusc(idSusc).fin === fin && filaAnuncio(idAnuncio).vence === fin,
+      `rechazo: ${r.pago.estado}, fin ${filaSusc(idSusc).fin === fin ? 'igual' : 'CAMBIÓ'}`);
+    ok(!facturaDe(pago.id) && siguienteB02() === b02, `rechazo sin factura ni NCF (B02 +${siguienteB02() - b02})`);
+    const rep = pagos.confirmarPago(pago.id);
+    ok(rep.pago.estado === 'rechazado' && filaSusc(idSusc).fin === fin && !facturaDe(pago.id),
+      `confirmar un rechazado no renueva (${rep.pago.estado})`);
+    const otro = lanza(() => db.registrarCobro({
+      idOrg: R.idOrg, idSusc, idAnuncio, cobro: cobroRenovacion({ etiqueta: 'RECH2' }),
+      intencion: intencionRenovacion({ idSusc, idAnuncio }),
+    }));
+    ok(!otro, `tras el rechazo se puede pedir otra (${otro ? otro.message : 'sí'})`);
+  }
+
+  // 2d. Importe cero: renueva sin factura, pago 'sin-costo'.
+  {
+    const fin = enDias(2);
+    const idSusc = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'estandar', cupo: 1, fin });
+    const idAnuncio = nuevoAnuncio({ idOrg: R.idOrg, idSusc, estado: 'activo', vence: fin });
+    const factAntes = facturasTotales();
+    let r = null;
+    const e = lanza(() => { r = db.renovarSinCosto({ idOrg: R.idOrg, idSusc, idAnuncio, dias: 30, cobro: cobroCero('CERO') }); });
+    const esperado = (() => { const d = new Date(fin); d.setDate(d.getDate() + 30); return d.toISOString(); })();
+    ok(!e && !!r && !!r.membresia && r.membresia.fin === esperado && filaAnuncio(idAnuncio).vence === esperado,
+      e ? `renovarSinCosto lanzó: ${e.message}` : `sin costo: fin ${r.membresia && r.membresia.fin === esperado ? '+30' : r.membresia && r.membresia.fin}`);
+    ok(!!r && !!r.periodo && r.periodo.inicio === fin && r.periodo.fin === esperado, `periodo devuelto ${r && JSON.stringify(r.periodo)}`);
+    const p = consulta("SELECT * FROM pagos WHERE suscripcion_id = ? AND procesador = 'sin-costo'", idSusc);
+    ok(!!p && p.estado === 'aprobado' && p.total === 0 && p.anuncio_id === idAnuncio && facturasTotales() === factAntes,
+      `pago ${p ? `${p.estado} ${p.procesador} total=${p.total}` : 'NO hay'} facturas +${facturasTotales() - factAntes}`);
+    const conImporte = lanza(() => db.renovarSinCosto({ idOrg: R.idOrg, idSusc, dias: 30, cobro: cobroRenovacion({ etiqueta: 'COLADO' }) }));
+    ok(!!conImporte && conImporte.codigo === 500, `un importe por renovarSinCosto: ${conImporte ? conImporte.codigo : 'NO lanzó'}`);
+  }
+
+  // 2e. Dos cupos y tres vencidos: vuelven dos, el de la intención primero.
+  {
+    const idSusc = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'estandar', cupo: 2, fin: enDias(-1), estado: 'vencida' });
+    const idViejo = nuevoAnuncio({ idOrg: R.idOrg, idSusc, estado: 'vencido', vence: enDias(-1), actualizado: enDias(-10) });
+    const idMedio = nuevoAnuncio({ idOrg: R.idOrg, idSusc, estado: 'vencido', vence: enDias(-1), actualizado: enDias(-5) });
+    const idNuevo = nuevoAnuncio({ idOrg: R.idOrg, idSusc, estado: 'vencido', vence: enDias(-1), actualizado: enDias(-2) });
+    let res = null;
+    const e = lanza(() => { res = renovarPagando({ idOrg: R.idOrg, idSusc, idAnuncio: idViejo, cupo: 2, etiqueta: 'CUPO' }); });
+    const est = [idViejo, idMedio, idNuevo].map((x) => filaAnuncio(x).estado);
+    ok(!e && res.r.pago.estado === 'aprobado', e ? `lanzó por capacidad: ${e.message}` : 'la aprobación no lanza');
+    ok(est[0] === 'activo' && est[1] === 'vencido' && est[2] === 'activo',
+      `intención + el más reciente activos, el otro sigue vencido (${est.join(', ')})`);
+    ok(filaAnuncio(idMedio).vence === filaSusc(idSusc).fin, 'el que no cupo toma igual el fin nuevo');
+  }
+
+  // 2f. La Premium de un dealer aprobado, vencida y con la página apagada.
+  {
+    const P2 = cuenta('premium-renueva', 'dealer');
+    ejecuta("UPDATE organizaciones SET estado_revision = 'aprobada', perfil_publico = 0 WHERE id = ?", P2.idOrg);
+    const idSusc = nuevaSuscripcion({ idOrg: P2.idOrg, plan: 'premium', cupo: 3, fin: enDias(-4), estado: 'vencida', precio: 5500 });
+    renovarPagando({ idOrg: P2.idOrg, idSusc, idPlan: 'premium', cupo: 3, precioUnitario: 5500, etiqueta: 'PREMIUM' });
+    const perfil = consulta('SELECT perfil_publico FROM organizaciones WHERE id = ?', P2.idOrg).perfil_publico;
+    ok(perfil === 1 && filaSusc(idSusc).estado === 'activa', `página del dealer ${perfil ? 'encendida' : 'SIGUE apagada'}`);
+  }
+
+  // 2g. Lo que no se renueva: ajena, pago que apunta a otra, sin fecha.
+  {
+    const idSuscOtra = nuevaSuscripcion({ idOrg: OTRA.idOrg, plan: 'estandar', cupo: 1, fin: enDias(3) });
+    const finOtra = filaSusc(idSuscOtra).fin;
+    const pAjeno = db.registrarCobro({
+      idOrg: R.idOrg, idSusc: idSuscOtra, cobro: cobroRenovacion({ etiqueta: 'AJENA' }),
+      intencion: intencionRenovacion({ idSusc: idSuscOtra }),
+    });
+    const e404 = lanza(() => db.aprobarPago(pAjeno.id));
+    ok(!!e404 && e404.codigo === 404 && db.pagoPorId(pAjeno.id).estado === 'pendiente' && filaSusc(idSuscOtra).fin === finOtra,
+      `suscripción ajena: ${e404 ? e404.codigo : 'NO lanzó'} pago=${db.pagoPorId(pAjeno.id).estado}`);
+    db.rechazarPago(pAjeno.id);
+
+    const idS1 = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'estandar', cupo: 1, fin: enDias(3) });
+    const idS2 = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'estandar', cupo: 1, fin: enDias(3) });
+    const pCruzado = db.registrarCobro({
+      idOrg: R.idOrg, idSusc: idS1, cobro: cobroRenovacion({ etiqueta: 'CRUZADO' }),
+      intencion: intencionRenovacion({ idSusc: idS2 }),
+    });
+    const e500 = lanza(() => db.aprobarPago(pCruzado.id));
+    ok(!!e500 && e500.codigo === 500 && db.pagoPorId(pCruzado.id).estado === 'pendiente',
+      `pago que apunta a otra membresía: ${e500 ? `${e500.codigo} ${e500.message}` : 'NO lanzó'}`);
+    db.rechazarPago(pCruzado.id);
+
+    const idSinFin = nuevaSuscripcion({ idOrg: R.idOrg, plan: 'estandar', cupo: 1, fin: null });
+    const pSinFin = db.registrarCobro({
+      idOrg: R.idOrg, idSusc: idSinFin, cobro: cobroRenovacion({ etiqueta: 'SINFIN' }),
+      intencion: intencionRenovacion({ idSusc: idSinFin }),
+    });
+    const e409 = lanza(() => db.aprobarPago(pSinFin.id));
+    ok(!!e409 && e409.codigo === 409 && db.pagoPorId(pSinFin.id).estado === 'pendiente',
+      `membresía sin fecha: ${e409 ? `${e409.codigo} ${e409.message}` : 'NO lanzó'}`);
+    db.rechazarPago(pSinFin.id);
+  }
+
+  // 2h. Lo que el panel necesita para ofrecer renovar.
+  {
+    const L = cuenta('lista');
+    const idViva = nuevaSuscripcion({ idOrg: L.idOrg, plan: 'destacado', cupo: 2, fin: enDias(6), precio: 3200 });
+    const idVencida = nuevaSuscripcion({ idOrg: L.idOrg, plan: 'estandar', cupo: 1, fin: enDias(-6), estado: 'vencida' });
+    const idInterna = nuevaSuscripcion({ idOrg: L.idOrg, plan: 'premium', cupo: 1, fin: null });
+    nuevoAnuncio({ idOrg: L.idOrg, idSusc: idViva, estado: 'activo', vence: enDias(6) });
+    const pend = db.registrarCobro({
+      idOrg: L.idOrg, idSusc: idVencida, cobro: cobroRenovacion({ etiqueta: 'LISTA' }),
+      intencion: intencionRenovacion({ idSusc: idVencida }),
+    });
+    const lista = db.suscripcionesRenovablesDe(L.idOrg);
+    const ids = lista.map((s) => s.id);
+    ok(ids.includes(idViva) && ids.includes(idVencida) && !ids.includes(idInterna),
+      `renovables: viva ${ids.includes(idViva)}, vencida ${ids.includes(idVencida)}, sin fin ${ids.includes(idInterna)}`);
+    const viva = lista.find((s) => s.id === idViva);
+    const vencida = lista.find((s) => s.id === idVencida);
+    ok(!!viva && viva.plan_nombre === 'Destacado' && viva.ocupados === 1 && viva.destacado === 1
+      && viva.precio_vigente === 3200 && viva.dias_ciclo === 30 && viva.renovacion_automatica === 0 && viva.renovacion_pendiente === null,
+    `viva: ${viva ? `${viva.plan_nombre} ocupados=${viva.ocupados} vigente=${viva.precio_vigente} días=${viva.dias_ciclo} auto=${viva.renovacion_automatica} pendiente=${viva.renovacion_pendiente}` : 'NO sale'}`);
+    ok(!!vencida && vencida.renovacion_pendiente === pend.referencia && vencida.plan_activo === 1,
+      `vencida: pendiente=${vencida && vencida.renovacion_pendiente === pend.referencia ? 'la referencia' : vencida && vencida.renovacion_pendiente} plan_activo=${vencida && vencida.plan_activo}`);
+    ok(!!db.suscripcionRenovable(idVencida, L.idOrg) && db.suscripcionRenovable(idVencida, R.idOrg) === null
+      && db.suscripcionRenovable(idInterna, L.idOrg) === null,
+    'suscripcionRenovable: la suya sí, ajena o sin fin → null');
+
+    // Renovación automática: guardada, nunca marcada por defecto.
+    const texto = 'Al activar esta opción, autorizas la renovación de este anuncio al finalizar su período.';
+    ok(db.guardarRenovacionAutomatica({ idSusc: idViva, idOrg: L.idOrg, activar: true, texto }) === true, 'activar devuelve true');
+    const on = filaSusc(idViva);
+    ok(on.renovacion_automatica === 1 && !!on.renovacion_aceptada && on.renovacion_texto === texto,
+      `activada: ${on.renovacion_automatica} aceptada=${!!on.renovacion_aceptada} texto ${on.renovacion_texto === texto ? 'tal cual' : on.renovacion_texto}`);
+    db.guardarRenovacionAutomatica({ idSusc: idViva, idOrg: L.idOrg, activar: false });
+    const off = filaSusc(idViva);
+    ok(off.renovacion_automatica === 0 && off.renovacion_aceptada === on.renovacion_aceptada && off.renovacion_texto === texto,
+      `desactivada: ${off.renovacion_automatica}, conserva fecha y texto (${off.renovacion_texto === texto})`);
+    ok(db.guardarRenovacionAutomatica({ idSusc: idViva, idOrg: R.idOrg, activar: true, texto }) === false
+      && filaSusc(idViva).renovacion_automatica === 0, 'otra organización no la toca');
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
