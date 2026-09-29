@@ -1074,6 +1074,48 @@ db.cargarSecuencia({
       `compra recién hecha: ${rCompra.codigo} casilla=${idNueva && filaSusc(idNueva).renovacion_automatica}`);
   }
 
+  console.log('\n6 · condiciones nuevas antes de renovar');
+  {
+    /* La 2.1 de contratacion decía que la vigencia empieza al aprobarse el
+       pago; la 2.2 explica que renovar suma al final del período, los avisos
+       de 7/3/1 día y la renovación automática. Quien aceptó la 2.1 tiene que
+       aceptar la 2.2 ANTES de pagar una renovación (PARA_PAGAR). */
+    ejecuta("UPDATE planes SET precio_promocional = 0, promo_hasta = '2099-12-31' WHERE id = 'estandar'");
+    ok(legales.versionDe('contratacion') === '2.2', `versionDe('contratacion') = ${legales.versionDe('contratacion')}`);
+
+    const html = fs.readFileSync(path.join(__dirname, '..', 'legal.html'), 'utf8');
+    const seccion = html.slice(html.indexOf('id="contratacion"'), html.indexOf('id="t-contratacion"') + 400);
+    ok(/v2\.2 · vigente desde/.test(seccion) && !/v2\.1 · vigente desde 2026-09-26/.test(seccion),
+      'legal.html enseña v2.2 en la sección de contratación');
+
+    const cli = cuentaConSesion('legales-22', { sinLegales: true });
+    // La versión vieja se anota como '2.1' literal a propósito: es lo que aceptó quien ya tenía cuenta.
+    ['terminos', 'privacidad', 'contratacion'].forEach((documento) => {
+      db.registrarAceptacion({
+        usuarioId: cli.idUsuario, documento, version: documento === 'contratacion' ? '2.1' : legales.versionDe(documento),
+        ip: '127.0.0.1', userAgent: 'prueba',
+      });
+    });
+    const finL = enDias(10);
+    const sL = nuevaSuscripcion({ idOrg: cli.idOrg, plan: 'estandar', cupo: 1, fin: finL });
+    const aL = nuevoAnuncio({ idOrg: cli.idOrg, idSusc: sL, vence: finL });
+    const pagosAntes = pagosDeSusc(sL);
+
+    const r1 = await renovarAnuncioApi(aL, cli, {});
+    ok(r1.codigo === 409 && ((r1.datos || {}).faltan || []).length > 0
+      && JSON.stringify((r1.datos || {}).faltan).includes('contratacion')
+      && pagosDeSusc(sL) === pagosAntes && filaSusc(sL).fin === finL,
+    `con la 2.1 aceptada: ${r1.codigo} «${errorDe(r1)}» pagos +${pagosDeSusc(sL) - pagosAntes}`);
+
+    const rAc = await pedir({
+      metodo: 'POST', url: '/api/legales/aceptar', cuerpo: { documentos: ['contratacion'] }, cabeceras: cli.cabeceras,
+    });
+    ok(rAc.codigo === 200, `aceptar la 2.2: ${rAc.codigo}`);
+
+    const r2 = await renovarAnuncioApi(aL, cli, {});
+    ok([201, 202].includes(r2.codigo), `tras aceptar la 2.2 renueva: ${r2.codigo} «${errorDe(r2)}»`);
+  }
+
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);
 })().catch((e) => {
