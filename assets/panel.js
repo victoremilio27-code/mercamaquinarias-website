@@ -1415,6 +1415,241 @@ async function montarPanel() {
     }
   });
 
+  /* ── Renovar (MOD-09, MOD-12) ─────────────────────────────
+     El panel solo pide renovar con el método y los datos fiscales: el
+     importe, el plan, los días y la aprobación los pone el servidor
+     (05.3-02). Lo que aquí se enseña —precio, fecha nueva— es
+     informativo y sale de /api/membresias. */
+  const ROTULO_METODO = {
+    transferencia: 'Transferencia bancaria',
+    tarjeta: 'Tarjeta de crédito o débito',
+    demo: 'Pago inmediato',
+  };
+
+  const avisoRen = (mensaje, ok = false) => {
+    const el = $('#avisoRenovar');
+    el.hidden = !mensaje;
+    el.textContent = mensaje || '';
+    el.classList.toggle('acceso__aviso--ok', ok);
+  };
+
+  /* Recarga anuncios y membresías tras renovar: la fecha de la fila, la
+     tarjeta del plan y «Pagos en espera» cambian todos a la vez. */
+  async function recargarTodo() {
+    const [d, c] = await Promise.all([
+      api('/mis-anuncios', { silencioso: true }),
+      api('/membresias', { silencioso: true }),
+    ]);
+    if (d) {
+      ANUNCIOS = d.anuncios || ANUNCIOS;
+      MEMBRESIAS = d.membresias || MEMBRESIAS;
+      pintarMetricas(d.resumen || {});
+    }
+    if (c) {
+      MEMBRESIAS = c.membresias || MEMBRESIAS;
+      guardarPagos(c);
+    }
+    pintarFiltros();
+    pintarPlan();
+    pintarTabla();
+  }
+
+  function cerrarRenovacion() {
+    RENOVAR_OBJETIVO = null;
+    $('#panelRenovar').hidden = true;
+    avisoRen('');
+  }
+
+  /* Fecha informativa de «tras renovar»: la real la pone el servidor
+     (D-03), que suma los días del ciclo al vencimiento o a hoy si ya
+     venció. */
+  function fechaTrasRenovar(r) {
+    const fin = r.fin ? new Date(String(r.fin).slice(0, 10) + 'T00:00:00') : new Date();
+    const base = fin > new Date() ? fin : new Date();
+    base.setDate(base.getDate() + (r.dias || 30));
+    const p = (n) => String(n).padStart(2, '0');
+    return fechaCorta(`${base.getFullYear()}-${p(base.getMonth() + 1)}-${p(base.getDate())}`);
+  }
+
+  function abrirRenovacion({ idAnuncio, idSusc }) {
+    const a = idAnuncio ? ANUNCIOS.find((x) => x.id === idAnuncio) : null;
+    if (idAnuncio && !a) return;
+    const r = renovableDe(idSusc || (a && a.suscripcion_id));
+
+    if (!r) { avisoPlan('Este anuncio no tiene un plan que se pueda renovar.'); return; }
+    if (r.renovacion_pendiente) {
+      avisoPlan(`Ya hay una renovación en espera de confirmación · ref. ${r.renovacion_pendiente}.`);
+      return;
+    }
+    if (!r.precio) {
+      avisoPlan('El plan de esta publicación ya no se ofrece. Escríbanos por correo o por el asistente del sitio.');
+      return;
+    }
+
+    // Un anuncio de un solo cupo se renueva por su ruta; lo demás, por el plan.
+    const porAnuncio = !!a && r.cupo === 1;
+    RENOVAR_OBJETIVO = { idAnuncio: porAnuncio ? a.id : null, idSusc: r.id, r, vencido: !!r.vencida, nombre: a ? nombreDe(a) : r.plan_nombre };
+
+    const que = porAnuncio
+      ? esc(nombreDe(a))
+      : `Plan ${esc(r.plan_nombre)} · capacidad para ${esc(r.cupo)} ${r.cupo === 1 ? 'equipo' : 'equipos'}`;
+    const total = r.precio.total;
+    $('#renovarResumen').innerHTML = `
+      <p class="panel__texto"><b>${que}</b></p>
+      <p class="panel__texto">${r.vencida ? 'Venció' : 'Hoy vence'} el ${esc(fechaCorta(r.fin))}.
+        Tras renovar: hasta el ${esc(fechaTrasRenovar(r))}.</p>
+      <p class="panel__texto"><b class="num">${total > 0 ? `RD$ ${esc(miles(total))} · ITBIS incluido` : 'Sin costo durante la promoción'}</b></p>`;
+
+    // Con importe cero no hay nada que pagar ni facturar.
+    const cobra = total > 0;
+    const metodos = $('#renovarMetodos');
+    metodos.hidden = !cobra || !METODOS_PAGO.length;
+    metodos.innerHTML = cobra && METODOS_PAGO.length
+      ? '<legend class="comprobante__titulo">Forma de pago</legend>' + METODOS_PAGO.map((m, i) => `
+        <label class="opcion opcion--chica">
+          <input type="radio" name="metodoRen" value="${esc(m)}"${i === 0 ? ' checked' : ''}>
+          <span class="opcion__cuerpo"><b class="opcion__nombre">${esc(ROTULO_METODO[m] || m)}</b></span>
+        </label>`).join('')
+      : '';
+    $('#bloqueComprobanteRen').hidden = !cobra;
+
+    // Casilla (D-12): solo existe si el servidor la ofrece, y nunca marcada.
+    const caja = $('#renovarAutomatica');
+    if (RENOVACION_AUTO.disponible) {
+      caja.innerHTML = `<label class="renovar-auto"><input type="checkbox" id="chkRenovacionAuto"> ${esc(RENOVACION_AUTO.texto || 'Renovar automáticamente')}</label>`;
+      caja.hidden = false;
+    } else {
+      caja.innerHTML = '';
+      caja.hidden = true;
+    }
+
+    avisoRen('');
+    if (faltanLegales('pagar').length) {
+      montarAvisoLegal('pagar');
+      avisoRen('Antes de pagar hace falta aceptar las condiciones nuevas (arriba).');
+    }
+    const sec = $('#panelRenovar');
+    sec.hidden = false;
+    $('#btnPagarRenovacion').disabled = false;
+    $('#btnPagarRenovacion').classList.remove('btn--ocupado');
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('#t-renovar').focus({ preventScroll: true });
+  }
+
+  /* Solo método, datos fiscales y la casilla: nunca importe, plan, cupo
+     ni días (T-05.3-18). `api()` lanza, así que va con su try/catch. */
+  async function pagarRenovacion() {
+    const obj = RENOVAR_OBJETIVO;
+    if (!obj) return;
+    const btn = $('#btnPagarRenovacion');
+
+    const cuerpo = {};
+    const metodo = document.querySelector('input[name="metodoRen"]:checked');
+    if (metodo) cuerpo.metodo = metodo.value;
+    else if (METODOS_PAGO.length && obj.r.precio.total > 0) cuerpo.metodo = METODOS_PAGO[0];
+    const rnc = document.querySelector('input[name="tipoComprobanteRen"]:checked');
+    if (obj.r.precio.total > 0 && rnc && rnc.value === 'si') {
+      cuerpo.conRnc = true;
+      cuerpo.razonSocial = $('#ren-razon').value || '';
+      cuerpo.rnc = $('#ren-rnc').value || '';
+      cuerpo.direccionFiscal = $('#ren-direccion').value || '';
+    }
+    const chk = $('#chkRenovacionAuto');
+    if (chk && chk.checked) cuerpo.renovacionAutomatica = true;
+
+    const ruta = obj.idAnuncio
+      ? `/anuncios/${encodeURIComponent(obj.idAnuncio)}/renovar`
+      : `/membresias/${encodeURIComponent(obj.idSusc)}/renovar`;
+
+    btn.disabled = true;
+    btn.classList.add('btn--ocupado');
+    avisoRen('');
+    try {
+      const r = await api(ruta, { metodo: 'POST', cuerpo });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      cerrarRenovacion();
+      await recargarTodo();
+
+      if (r.pago && r.pago.estado === 'pendiente' || !r.membresia) {
+        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+        return;
+      }
+      const fin = fechaCorta(r.membresia.fin);
+      avisoPlan(obj.vencido
+        ? `Listo: ${obj.nombre} vuelve a estar publicado hasta el ${fin}.`
+        : `Listo: ${obj.nombre} sigue publicado hasta el ${fin}.`, false);
+    } catch (e) {
+      btn.disabled = false;
+      btn.classList.remove('btn--ocupado');
+      const msg = e.message || 'No se pudo renovar.';
+      avisoRen(msg);
+      if (/debe aceptar/i.test(msg)) montarAvisoLegal('pagar');
+      // Un anuncio de un plan de varios cupos no se renueva solo.
+      if (e.codigo === 409 && /renueve el plan completo/i.test(msg) && e.idSusc) {
+        const el = $('#avisoRenovar');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn-tabla btn-tabla--fuerte';
+        b.textContent = 'Renovar plan';
+        b.addEventListener('click', () => abrirRenovacion({ idSusc: e.idSusc }));
+        el.append(' ', b);
+      }
+    }
+  }
+
+  $('#btnPagarRenovacion').addEventListener('click', pagarRenovacion);
+  $('#btnCancelarRenovacion').addEventListener('click', cerrarRenovacion);
+  document.querySelectorAll('input[name="tipoComprobanteRen"]').forEach((rad) => {
+    rad.addEventListener('change', () => {
+      $('#camposFiscalesRen').hidden = rad.value !== 'si' || !rad.checked;
+      if (!$('#camposFiscalesRen').hidden) $('#ren-razon').focus();
+    });
+  });
+  $('#ren-rnc').addEventListener('input', (ev) => {
+    ev.target.value = ev.target.value.replace(/\D+/g, '');
+  });
+
+  $('#filasAnuncios').addEventListener('click', (ev) => {
+    const uno = ev.target.closest('[data-renovar]');
+    if (uno) { abrirRenovacion({ idAnuncio: uno.dataset.renovar }); return; }
+    const plan = ev.target.closest('[data-renovar-plan]');
+    if (plan) abrirRenovacion({ idSusc: plan.dataset.renovarPlan });
+  });
+  $('#panelPlan').addEventListener('click', (ev) => {
+    const plan = ev.target.closest('[data-renovar-plan]');
+    if (plan) abrirRenovacion({ idSusc: plan.dataset.renovarPlan });
+  });
+
+  /* Interruptor de la renovación automática de un plan. Solo existe si
+     el servidor la ofrece; si el PUT falla, la casilla vuelve a como
+     estaba y se dice por qué. */
+  $('#panelPlan').addEventListener('change', async (ev) => {
+    const chk = ev.target.closest('[data-renovacion-auto]');
+    if (!chk || !RENOVACION_AUTO.disponible) return;
+    const activar = chk.checked;
+    chk.disabled = true;
+    try {
+      const r = await api(`/membresias/${encodeURIComponent(chk.dataset.renovacionAuto)}/renovacion-automatica`, {
+        metodo: 'PUT', cuerpo: { activar },
+      });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      const ren = renovableDe(chk.dataset.renovacionAuto);
+      if (ren) ren.renovacion_automatica = activar;
+      avisoPlan(activar ? 'Renovación automática activada.' : 'Renovación automática desactivada.', false);
+    } catch (e) {
+      chk.checked = !activar;
+      avisoPlan(e.message);
+    } finally {
+      chk.disabled = false;
+    }
+  });
+
+  /* Enlace de los avisos por correo: panel.html?renovar=<id>. El valor
+     sale de la URL, así que solo se usa si coincide EXACTAMENTE con un
+     anuncio de esta cuenta y nunca se pinta (T-05.3-17). */
+  const idRenovar = new URLSearchParams(location.search).get('renovar');
+  if (idRenovar && ANUNCIOS.some((x) => x.id === idRenovar)) abrirRenovacion({ idAnuncio: idRenovar });
+
   $('#btnSalir').addEventListener('click', async () => {
     await api('/cuenta/salir', { metodo: 'POST', silencioso: true });
     location.href = 'index.html';

@@ -3343,6 +3343,11 @@ main { position: relative; }
 .membresia__gratis { font-size: 11.5px; font-weight: 700; color: var(--verde); }
 .membresia__siguiente { font-size: 11.5px; color: var(--gris-acero); }
 .membresia .btn { align-self: flex-start; margin-top: 2px; }
+.membresia__renovar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
+.renovar-auto { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--texto-2); }
+.renovar-auto input { accent-color: var(--ambar-hondo); }
+.planes-vencidos { margin-top: 14px; }
+.renovar-metodos { border: 0; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; }
 
 /* Selector de plan en la tabla: cambia el nivel de un equipo sin salir
    de la lista, que es donde el anunciante los está comparando. */
