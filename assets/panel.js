@@ -1469,6 +1469,7 @@ async function montarPanel() {
       caja.hidden = true;
     }
 
+    cerrarAmpliacion();
     avisoRen('');
     if (faltanLegales('pagar').length) {
       montarAvisoLegal('pagar');
@@ -1698,6 +1699,55 @@ async function montarPanel() {
      anuncio de esta cuenta y nunca se pinta (T-05.3-17). */
   const idRenovar = new URLSearchParams(location.search).get('renovar');
   if (idRenovar && ANUNCIOS.some((x) => x.id === idRenovar)) abrirRenovacion({ idAnuncio: idRenovar });
+
+  /* Solo `cupo` y `metodo`: nunca importe (T-05.4-09). `api()` lanza, así
+     que va con su try/catch. Un 202 no es una ampliación hecha: la
+     membresía sigue con lo que tenía y el pago queda en «Pagos en
+     espera» (T-05.4-11). */
+  async function confirmarAmpliacion() {
+    const obj = AMPLIAR_OBJETIVO;
+    if (!obj) return;
+    const cantidad = cantidadAmpliar();
+    if (!cantidad) { pintarPrecioAmpliar(); return; }
+    const { m } = obj;
+    const btn = $('#btnConfirmarAmpliar');
+
+    const metodo = document.querySelector('input[name="metodoAmp"]:checked');
+    const cupo = m.anuncios_incluidos + cantidad;
+
+    btn.disabled = true;
+    btn.classList.add('btn--ocupado');
+    avisoAmp('');
+    try {
+      const r = await api(`/membresias/${encodeURIComponent(m.id)}/ampliar`, {
+        metodo: 'POST', cuerpo: { cupo, ...(metodo ? { metodo: metodo.value } : {}) },
+      });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      await refrescarCupos();
+      cerrarAmpliacion();
+
+      if (r.pago && r.pago.estado === 'pendiente') {
+        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+        return;
+      }
+      avisoPlan(`Su plan ${m.plan_nombre} pasó a ${cupo} publicaciones activas permitidas.`, false);
+    } catch (e) {
+      btn.disabled = false;
+      btn.classList.remove('btn--ocupado');
+      const msg = e.message || 'No se pudo agregar las publicaciones.';
+      avisoAmp(msg);
+      // 409 de condiciones sin aceptar: mismo enlace que la sección de renovar.
+      // Cualquier otro 409 (operación en espera) ya trae su referencia en `msg`.
+      if (/debe aceptar/i.test(msg)) montarAvisoLegal('pagar');
+    }
+  }
+  $('#btnConfirmarAmpliar').addEventListener('click', confirmarAmpliacion);
+
+  /* Enlace panel.html?ampliar=<id>. El valor sale de la URL: solo abre si
+     coincide EXACTAMENTE con una membresía de esta cuenta con límite y
+     nunca se pinta (T-05.4-08). */
+  const idAmpliar = new URLSearchParams(location.search).get('ampliar');
+  if (idAmpliar && MEMBRESIAS.some((x) => x.id === idAmpliar && x.anuncios_incluidos != null)) abrirAmpliacion(idAmpliar);
 
   $('#btnSalir').addEventListener('click', async () => {
     await api('/cuenta/salir', { metodo: 'POST', silencioso: true });
