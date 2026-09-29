@@ -1425,6 +1425,8 @@ async function cargarPlanes() {
    script. */
 function tarjetaPlanPublicar(n) {
   const elegido = n.id === estado.planElegido;
+  // El mismo criterio que planes.js: la cinta es del Destacado, no del Premium.
+  const sugerido = n.destacado && !n.perfil_publico;
   const unitario = n.precio_vigente != null ? n.precio_vigente : n.precio;
   const total = precioCompra({ precioUnitario: unitario, cupo: 1, dias: estado.diasElegidos }).total;
 
@@ -1438,10 +1440,10 @@ function tarjetaPlanPublicar(n) {
   ].filter(Boolean);
 
   return `<li>
-    <label class="plan-op${elegido ? ' plan-op--elegido' : ''}${n.destacado ? ' plan-op--sugerido' : ''}">
+    <label class="plan-op${elegido ? ' plan-op--elegido' : ''}${sugerido ? ' plan-op--sugerido' : ''}">
       <input type="radio" name="planPublicar" value="${esc(n.id)}"${elegido ? ' checked' : ''}>
       <span class="plan-op__cabeza">
-        ${n.destacado
+        ${sugerido
           ? '<span class="plan-op__cinta">Más contratado</span>'
           : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
         <span class="plan-op__nombre">Publicación ${esc(n.nombre)}</span>
