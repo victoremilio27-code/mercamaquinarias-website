@@ -22,7 +22,11 @@ progress:
   borrador) y 05.2-04 (panel y planes sin «cupo») commiteados y empujados **sin desplegar a propósito**:
   las tarjetas nuevas de `planes.html` llevan a `publicar.html?plan=…`, que solo entiende el 05.2-05.
   Desplegar 03+04+05 juntos.
-- Siguiente: ejecutar el 05.2-05 (Sonnet) desde cero; el intento anterior no llegó a commitear nada.
+- Siguiente: terminar el 05.2-05 (Sonnet). El segundo intento se cortó por el **límite semanal** y dejó
+  el commit `f96eece` «wip» con ~750 líneas en `assets/publicar.js` y `publicar.html`, **sin probar y con un
+  error de sintaxis en `assets/publicar.js:2205`** (`const miToken = += …`). Partir de ahí o revertirlo.
+- 05.3: planes escritos (5). Rama `claude/fase-05.3-renovacion` (worktree `/home/user/merca-05.3` en la
+  nube, efímero); el 05.3-01 se cortó sin commitear nada.
   Luego verificación de cierre de la 05.2 (Opus) y PR.
 - 05.3: `05.3-CONTEXT.md` escrito; relanzar el planificador (Opus).
 - Deploy por plan autorizado por Victor (ver Decisions).
