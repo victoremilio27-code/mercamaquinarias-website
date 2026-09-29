@@ -946,33 +946,54 @@ const enviarAnuncioPublicado = ({ para, nombre, equipo, idAnuncio, vence, plan }
   }),
 });
 
-/* Aviso previo al vencimiento. Se manda una sola vez por anuncio; de
-   eso se encarga quien llama, anotándolo en la base. */
-const enviarAnuncioPorVencer = ({ para, nombre, equipo, idAnuncio, vence, dias }) => enviar({
-  para,
-  responderA: BUZONES.anuncios,
-  asunto: `Su ${equipo} vence en ${dias} ${dias === 1 ? 'día' : 'días'} · MercaMaquinarias`,
-  texto: [
-    nombre ? `Hola, ${nombre}:` : 'Hola:', '',
-    `Su anuncio de ${equipo} deja de publicarse el ${fecha(vence)}.`, '',
-    'Si todavía no lo ha vendido, puede renovarlo desde el panel y sigue',
-    'apareciendo en el catálogo sin perder las visitas acumuladas:',
-    `${SITIO}/panel.html`, '',
-    'Si ya lo vendió, márquelo como vendido y así no le volvemos a escribir.', '',
-    'MercaMaquinarias',
-  ].join('\n'),
-  html: envoltura({
-    titulo: `Su anuncio vence en ${dias} ${dias === 1 ? 'día' : 'días'}`,
-    saludo: nombre ? `Hola, ${nombre}:` : 'Hola:',
-    parrafos: ['Si todavía no lo ha vendido, renuévelo y sigue apareciendo en el catálogo sin perder las visitas acumuladas.'],
-    extra: tarjeta(`
+/* Avisos previos al vencimiento: 7 días, 3 días y 24 horas. Sustituyen al
+   aviso único de 5 días (D-08); quien llama se encarga de mandarlos una sola
+   vez por anuncio y ciclo con la tabla `recordatorios`. Van de tú para que
+   casen con los asuntos fijados en D-09 (el resto de correos sigue en usted). */
+const ASUNTOS_RECORDATORIO = {
+  '7d': 'Tu anuncio vence en 7 días',
+  '3d': 'Tu anuncio vence en 3 días',
+  '1d': 'Tu anuncio vence mañana',
+};
+const asuntoRecordatorio = (tipo) => {
+  if (!Object.prototype.hasOwnProperty.call(ASUNTOS_RECORDATORIO, tipo)) {
+    throw new Error(`Tipo de recordatorio desconocido: ${tipo}`);
+  }
+  return ASUNTOS_RECORDATORIO[tipo];
+};
+
+const enviarRecordatorioVencimiento = ({ para, nombre, equipo, idAnuncio, vence, tipo, plan }) => {
+  const asunto = asuntoRecordatorio(tipo);
+  const enlace = `${SITIO}/panel.html?renovar=${encodeURIComponent(idAnuncio)}`;
+  return enviar({
+    para,
+    responderA: BUZONES.anuncios,
+    asunto: `${asunto} · MercaMaquinarias`,
+    texto: [
+      nombre ? `Hola, ${nombre}:` : 'Hola:', '',
+      `Tu anuncio de ${equipo} deja de publicarse el ${fecha(vence)}.`,
+      plan ? `Plan: ${plan}` : null,
+      '',
+      'Renuévalo y sigue en el catálogo con las mismas fotos, el mismo anuncio y sus',
+      'visitas acumuladas. El nuevo período se suma al final del actual:',
+      enlace, '',
+      'Si ya lo vendiste, márcalo como vendido en el panel y no te volvemos a escribir por este equipo.', '',
+      'MercaMaquinarias',
+    ].filter((l) => l !== null).join('\n'),
+    html: envoltura({
+      titulo: asunto,
+      saludo: nombre ? `Hola, ${nombre}:` : 'Hola:',
+      parrafos: ['Renuévalo y sigue en el catálogo con las mismas fotos, el mismo anuncio y sus visitas acumuladas. El nuevo período se suma al final del actual.'],
+      extra: tarjeta(`
       <div style="font-family:${TIPO};font-size:18px;font-weight:700;color:${AZUL};line-height:1.3">${esc(equipo)}</div>
       <div style="margin-top:10px;font-family:${TIPO};font-size:13px;color:${GRIS_CLARO}">Deja de publicarse el</div>
-      <div style="margin-top:2px;font-family:${TIPO};font-size:20px;font-weight:800;color:${AMBAR}">${esc(fecha(vence))}</div>`),
-    accion: { texto: 'Renovar el anuncio', url: `${SITIO}/panel.html` },
-    nota: 'Si ya lo vendió, márquelo como vendido en el panel y así no le volvemos a escribir por este equipo.',
-  }),
-});
+      <div style="margin-top:2px;font-family:${TIPO};font-size:20px;font-weight:800;color:${AMBAR}">${esc(fecha(vence))}</div>
+      ${filas([['Plan', plan]])}`),
+      accion: { texto: 'Renovar anuncio', url: enlace },
+      nota: 'Si ya lo vendiste, márcalo como vendido en el panel y no te volvemos a escribir por este equipo.',
+    }),
+  });
+};
 
 const enviarAnuncioVencido = ({ para, nombre, equipo, idAnuncio }) => enviar({
   para,
@@ -1259,7 +1280,7 @@ const enviarBienvenida = ({ para, nombre, esDealer }) => enviar({
 module.exports = {
   enviar, enviarCodigo, enviarAvisoCambioClave,
   enviarSolicitudDealer, enviarResolucionDealer, enviarSolicitudServicio,
-  enviarAnuncioPublicado, enviarAnuncioPorVencer, enviarAnuncioVencido,
+  enviarAnuncioPublicado, asuntoRecordatorio, enviarRecordatorioVencimiento, enviarAnuncioVencido,
   enviarComprobante, enviarContactoRecibido, enviarBienvenida,
   enviarDatosTransferencia, enviarTransferenciaAnulada,
   avisarInternamente,
