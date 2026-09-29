@@ -1186,7 +1186,7 @@ db.cargarSecuencia({
       `--seco cuenta y no borra: salida ${seco.status} A existe=${existe(A)}`);
 
     const real = tarea('borradores');
-    ok(real.status === 0, `tarea borradores: salida ${real.status} ${(real.stderr || '').trim().slice(0, 120)}`);
+    ok(real.status === 0, `tarea borradores: salida ${real.status}${real.status ? ` ${(real.stderr || '').trim().slice(0, 120)}` : ''}`);
     ok(!existe(A) && fotosDe(A) === 0, `el abandonado se borró con sus fotos: existe=${existe(A)}`);
     ok(!fs.existsSync(archivoFoto), `y su archivo de foto se fue del disco: existe=${fs.existsSync(archivoFoto)}`);
     ok(existe(B) && existe(C) && existe(D) && existe(E),
