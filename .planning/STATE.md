@@ -16,93 +16,99 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-09-29) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-09-29, noche) — EMPIEZA AQUÍ
+
+Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
+.planning/STATE.md y sigue.»*
 
 **Forma de trabajar:** una rama y un PR por fase; se fusiona y despliega al cerrar la fase (verificación
-passed + CI en verde). Opus planifica con GSD y verifica; Sonnet ejecuta; un plan que toca ITBIS,
-comprobante o NCF lo ejecuta Opus. Hasta 2-3 agentes si no tocan los mismos archivos. Detalle en «Decisions».
+passed + CI en verde, sin volver a preguntar). Opus planifica con GSD y verifica; Sonnet ejecuta; un plan
+que toca ITBIS, comprobante o NCF lo ejecuta Opus. Hasta 2-3 agentes si no tocan los mismos archivos (el
+segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions».
 
-**Hecho y en producción:**
-- PR #33 (reactivar un vendido exige cupo libre), #34 (renders en alquiler), #35 (fase 05.1: precio único
-  con el 3 % dentro e ITBIS incluido, 1.800/3.200, condiciones v2.1), #36 y #37 (05.2-01 y 05.2-02).
+### Dónde estamos
 
-**Fase 05.2 en producción** (PR #38 fusionado).
+- **En producción:** fases 05.1 (precio único), 05.2 (publicar este equipo) y 05.3 (renovación,
+  vencimientos y avisos 7/3/1; PR #39, «Sitio arriba: 069fcee»). La casilla de renovación automática está
+  construida y **apagada** (`MERCA_CARDNET`). Condiciones de contratación en la 2.2.
+- **Preparado sin planificar todavía:** la 05.4 y la 12 tienen `CONTEXT.md` y `RESEARCH.md`; la facturación
+  electrónica tiene `research/facturacion-electronica.md`.
+- **En la nube:** puppeteer como root necesita un envoltorio de Chrome en el scratchpad con `--no-sandbox` y
+  el proxy del entorno, vía `PUPPETEER_EXECUTABLE_PATH` (ver «Decisions»); nunca se toca `tools/` por eso.
 
-**Fase 05.3 en producción** (PR #39 fusionado; «Sitio arriba: 069fcee» el 2026-09-29): los 5 planes
-hechos; `05.3-VERIFICATION.md` da human_needed solo por la revisión visual (5 criterios y 26 verdades
-comprobados en el código). Migración `2026-09-renovacion`, renovar anuncio o plan por `confirmarPago`,
-tarea `suscripciones` que vence de verdad, avisos 7/3/1 con registro idempotente, panel con «Vence el…»
-y renovar, casilla de renovación automática construida y **apagada** (`MERCA_CARDNET`), condiciones 2.2.
-Arneses nuevos: `renovacion:probar` (150) y `recordatorios:probar` (32), ambos en CI.
-- Anotado para la fase de deuda técnica (no bloquea): `tipoRecordatorio` redondea hacia arriba, así que
-  «vence mañana» puede llegar el mismo día del corte; `fechaCorta` de `assets/panel.js` pinta la fecha en
-  UTC (un corte entre 00:00 y 04:00 UTC sale un día después que en hora dominicana); la rama `ampliacion`
-  de `aprobarPago` no mira `fin` (hoy la frena `membresiaViva` en la consola).
-- En la nube, puppeteer como root necesita `--no-sandbox` y el proxy del entorno: los ejecutores usaron un
-  envoltorio en el scratchpad vía `PUPPETEER_EXECUTABLE_PATH`, sin tocar el repo.
+### Lo que falta, en orden
 
-**Siguiente paso (en este orden; el próximo chat empieza aquí):**
-1. **Planificar la 05.4** con `gsd-plan-phase 05.4`. Ya tiene `05.4-CONTEXT.md` (D-01 a D-20, sin discusión
-   interactiva) y `05.4-RESEARCH.md` (2026-09-29): **no repetir la investigación**; va directo al planificador
-   (Opus) y al comprobador de planes (Opus). Reparto propuesto en RESEARCH: 01 guardas del servidor y
-   prorrateo con pruebas primero (Opus: toca `aprobarPago`), 02 panel del dealer y sección de ampliar,
-   03 textos sin «cupo», asistente, concepto del comprobante solo hacia adelante (Opus) y contratación 2.3,
-   04 consola de solo lectura, 05 batería y auditorías. Ola 0: `tools/probar-capacidad.js`, script
-   `capacidad:probar` y su paso de CI (en LF). Las pruebas que hoy exigen «cupo» (`probar-publicacion.js:736`,
-   `probar-transferencia.js`, `prueba-chat.js`) se invierten en el mismo plan que cambia el texto.
-   Luego ejecutarla (rama nueva desde `main`, un PR, fusionar con CI en verde).
-2. **Replanificar la fase 6 (CardNet)** desde el 06-02 contra el modelo nuevo; su migración
-   `2026-10-cardnet` no debe volver a crear las columnas `renovacion_*` que ya crea la 05.3, y el cobro
-   recurrente tiene que respetar las guardas de la 05.4 (una operación de capacidad pendiente por membresía,
-   `aprobarPago` no suma a una membresía vencida).
-3. **Planificar la fase 12** (lote mensual): ya tiene `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP escrito a mano
-   con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni `lotes_contador`,
-   restos del envío automático prohibido). Se planifica ya y se ejecuta en su turno del ROADMAP (tras la 11).
-4. Sin planificar por falta de datos de Victor: 11 (contenido real de transporte y financiamiento), 14
-   (personas y protocolo de inspección). 13, 15 y 16 se planifican cuando se acerquen: tocan archivos que la
-   05.4 y la 6 aún cambian.
-5. Papeleo: las fases 2, 3 y 4 tienen todos sus planes hechos pero sin VERIFICATION ni casilla en el ROADMAP;
-   la 8 y la 9 tienen VERIFICATION pero sin casilla. Revisar y marcar.
+1. **Fase 05.4 — dealer con capacidad de publicaciones activas y consola.** `gsd-plan-phase 05.4`: ya hay
+   `05.4-CONTEXT.md` (D-01 a D-20) y `05.4-RESEARCH.md`, **no repetir la investigación**; directo al
+   planificador (Opus) y al comprobador (Opus). Reparto propuesto: 01 guardas del servidor y prorrateo con
+   pruebas primero (Opus: toca `aprobarPago`); 02 panel del dealer y sección de ampliar; 03 textos sin
+   «cupo», asistente, concepto del comprobante solo hacia adelante (Opus) y contratación 2.3; 04 consola de
+   solo lectura; 05 batería y auditorías. Ola 0: `tools/probar-capacidad.js`, script `capacidad:probar` y su
+   paso de CI (en LF). Las pruebas que hoy exigen «cupo» (`probar-publicacion.js:736`,
+   `probar-transferencia.js`, `prueba-chat.js`) se invierten en el mismo plan que cambia el texto. Después,
+   ejecutar, verificar, PR, fusionar y comprobar «Sitio arriba».
+2. **Fase 6 — CardNet.** Replanificar desde el 06-02 contra el modelo nuevo: la migración `2026-10-cardnet`
+   no vuelve a crear las columnas `renovacion_*` de la 05.3, y el cobro recurrente respeta las guardas de la
+   05.4 (una operación de capacidad pendiente por membresía; `aprobarPago` no suma a una membresía vencida).
+   Ejecutar y entregar apagada.
+3. **Fase 12 — lote mensual de comprobantes.** Planificar ya con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP
+   escrito a mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni
+   `lotes_contador`, restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista
+   la e-CF, el lote incluye también el XML y la representación impresa.
+4. **Papeleo del ROADMAP.** Las fases 2, 3 y 4 tienen todos sus planes hechos pero sin VERIFICATION ni casilla;
+   la 8 y la 9 tienen VERIFICATION pero sin casilla. Verificar lo que falte y marcar.
+5. **Facturación electrónica (e-CF) — en espera.** Victor todavía no ha solicitado ser emisor electrónico; lo
+   hace en **octubre de 2026**. Cuando diga que está presentada: insertar la fase «6.1 e-CF» con `gsd-phase`
+   (propuesta en §7 de la investigación: FE-01 a FE-13, construida y apagada tras `MERCA_ECF`, ejecutada con
+   Opus) y planificarla. Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador.
+6. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan
+   personas y protocolo de inspección); 13, 15 y 16 se planifican cuando se acerquen, porque tocan archivos que
+   la 05.4 y la 6 aún cambian.
+7. **Deuda anotada para la 13 (no bloquea):** `fechaCorta` de `assets/panel.js` y de los PDF pinta la fecha en
+   UTC; `tipoRecordatorio` redondea hacia arriba («vence mañana» el mismo día del corte); desborde de
+   `panel.html` a 390 px; `destino` sin validar en `assets/planes.js`; `tools/admin.js` cambia el sello sin
+   bitácora; borrar `proximamente.html` y `vercel.json` (con el visto bueno de Victor).
 
-**Preguntas nuevas para Victor (se planifica con el valor por defecto si no contesta):**
-- 05.4 P9: precio de «Agregar publicaciones activas» — lista (por defecto) / vigente con promoción /
+### Preguntas para Victor (se trabaja con el valor por defecto si no contesta)
+
+- 05.4 P9: precio de «Agregar publicaciones activas»: lista (**por defecto**) / vigente con promoción /
   pactado (exige migración).
-- 05.4 P13: ampliar tras renovar por adelantado cobra todos los días que quedan (por defecto) o máximo un ciclo.
-- 05.4 P14: página pública del dealer solo con Premium (por defecto) o con cualquier nivel con capacidad viva.
+- 05.4 P13: ampliar tras renovar por adelantado cobra todos los días que quedan (**por defecto**) o máximo un
+  ciclo.
+- 05.4 P14: página pública del dealer solo con Premium (**por defecto**) o con cualquier nivel con capacidad
+  viva.
 - 05.4: la contratación 2.3 obliga a todos a aceptar de nuevo antes de su próximo pago, a dos semanas del
-  lanzamiento. Por defecto se sube; la alternativa es dejar esas cláusulas para después.
-- 12 (con el contador): ¿quiere el Formato 607 de la DGII y en qué formato? (por defecto no se genera; el CSV
-  trae los campos); ¿ZIP (por defecto) o un solo PDF?; ¿contenido del paquete (PDF de cada comprobante,
-  `resumen.csv` con `;`, `resumen.pdf`, `LEEME.txt`)?; ¿recibos no fiscales dentro, aparte (por defecto)?;
-  ¿corte por mes calendario dominicano y fecha de cobro (por defecto)?
+  lanzamiento. **Por defecto se sube**; la alternativa es dejar esas cláusulas para después.
+- 12 (con el contador): ¿Formato 607 de la DGII y en qué formato? (**por defecto no se genera**; el CSV trae
+  los campos); ¿ZIP (**por defecto**) o un solo PDF?; ¿contenido del paquete (PDF de cada comprobante,
+  `resumen.csv` con `;`, `resumen.pdf`, `LEEME.txt`)?; ¿recibos no fiscales dentro, aparte (**por defecto**)?;
+  ¿corte por mes calendario dominicano y fecha de cobro (**por defecto**)?
 
-**Pendiente de Victor (además de lo de más abajo):**
-- NCF (dato de Victor, 2026-09-29): **las secuencias B quedan obsoletas el 30 de noviembre de 2026; desde el
-  1 de diciembre se factura con e-CF** (migración del Gobierno). Hasta entonces se usan las secuencias que hay
-  y, cuando quedan pocas, se piden más y la DGII las da al instante: hay que estar encima. El aviso ya existe
-  (tarea diaria `ncf` de `tools/tareas.js`, dos umbrales, correo a gerencia). Pedir la **B02** (hoy no está
-  cargada: el que compra sin RNC recibe un recibo no fiscal) y más B01 (quedan 15); cargar sus fechas de
-  vencimiento con `tools/facturas.js`.
-- e-CF: investigación hecha en `research/facturacion-electronica.md` (2026-09-29; `dgii.gov.do` bloqueado
-  por el proxy, cada dato marcado [V]/[C]/[P]/[E]). **Lo publicado no casa con el 30-nov:** pequeños y micro
-  tienen hasta el **15-nov-2026** (Aviso 06-26) y grandes y medianos, e-CF exclusivo desde el **1-nov-2026**.
-  Se planifica contra el 15-nov. **Primero, saber en qué grupo cae Inversiones XZT** (si es mediana, el corte
-  es el 1-nov). Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador, con un certificado
-  digital propio; emitir directo queda como alternativa. Fase propuesta «6.1 e-CF» (FE-01 a FE-13, §7),
-  construida y apagada tras `MERCA_ECF`, ejecutada con Opus: **pendiente del visto bueno de Victor porque
-  altera el orden fijado** (va antes de la 11). Hasta decidirlo no se inserta en el ROADMAP.
-- Calendario para Victor (§6, hacia atrás desde el 15-nov): ya, preguntar al contador el grupo de la empresa,
-  de dónde sale el 30-nov y si ya es emisor electrónico; 2-oct, clave de la OFV y dispositivo de seguridad;
-  6-oct, pedir el certificado digital (Avansi, Viafirma o Digifirma; 3-10 días hábiles); 9-oct, elegir
-  proveedor PSFE y bajar los PDF/XSD oficiales al repositorio; 16-oct, solicitud de emisor electrónico en la
-  OFV; 19-30 oct, pruebas en el portal; 31-oct, declaración jurada; ~6-nov, secuencias E31/E32/E34; 9-13 nov,
-  pruebas en producción; 15-nov, corte.
-- Revisar la redacción de las Condiciones, ya en la 2.2 (cláusula 2.1 y las nuevas 4.4-4.6 de renovación).
-- Revisión visual de la 05.3 (lista en `05.3-VERIFICATION.md`): «Vence el…» y avisos en el panel, sección
-  «Renovar», renovar un vencido tras el despliegue, los tres correos de aviso en un cliente real, y decidir
-  si vale «vence mañana» cuando el corte es ese mismo día.
-- Confirmar en supercarros.com/vender los precios del estudio (`research/precios-mercado.md`).
-- Revisión visual de la 05.1 y la 05.2 (listas en sus VERIFICATION/SUMMARY).
+### Lo que solo puede hacer Victor
+
+- **CardNet:** meter el expediente de afiliación (es lo único que puede retrasar el lanzamiento) y contestar
+  las 8 preguntas de `06-CONTEXT.md` («Preguntas abiertas»), sobre todo si `DataDo.Invoice` es número de orden
+  o NCF; llaves de lab, afiliación con `Ecommerce_COF` y `MOTO_Recurring`, registrar la URL de notificación.
+- **NCF hasta el corte:** se usan las secuencias B que hay (quedan 15 B01, 10 B04, ninguna B02); cuando
+  queden pocas se piden más (según Victor, la DGII las da al instante; la investigación no lo confirma). El
+  aviso diario ya existe (tarea `ncf` de `tools/tareas.js`, correo a gerencia). Pedir la **B02** si el
+  contador lo ve útil antes del corte, y cargar las fechas de vencimiento con `tools/facturas.js`.
+- **e-CF:** preguntar al contador en qué grupo cae Inversiones XZT (pequeño/micro: corte 15-nov-2026;
+  mediano/grande: e-CF exclusivo desde el 1-nov-2026) y de dónde sale el 30-nov que dijo Victor. Calendario
+  (§6 de la investigación): clave de la OFV y dispositivo de seguridad; pedir el certificado digital (Avansi,
+  Viafirma o Digifirma; 3-10 días hábiles); elegir proveedor PSFE; bajar al repositorio los PDF y XSD oficiales
+  de la DGII (el proxy de la nube bloquea `dgii.gov.do`); solicitud de emisor electrónico en la OFV (octubre);
+  pruebas en el portal; declaración jurada; secuencias E31/E32/E34; pruebas en producción; corte.
+- **Configuración:** los cinco datos bancarios (`deploy/README.md` §10b), la tasa del dólar en la consola,
+  créditos SMS de Brevo y `MERCA_SMS=brevo`, clave de Anthropic.
+- **Protección de la rama `main`** (plan 01-02, Settings → Branches, exigiendo `pruebas` y `navegador`): hoy
+  todavía se puede fusionar un PR en rojo.
+- **Revisiones:** redacción de las Condiciones 2.2 (cláusula 2.1 y las nuevas 4.4-4.6); revisión visual de la
+  05.1, 05.2 y 05.3 (listas en sus VERIFICATION; en la 05.3, decidir si vale «vence mañana» el mismo día del
+  corte); precios del estudio contra supercarros.com/vender; revisión visual en claro y oscuro de las fases 2,
+  4, 5, 7, 8, 9 y 10.
+- **Para planificar la 11 y la 14:** con quién y en qué condiciones van transporte y financiamiento; quién
+  inspecciona las máquinas y con qué protocolo.
 
 ## Project Reference
 
