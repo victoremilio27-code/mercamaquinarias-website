@@ -209,7 +209,15 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   1. El panel del dealer resume publicaciones activas, vendidas y vencidas, capacidad disponible, plan y fecha de vencimiento; ninguna pantalla del dealer dice «cupos».
   2. «Agregar publicaciones activas» cobra el prorrateo con la fórmula de la 05.1, sin doble cobro, y la regla de uno gratis por cada cinco se conserva.
   3. La consola lista publicaciones por estado, pagos con base, ajuste (solo ahí), ITBIS y total, renovaciones y dealers con su capacidad; toda escritura en nombre de otro pasa por la bitácora.
-**Plans**: sin planificar
+**Plans**: 8 planes en 4 olas
+- [ ] 05.4-01-PLAN.md — Guardas del servidor y prorrateo: días reales (P13), una operación de capacidad pendiente por membresía, `aprobarPago` que no amplía lo vencido, `PARA_PAGAR` al ampliar y `capacidad:probar` en CI
+- [ ] 05.4-02-PLAN.md — Panel: sección «Agregar publicaciones activas» con prorrateo y regla, sin `prompt()`, y `?ampliar=` validado
+- [ ] 05.4-03-PLAN.md — Panel del dealer: resumen, inventario por estado, aviso de vendido y textos sin «cupo»
+- [ ] 05.4-04-PLAN.md — Planes, publicar, portada, directorio, cuenta, mi página y pie común sin «cupo»; ampliar lleva al panel
+- [ ] 05.4-05-PLAN.md — Mensajes de la API y correos sin «cupo» y concepto del comprobante solo hacia adelante, con las pruebas invertidas
+- [ ] 05.4-06-PLAN.md — Asistente con los dos caminos y contratación 2.3
+- [ ] 05.4-07-PLAN.md — Consola de solo lectura: publicaciones por estado, pagos de todos los métodos con desglose, renovaciones y dealers con capacidad
+- [ ] 05.4-08-PLAN.md — Recorrido de la sección 39, auditorías de navegador y batería completa
 **UI hint**: yes
 **Notas**: Queda por decidir (P9) si ampliar se cobra al precio pactado o al vigente; por defecto al precio de lista del plan, que es lo que ya hace hoy.
 
