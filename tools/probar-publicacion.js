@@ -733,8 +733,12 @@ db.cargarSecuencia({
     const dealerSinMembresia = cuentaCon({ correo: `dealersin-${SELLO}@prueba.invalid`, tipo: 'dealer' });
     const f3 = await subirFoto(dealerSinMembresia.cabeceras);
     const rDealer402 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: ANUNCIO_COMPLETO([f3, f3, f3]), cabeceras: dealerSinMembresia.cabeceras });
-    ok(rDealer402.codigo === 402 && /cupo/i.test((rDealer402.datos || {}).error || ''),
-      `dealer sin membresía sigue con el 402 de siempre: ${rDealer402.codigo} «${rDealer402.datos && rDealer402.datos.error}»`);
+    /* 05.4-05: el dealer conserva el 402, pero ya no se le habla de «cupo»:
+       se le habla de capacidad y de publicaciones activas. La comprobación
+       no se quita, cambia de sentido. */
+    ok(rDealer402.codigo === 402 && !/cupo/i.test((rDealer402.datos || {}).error || '')
+      && /publicaciones activas|capacidad/i.test((rDealer402.datos || {}).error || ''),
+      `dealer sin membresía: 402 sin «cupo» y con capacidad/publicaciones activas: ${rDealer402.codigo} «${rDealer402.datos && rDealer402.datos.error}»`);
 
     // MOD-07: capacidadLibre al marcar vendido.
     const rVendido = await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idPublicadoLibre}`, cuerpo: { estado: 'vendido' }, cabeceras: conMembresia.cabeceras });

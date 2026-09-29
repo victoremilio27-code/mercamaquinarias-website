@@ -411,6 +411,152 @@ db.cargarSecuencia({
     ok(r2.codigo === 202, `aceptadas las condiciones: 202 (${r2.codigo}: ${errorDe(r2)})`);
   }
 
+  console.log('\n5. La API le habla al dealer de capacidad y publicaciones activas, no de «cupos»');
+  {
+    const SIN_CUPO = (r) => !/cupo/i.test(errorDe(r));
+    const HABLA_DE_CAPACIDAD = (r) => /publicaciones activas|capacidad/i.test(errorDe(r));
+    const sinCobroInterno = (r) => {
+      const c = (r && r.datos && r.datos.cobro) || null;
+      return !c || (!('base' in c) && !('ajuste' in c) && !('ajusteTasa' in c));
+    };
+    const anuncioEn = (dueno, idSusc, serie) => db.crearAnuncio({
+      idOrg: dueno.idOrg, idUsuario: dueno.idUsuario, idSuscripcion: idSusc, categoria: 'excavadoras',
+      marca: 'caterpillar', modelo: `M-${serie}`, anio: 2019, provincia: 'santo-domingo', precio: 1000000,
+      moneda: 'DOP', vence: db.sumarDias(30), serie, fotos: ['/fotos/2026-09/placa.jpg'], telefonos: [],
+    });
+
+    // Publicar sin nada contratado: 402. El cuerpo vacío basta, la capacidad se mira antes de validar campos.
+    const sin = cuenta('sincontrato');
+    const r402 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: {}, cabeceras: sin.cabeceras });
+    ok(r402.codigo === 402 && SIN_CUPO(r402) && HABLA_DE_CAPACIDAD(r402),
+      `sin membresía: 402 sin «cupo» y con capacidad/publicaciones activas (${r402.codigo}: ${errorDe(r402)})`);
+
+    // Publicar con la capacidad llena: 409.
+    const llena = cuenta('llena');
+    const sLlena = membresia(llena.idOrg, { cupo: 1, finEnDias: 20 });
+    const idOcupa = anuncioEn(llena, sLlena, 'CAP-OCUPA-1');
+    const r409 = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: { membresia: sLlena }, cabeceras: llena.cabeceras });
+    ok(r409.codigo === 409 && SIN_CUPO(r409) && HABLA_DE_CAPACIDAD(r409),
+      `capacidad llena: 409 sin «cupo» (${r409.codigo}: ${errorDe(r409)})`);
+    const rTodo = await pedir({ metodo: 'POST', url: '/api/anuncios', cuerpo: {}, cabeceras: llena.cabeceras });
+    ok(rTodo.codigo === 402 && SIN_CUPO(rTodo) && HABLA_DE_CAPACIDAD(rTodo),
+      `todo lleno sin elegir membresía: 402 sin «cupo» (${rTodo.codigo}: ${errorDe(rTodo)})`);
+
+    // Mover a una membresía llena: 409.
+    const sVacia = membresia(llena.idOrg, { cupo: 2, finEnDias: 20 });
+    const idMovible = anuncioEn(llena, sVacia, 'CAP-MOVER-1');
+    const rMover = await pedir({
+      metodo: 'PATCH', url: `/api/anuncios/${idMovible}/plan`, cuerpo: { membresia: sLlena }, cabeceras: llena.cabeceras,
+    });
+    ok(rMover.codigo === 409 && SIN_CUPO(rMover) && HABLA_DE_CAPACIDAD(rMover),
+      `mover a una membresía llena: 409 sin «cupo» (${rMover.codigo}: ${errorDe(rMover)})`);
+
+    // Reactivar un vendido sin capacidad: 409.
+    const idVendido = anuncioEn(llena, sLlena, 'CAP-VENDIDO-1');
+    ejecuta("UPDATE anuncios SET estado = 'vendido' WHERE id = ?", idVendido);
+    const rReact = await pedir({
+      metodo: 'PATCH', url: `/api/anuncios/${idVendido}`, cuerpo: { estado: 'activo' }, cabeceras: llena.cabeceras,
+    });
+    ok(rReact.codigo === 409 && SIN_CUPO(rReact) && HABLA_DE_CAPACIDAD(rReact),
+      `reactivar sin capacidad: 409 sin «cupo» (${rReact.codigo}: ${errorDe(rReact)})`);
+    ok(!!idOcupa, 'el anuncio que ocupa la capacidad existe');
+
+    // Ampliación por transferencia: 202 y su aviso sin «cupo».
+    const dueno = cuenta('avisos');
+    const sA = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+    const r202 = await ampliar(sA, { cupo: 7 }, dueno);
+    const avisoA = (r202.datos || {}).aviso || '';
+    ok(r202.codigo === 202 && avisoA.length > 0 && !/cupo/i.test(avisoA),
+      `ampliar con transferencia: 202 con aviso sin «cupo» (${r202.codigo}: ${avisoA})`);
+    ok(sinCobroInterno(r202), 'sin base ni ajuste en la respuesta de la ampliación');
+
+    // Compra con transferencia: el mismo aviso compartido.
+    const rCompra = await pedir({
+      metodo: 'POST', url: '/api/membresias', cuerpo: { plan: 'destacado', cupo: 2, dias: 30 }, cabeceras: dueno.cabeceras,
+    });
+    const avisoC = (rCompra.datos || {}).aviso || '';
+    ok(rCompra.codigo === 202 && !/cupo/i.test(avisoC), `comprar con transferencia: aviso sin «cupo» (${rCompra.codigo}: ${avisoC})`);
+    ok(sinCobroInterno(rCompra), 'sin base ni ajuste en la respuesta de la compra');
+
+    // Rechazo del procesador: 402 con el texto de NO_APROBADO y de EN_PROCESO sin «cupo».
+    const original = pagos.PROCESADORES.transferencia;
+    try {
+      const sR = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+      pagos.PROCESADORES.transferencia = async () => ({ resultado: 'rechazado', motivo: 'prueba' });
+      const rRech = await ampliar(sR, { cupo: 7 }, dueno);
+      ok(rRech.codigo === 402 && SIN_CUPO(rRech) && sinCobroInterno(rRech),
+        `ampliación rechazada: 402 sin «cupo» ni base/ajuste (${rRech.codigo}: ${errorDe(rRech)})`);
+      ok(cupoDe(sR) === 3, 'y el cupo no cambia');
+
+      const sP = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+      pagos.PROCESADORES.transferencia = async () => ({ resultado: 'pendiente' });
+      const rEnProceso = await ampliar(sP, { cupo: 7 }, dueno);
+      ok(rEnProceso.codigo === 202 && !/cupo/i.test((rEnProceso.datos || {}).aviso || ''),
+        `ampliación en proceso: aviso sin «cupo» (${rEnProceso.codigo})`);
+    } finally {
+      pagos.PROCESADORES.transferencia = original;
+    }
+  }
+
+  console.log('\n5b. El concepto del comprobante: vocabulario nuevo solo hacia adelante');
+  {
+    const conceptoDe = (r) => {
+      const fila = consulta('SELECT intencion FROM pagos WHERE referencia = ?', ((r.datos || {}).cobro || {}).referencia);
+      return fila ? JSON.parse(fila.intencion).concepto : null;
+    };
+    const dueno = cuenta('concepto');
+
+    const c5 = await pedir({
+      metodo: 'POST', url: '/api/membresias', cuerpo: { plan: 'destacado', cupo: 5, dias: 30 }, cabeceras: dueno.cabeceras,
+    });
+    ok(conceptoDe(c5) === 'Destacado · 5 publicaciones activas · 30 días', `compra de 5: «${conceptoDe(c5)}»`);
+    const c1 = await pedir({
+      metodo: 'POST', url: '/api/membresias', cuerpo: { plan: 'destacado', cupo: 1, dias: 30 }, cabeceras: dueno.cabeceras,
+    });
+    ok(conceptoDe(c1) === 'Destacado · 1 publicación activa · 30 días', `compra de 1: «${conceptoDe(c1)}»`);
+
+    const sA = membresia(dueno.idOrg, { cupo: 5, finEnDias: 20 });
+    const a2 = await ampliar(sA, { cupo: 7 }, dueno);
+    ok(conceptoDe(a2) === 'Ampliación de Destacado · 2 publicaciones activas más · hasta 7', `ampliación de 2: «${conceptoDe(a2)}»`);
+    const sB = membresia(dueno.idOrg, { cupo: 5, finEnDias: 20 });
+    const a1 = await ampliar(sB, { cupo: 6 }, dueno);
+    ok(a1.codigo === 202 && conceptoDe(a1) === 'Ampliación de Destacado · 1 publicación activa más · hasta 6',
+      `ampliación de 1: «${conceptoDe(a1)}»`);
+
+    // Confirmar la ampliación nueva: cuadra, mismo total que el pago y el NCF avanza una vez.
+    const pagoA2 = consulta('SELECT * FROM pagos WHERE referencia = ?', a2.datos.cobro.referencia);
+    const antesB02 = siguienteB02();
+    const antesB01 = siguienteB01();
+    const conf = pagos.confirmarPago(pagoA2.id);
+    const f = consulta("SELECT * FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'", pagoA2.id);
+    ok(!!f && f.subtotal + f.itbis === f.total && f.total === pagoA2.total,
+      `el comprobante cuadra y coincide con el pago: ${f && `${f.subtotal} + ${f.itbis} = ${f.total}`} / ${pagoA2.total}`);
+    ok(!!f && /publicaciones activas más/.test(f.concepto), `el comprobante nuevo lleva el concepto nuevo: «${f && f.concepto}»`);
+    const avance = (siguienteB02() - antesB02) + (siguienteB01() - antesB01);
+    ok(avance === 1, `el NCF avanzó exactamente una vez (${avance})`);
+    ok(!!conf.comprobante && cupoDe(sA) === 7, `y el cupo pasó a 7 (${cupoDe(sA)})`);
+
+    // Anular una ampliación pendiente no crea factura ni consume NCF.
+    const pagoA1 = consulta('SELECT id FROM pagos WHERE referencia = ?', a1.datos.cobro.referencia);
+    const facturasAntes = facturasTotales();
+    const b02 = siguienteB02();
+    const b01 = siguienteB01();
+    db.rechazarPago(pagoA1.id);
+    ok(facturasTotales() === facturasAntes && siguienteB02() === b02 && siguienteB01() === b01 && cupoDe(sB) === 5,
+      'ampliación anulada: sin factura, sin NCF y sin cupo');
+
+    // Una intención ya guardada con el vocabulario viejo se confirma tal cual: nada la reescribe.
+    const sV = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+    const pViejo = ampliacionPendiente({ idOrg: dueno.idOrg, idSusc: sV, cupoActual: 3, cupoNuevo: 5 });
+    const conceptoViejo = JSON.parse(consulta('SELECT intencion FROM pagos WHERE id = ?', pViejo.id).intencion).concepto;
+    ok(/cupos más/.test(conceptoViejo), `la intención vieja dice «${conceptoViejo}»`);
+    pagos.confirmarPago(pViejo.id);
+    const fViejo = consulta("SELECT concepto FROM facturas WHERE pago_id = ?", pViejo.id);
+    const intencionDespues = JSON.parse(consulta('SELECT intencion FROM pagos WHERE id = ?', pViejo.id).intencion).concepto;
+    ok(!!fViejo && /cupos más/.test(fViejo.concepto) && intencionDespues === conceptoViejo,
+      `el comprobante lleva el concepto viejo tal cual y la intención no se reescribió: «${fViejo && fViejo.concepto}»`);
+  }
+
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
