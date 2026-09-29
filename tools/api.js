@@ -1497,6 +1497,27 @@ const listarPagosAdmin = conAdmin((req, res, ctx, consulta) => {
   return responder(res, 200, { estado, pagos: db.pagosParaConsola({ estado }) });
 });
 
+/* Consola de solo lectura de la fase 05.4 (MOD-14). Solo GET, sin
+   escritura alguna: por eso no tocan ESCRITURAS_ADMIN_PROPIAS ni la
+   bitácora. Los filtros se leen tal cual y db.js los pasa por su lista
+   blanca; el tope de filas también es de db.js. */
+const listarPublicacionesAdmin = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  return responder(res, 200, db.publicacionesParaConsola({ estado: q.get('estado'), limite: q.get('limite') }));
+});
+
+const listarCobrosAdmin = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  return responder(res, 200, db.cobrosParaConsola({
+    tipo: q.get('tipo'), estado: q.get('estado'), limite: q.get('limite'),
+  }));
+});
+
+const listarRenovacionesAdmin = conAdmin((req, res, ctx, consulta) => {
+  const q = consulta || new URLSearchParams();
+  return responder(res, 200, db.renovacionesParaConsola({ limite: q.get('limite') }));
+});
+
 /* D-07, el pendiente que dejó anotado la fase 3. Sumar los cupos a
    una membresía vencida los regalaría sin plazo, y convertir la
    ampliación en una compra nueva sería decidir por el cliente qué
@@ -4459,6 +4480,9 @@ const RUTAS = [
   /* Transferencias. Las dos escrituras van por la bitácora, no en
      ESCRITURAS_ADMIN_PROPIAS: son en nombre de otra organización. */
   ['GET',  /^\/api\/admin\/pagos$/,                     listarPagosAdmin],
+  ['GET',  /^\/api\/admin\/publicaciones$/,             listarPublicacionesAdmin],
+  ['GET',  /^\/api\/admin\/cobros$/,                     listarCobrosAdmin],
+  ['GET',  /^\/api\/admin\/renovaciones$/,                listarRenovacionesAdmin],
   ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/recibido$/, marcarTransferenciaRecibida],
   ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/anular$/,   anularTransferencia],
   ['GET',  /^\/api\/admin\/solicitudes$/,               listarSolicitudes],

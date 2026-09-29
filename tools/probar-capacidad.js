@@ -670,7 +670,7 @@ db.cargarSecuencia({
 
     // Directorio con capacidad, sin RNC.
     const rO = await get('/api/admin/organizaciones');
-    const fO = ((rO.datos || {}).organizaciones || []).find((o) => o.id === dueno.idOrg);
+    const fO = ((rO.datos || {}).empresas || []).find((o) => o.id === dueno.idOrg);
     ok(rO.codigo === 200 && !!fO, `el dealer sale en el directorio (${rO.codigo})`);
     ok(!!fO && fO.permitidas === 5 + 3 + 2 && fO.sin_limite === false, `permitidas ${fO && fO.permitidas} (5+3+2 de sus tres membresías)`);
     ok(!!fO && fO.en_uso === 2 && fO.vendidas === 1 && fO.vencidas === 1 && fO.disponible === fO.permitidas - 2,
