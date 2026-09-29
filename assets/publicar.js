@@ -182,6 +182,14 @@ function estadoInicial() {
     idBorrador: null,
     planElegido: '',
     diasElegidos: 30,
+    /* Un visitante sin sesión que ya eligió plan: la URL de vuelta de
+       cuenta.html no admite parámetros (`destinoTrasEntrar` solo acepta
+       `algo.html`), así que este indicador viaja en la copia local y le
+       dice a `montarPublicador` que, al volver con sesión, ese plan se
+       convierta en borrador del servidor sin volver a pedirlo. Sin él,
+       cualquier plan que alguien marcó y abandonó crearía un borrador
+       días después, solo por abrir la página. */
+    crearBorradorAlVolver: false,
   };
 }
 
@@ -191,7 +199,7 @@ let estado = estadoInicial();
    ya están reducidas, y el navegador avisa por excepción si el cupo
    de almacenamiento se agota. En ese caso se guarda sin ellas antes
    que perder todo lo escrito. */
-function guardarBorrador() {
+function guardarBorrador({ servidor = true } = {}) {
   try {
     localStorage.setItem(CLAVE_BORRADOR, JSON.stringify(estado));
   } catch (_) {
@@ -199,6 +207,15 @@ function guardarBorrador() {
       localStorage.setItem(CLAVE_BORRADOR, JSON.stringify({ ...estado, fotos: [] }));
     } catch (__) { /* almacenamiento no disponible: se sigue en memoria */ }
   }
+
+  /* Fase 05.2, D-06: la copia local ya no es la fuente de verdad, lo es
+     el servidor. Cada sitio que guardaba aquí (cambio de un campo, foto
+     añadida o quitada, video, paso nuevo) programa también el guardado
+     en el servidor, con la espera de 1,5 s y un solo temporizador. Así
+     ningún rincón del asistente puede olvidarse de guardar: retomar el
+     borrador con `?borrador=` da prioridad a lo del servidor, y una
+     foto que solo estuviera en este navegador se habría perdido. */
+  if (servidor && MODO === 'publicacion' && estado.idBorrador) guardarEnServidor(false);
 }
 
 function leerBorrador() {
@@ -1385,8 +1402,8 @@ let METODOS_PAGO = [];
 let borradorPlanServidor = null;
 let borradorDiasServidor = null;
 
-function decidirModo() {
-  if (params().get('borrador')) return 'publicacion';
+function decidirModo({ conUrl = true } = {}) {
+  if (conUrl && params().get('borrador')) return 'publicacion';
   if (!haySesion()) return 'publicacion';
   const org = SESION.organizacion;
   if (org && org.tipo === 'particular' && !EXENTA && !conHueco().length) return 'publicacion';
@@ -1472,7 +1489,8 @@ function montarPasoPlan() {
 }
 
 function validarPlan(seccion) {
-  if (!estado.planElegido) {
+  const elegido = planPublicarElegido();
+  if (!elegido || !elegido.activo) {
     avisoPaso(seccion, 'Elija cómo quiere publicar este equipo.');
     return false;
   }
@@ -1503,7 +1521,25 @@ function montarBloqueFiscalPublicar() {
    eligieron en el primer paso. */
 function cuerpoParaBorrador() {
   const { membresia, ...resto } = anuncioParaApi();
-  return { ...resto, plan: estado.planElegido, dias: estado.diasElegidos };
+
+  /* `anuncioParaApi()` está hecho para publicar, donde todo está
+     completo: manda `anio: 0` y `precio: null` cuando el campo está
+     vacío. En un borrador a medias eso no es «vacío», es un año 0 y un
+     precio nulo que el servidor rechaza con 400 —«Año entre 1970 y…»—,
+     y cada guardado automático de una ficha a medio rellenar habría
+     fallado. Un borrador manda el año y el precio tal como están
+     escritos, y los números que no existen no se mandan: el servidor
+     los guardaría como 0, y al retomar el borrador el campo diría «0». */
+  const cuerpo = {
+    ...resto,
+    anio: String(estado.equipo.anio || ''),
+    precio: soloDigitos(estado.precio.monto),
+    plan: estado.planElegido,
+    dias: estado.diasElegidos,
+  };
+  if (!cuerpo.usoValor) delete cuerpo.usoValor;
+  if (!cuerpo.precioMinimo) delete cuerpo.precioMinimo;
+  return cuerpo;
 }
 
 /* Aviso discreto, sin bloquear el formulario: para cuando guardar en el
@@ -1575,6 +1611,8 @@ async function asegurarBorrador() {
   const seccion = $('.paso[data-paso="plan"]');
 
   if (!haySesion()) {
+    // El plan viaja en la copia local; ver `crearBorradorAlVolver`.
+    estado.crearBorradorAlVolver = true;
     guardarBorrador();
     location.href = 'cuenta.html?destino=publicar.html&crear=1';
     return false;
@@ -1596,7 +1634,8 @@ async function asegurarBorrador() {
       borradorPlanServidor = estado.planElegido;
       borradorDiasServidor = estado.diasElegidos;
     }
-    guardarBorrador();
+    estado.crearBorradorAlVolver = false;
+    guardarBorrador({ servidor: false });   // el POST/PUT de arriba ya lo guardó
     return true;
   } catch (e) {
     avisoPaso(seccion, e.message);
@@ -1702,9 +1741,10 @@ function montarCheckboxCondiciones() {
    monta —el plan se eligió en el primer paso— por eso la redirección
    a planes.html de aquí abajo solo puede darse en modo capacidad. */
 async function montarPasoConfirmarCapacidad() {
-  await cargarMembresias();
+  /* (Las membresías ya las cargó `montarPublicador` para decidir el
+     modo: no se piden dos veces.)
 
-  /* Quien llega sin ninguna capacidad contratada se va derecho a los
+     Quien llega sin ninguna capacidad contratada se va derecho a los
      planes, sin recorrer cinco pasos para chocar al final. Solo si no
      tiene NADA: a quien le sobra un cupo no se le enseña un precio. */
   if (haySesion() && !MEMBRESIAS.length && params().get('sincupos') !== '1') {
@@ -2202,7 +2242,8 @@ let tokenResumenPublicacion = 0;
    haya (por si acaba de escribir algo) y se pide al servidor el precio
    final, `completo` y `falta` de este borrador. */
 async function actualizarResumenPublicacion() {
-  const miToken = += tokenResumenPublicacion;
+  tokenResumenPublicacion += 1;
+  const miToken = tokenResumenPublicacion;
   const caja = $('#resumenPublicacion');
   if (!caja) return;
 
@@ -2263,6 +2304,10 @@ async function pagarPublicacion() {
     const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}/pago`, { metodo: 'POST', cuerpo });
     if (!r) return restaurar('No hay conexión con el servidor. Su borrador sigue guardado.');
 
+    // Ya no hay nada que guardar: un PUT tardío sobre un borrador que
+    // acaba de pasar a pago o a anuncio solo daría 409 o 404.
+    clearTimeout(temporizadorGuardado);
+
     if (r.pago && r.pago.estado === 'pendiente') {
       borrarBorrador();
       pintarEspera(r);
@@ -2303,8 +2348,11 @@ function pintarVistaPrevia() {
   const e = estado.equipo;
   const titulo = [e.anio, e.marca, e.modelo].filter(Boolean).join(' ') || 'Tu equipo';
   const uso = soloDigitos(e.uso) ? `${miles(Number(soloDigitos(e.uso)))} ${e.unidad}` : 'Uso pendiente';
-  // El distintivo depende del nivel del cupo que vaya a ocupar.
-  const destacado = !!(membresiaElegida() || {}).destacado;
+  // El distintivo depende del nivel: el del plan elegido en modo
+  // publicación, el del cupo que vaya a ocupar en modo capacidad.
+  const destacado = MODO === 'publicacion'
+    ? !!(planPublicarElegido() || {}).destacado
+    : !!(membresiaElegida() || {}).destacado;
 
   caja.innerHTML = `
     <p class="vista-previa__rotulo">${icono('i-buscar')} Así se verá en el catálogo</p>
@@ -2331,7 +2379,32 @@ function pintarResumenPedido() {
   /* Aquí no hay pedido que resumir: publicar no cobra. Lo que se dice
      es dónde va a caer el anuncio y qué le queda después, que es la
      información que de verdad le sirve mientras rellena la ficha. */
+  /* Modo publicación (05.2): lo que se paga es UNA publicación, con el
+     precio final «ITBIS incluido». Es solo lo que se enseña mientras
+     rellena la ficha; lo que se cobra lo calcula el servidor al pedir
+     el pago (T-05.2-21). */
+  if (MODO === 'publicacion') {
+    const plan = planPublicarElegido();
+    if (!plan) {
+      caja.innerHTML = `<h3 class="pedido__titulo">Su publicación</h3>
+         <p class="pedido__vacio">${icono('i-etiqueta')} Elija en el primer paso cómo publicar este equipo. Puede dejarla a medias: queda guardada como borrador.</p>`;
+      return;
+    }
+    const unitario = plan.precio_vigente != null ? plan.precio_vigente : plan.precio;
+    const total = precioCompra({ precioUnitario: unitario, cupo: 1, dias: estado.diasElegidos }).total;
+    caja.innerHTML = `
+      <h3 class="pedido__titulo">Su publicación</h3>
+      <dl class="pedido__lista">
+        <div><dt>Publicación</dt><dd>${esc(plan.nombre)}${plan.destacado ? ' · sale destacado' : ''}</dd></div>
+        <div><dt>Fotografías</dt><dd class="num">hasta ${plan.fotos_maximas}</dd></div>
+        <div><dt>Vigencia</dt><dd>${estado.diasElegidos} días</dd></div>
+        <div class="pedido__total"><dt>Total</dt><dd class="num">${total === 0 ? 'Sin costo' : `${pesos(total)} · ITBIS incluido`}</dd></div>
+      </dl>`;
+    return;
+  }
+
   const m = membresiaElegida();
+  const particular = esParticularCuenta();
 
   if (!m) {
     caja.innerHTML = haySesion()
@@ -2346,7 +2419,7 @@ function pintarResumenPedido() {
     <dl class="pedido__lista">
       <div><dt>Se publica en</dt><dd>${esc(m.plan_nombre)}</dd></div>
       <div><dt>Fotografías</dt><dd class="num">hasta ${m.fotos_maximas}</dd></div>
-      <div><dt>Cupos libres</dt><dd class="num">${m.libres === null ? 'Sin límite' : m.libres}</dd></div>
+      <div><dt>${particular ? 'Capacidad libre' : 'Cupos libres'}</dt><dd class="num">${m.libres === null ? 'Sin límite' : m.libres}</dd></div>
       <div class="pedido__total"><dt>Total</dt><dd class="num">${EXENTA ? 'Sin costo' : 'Ya pagado'}</dd></div>
     </dl>`;
 }
@@ -2354,6 +2427,7 @@ function pintarResumenPedido() {
 /* ── Navegación entre pasos ─────────────────────────────── */
 
 const VALIDADORES = {
+  plan: validarPlan,
   equipo: validarEquipo,
   fotos: validarFotos,
   precio: validarPrecio,
@@ -2363,7 +2437,8 @@ const VALIDADORES = {
 
 function pintarPasos() {
   const nav = $('#pasosNav');
-  nav.innerHTML = PASOS.map((p, i) => `
+  const pasos = pasosDelModo();
+  nav.innerHTML = pasos.map((p, i) => `
     <li class="pasos__it${i === estado.paso ? ' pasos__it--activo' : ''}${i < estado.paso ? ' pasos__it--hecho' : ''}">
       <button type="button" class="pasos__btn" data-ir="${i}"${i > estado.paso ? ' disabled' : ''}
         ${i === estado.paso ? 'aria-current="step"' : ''}>
@@ -2375,22 +2450,31 @@ function pintarPasos() {
       </button>
     </li>`).join('');
 
-  $$('.paso').forEach((s) => { s.hidden = s.dataset.paso !== PASOS[estado.paso].id; });
+  $$('.paso').forEach((s) => { s.hidden = s.dataset.paso !== pasos[estado.paso].id; });
 
-  const ultimo = estado.paso === PASOS.length - 1;
+  const ultimo = estado.paso === pasos.length - 1;
   $('#btnAtras').hidden = estado.paso === 0;
   $('#btnSiguiente').hidden = ultimo;
   $('#btnPublicar').hidden = !ultimo;
-  $('#progresoTexto').textContent = `Paso ${estado.paso + 1} de ${PASOS.length}`;
-  $('#progresoBarra').style.setProperty('--avance', `${((estado.paso + 1) / PASOS.length) * 100}%`);
+  $('#progresoTexto').textContent = `Paso ${estado.paso + 1} de ${pasos.length}`;
+  $('#progresoBarra').style.setProperty('--avance', `${((estado.paso + 1) / pasos.length) * 100}%`);
 
+  // El resumen lateral cambia con el plan y los días elegidos.
+  pintarResumenPedido();
   if (ultimo) pintarPasoFinal();
 }
 
+/* Cambia de paso. Al salir de un paso en modo publicación el borrador
+   se guarda YA en el servidor, sin la espera de 1,5 s del `change`:
+   quien cierra la pestaña justo después de pulsar «Continuar» no debe
+   perder lo que acababa de escribir (D-06). */
 function irAPaso(i) {
-  estado.paso = Math.max(0, Math.min(PASOS.length - 1, i));
+  estado.paso = Math.max(0, Math.min(pasosDelModo().length - 1, i));
   pintarPasos();
   guardarBorrador();
+  if (MODO === 'publicacion' && estado.idBorrador && pasosDelModo()[estado.paso].id !== 'confirmar') {
+    guardarEnServidor(true);
+  }
   const caja = $('#publicar');
   if (caja.getBoundingClientRect().top < 0) caja.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -2482,15 +2566,60 @@ function volcarEstadoAlFormulario() {
 
 /* ── Arranque ───────────────────────────────────────────── */
 
+/* Del borrador del SERVIDOR (`GET /api/borradores/:id`) al estado del
+   formulario. `local` es la copia de este navegador, y solo se usa para
+   lo que el servidor no guarda de un borrador: nombre, correo, horario,
+   web y preferencia de contacto (el borrador solo guarda sucursal y
+   teléfonos). Todo lo demás manda el servidor (D-06): si las dos copias
+   difieren, una foto que este navegador tuviera y el servidor no,
+   simplemente no existe. */
+function estadoDesdeBorrador(b, local) {
+  const base = estadoInicial();
+  const d = b.datos || {};
+  const c = (local && local.contacto) || {};
+  return {
+    ...base,
+    equipo: { ...base.equipo, ...(d.equipo || {}) },
+    precio: { ...base.precio, ...(d.precio || {}) },
+    contacto: {
+      ...base.contacto,
+      nombre: c.nombre || '', correo: c.correo || '', horario: c.horario || '',
+      web: c.web || '', preferencia: c.preferencia || base.contacto.preferencia,
+      ...(d.contacto || {}),
+    },
+    fotos: Array.isArray(d.fotos) ? d.fotos : [],
+    videos: Array.isArray(d.videos) ? d.videos : [],
+    idBorrador: b.id,
+    planElegido: b.plan ? b.plan.id : '',
+    diasElegidos: Number(b.dias) === 60 ? 60 : 30,
+  };
+}
+
+/* Índice de un paso en la lista del modo actual (-1 si no existe). */
+const indicePaso = (id) => pasosDelModo().findIndex((p) => p.id === id);
+
 async function montarPublicador() {
   const caja = $('#publicar');
   if (!caja) return;
 
+  /* «Copiar» la referencia de pago. En el documento y no en el bloque,
+     porque el bloque se crea después, con cada pedido. Sin portapapeles
+     no se dice nada: la referencia sigue a la vista. */
+  document.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-copiar]');
+    if (!btn) return;
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copiar);
+      btn.textContent = 'Copiada';
+    } catch (_) { /* sin portapapeles: caída silenciosa */ }
+  });
+
   // La sesión decide qué capacidad tiene ya contratada y qué identidad
-  // firma el anuncio. Se resuelve ANTES de pintar: el paso del plan
-  // necesita saber si le quedan cupos libres para enseñar un camino o
-  // el otro.
+  // firma el anuncio. Se resuelve ANTES de pintar: el asistente necesita
+  // saber si le quedan cupos libres para enseñar un camino o el otro.
   await cargarSesion();
+  await cargarMembresias();
+  MODO = decidirModo();
 
   /* Si hay condiciones nuevas sin aceptar, se avisa arriba. No bloquea
      el asistente: quien esté a medio escribir un anuncio puede seguir.
@@ -2518,16 +2647,95 @@ async function montarPublicador() {
     history.replaceState(null, '', 'publicar.html');
   }
 
+  /* Retomar un borrador del servidor: por `?borrador=<id>` (desde el
+     panel) o porque la copia local recuerda uno. En los dos casos manda
+     el servidor. Con una copia de «Duplicar» no se retoma ninguno: la
+     copia es un borrador NUEVO (D-16). */
+  const idUrl = params().get('borrador');
+  const idLocal = (!copia && previo && previo.idBorrador) || null;
+  const idRetomar = haySesion() && !copia ? (idUrl || idLocal) : null;
+
+  // Una cuenta particular con capacidad libre que aún guarda un borrador
+  // del servidor: se retoma en modo publicación, que es donde se le
+  // ofrece usar esa capacidad en vez de cobrarle otra publicación (D-02).
+  const org = SESION.organizacion;
+  if (MODO === 'capacidad' && idRetomar && org && org.tipo === 'particular' && !EXENTA) MODO = 'publicacion';
+
+  let retomado = null;         // el borrador del servidor, si se pudo abrir
+  let avisoPlan = '';          // qué decir en el paso del plan si algo falló
+  let esperaPago = false;      // el borrador tiene un pago pendiente
+
+  if (idUrl && !haySesion()) {
+    avisoPlan = 'Entre a su cuenta para retomar su borrador.';
+  }
+
+  if (idRetomar) {
+    try {
+      const r = await api(`/borradores/${encodeURIComponent(idRetomar)}`);
+      if (!r || !r.borrador) {
+        avisoPlan = 'No hay conexión con el servidor. Se muestra lo guardado en este navegador.';
+      } else if (r.borrador.pendientePago) {
+        // D-13: con un pago esperando no se ofrece el formulario, que el
+        // servidor tampoco aceptaría (409): se enseña la espera.
+        pintarEspera(esperaDesdeBorrador(r.borrador));
+        esperaPago = true;
+      } else {
+        retomado = r.borrador;
+      }
+    } catch (e) {
+      avisoPlan = e.codigo === 404 ? 'Ese borrador ya no existe o no es suyo.' : e.message;
+      if (e.codigo === 404 && previo) previo.idBorrador = null;   // la copia local recordaba uno que ya no existe
+    }
+  }
+  if (esperaPago) return;
+
+  // Si el borrador que se iba a retomar no existe, el modo vuelve a
+  // decidirse solo por la capacidad de la cuenta, sin mirar la URL: un
+  // `?borrador=` que no es suyo no convierte a un dealer, ni a quien
+  // tiene capacidad libre, en cliente del paso del plan.
+  if (idRetomar && !retomado) MODO = decidirModo({ conUrl: false });
+
+  if (MODO === 'publicacion') await cargarPlanes();
+
   const guardado = copia || previo;
-  if (copia) {
+  if (retomado) {
+    estado = estadoDesdeBorrador(retomado, previo);
+    borradorPlanServidor = estado.planElegido;
+    borradorDiasServidor = estado.diasElegidos;
+    estado.paso = indicePaso('equipo');
+    guardarBorrador({ servidor: false });
+  } else if (copia) {
     estado = copia;
-    guardarBorrador();
+    guardarBorrador({ servidor: false });
   } else if (guardado) {
     estado = guardado;
     estado.paso = 0;    // se retoma desde el principio, con todo lleno
   }
+  // En modo capacidad el plan y el borrador del servidor no existen:
+  // lo que la copia local recordara de ellos ya no significa nada.
+  if (MODO !== 'publicacion') {
+    estado.idBorrador = null;
+    estado.planElegido = '';
+    estado.crearBorradorAlVolver = false;
+  }
+  const hayContenido = !!(retomado || copia || previo);
 
-  /* Con `await`: la categoría, la marca y el modelo son <select> que
+  /* `?plan=<id>&dias=<n>` (desde las tarjetas de planes.html): el plan
+     llega elegido. Con sesión se crea el borrador y se salta al paso
+     del equipo, al terminar de montar; sin sesión se deja elegido en el
+     paso del plan y el borrador nace tras crear la cuenta. */
+  let preseleccion = false;
+  const idPlanUrl = params().get('plan');
+  if (MODO === 'publicacion' && idPlanUrl) {
+    const p = PLANES.find((n) => n.id === idPlanUrl && n.activo);
+    if (p) {
+      estado.planElegido = p.id;
+      estado.diasElegidos = params().get('dias') === '60' ? 60 : 30;
+      preseleccion = true;
+    }
+  }
+
+  /* Con await: la categoría, la marca y el modelo son <select> que
      `montarPasoEquipo` llena de <option> al recibir la taxonomía del
      servidor, y `volcarEstadoAlFormulario` de aquí abajo solo puede
      asignarles un valor si esa opción ya existe. Sin esperar, la
@@ -2541,9 +2749,15 @@ async function montarPublicador() {
   montarPasoVideos();
   montarPasoPrecio();
   montarPasoContacto();
-  await montarPasoConfirmar();
+  if (MODO === 'publicacion') {
+    montarPasoPlan();
+    montarBloqueFiscalPublicar();
+  } else {
+    await montarPasoConfirmarCapacidad();
+  }
+  montarCheckboxCondiciones();
 
-  if (guardado) {
+  if (hayContenido) {
     volcarEstadoAlFormulario();
     /* La cadena es categoría → subcategoría → marca → modelo: cada
        nivel llena las <option> del siguiente al recibir su propio
@@ -2587,11 +2801,20 @@ async function montarPublicador() {
       if (smod && valorModelo) smod.value = valorModelo;
     });
 
-    $('#avisoBorrador').hidden = false;
-    if (copia) {
-      $('#avisoBorrador span').textContent =
-        `Copia de ${copia.origen ? copia.origen.nombre : 'un anuncio anterior'}. `
-        + 'Cambie lo que sea distinto —número de serie, horas, precio y fotos— y publíquelo.';
+    /* El texto del aviso según de dónde viene lo que se ve. Sin `copia`
+       ni `retomado` es el que trae el HTML: «Recuperamos el borrador
+       que dejó sin terminar». */
+    if (retomado || copia || previo) $('#avisoBorrador').hidden = false;
+    if (retomado) {
+      const nombrePlan = retomado.plan ? ` ${retomado.plan.nombre}` : '';
+      $('#avisoBorrador span').textContent = `Retomando su borrador de Publicación${nombrePlan}.`;
+    } else if (copia) {
+      const de = copia.origen ? copia.origen.nombre : 'un anuncio anterior';
+      /* D-16: en modo publicación la copia es un borrador más y pasa por
+         el pago, sin atajo. Se empieza por elegir cómo publicarla. */
+      $('#avisoBorrador span').textContent = MODO === 'publicacion'
+        ? `Copia de ${de}. Elija cómo publicarla; después cambie lo que sea distinto —número de serie, horas, precio y fotos.`
+        : `Copia de ${de}. Cambie lo que sea distinto —número de serie, horas, precio y fotos— y publíquelo.`;
     }
   } else if (idDuplicar && haySesion()) {
     // Se pidió duplicar pero la copia no llegó (ya no es suyo, o no hay
@@ -2614,8 +2837,8 @@ async function montarPublicador() {
     }
   }
 
-  $('#btnSiguiente').addEventListener('click', () => {
-    const id = PASOS[estado.paso].id;
+  $('#btnSiguiente').addEventListener('click', async () => {
+    const id = pasosDelModo()[estado.paso].id;
     const seccion = $(`.paso[data-paso="${id}"]`);
     leerPaso(id);
     if (!VALIDADORES[id](seccion)) {
@@ -2623,28 +2846,55 @@ async function montarPublicador() {
       if (primero) primero.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
+    // Al salir del paso del plan nace (o se retoma) el borrador en el
+    // servidor. Si falla, o si hay que ir a crear la cuenta, no se avanza.
+    if (id === 'plan') {
+      const btn = $('#btnSiguiente');
+      btn.disabled = true;
+      const sigue = await asegurarBorrador();
+      btn.disabled = false;
+      if (!sigue) return;
+    }
     irAPaso(estado.paso + 1);
   });
 
   $('#btnAtras').addEventListener('click', () => {
-    leerPaso(PASOS[estado.paso].id);
+    leerPaso(pasosDelModo()[estado.paso].id);
     irAPaso(estado.paso - 1);
   });
 
   $('#pasosNav').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ir]');
     if (!btn || btn.disabled) return;
-    leerPaso(PASOS[estado.paso].id);
+    leerPaso(pasosDelModo()[estado.paso].id);
     irAPaso(Number(btn.dataset.ir));
   });
 
   $('#btnPublicar').addEventListener('click', () => {
     const seccion = $('.paso[data-paso="confirmar"]');
     if (!validarConfirmar(seccion)) return;
-    publicar();
+    if (MODO === 'publicacion') pagarPublicacion();
+    else publicar();
   });
 
-  $('#btnDescartar').addEventListener('click', () => {
+  /* Descartar. En modo publicación, con un borrador ya en el servidor,
+     descartar lo BORRA de verdad —datos y fotografías—, así que se
+     confirma. Un pago en espera lo impide (409) y se dice por qué. */
+  $('#btnDescartar').addEventListener('click', async () => {
+    if (MODO === 'publicacion' && estado.idBorrador) {
+      if (!window.confirm('¿Descartar este borrador? Se borran sus datos y fotografías.')) return;
+      clearTimeout(temporizadorGuardado);
+      try {
+        await api(`/anuncios/${encodeURIComponent(estado.idBorrador)}`, { metodo: 'DELETE' });
+      } catch (e) {
+        // 404: ya no existe, que es lo que se quería. Cualquier otro
+        // (un pago en espera, sin conexión) no se descarta.
+        if (e.codigo !== 404) {
+          avisoPaso($(`.paso[data-paso="${pasosDelModo()[estado.paso].id}"]`), e.message);
+          return;
+        }
+      }
+    }
     borrarBorrador();
     location.href = 'publicar.html';
   });
@@ -2660,11 +2910,13 @@ async function montarPublicador() {
       if (aviso) aviso.remove();
       ev.target.removeAttribute('aria-invalid');
     }
-    leerPaso(PASOS[estado.paso].id);
+    leerPaso(pasosDelModo()[estado.paso].id);
     pintarVistaPrevia();
   });
+  // `guardarBorrador()` también programa el guardado en el servidor
+  // (con espera): nunca por tecla, solo al cambiar un campo.
   caja.addEventListener('change', () => {
-    leerPaso(PASOS[estado.paso].id);
+    leerPaso(pasosDelModo()[estado.paso].id);
     pintarVistaPrevia();
     guardarBorrador();
   });
@@ -2675,6 +2927,19 @@ async function montarPublicador() {
   pintarPasos();
   pintarVistaPrevia();
   pintarResumenPedido();
+
+  if (avisoPlan) avisoPaso($(`.paso[data-paso="${pasosDelModo()[estado.paso].id}"]`), avisoPlan);
+
+  /* Con el plan ya elegido (viene de planes.html, o de antes de crear
+     la cuenta) y con sesión, el borrador nace ahora y se salta al paso
+     del equipo. Si falla, se queda en el paso del plan con el mensaje. */
+  if (MODO === 'publicacion' && haySesion() && estado.planElegido
+      && (preseleccion || estado.crearBorradorAlVolver) && !estado.idBorrador) {
+    if (await asegurarBorrador()) irAPaso(indicePaso('equipo'));
+  } else if (preseleccion && retomado && estado.idBorrador) {
+    // Un borrador retomado al que se le eligió otro plan desde planes.html.
+    if (await asegurarBorrador()) irAPaso(indicePaso('equipo'));
+  }
 }
 
 document.addEventListener('DOMContentLoaded', montarPublicador);
