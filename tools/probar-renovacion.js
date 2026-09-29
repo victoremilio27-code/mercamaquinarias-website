@@ -45,9 +45,10 @@ process.env.MERCA_CORREO = 'archivo';
 process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 
 /* Un .env local o el entorno de quien corre la prueba no puede decidir
-   el resultado: la transferencia se apaga del todo. */
+   el resultado: la transferencia se apaga del todo, y CardNet también
+   (la sección 5 enciende MERCA_CARDNET solo donde lo necesita). */
 for (const k of Object.keys(process.env)) {
-  if (k.startsWith('MERCA_TRANSFERENCIA')) delete process.env[k];
+  if (k.startsWith('MERCA_TRANSFERENCIA') || k.startsWith('MERCA_CARDNET')) delete process.env[k];
 }
 
 const db = require('./db');
@@ -257,6 +258,12 @@ const avisosDe = (referencia) => {
     .filter((t) => t.includes(`Transferencia en espera ${referencia}`)).length;
 };
 const respiro = () => new Promise((r) => setTimeout(r, 30));
+
+/* La sección 21 del modelo comercial, copiada aquí a propósito y no
+   leída de api.js: si alguien cambia el texto del servidor, la prueba
+   tiene que enterarse. */
+const TEXTO_ESPERADO = 'Al activar esta opción, autorizas la renovación de este anuncio al finalizar su '
+  + 'período con el método de pago autorizado, según las condiciones y el precio vigente de renovación.';
 
 /* La transferencia, con los datos falsos de probar-transferencia.js (se
    leen en cada llamada, así que basta con fijar el entorno). */
@@ -890,6 +897,181 @@ db.cargarSecuencia({
     ok(!!g.renovacionAutomatica && g.renovacionAutomatica.disponible === false && g.renovacionAutomatica.texto === undefined,
       `renovacionAutomatica apagada: ${JSON.stringify(g.renovacionAutomatica)}`);
     ok(!(g.membresias || []).some((x) => x.id === sPV), 'membresias sigue sin traer la vencida');
+  }
+
+  console.log('\n5 · consola, renovación automática y seguridad');
+  {
+    const correoAdmin = `admin-renovacion-${SELLO}@prueba.invalid`;
+    const { idUsuario: idAdmin } = db.crearCuenta({
+      correo: correoAdmin, clave: 'UnaClaveLargaYSegura9',
+      nombre: 'Administradora de Prueba', telefono: '8095550000', tipo: 'particular',
+    });
+    db.marcarAdmin(correoAdmin, true);
+    const comoAdmin = { cookie: `te_sesion=${db.abrirSesion(idAdmin)}`, 'cf-connecting-ip': '190.1.2.3' };
+    const recibido = (idPago, cuerpo = {}) =>
+      pedir({ metodo: 'POST', url: `/api/admin/pagos/${idPago}/recibido`, cuerpo, cabeceras: comoAdmin });
+    const filasBitacora = (accion) =>
+      consulta('SELECT COUNT(*) AS n FROM bitacora_admin WHERE accion = ?', accion).n;
+    const todasLasFilas = () => consulta('SELECT COUNT(*) AS n FROM bitacora_admin').n;
+    const periodos = (idSusc) =>
+      consulta("SELECT COUNT(*) AS n FROM pagos WHERE suscripcion_id = ? AND estado = 'aprobado'", idSusc).n;
+
+    // La consola renueva por la misma transición, una sola vez.
+    encenderTransferencia();
+    try {
+      const cliente = cuentaConSesion('consola-renueva');
+      const finT = enDias(3);
+      const sT = nuevaSuscripcion({ idOrg: cliente.idOrg, plan: 'destacado', cupo: 1, fin: finT });
+      const aT = nuevoAnuncio({ idOrg: cliente.idOrg, idSusc: sT, vence: finT, fotos: 1 });
+      const rT = await renovarAnuncioApi(aT, cliente, { metodo: 'transferencia' });
+      const idPago = ((rT.datos || {}).pago || {}).id;
+      ok(rT.codigo === 202 && !!idPago, `pedir por transferencia: ${rT.codigo}`);
+
+      const fact = facturasTotales();
+      const filas = filasBitacora('pago.transferencia_recibida');
+      const nAnuncios = anunciosDeOrg(cliente.idOrg);
+      const rr = await recibido(idPago);
+      const pT = db.pagoPorId(idPago);
+      ok(rr.codigo === 200 && pT.estado === 'aprobado' && filaSusc(sT).fin === masDias(finT, 30),
+        `marcar recibido: ${rr.codigo} «${errorDe(rr)}» pago=${pT.estado} fin extendido=${filaSusc(sT).fin === masDias(finT, 30)}`);
+      ok(filaAnuncio(aT).estado === 'activo' && anunciosDeOrg(cliente.idOrg) === nAnuncios && fotosDe(aT) === 1,
+        `el mismo anuncio: ${filaAnuncio(aT).estado} anuncios +${anunciosDeOrg(cliente.idOrg) - nAnuncios}`);
+      const fT = facturaDe(idPago);
+      ok(!!fT && /^B02/.test(fT.ncf || '') && fT.subtotal + fT.itbis === fT.total && fT.total === pT.total
+        && facturasTotales() === fact + 1,
+      `comprobante: ${fT ? `${fT.ncf} ${fT.subtotal}+${fT.itbis}=${fT.total}` : 'NO hay'}`);
+      ok(filasBitacora('pago.transferencia_recibida') === filas + 1,
+        `bitácora: +${filasBitacora('pago.transferencia_recibida') - filas}`);
+
+      const rr2 = await recibido(idPago);
+      ok(rr2.codigo === 200 && (rr2.datos || {}).yaEstaba === true && facturasTotales() === fact + 1
+        && filaSusc(sT).fin === masDias(finT, 30) && periodos(sT) === 1,
+      `marcar otra vez: ${rr2.codigo} yaEstaba=${(rr2.datos || {}).yaEstaba} facturas +${facturasTotales() - fact}`);
+
+      // Huérfana: la membresía se canceló mientras la transferencia esperaba.
+      const finH = enDias(5);
+      const sH = nuevaSuscripcion({ idOrg: cliente.idOrg, plan: 'destacado', cupo: 1, fin: finH });
+      const aH = nuevoAnuncio({ idOrg: cliente.idOrg, idSusc: sH, vence: finH });
+      const rH = await renovarAnuncioApi(aH, cliente, { metodo: 'transferencia' });
+      const idPagoH = ((rH.datos || {}).pago || {}).id;
+      ejecuta("UPDATE suscripciones SET estado = 'cancelada' WHERE id = ?", sH);
+      const factH = facturasTotales();
+      const filasH = todasLasFilas();
+      const rhr = await recibido(idPagoH);
+      ok(rhr.codigo === 409 && /Anule el pago/.test(errorDe(rhr)) && /renovaba/.test(errorDe(rhr))
+        && db.pagoPorId(idPagoH).estado === 'pendiente' && facturasTotales() === factH && todasLasFilas() === filasH
+        && filaSusc(sH).fin === finH && filaSusc(sH).estado === 'cancelada',
+      `huérfana: ${rhr.codigo} «${errorDe(rhr)}» pago=${db.pagoPorId(idPagoH).estado} filas +${todasLasFilas() - filasH}`);
+
+      /* La misma carrera, pero cancelada DESPUÉS de la comprobación: la
+         primera consulta ve la membresía viva y aprobarPago lanza dentro
+         del SAVEPOINT. Se le dice lo mismo al personal. */
+      const finH2 = enDias(5);
+      const sH2 = nuevaSuscripcion({ idOrg: cliente.idOrg, plan: 'destacado', cupo: 1, fin: finH2 });
+      const aH2 = nuevoAnuncio({ idOrg: cliente.idOrg, idSusc: sH2, vence: finH2 });
+      const rH2 = await renovarAnuncioApi(aH2, cliente, { metodo: 'transferencia' });
+      const idPagoH2 = ((rH2.datos || {}).pago || {}).id;
+      const viva = db.suscripcionRenovable(sH2, cliente.idOrg);
+      ejecuta("UPDATE suscripciones SET estado = 'cancelada' WHERE id = ?", sH2);
+      const original = db.suscripcionRenovable;
+      let primera = true;
+      db.suscripcionRenovable = (...args) => {
+        if (primera) { primera = false; return viva; }
+        return original(...args);
+      };
+      const factH2 = facturasTotales();
+      const filasH2 = todasLasFilas();
+      let rhr2 = null;
+      try {
+        rhr2 = await recibido(idPagoH2);
+      } finally {
+        db.suscripcionRenovable = original;
+      }
+      ok(rhr2.codigo === 409 && /Anule el pago/.test(errorDe(rhr2)) && /renovaba/.test(errorDe(rhr2))
+        && db.pagoPorId(idPagoH2).estado === 'pendiente' && facturasTotales() === factH2 && todasLasFilas() === filasH2
+        && filaSusc(sH2).fin === finH2,
+      `huérfana a mitad: ${rhr2.codigo} «${errorDe(rhr2)}» filas +${todasLasFilas() - filasH2}`);
+    } finally {
+      apagarTransferencia();
+    }
+
+    // La casilla de renovación automática.
+    const dueno = cuentaConSesion('automatica');
+    const sA = nuevaSuscripcion({ idOrg: dueno.idOrg, plan: 'destacado', cupo: 1, fin: enDias(9) });
+    const casilla = (idSusc, quien, cuerpo) =>
+      pedir({ metodo: 'PUT', url: `/api/membresias/${idSusc}/renovacion-automatica`, cuerpo, cabeceras: quien && quien.cabeceras });
+
+    delete process.env.MERCA_CARDNET;
+    const rApagada = await casilla(sA, dueno, { activar: true, texto: 'otro' });
+    ok(rApagada.codigo === 409 && filaSusc(sA).renovacion_automatica === 0 && filaSusc(sA).renovacion_aceptada === null,
+      `sin MERCA_CARDNET, activar: ${rApagada.codigo} «${errorDe(rApagada)}» casilla=${filaSusc(sA).renovacion_automatica}`);
+    process.env.MERCA_CARDNET = 'apagado';
+    const rApagado = await casilla(sA, dueno, { activar: true });
+    const gApagado = await pedir({ url: '/api/membresias', cabeceras: dueno.cabeceras });
+    ok(rApagado.codigo === 409 && filaSusc(sA).renovacion_automatica === 0
+      && ((gApagado.datos || {}).renovacionAutomatica || {}).disponible === false,
+    `MERCA_CARDNET=apagado: ${rApagado.codigo} disponible=${((gApagado.datos || {}).renovacionAutomatica || {}).disponible}`);
+
+    // Renovar con la casilla marcada y CardNet apagado: renueva y la casilla sigue en 0.
+    const aA = nuevoAnuncio({ idOrg: dueno.idOrg, idSusc: sA, vence: filaSusc(sA).fin });
+    const rRen = await renovarAnuncioApi(aA, dueno, { renovacionAutomatica: true });
+    ok(rRen.codigo === 201 && filaSusc(sA).renovacion_automatica === 0,
+      `renovar con la casilla y CardNet apagado: ${rRen.codigo} casilla=${filaSusc(sA).renovacion_automatica}`);
+
+    process.env.MERCA_CARDNET = 'lab';
+    try {
+      const rOn = await casilla(sA, dueno, { activar: true, texto: 'otro' });
+      const fOn = filaSusc(sA);
+      ok(rOn.codigo === 200 && (rOn.datos || {}).renovacionAutomatica === true && fOn.renovacion_automatica === 1
+        && !!fOn.renovacion_aceptada && fOn.renovacion_texto === TEXTO_ESPERADO,
+      `con lab, activar: ${rOn.codigo} casilla=${fOn.renovacion_automatica} fecha=${!!fOn.renovacion_aceptada} texto del servidor=${fOn.renovacion_texto === TEXTO_ESPERADO}`);
+      const gOn = await pedir({ url: '/api/membresias', cabeceras: dueno.cabeceras });
+      const ra = (gOn.datos || {}).renovacionAutomatica || {};
+      const enLista = ((gOn.datos || {}).renovables || []).find((x) => x.id === sA);
+      ok(ra.disponible === true && ra.texto === TEXTO_ESPERADO && !!enLista && enLista.renovacion_automatica === true,
+        `GET /api/membresias con lab: disponible=${ra.disponible} texto=${ra.texto === TEXTO_ESPERADO} en la lista=${enLista && enLista.renovacion_automatica}`);
+
+      const rOff = await casilla(sA, dueno, { activar: false });
+      const fOff = filaSusc(sA);
+      ok(rOff.codigo === 200 && fOff.renovacion_automatica === 0 && fOff.renovacion_aceptada === fOn.renovacion_aceptada
+        && fOff.renovacion_texto === TEXTO_ESPERADO,
+      `desactivar: ${rOff.codigo} casilla=${fOff.renovacion_automatica} fecha y texto conservados=${fOff.renovacion_aceptada === fOn.renovacion_aceptada && fOff.renovacion_texto === TEXTO_ESPERADO}`);
+
+      // Solo el propietario; ajena, 404; sin sesión, 401.
+      const miembro = cuentaConSesion('automatica-miembro');
+      ejecuta("UPDATE miembros SET organizacion_id = ?, rol = 'administrador' WHERE usuario_id = ?", dueno.idOrg, miembro.idUsuario);
+      const rMiembro = await casilla(sA, miembro, { activar: true });
+      ok(rMiembro.codigo === 403 && filaSusc(sA).renovacion_automatica === 0, `un administrador que no es propietario: ${rMiembro.codigo}`);
+      const ajeno = cuentaConSesion('automatica-ajeno');
+      const rAjena = await casilla(sA, ajeno, { activar: true });
+      ok(rAjena.codigo === 404 && filaSusc(sA).renovacion_automatica === 0, `membresía ajena: ${rAjena.codigo}`);
+      const rSinSesion = await casilla(sA, null, { activar: true });
+      ok(rSinSesion.codigo === 401, `sin sesión: ${rSinSesion.codigo}`);
+
+      // Activar exige las condiciones de pago.
+      const sinLegales = cuentaConSesion('automatica-sin-legales', { sinLegales: true });
+      const sSL = nuevaSuscripcion({ idOrg: sinLegales.idOrg, plan: 'destacado', cupo: 1, fin: enDias(9) });
+      const rSL = await casilla(sSL, sinLegales, { activar: true });
+      ok(rSL.codigo === 409 && ((rSL.datos || {}).faltan || []).length > 0 && filaSusc(sSL).renovacion_automatica === 0,
+        `activar sin aceptar condiciones: ${rSL.codigo}`);
+    } finally {
+      delete process.env.MERCA_CARDNET;
+    }
+
+    // Desactivar funciona siempre, también con CardNet apagado.
+    ejecuta('UPDATE suscripciones SET renovacion_automatica = 1 WHERE id = ?', sA);
+    const rOffApagado = await casilla(sA, dueno, { activar: false });
+    ok(rOffApagado.codigo === 200 && filaSusc(sA).renovacion_automatica === 0,
+      `desactivar con CardNet apagado: ${rOffApagado.codigo} casilla=${filaSusc(sA).renovacion_automatica}`);
+
+    // Nunca marcada por defecto: una compra recién hecha nace en 0.
+    const comprador = cuentaConSesion('automatica-compra');
+    const rCompra = await pedir({
+      metodo: 'POST', url: '/api/membresias', cuerpo: { plan: 'destacado', cupo: 1, dias: 30 }, cabeceras: comprador.cabeceras,
+    });
+    const idNueva = ((rCompra.datos || {}).membresia || {}).id;
+    ok(rCompra.codigo === 201 && !!idNueva && filaSusc(idNueva).renovacion_automatica === 0,
+      `compra recién hecha: ${rCompra.codigo} casilla=${idNueva && filaSusc(idNueva).renovacion_automatica}`);
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
