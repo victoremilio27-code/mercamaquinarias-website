@@ -323,6 +323,72 @@ modo «sin pantalla».
    y días (lo mismo que costaría comprarlo ese día), avisado 7 días antes. Si Victor
    prefiere congelar el precio del ciclo anterior (por ejemplo, para quien compró en
    promoción), es cambiar una línea de `pagos.renovar`; es decisión suya, no técnica.
+   *(Resuelta por el modelo comercial y la 05.3: precio vigente con
+   `precios.precioRenovacion`, el mismo de la renovación manual.)*
+   La pregunta 7 también quedó resuelta: la cláusula 4.6 de la contratación (05.3, v2.2;
+   hoy 2.3) ya cubre la renovación automática solo si se activa.
+
+---
+
+<revision_modelo_comercial>
+## Revisión 2026-09-30: replanificación desde el 06-02 contra el modelo comercial
+
+El 06-01 (`tools/cardnet.js`, `tools/probar-cardnet.js`, CI) está hecho y no cambia de plan. Desde
+el 06-02 los planes se rehicieron contra lo que ya está en producción (fases 05.1 a 05.4). Estas
+decisiones **sustituyen** a las marcadas; todo lo demás de arriba sigue vigente.
+
+- **R-01 (sustituye D-12).** Migración `2026-10-cardnet` detrás de `2026-09-renovacion` (la
+  última hoy; comprobar al ejecutar que nada quedó detrás). NO vuelve a crear
+  `suscripciones.renovacion_automatica`, `renovacion_aceptada` ni `renovacion_texto` (las creó
+  la 05.3). En `suscripciones` solo añade `metodo_pago_id`, `renovacion_intentos` y
+  `renovacion_avisada`. La fecha del próximo intento reutiliza `suscripciones.proximo_cargo`,
+  que existe desde el esquema original y ningún código escribe. `pagos`, `metodos_pago`,
+  `clientes_procesador` y `pagos_eventos` como en D-12. Los índices sobre columnas nuevas de
+  tablas existentes van SOLO en la migración (convención de 05.2/05.3: `abrir()` ejecuta
+  `schema.sql` antes de migrar).
+- **R-02 (amplía D-17/D-18).** Se cobra con tarjeta por las rutas de cobro que existen hoy, no
+  solo por membresías: `POST /api/borradores/:id/pago` (publicación del particular),
+  `POST /api/membresias` (plan del dealer), `POST /api/membresias/:id/ampliar` (capacidad) y
+  `POST /api/anuncios/:id/renovar` / `POST /api/membresias/:id/renovar` (renovación manual).
+  Un pendiente de CardNet sin intento de cobro no bloquea: se retoma (nueva URL de captura del
+  mismo pago) o, si se pide otro método, se anula sin cobrar y se crea el nuevo.
+- **R-03 (sustituye D-27).** Consentimiento: el de la 05.3, tal cual (`TEXTO_RENOVACION_AUTOMATICA`
+  de `tools/api.js`, `renovacion_aceptada`, `renovacion_texto`). La casilla del pago solo vale
+  con el método `cardnet` y solo del propietario; viaja en la intención del pago y se aplica al
+  APROBARSE, enlazando la tarjeta con la que se pagó. Con transferencia no se guarda. El
+  interruptor del panel exige una tarjeta activa de la organización. Desactivar, siempre.
+  `renovacionAutomaticaDisponible()` pasa a ser `cardnet.activo()` (lo anunció 05.3-02).
+- **R-04 (sustituye D-27/D-29).** Qué se renueva: la SUSCRIPCIÓN. Para el particular, la de
+  un cupo de su publicación; para el dealer, su capacidad. Importe: el de la renovación manual
+  (`precios.precioRenovacion` con `precio_vigente`, `anuncios_incluidos` y los días del ciclo).
+  La intención es la de la renovación manual (`tipo: 'renovacion'`, rama que ya existe en
+  `db.aprobarPago` desde la 05.3) con `automatica: true`, construida por UNA función compartida
+  con `pedirRenovacion`. No se añade rama nueva a `aprobarPago`.
+- **R-05 (guardas de la 05.4).** Una sola operación de capacidad pendiente por membresía: la
+  renovación automática no se pide si hay una renovación o una ampliación pendiente. Antes de
+  llamar a CardNet, el procesador comprueba que lo comprado aún se puede aplicar (ampliación:
+  membresía viva; publicación: el borrador sigue siendo borrador; renovación: la suscripción
+  sigue renovable); si no, rechaza SIN cobrar. Si CardNet aprueba y `aprobarPago` lanza 404/409
+  (carrera), el pago NO se rechaza —el dinero entró—: queda pendiente con un evento
+  `aprobado-sin-aplicar`, sin NCF, y sale en el informe a gerencia para devolverlo a mano.
+- **R-06 (sustituye D-28).** Calendario: aviso 7 días antes (una vez por ciclo, en
+  `renovacion_avisada`); intentos a `fin` − 3, − 2 y − 1 días (tres como máximo, siempre antes
+  de `fin`); correo por rechazo con enlace a renovar a mano. Con la renovación automática
+  activa, tarjeta usable y CardNet encendido, los avisos 7/3/1 de la 05.3 de esa suscripción no
+  se mandan (los sustituye el aviso de renovación); apagado, salen como hoy.
+- **R-07.** El sitio no dice «cupo» a nadie: el texto genérico de rechazo de `tools/cardnet.js`
+  pasa a «no se activó nada». Los identificadores internos pueden seguir diciendo cupo. El
+  criterio 3 del ROADMAP («otorga cupos») se lee como «activa la publicación o la capacidad
+  comprada».
+- **R-08.** El cliente del navegador no puede usar `api()` de `assets/sesion.js` para la
+  confirmación con tarjeta: esa función descarta el cuerpo de los errores y el paso de
+  activación (409 `{ activacion, metodoPago }`) lo necesita. `assets/cardnet.js` lleva su
+  propio envoltorio de `fetch`; `sesion.js` no se toca.
+
+Planes: 06-02 base · 06-03 CSP · 06-04 transición en `pagos.js` · 06-05 rutas · 06-06
+notificación y conciliación · 06-07 pantallas de pago · 06-08 renovación automática · 06-09
+panel · 06-10 cierre.
+</revision_modelo_comercial>
 
 ---
 
