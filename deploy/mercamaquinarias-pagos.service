@@ -1,0 +1,37 @@
+# Conciliación de pagos con tarjeta (CardNet). Lo dispara
+# mercamaquinarias-pagos.timer cada 10 minutos.
+# Instalar junto al .timer en /etc/systemd/system/
+#
+# Por qué existe: el aviso de CardNet se pierde si llega mientras el
+# droplet se reinicia (y se reinicia en cada despliegue), y el navegador
+# del comprador puede cerrarse antes de confirmar. Esta tarea vuelve a
+# preguntar a CardNet por los pagos que llevan más de 10 minutos
+# pendientes y completa los aprobados (un solo comprobante y un solo NCF,
+# por mucho que se repita).
+#
+# Con CardNet apagado la tarea no hace nada, así que instalarla antes de
+# encender la pasarela es inocuo. El despliegue automático NO la instala.
+
+[Unit]
+Description=MercaMaquinarias — conciliación de pagos con tarjeta
+After=network.target
+
+[Service]
+Type=oneshot
+User=mercamaquinarias
+Group=mercamaquinarias
+WorkingDirectory=/var/www/mercamaquinarias
+
+Environment=NODE_ENV=production
+Environment=MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db
+# La recuperación de un pago emite el comprobante y escribe su PDF.
+Environment=MERCA_FACTURAS=/var/lib/mercamaquinarias/facturas
+EnvironmentFile=/etc/mercamaquinarias.env
+
+ExecStart=/usr/bin/node tools/tareas.js reconciliar
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mercamaquinarias
