@@ -532,8 +532,10 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     };
     await sinCupo('panel.html', 'panel.html');
     if (await p.$('.resumen-dealer')) {
-      const t = await p.$eval('.resumen-dealer', (e) => e.innerText);
-      if (/Capacidad disponible/.test(t) && /Vence el/.test(t)) ok('el resumen del dealer se ve con «Capacidad disponible» y «Vence el»');
+      /* textContent y sin distinguir mayúsculas: el CSS pone los rótulos
+         en versales y innerText devuelve lo que se pinta, no lo escrito. */
+      const t = await p.$eval('.resumen-dealer', (e) => e.textContent);
+      if (/Capacidad disponible/i.test(t) && /Vence el/i.test(t)) ok('el resumen del dealer se ve con «Capacidad disponible» y «Vence el»');
       else anota('dealer', 'ux', 'el resumen del dealer no trae «Capacidad disponible» y «Vence el»');
     } else {
       anota('dealer', 'ux', 'el panel del dealer no muestra .resumen-dealer');
