@@ -91,6 +91,19 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
   comprobar(!/RD\$0\b/.test(sis), 'el plan gratis no se anuncia como «RD$0»');
   comprobar(/SIN COSTO/.test(sis), 'el plan gratis se anuncia como sin costo');
 
+  /* Fase 10.1: las cuentas. Cada camino con su sitio exacto, y el límite
+     de lo que el asistente jamás hace desde el chat. */
+  comprobar(/«Olvidé mi contraseña»/.test(sis) && /Olvidó la contraseña/.test(sis),
+    'el prompt manda a «Olvidé mi contraseña» a quien olvidó la contraseña');
+  comprobar(/«Seguridad de la cuenta»/.test(sis) && /Panel/.test(sis),
+    'el prompt manda a «Seguridad de la cuenta» del Panel a quien quiere cambiar correo o contraseña con sesión');
+  comprobar(/«¿Ya no tiene acceso a su correo\?»/.test(sis) && /72 horas/.test(sis) && /correo antiguo/.test(sis),
+    'el prompt explica el formulario de acceso perdido: revisión del personal, 72 horas y aviso al correo antiguo');
+  comprobar(/«No fui yo»/.test(sis) && /7 días/.test(sis),
+    'el prompt manda al enlace «No fui yo» (7 días) ante un cambio de correo que no se hizo');
+  comprobar(/NUNCA cambias un correo ni recuperas una cuenta/.test(sis) && /NUNCA pides contraseñas ni códigos/.test(sis),
+    'el prompt prohíbe cambiar correos, recuperar cuentas y pedir contraseñas o códigos desde el chat');
+
   /* El asistente anuncia el precio FINAL —el mismo que cobra
      `precioCompra`/`desglose`—, nunca la base ni el 3 % de ajuste. Lo
      esperado se calcula aquí con el mismo módulo que usa chat.js, no a

@@ -790,6 +790,207 @@ function montarSeries() {
   cargarSeries();
 }
 
+/* ═══ Recuperación de cuentas (fase 10.1) ════════════════
+   Quien perdió el acceso a su correo pide pasar la cuenta a otro. Esta
+   sección pone lo que dice el solicitante al lado de lo que la cuenta
+   sabe, para cotejar. Los textos los escribe un visitante sin sesión:
+   todo pasa por `esc`. Aprobar exige que hayan pasado las 72 h de espera
+   (el servidor lo vuelve a comprobar y responde 409) y una cuenta detrás;
+   los dos casos deshabilitan el botón con el porqué en el título. Aprobar
+   y rechazar piden un motivo de al menos 15 caracteres, que queda en la
+   bitácora. Los atributos son `data-recu-*` para no engancharse a los
+   `data-estado` de la cola. */
+
+let RECU_ESTADO = 'pendiente';
+let RECU_ABIERTA = null;
+const RECU_MOTIVO_MINIMO = 15;
+
+const RECU_VACIO = {
+  pendiente: 'No hay solicitudes de recuperación pendientes.',
+  aprobada: 'Todavía no se ha aprobado ninguna recuperación.',
+  rechazada: 'No hay recuperaciones rechazadas.',
+  anulada: 'No hay recuperaciones anuladas (se anulan solas cuando el titular entra a su cuenta).',
+  todas: 'No hay solicitudes de recuperación.',
+};
+
+function avisarRecu(mensaje, bien = false) {
+  const aviso = $('#avisoRecu');
+  if (!aviso) return;
+  aviso.hidden = !mensaje;
+  aviso.className = `acceso__aviso${bien ? ' acceso__aviso--bien' : ''}`;
+  aviso.textContent = mensaje || '';
+}
+
+/* ¿Ya pasó la espera? Solo orienta al botón: el veredicto es del servidor. */
+const recuEnTiempo = (s) => !!s.resolver_desde && Date.now() >= new Date(s.resolver_desde).getTime();
+
+function recuHTML(s) {
+  const clase = { aprobada: 'sol--aprobada', rechazada: 'sol--rechazada', anulada: 'sol--rechazada' }[s.estado] || '';
+  const pendiente = s.estado === 'pendiente';
+  const enTiempo = recuEnTiempo(s);
+  const sinCuenta = !s.usuario_id;
+  const porque = sinCuenta ? 'Sin cuenta con ese correo solo se puede rechazar.'
+    : !enTiempo ? `Todavía no: se puede resolver desde ${fechaHora(s.resolver_desde)}.` : '';
+
+  return `<li class="sol ${clase}" data-id="${esc(s.id)}">
+    <div class="sol__cabeza">
+      <b class="sol__nombre num">${esc(s.referencia)}</b>
+      <span class="sol__meta">${esc(s.nombre)}</span>
+      <span class="sol__fecha">${fechaHora(s.creada)}</span>
+    </div>
+    <p class="sol__meta">Cuenta: ${esc(s.correo_cuenta)}${sinCuenta ? ' · <b>sin cuenta con ese correo</b>' : ''}</p>
+    <p class="sol__meta">Contacto: ${esc(s.correo_contacto)} · Estado: <b>${esc(s.estado)}</b></p>
+    ${pendiente ? `<p class="sol__meta">Se puede resolver desde ${esc(fechaHora(s.resolver_desde))}${enTiempo ? ' (ya se puede)' : ''}</p>` : ''}
+    ${!pendiente && s.resuelta ? `<p class="sol__meta">${s.estado === 'anulada' ? 'Anulada' : 'Resuelta'} el ${esc(fechaHora(s.resuelta))}${s.motivo ? ` · ${esc(s.motivo)}` : ''}</p>` : ''}
+    <div class="sol__acciones">
+      <button type="button" class="btn btn--linea btn--chico" data-recu-accion="ver" aria-expanded="false">Ver expediente</button>
+      ${pendiente ? `
+      <button type="button" class="btn btn--ambar btn--chico" data-recu-accion="aprobar"${porque ? ` disabled title="${esc(porque)}"` : ''}>Aprobar</button>
+      <button type="button" class="btn btn--linea btn--chico" data-recu-accion="rechazar">Rechazar</button>` : ''}
+    </div>
+    <div class="sol__detalle" data-recu-detalle hidden></div>
+  </li>`;
+}
+
+const recuLinea = (rotulo, valor) => `<p class="sol__meta">${esc(rotulo)}: ${valor ? esc(valor) : '—'}</p>`;
+
+function expedienteRecuHTML(e) {
+  const c = e.cuenta;
+  const o = e.organizacion;
+  const izquierda = `<div>
+      <h3 class="sol__nombre">Lo que dice el solicitante</h3>
+      ${recuLinea('Nombre', e.nombre)}
+      ${recuLinea('Teléfono', e.telefono)}
+      ${recuLinea('RNC', e.rnc)}
+      ${recuLinea('Correo de contacto', e.correo_contacto)}
+      <p class="sol__meta">Detalle: ${esc(e.detalle || '—')}</p>
+    </div>`;
+
+  const derecha = !c ? `<div>
+      <h3 class="sol__nombre">Lo que sabe la cuenta</h3>
+      <p class="sol__meta">No hay cuenta con ese correo: solo se puede rechazar.</p>
+    </div>` : `<div>
+      <h3 class="sol__nombre">Lo que sabe la cuenta</h3>
+      ${recuLinea('Nombre', c.nombre)}
+      ${recuLinea('Correo', c.correo)}
+      ${recuLinea('Teléfono', c.telefono)}
+      ${recuLinea('Alta', c.creado ? fechaHora(c.creado) : '')}
+      ${o ? recuLinea('Organización', `${o.nombre} (${o.tipo}${o.rnc ? `, RNC ${o.rnc}` : ''})`) : recuLinea('Organización', '')}
+      ${recuLinea('Anuncios', `${e.anuncios ? e.anuncios.total : 0}${e.anuncios && e.anuncios.titulos.length ? ` · ${e.anuncios.titulos.join(', ')}` : ''}`)}
+      <p class="sol__meta">Últimos pagos: ${(e.pagos || []).length ? '' : '—'}</p>
+      ${(e.pagos || []).map((p) => `<p class="sol__meta num">${esc(fechaCorta(p.fecha))} · ${esc(p.referencia)} · ${esc(importePago(p.total))} · ${esc(p.estado)}${p.ncf ? ` · NCF ${esc(p.ncf)}` : ''}</p>`).join('')}
+      ${recuLinea('Teléfonos verificados', (e.telefonosVerificados || []).join(', '))}
+      <p class="sol__meta">Cambios de correo recientes: ${(e.cambiosCorreo || []).length ? '' : 'ninguno'}</p>
+      ${(e.cambiosCorreo || []).map((x) => `<p class="sol__meta">${esc(fechaHora(x.creado))} · ${esc(x.anterior)} → ${esc(x.nuevo)} · ${esc(x.via)}${x.revertido ? ' · revertido' : ''}</p>`).join('')}
+    </div>`;
+
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.25rem">${izquierda}${derecha}</div>`;
+}
+
+async function alternarExpedienteRecu(id, caja, boton) {
+  if (!caja.hidden) {
+    caja.hidden = true;
+    boton.setAttribute('aria-expanded', 'false');
+    RECU_ABIERTA = null;
+    return;
+  }
+  boton.disabled = true;
+  try {
+    const e = await api(`/admin/recuperaciones/${encodeURIComponent(id)}`);
+    if (!e) throw new Error('No hay conexión con el servidor.');
+    caja.innerHTML = expedienteRecuHTML(e);
+    caja.hidden = false;
+    boton.setAttribute('aria-expanded', 'true');
+    RECU_ABIERTA = id;
+  } catch (err) {
+    avisarRecu(err.message || 'No se pudo abrir el expediente.');
+  } finally {
+    boton.disabled = false;
+  }
+}
+
+async function cargarRecu() {
+  if (!$('#listaRecu')) return;
+  const datos = await api(`/admin/recuperaciones?estado=${encodeURIComponent(RECU_ESTADO)}`, { silencioso: true });
+  if (!datos) return avisarRecu('No se pudieron cargar las solicitudes de recuperación.');
+
+  const lista = datos.solicitudes || [];
+  $('#listaRecu').innerHTML = lista.map(recuHTML).join('');
+  const vacio = $('#recuVacia');
+  vacio.hidden = lista.length > 0;
+  vacio.textContent = RECU_VACIO[RECU_ESTADO] || RECU_VACIO.pendiente;
+
+  const pendientes = RECU_ESTADO === 'pendiente'
+    ? lista
+    : ((await api('/admin/recuperaciones?estado=pendiente', { silencioso: true })) || {}).solicitudes;
+  const n = Array.isArray(pendientes) ? pendientes.length : null;
+  $('#metaRecu').textContent = n == null ? '' : n === 0 ? 'Ninguna en espera' : `${n} en espera`;
+}
+
+async function resolverRecu(id, accion, motivo) {
+  try {
+    const datos = await api(`/admin/recuperaciones/${encodeURIComponent(id)}/${accion}`, {
+      metodo: 'POST', cuerpo: { motivo },
+    });
+    if (!datos) throw new Error('No hay conexión con el servidor.');
+    await cargarRecu();
+    cargarBitacora();
+    avisarRecu(accion === 'aprobar'
+      ? 'Aprobada. El correo de la cuenta cambió y se avisó a los dos correos.'
+      : 'Rechazada. Se avisó al correo de contacto.', true);
+  } catch (e) {
+    // Un 409 quiere decir que la fila ya no es lo que se ve en pantalla.
+    if (e && e.codigo === 409) await cargarRecu();
+    avisarRecu(e.message || 'No se pudo resolver la solicitud.');
+  }
+}
+
+function montarRecuperaciones() {
+  if (!$('#listaRecu')) return;
+
+  $('#filtrosRecu').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-recu-estado]');
+    if (!boton) return;
+    RECU_ESTADO = boton.dataset.recuEstado;
+    elegirFiltro(boton);
+    avisarRecu('');
+    cargarRecu();
+  });
+
+  $('#listaRecu').addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-recu-accion]');
+    if (!boton || boton.disabled) return;
+    const fila = boton.closest('.sol');
+    if (!fila) return;
+    const accion = boton.dataset.recuAccion;
+
+    if (accion === 'ver') {
+      return alternarExpedienteRecu(fila.dataset.id, fila.querySelector('[data-recu-detalle]'), boton);
+    }
+
+    // Aprobar y rechazar comparten sitio en la fila: pulsar la otra cambia de caja.
+    const abierta = fila.querySelector('.sol__motivo');
+    if (abierta && abierta.dataset.recu !== accion) abierta.remove();
+
+    const aprobar = accion === 'aprobar';
+    pedirMotivo(fila, (motivo) => resolverRecu(fila.dataset.id, accion, motivo), {
+      placeholder: aprobar
+        ? 'Cómo se comprobó la identidad (qué datos coinciden). Queda en la bitácora.'
+        : 'Por qué se rechaza. Se le informa al contacto que escriba a soporte.',
+      etiqueta: aprobar ? 'Motivo de la aprobación' : 'Motivo del rechazo',
+      confirmar: aprobar ? 'Confirmar aprobación' : 'Confirmar rechazo',
+      falta: `Escriba el motivo, con al menos ${RECU_MOTIVO_MINIMO} caracteres.`,
+      minimo: RECU_MOTIVO_MINIMO,
+      maximo: 500,
+      avisarCon: avisarRecu,
+    });
+    const caja = fila.querySelector('.sol__motivo');
+    if (caja) caja.dataset.recu = accion;
+  });
+
+  cargarRecu();
+}
+
 /* ═══ Pagos por transferencia ════════════════════════════
    El servidor no puede saber cuándo entra el dinero en la cuenta: lo
    confirma una persona desde aquí. Al marcarlo recibido se activa lo
@@ -1626,6 +1827,7 @@ async function montarAdmin() {
 
   await cargar();
   montarBandeja();
+  montarRecuperaciones();
   montarEmpresas();
   montarSeries();
   montarPagos();
