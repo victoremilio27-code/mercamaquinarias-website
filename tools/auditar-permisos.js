@@ -181,6 +181,11 @@ async function entrar(correo, clave) {
     ['/admin/publicaciones', 'GET', null, 'la consola de publicaciones oculta'],
     ['/admin/cobros', 'GET', null, 'la consola de pagos de todos los métodos oculta'],
     ['/admin/renovaciones', 'GET', null, 'la consola de renovaciones oculta'],
+    // Fase 10.1: recuperación de cuentas. Aprobar cambia el correo de una cuenta ajena.
+    ['/admin/recuperaciones', 'GET', null, 'el listado de recuperaciones de cuenta oculto'],
+    ['/admin/recuperaciones/cualquiera', 'GET', null, 'el expediente de una recuperación oculto'],
+    ['/admin/recuperaciones/cualquiera/aprobar', 'POST', { motivo: 'Datos coinciden con la cuenta' }, 'aprobar una recuperación bloqueado'],
+    ['/admin/recuperaciones/cualquiera/rechazar', 'POST', { motivo: 'Datos no coinciden con la cuenta' }, 'rechazar una recuperación bloqueado'],
   ]) {
     const rr = await pedir(ruta, { metodo, cuerpo: cuerpo || undefined, cookie: cibao });
     comprobar(`${que} a cuenta sin permiso`, rr.estado === 404, `devolvió ${rr.estado}`);

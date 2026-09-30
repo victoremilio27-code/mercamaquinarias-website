@@ -576,6 +576,30 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
 
     await sinCupo('planes.html', 'planes.html');
     await sinCupo('publicar.html', 'publicar.html');
+
+    /* Seguridad de la cuenta (10.1): el panel trae los tres bloques y una
+       contraseña equivocada al cambiar el correo se queda en un aviso,
+       sin recargar y sin cambiar nada. */
+    await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+    await esperar(800);
+    const bloques = await p.$$eval('#panelSeguridad #segCorreo, #panelSeguridad #segClave, #panelSeguridad #segSesiones', (n) => n.length).catch(() => 0);
+    if (bloques === 3) ok('panel.html trae «Seguridad de la cuenta» con correo, contraseña y sesiones');
+    else anota('seguridad', 'flujo', `#panelSeguridad no trae los tres bloques (hay ${bloques})`);
+
+    if (await p.$('#btnCambiarCorreo')) {
+      await p.evaluate(() => { window.__sinRecarga = true; });
+      await p.click('#btnCambiarCorreo');
+      await escribir(p, '#seg-correo-nuevo', `nuevo-${SELLO}@auditoria.do`);
+      await escribir(p, '#seg-correo-clave', 'una-clave-equivocada-99');
+      await p.click('#formCorreoNuevo button[type="submit"]');
+      await esperar(1200);
+      const av = await p.$eval('#avisoSegCorreo', (el) => (el.hidden ? '' : el.textContent.trim())).catch(() => '');
+      const sigue = await p.evaluate(() => window.__sinRecarga === true);
+      if (av && sigue) ok(`cambiar el correo con contraseña equivocada avisa sin recargar: «${av.slice(0, 60)}»`);
+      else anota('seguridad', 'flujo', `la contraseña equivocada no dejó aviso o recargó la página (aviso=«${av}», sinRecarga=${sigue})`);
+    } else {
+      anota('seguridad', 'flujo', 'el panel no tiene el botón «Cambiar correo»');
+    }
   }
 
   /* Visitante sin sesión: ni el cuerpo ni el pie dicen «cupo». */
@@ -590,6 +614,23 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     if (/cupo/i.test(t)) anota('visitante', 'ux', `${pagina} dice «cupo» al visitante: …${contexto(t, /cupo/i)}…`);
     else ok(`${pagina} no dice «cupo» al visitante (cuerpo y pie)`);
   }
+
+  /* «No fui yo» (10.1): con un testigo falso solo se muestra el bloque.
+     Ninguna petición POST sale antes de pulsar el botón: los antivirus de
+     correo abren los enlaces solos y una reversión por GET anularía la
+     contraseña de quien no la pidió. */
+  const posts = [];
+  const escuchar = (rq) => { if (rq.method() === 'POST' && rq.url().includes('/api/')) posts.push(rq.url()); };
+  p.on('request', escuchar);
+  await p.goto(`${BASE}/cuenta.html?revertir=${'ab'.repeat(32)}`, { waitUntil: 'networkidle0' });
+  await esperar(800);
+  const veRevertir = await p.$eval('#formRevertir', (el) => !el.hidden).catch(() => false);
+  const veEntrar = await p.$eval('#formEntrar', (el) => !el.hidden).catch(() => true);
+  if (veRevertir && !veEntrar) ok('cuenta.html?revertir= muestra el bloque de revertir en vez de los formularios');
+  else anota('revertir', 'flujo', `cuenta.html?revertir= no muestra solo el bloque de revertir (revertir=${veRevertir}, entrar=${veEntrar})`);
+  if (!posts.length) ok('cuenta.html?revertir= no hace ninguna petición POST antes de pulsar');
+  else anota('revertir', 'SEGURIDAD', `cuenta.html?revertir= hizo POST al cargar: ${posts.join(', ')}`);
+  p.off('request', escuchar);
 
   /* ═══ ADMINISTRADOR ═══ */
   console.log('\n═══ Administrador ═══');

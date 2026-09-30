@@ -475,10 +475,19 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     const db = require('./db');
     const d = db.abrir();
 
-    /* Es la última de MIGRACIONES: se lee el orden en que quedaron
-       anotadas y el texto del archivo. */
+    /* Se añadió al final, detrás de la 05.3, sin reordenar nada. Antes
+       se exigía que fuera LA última, y eso era una foto del día en que se
+       escribió: la primera migración nueva (la 10.1) rompía la prueba sin
+       que la de CardNet hubiera cambiado. Lo que importa es el orden: que
+       vaya después de `2026-09-renovacion` y que todo lo que venga detrás
+       sea posterior a ella. */
     const anotadas = d.prepare('SELECT id FROM migraciones ORDER BY aplicada, rowid').all().map((r) => r.id);
-    ok(anotadas[anotadas.length - 1] === '2026-10-cardnet', `es la última migración anotada (${anotadas[anotadas.length - 1]})`);
+    const pos = anotadas.indexOf('2026-10-cardnet');
+    const detras = anotadas.slice(pos + 1);
+    ok(pos > anotadas.indexOf('2026-09-renovacion') && anotadas.indexOf('2026-09-renovacion') >= 0,
+      'se anotó después de 2026-09-renovacion');
+    ok(detras.every((x) => x > '2026-10-cardnet'),
+      `detrás solo van migraciones posteriores (${detras.join(', ') || 'ninguna'})`);
     ok(anotadas.filter((x) => x === '2026-10-cardnet').length === 1, 'anotada una sola vez');
 
     const fuente = fs.readFileSync(path.join(__dirname, 'db.js'), 'utf8');

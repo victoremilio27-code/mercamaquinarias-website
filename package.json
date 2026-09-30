@@ -40,6 +40,7 @@
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
     "bitacora:probar": "node tools/probar-bitacora.js",
+    "cuenta:probar": "node tools/probar-cuenta.js",
     "metricas:probar": "node tools/probar-metricas.js",
     "contactos:probar": "node tools/probar-contactos.js",
     "catalogo:probar": "node tools/probar-catalogo.js",

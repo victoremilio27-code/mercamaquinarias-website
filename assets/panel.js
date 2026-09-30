@@ -1172,6 +1172,7 @@ async function montarPanel() {
   montarFacturas();
   montarContactos();
   montarRecibidos();
+  montarSeguridad();
 
   const org = SESION.organizacion || {};
   $('#panelTitulo').innerHTML = `<em>${esc((org.nombre || SESION.usuario.nombre).split(/[\s,]+/)[0])}</em> ${esc((org.nombre || '').replace(/^\S+\s*/, ''))}`;
@@ -2145,6 +2146,192 @@ async function montarRecibidos() {
   selAnuncio.addEventListener('change', pintar);
   selCanal.addEventListener('change', pintar);
   await pintar();
+}
+
+/* ── Seguridad de la cuenta (10.1) ──────────────────────────
+
+   Correo, contraseña y otras sesiones. `api()` lanza cuando la respuesta
+   no es ok, así que cada llamada va en su propio try/catch y enseña
+   `e.message` en el aviso del bloque: si no, un «contraseña incorrecta»
+   se perdería como promesa rechazada sin que nadie lo viera.
+
+   La contraseña de «Cambiar correo» vive solo en la variable local de
+   esta función mientras se espera el código, para poder pedir otro sin
+   volver a escribirla. Nunca se guarda en el DOM ni en el almacenamiento
+   del navegador, y se borra al confirmar o cancelar. */
+function montarSeguridad() {
+  if (!$('#panelSeguridad') || !haySesion()) return;
+
+  const aviso = (id, texto, bien = false) => {
+    const el = $(id);
+    el.hidden = !texto;
+    el.textContent = texto || '';
+    el.classList.toggle('acceso__aviso--ok', !!bien);
+  };
+  const pintarCorreo = () => { $('#segCorreoActual').textContent = SESION.usuario.correo; };
+  pintarCorreo();
+
+  /* Bloquea el botón de envío mientras dura la petición: una conexión
+     lenta invita a pulsar dos veces. */
+  async function conEspera(boton, tarea) {
+    const rotulo = boton.textContent;
+    boton.disabled = true;
+    boton.textContent = 'Un momento…';
+    try { return await tarea(); } finally {
+      boton.disabled = false;
+      boton.textContent = rotulo;
+    }
+  }
+
+  // ── Correo ──
+  const formNuevo = $('#formCorreoNuevo');
+  const formCodigo = $('#formCorreoCodigo');
+  const botonCambiar = $('#btnCambiarCorreo');
+  let pedido = null;   // { correo, clave } del cambio en curso
+
+  function cerrarCorreo() {
+    pedido = null;
+    formNuevo.reset();
+    formCodigo.reset();
+    formNuevo.hidden = true;
+    formCodigo.hidden = true;
+    botonCambiar.setAttribute('aria-expanded', 'false');
+    $('#segCorreoAcciones').hidden = false;
+  }
+
+  botonCambiar.addEventListener('click', () => {
+    aviso('#avisoSegCorreo', '');
+    formNuevo.hidden = false;
+    botonCambiar.setAttribute('aria-expanded', 'true');
+    $('#segCorreoAcciones').hidden = true;
+    $('#seg-correo-nuevo').focus();
+  });
+  $('#btnCancelarCorreo').addEventListener('click', cerrarCorreo);
+  $('#btnCancelarCodigo').addEventListener('click', () => { cerrarCorreo(); aviso('#avisoSegCorreo', ''); });
+
+  async function pedirCodigo(boton) {
+    const r = await conEspera(boton, () => api('/cuenta/correo', {
+      metodo: 'POST', cuerpo: { correo: pedido.correo, clave: pedido.clave },
+    }));
+    if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+    pedido.correo = r.correo;
+    $('#segCodigoIntro').textContent =
+      `Le enviamos un código a ${r.correo}. Vence en ${r.minutos} minutos.`;
+    formNuevo.hidden = true;
+    formCodigo.hidden = false;
+    $('#seg-codigo').value = '';
+    $('#seg-codigo').focus();
+  }
+
+  formNuevo.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const correo = $('#seg-correo-nuevo').value.trim();
+    const clave = $('#seg-correo-clave').value;
+    if (!correo || !clave) return aviso('#avisoSegCorreo', 'Escriba el correo nuevo y su contraseña actual.');
+    aviso('#avisoSegCorreo', '');
+    pedido = { correo, clave };
+    try {
+      await pedirCodigo(formNuevo.querySelector('button[type="submit"]'));
+    } catch (e) {
+      pedido = null;
+      aviso('#avisoSegCorreo', e.message);
+    }
+  });
+
+  $('#btnOtroCodigo').addEventListener('click', async () => {
+    if (!pedido) return;
+    aviso('#avisoSegCorreo', '');
+    try {
+      await pedirCodigo($('#btnOtroCodigo'));
+      aviso('#avisoSegCorreo', 'Le enviamos un código nuevo. El anterior dejó de servir.', true);
+    } catch (e) {
+      aviso('#avisoSegCorreo', e.message);
+    }
+  });
+
+  $('#seg-codigo').addEventListener('input', (ev) => {
+    ev.target.value = ev.target.value.replace(/\D/g, '').slice(0, 6);
+  });
+
+  formCodigo.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const codigo = $('#seg-codigo').value.trim();
+    if (!pedido) return;
+    if (codigo.length !== 6) return aviso('#avisoSegCorreo', 'El código tiene 6 dígitos.');
+    aviso('#avisoSegCorreo', '');
+    try {
+      const r = await conEspera(formCodigo.querySelector('button[type="submit"]'), () =>
+        api('/cuenta/correo/confirmar', { metodo: 'POST', cuerpo: { correo: pedido.correo, codigo } }));
+      if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+
+      const anterior = SESION.usuario.correo;
+      SESION.usuario = r.usuario || { ...SESION.usuario, correo: pedido.correo };
+      if (r.organizacion) SESION.organizacion = r.organizacion;
+      const sub = $('#panelSub');
+      if (sub) sub.textContent = sub.textContent.replace(anterior, SESION.usuario.correo);
+      pintarCorreo();
+      cerrarCorreo();
+      aviso('#avisoSegCorreo', `Listo. Su cuenta usa ahora ${SESION.usuario.correo}. Cerramos las sesiones abiertas en otros equipos y avisamos a su correo anterior.`, true);
+    } catch (e) {
+      aviso('#avisoSegCorreo', e.message);
+    }
+  });
+
+  // ── Contraseña ──
+  const formClave = $('#formClaveNueva');
+  const botonClave = $('#btnCambiarClave');
+  const cerrarClave = () => {
+    formClave.reset();
+    formClave.hidden = true;
+    botonClave.setAttribute('aria-expanded', 'false');
+    $('#segClaveAcciones').hidden = false;
+  };
+  botonClave.addEventListener('click', () => {
+    aviso('#avisoSegClave', '');
+    formClave.hidden = false;
+    botonClave.setAttribute('aria-expanded', 'true');
+    $('#segClaveAcciones').hidden = true;
+    $('#seg-clave-actual').focus();
+  });
+  $('#btnCancelarClave').addEventListener('click', cerrarClave);
+
+  formClave.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const actual = $('#seg-clave-actual').value;
+    const nueva = $('#seg-clave-nueva').value;
+    if (!actual) return aviso('#avisoSegClave', 'Escriba su contraseña actual.');
+    if (nueva.length < 10) return aviso('#avisoSegClave', 'La contraseña nueva debe tener al menos 10 caracteres.');
+    if ($('#seg-clave-nueva2').value !== nueva) {
+      $('#seg-clave-nueva2').focus();
+      return aviso('#avisoSegClave', 'Las dos contraseñas nuevas no coinciden.');
+    }
+    aviso('#avisoSegClave', '');
+    try {
+      const r = await conEspera(formClave.querySelector('button[type="submit"]'), () =>
+        api('/cuenta/clave', { metodo: 'POST', cuerpo: { actual, nueva } }));
+      if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+      cerrarClave();
+      aviso('#avisoSegClave', r.mensaje || 'Su contraseña cambió y se cerraron las demás sesiones.', true);
+    } catch (e) {
+      aviso('#avisoSegClave', e.message);
+    }
+  });
+
+  // ── Otras sesiones ──
+  $('#btnCerrarOtras').addEventListener('click', async (ev) => {
+    if (!confirm('Se cerrará la sesión en todos los demás equipos. Esta sesión sigue abierta. ¿Continuar?')) return;
+    aviso('#avisoSegSesiones', '');
+    try {
+      const r = await conEspera(ev.currentTarget, () => api('/cuenta/cerrar-otras', { metodo: 'POST', cuerpo: {} }));
+      if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+      const n = Number(r.cerradas) || 0;
+      aviso('#avisoSegSesiones', n === 0
+        ? 'No había sesiones abiertas en otros equipos.'
+        : `Cerramos ${n} ${n === 1 ? 'sesión' : 'sesiones'} en otros equipos.`, true);
+    } catch (e) {
+      aviso('#avisoSegSesiones', e.message);
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', montarPanel);

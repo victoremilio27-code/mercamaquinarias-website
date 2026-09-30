@@ -1206,6 +1206,75 @@ const MIGRACIONES = [
        SELECT RAISE(ABORT, 'Los eventos de pago no se borran');
      END`,
   ]],
+
+  /* Fase 10.1: recuperar la cuenta y cambiar el correo.
+     `cambios_correo` es el historial de cada cambio de correo y guarda,
+     en lugar del testigo, solo su HMAC: quien lea la base no puede
+     deshacer el cambio de nadie. `solicitudes_recuperacion` es la cola
+     de quienes perdieron el acceso a su correo y esperan una revisión
+     humana; `usuario_id` puede ser NULL a propósito, porque la solicitud
+     se acepta igual exista o no la cuenta (no revela qué correos están
+     registrados). Ninguna de las dos toca comprobantes fiscales.
+
+     `codigos.tipo` llevaba un CHECK cerrado a tres valores y SQLite no
+     permite cambiarlo con ALTER: sin rehacer la tabla, el primer código
+     de tipo `cambio_correo` reventaba con «CHECK constraint failed» y el
+     usuario veía un 500. Se rehace copiando las filas y los índices. */
+  ['2026-10-cuenta-recuperacion', [
+    `CREATE TABLE codigos_nueva (
+       id          TEXT PRIMARY KEY,
+       usuario_id  TEXT REFERENCES usuarios(id) ON DELETE CASCADE,
+       correo      TEXT NOT NULL,
+       tipo        TEXT NOT NULL CHECK (tipo IN ('verificacion', 'acceso', 'restablecer', 'cambio_correo')),
+       codigo_hash TEXT NOT NULL,
+       intentos    INTEGER NOT NULL DEFAULT 0,
+       consumido   INTEGER NOT NULL DEFAULT 0,
+       expira      TEXT NOT NULL,
+       creado      TEXT NOT NULL
+     )`,
+    `INSERT INTO codigos_nueva (id, usuario_id, correo, tipo, codigo_hash, intentos, consumido, expira, creado)
+       SELECT id, usuario_id, correo, tipo, codigo_hash, intentos, consumido, expira, creado FROM codigos`,
+    'DROP TABLE codigos',
+    'ALTER TABLE codigos_nueva RENAME TO codigos',
+    'CREATE INDEX IF NOT EXISTS ix_codigos_vigentes ON codigos (correo, tipo, consumido, expira)',
+    'CREATE INDEX IF NOT EXISTS ix_codigos_usuario ON codigos (usuario_id)',
+    `CREATE TABLE IF NOT EXISTS cambios_correo (
+       id TEXT PRIMARY KEY,
+       usuario_id TEXT NOT NULL REFERENCES usuarios(id),
+       anterior TEXT NOT NULL,
+       nuevo TEXT NOT NULL,
+       via TEXT NOT NULL CHECK (via IN ('usuario','recuperacion','reversion')),
+       creado TEXT NOT NULL,
+       ip TEXT,
+       revertir_hash TEXT,
+       revertir_expira TEXT,
+       revertido TEXT,
+       solicitud_id TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_cambios_correo_usuario ON cambios_correo (usuario_id)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_cambios_correo_revertir ON cambios_correo (revertir_hash)',
+    `CREATE TABLE IF NOT EXISTS solicitudes_recuperacion (
+       id TEXT PRIMARY KEY,
+       referencia TEXT NOT NULL UNIQUE,
+       correo_cuenta TEXT NOT NULL,
+       usuario_id TEXT REFERENCES usuarios(id),
+       correo_contacto TEXT NOT NULL,
+       nombre TEXT NOT NULL,
+       telefono TEXT,
+       rnc TEXT,
+       detalle TEXT NOT NULL,
+       estado TEXT NOT NULL DEFAULT 'pendiente'
+         CHECK (estado IN ('pendiente','aprobada','rechazada','anulada')),
+       creada TEXT NOT NULL,
+       resolver_desde TEXT NOT NULL,
+       resuelta TEXT,
+       resuelta_por TEXT REFERENCES usuarios(id),
+       motivo TEXT,
+       ip TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_recuperacion_estado ON solicitudes_recuperacion (estado, creada)',
+    'CREATE INDEX IF NOT EXISTS ix_recuperacion_usuario ON solicitudes_recuperacion (usuario_id)',
+  ]],
 ];
 
 function migrar() {
@@ -1473,7 +1542,7 @@ const firmarCodigo = (codigo, correo) =>
    predecible y aquí protege el acceso a una cuenta. */
 const generarCodigo = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 
-const MINUTOS_CODIGO = { verificacion: 15, acceso: 10, restablecer: 20 };
+const MINUTOS_CODIGO = { verificacion: 15, acceso: 10, restablecer: 20, cambio_correo: 15 };
 const MAX_INTENTOS_CODIGO = 5;
 
 /* Emite un código y anula los anteriores del mismo tipo: si se piden
@@ -2312,6 +2381,7 @@ const ACCIONES_BITACORA = Object.freeze({
   'pagina.editar': 'Página del dealer editada en su nombre',
   'pago.transferencia_recibida': 'Transferencia marcada como recibida',
   'pago.transferencia_anulada': 'Transferencia anulada sin cobro',
+  'cuenta.recuperar': 'Cuenta recuperada: correo cambiado tras comprobar identidad',
 });
 
 const errorCodigo = (mensaje, codigo) => Object.assign(new Error(mensaje), { codigo });
@@ -5436,6 +5506,251 @@ const cambiarClave = (idUsuario, clave) => {
     .run(hash, sal, idUsuario);
 };
 
+/* ── Cuenta: cambio de correo y recuperación (fase 10.1) ─────── */
+
+/* Cierra todas las sesiones del usuario MENOS la actual y olvida todos
+   sus equipos de confianza. Es lo que se hace tras cambiar la contraseña
+   o el correo desde dentro: quien está en la sesión sigue, y quien
+   hubiera entrado antes queda fuera. */
+function cerrarOtrasDe(idUsuario, testigoActual) {
+  const d = abrir();
+  const r = d.prepare('DELETE FROM sesiones WHERE usuario_id = ? AND testigo <> ?')
+    .run(idUsuario, String(testigoActual || ''));
+  d.prepare('DELETE FROM dispositivos WHERE usuario_id = ?').run(idUsuario);
+  return Number(r.changes);
+}
+
+/* El testigo de reversión no se guarda: solo su HMAC, con un prefijo
+   propio para que no coincida con la firma de un código. */
+const firmarReversion = (testigo) =>
+  crypto.createHmac('sha256', SECRETO).update(`revertir|${testigo}`).digest('hex');
+
+const DIAS_REVERSION = 7;
+
+/* Cambia el correo de la cuenta. SAVEPOINT y no BEGIN: la aprobación de
+   una recuperación la llama dentro de `enNombreDe`, que ya tiene el suyo.
+
+   La organización solo se actualiza si su correo ERA el anterior: en un
+   dealer puede ser el buzón de la empresa, que no cambia porque cambie
+   el correo de quien inicia sesión. */
+function cambiarCorreo({ idUsuario, nuevo, via, ip, verificado, conReversion, solicitudId }) {
+  const d = abrir();
+  const correoNuevo = String(nuevo).trim().toLowerCase();
+  const u = usuarioPorId(idUsuario);
+  if (!u) throw errorCodigo('La cuenta no existe', 404);
+  const anterior = u.correo;
+
+  const otro = d.prepare('SELECT id FROM usuarios WHERE correo = ? AND id <> ?').get(correoNuevo, idUsuario);
+  if (otro) throw errorCodigo('Ese correo ya tiene una cuenta', 409);
+
+  const testigoRevertir = conReversion ? crypto.randomBytes(32).toString('hex') : null;
+
+  d.prepare('SAVEPOINT cambio_correo').run();
+  try {
+    d.prepare('UPDATE usuarios SET correo = ?, correo_verificado = ? WHERE id = ?')
+      .run(correoNuevo, verificado ? 1 : 0, idUsuario);
+    d.prepare(`UPDATE organizaciones SET correo = ?
+                WHERE correo = ? AND id IN (SELECT organizacion_id FROM miembros WHERE usuario_id = ?)`)
+      .run(correoNuevo, anterior, idUsuario);
+    d.prepare('UPDATE codigos SET consumido = 1 WHERE correo = ? AND consumido = 0').run(anterior);
+
+    d.prepare(`INSERT INTO cambios_correo
+        (id, usuario_id, anterior, nuevo, via, creado, ip, revertir_hash, revertir_expira, solicitud_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id(), idUsuario, anterior, correoNuevo, via, ahora(), ip ? String(ip).slice(0, 64) : null,
+        testigoRevertir ? firmarReversion(testigoRevertir) : null,
+        testigoRevertir ? sumarDias(DIAS_REVERSION) : null,
+        solicitudId || null);
+
+    d.prepare('RELEASE cambio_correo').run();
+  } catch (e) {
+    d.prepare('ROLLBACK TO cambio_correo').run();
+    d.prepare('RELEASE cambio_correo').run();
+    // Dos cambios simultáneos al mismo correo: lo frena el UNIQUE.
+    if (/UNIQUE/i.test(e.message)) throw errorCodigo('Ese correo ya tiene una cuenta', 409);
+    throw e;
+  }
+
+  return { anterior, nuevo: correoNuevo, testigoRevertir };
+}
+
+/* «No fui yo». Devuelve { ok:true, idUsuario, correo } o { ok:false, motivo }.
+
+   La marca de usado va en una sentencia condicional (`revertido IS NULL`),
+   como en verificarCodigo: dos clics simultáneos al mismo enlace no
+   pueden aplicarse los dos. */
+function revertirCambioCorreo(testigo, ip) {
+  const d = abrir();
+  const fila = d.prepare('SELECT * FROM cambios_correo WHERE revertir_hash = ?')
+    .get(firmarReversion(String(testigo || '')));
+  if (!fila) return { ok: false, motivo: 'inexistente' };
+  if (fila.revertido) return { ok: false, motivo: 'usado' };
+  if (fila.revertir_expira < ahora()) return { ok: false, motivo: 'vencido' };
+
+  const u = usuarioPorId(fila.usuario_id);
+  if (!u) return { ok: false, motivo: 'inexistente' };
+  const otro = d.prepare('SELECT id FROM usuarios WHERE correo = ? AND id <> ?').get(fila.anterior, u.id);
+  if (otro) return { ok: false, motivo: 'ocupado' };
+
+  d.prepare('SAVEPOINT revertir_correo').run();
+  try {
+    const t = ahora();
+    const marca = d.prepare('UPDATE cambios_correo SET revertido = ? WHERE id = ? AND revertido IS NULL')
+      .run(t, fila.id);
+    if (!marca.changes) {
+      d.prepare('ROLLBACK TO revertir_correo').run();
+      d.prepare('RELEASE revertir_correo').run();
+      return { ok: false, motivo: 'usado' };
+    }
+
+    const actual = u.correo;
+    d.prepare('UPDATE usuarios SET correo = ?, correo_verificado = 1 WHERE id = ?').run(fila.anterior, u.id);
+    d.prepare(`UPDATE organizaciones SET correo = ?
+                WHERE correo = ? AND id IN (SELECT organizacion_id FROM miembros WHERE usuario_id = ?)`)
+      .run(fila.anterior, actual, u.id);
+    d.prepare('UPDATE codigos SET consumido = 1 WHERE correo = ? AND consumido = 0').run(actual);
+
+    d.prepare(`INSERT INTO cambios_correo (id, usuario_id, anterior, nuevo, via, creado, ip)
+               VALUES (?, ?, ?, ?, 'reversion', ?, ?)`)
+      .run(id(), u.id, actual, fila.anterior, t, ip ? String(ip).slice(0, 64) : null);
+
+    // Los testigos de cambios POSTERIORES son de la cadena de quien
+    // tomó la cuenta: si siguieran vivos, el intruso podría «deshacer»
+    // la reversión con el aviso que él mismo provocó.
+    d.prepare(`UPDATE cambios_correo SET revertir_hash = NULL
+                WHERE usuario_id = ? AND creado >= ? AND revertido IS NULL AND id <> ?`)
+      .run(u.id, fila.creado, fila.id);
+
+    d.prepare('RELEASE revertir_correo').run();
+  } catch (e) {
+    d.prepare('ROLLBACK TO revertir_correo').run();
+    d.prepare('RELEASE revertir_correo').run();
+    throw e;
+  }
+  return { ok: true, idUsuario: u.id, correo: fila.anterior };
+}
+
+/* Deja una contraseña que nadie conoce. Se usa tras revertir un cambio:
+   quien tomó la cuenta pudo haber puesto la suya. */
+const anularClave = (idUsuario) =>
+  cambiarClave(idUsuario, crypto.randomBytes(32).toString('hex'));
+
+/* Solicitudes de recuperación (sin acceso al correo). */
+
+const HORAS_ESPERA_RECUPERACION = 72;
+
+// Sin 0/O, 1/I/L: la referencia se dicta por escrito y se copia a mano.
+const ALFABETO_REFERENCIA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function referenciaRecuperacion() {
+  let r = 'REC-';
+  for (let i = 0; i < 6; i++) r += ALFABETO_REFERENCIA[crypto.randomInt(0, ALFABETO_REFERENCIA.length)];
+  return r;
+}
+
+const solicitudRecuperacion = (idSol) =>
+  abrir().prepare('SELECT * FROM solicitudes_recuperacion WHERE id = ?').get(idSol);
+
+/* Devuelve la fila creada, o null si ya había una pendiente para ese
+   correo de cuenta (el llamador responde igual en los dos casos). */
+function crearSolicitudRecuperacion({ correoCuenta, correoContacto, nombre, telefono, rnc, detalle, ip }) {
+  const d = abrir();
+  const cuenta = String(correoCuenta).trim().toLowerCase();
+  const previa = d.prepare(`SELECT 1 FROM solicitudes_recuperacion
+                             WHERE correo_cuenta = ? AND estado = 'pendiente'`).get(cuenta);
+  if (previa) return null;
+
+  const u = usuarioPorCorreo(cuenta);
+  const idSol = id();
+  const t = new Date();
+  const desde = new Date(t.getTime() + HORAS_ESPERA_RECUPERACION * 3600000).toISOString();
+
+  for (let intento = 0; ; intento++) {
+    try {
+      d.prepare(`INSERT INTO solicitudes_recuperacion
+          (id, referencia, correo_cuenta, usuario_id, correo_contacto, nombre, telefono, rnc,
+           detalle, estado, creada, resolver_desde, ip)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?)`)
+        .run(idSol, referenciaRecuperacion(), cuenta, u ? u.id : null,
+          String(correoContacto).trim().toLowerCase(), nombre, telefono || null, rnc || null,
+          detalle, t.toISOString(), desde, ip ? String(ip).slice(0, 64) : null);
+      break;
+    } catch (e) {
+      // Colisión de referencia (una en 887 millones): se reintenta.
+      if (intento < 4 && /UNIQUE.*referencia/i.test(e.message)) continue;
+      throw e;
+    }
+  }
+  return solicitudRecuperacion(idSol);
+}
+
+function solicitudesRecuperacion({ estado } = {}) {
+  const d = abrir();
+  return estado
+    ? d.prepare('SELECT * FROM solicitudes_recuperacion WHERE estado = ? ORDER BY creada DESC LIMIT 200').all(estado)
+    : d.prepare('SELECT * FROM solicitudes_recuperacion ORDER BY creada DESC LIMIT 200').all();
+}
+
+/* La solicitud con los datos de la cuenta al lado, para que quien la
+   revisa coteje lo que dice la persona contra lo que la base sabe. */
+function expedienteRecuperacion(idSol) {
+  const s = solicitudRecuperacion(idSol);
+  if (!s) return null;
+  const exp = { ...s, cuenta: null, organizacion: null, anuncios: { total: 0, titulos: [] },
+    pagos: [], telefonosVerificados: [], cambiosCorreo: [] };
+  if (!s.usuario_id) return exp;
+
+  const d = abrir();
+  const u = usuarioPorId(s.usuario_id);
+  if (!u) return exp;
+  exp.cuenta = { nombre: u.nombre, correo: u.correo, telefono: u.telefono || null,
+    creado: u.creado, correo_verificado: u.correo_verificado };
+
+  const org = organizacionDe(u.id);
+  if (org) {
+    exp.organizacion = { tipo: org.tipo, nombre: org.nombre, rnc: org.rnc || null,
+      estado_revision: org.estado_revision };
+    exp.anuncios.total = d.prepare(`SELECT COUNT(*) AS n FROM anuncios
+                                     WHERE organizacion_id = ? AND estado <> 'borrador'`).get(org.id).n;
+    exp.anuncios.titulos = d.prepare(`SELECT anio || ' ' || marca || ' ' || modelo AS t
+                                        FROM anuncios WHERE organizacion_id = ? AND estado <> 'borrador'
+                                       ORDER BY creado DESC LIMIT 5`).all(org.id).map((f) => f.t);
+    exp.pagos = d.prepare(`SELECT p.creado AS fecha, COALESCE(p.referencia, p.id) AS referencia,
+                                  p.total, p.estado,
+                                  (SELECT f.ncf FROM facturas f WHERE f.pago_id = p.id AND f.ncf IS NOT NULL
+                                    ORDER BY f.creada LIMIT 1) AS ncf
+                             FROM pagos p WHERE p.organizacion_id = ?
+                            ORDER BY p.creado DESC LIMIT 5`).all(org.id);
+    exp.telefonosVerificados = d.prepare(`SELECT numero FROM contactos_verificados
+                                           WHERE organizacion_id = ? AND verificado IS NOT NULL
+                                           ORDER BY numero`).all(org.id).map((f) => f.numero);
+  }
+  exp.cambiosCorreo = d.prepare(`SELECT anterior, nuevo, via, creado, revertido FROM cambios_correo
+                                  WHERE usuario_id = ? ORDER BY creado DESC LIMIT 5`).all(u.id);
+  return exp;
+}
+
+/* Cuando el titular entra a su cuenta, lo que alguien pidió a sus
+   espaldas deja de valer. Devuelve cuántas anuló. */
+function anularRecuperacionesDe(idUsuario, motivo) {
+  const r = abrir().prepare(`UPDATE solicitudes_recuperacion
+                                SET estado = 'anulada', resuelta = ?, motivo = ?
+                              WHERE usuario_id = ? AND estado = 'pendiente'`)
+    .run(ahora(), motivo ? String(motivo).slice(0, 500) : null, idUsuario);
+  return Number(r.changes);
+}
+
+/* pendiente → aprobada | rechazada, en una sentencia condicional: dos
+   administradores resolviendo a la vez no pueden pisarse. */
+function resolverRecuperacion({ id: idSol, estado, idAdmin, motivo }) {
+  if (estado !== 'aprobada' && estado !== 'rechazada') throw errorCodigo('Estado no válido', 400);
+  const r = abrir().prepare(`UPDATE solicitudes_recuperacion
+                                SET estado = ?, resuelta = ?, resuelta_por = ?, motivo = ?
+                              WHERE id = ? AND estado = 'pendiente'`)
+    .run(estado, ahora(), idAdmin, String(motivo || '').slice(0, 500), idSol);
+  if (!r.changes) throw errorCodigo('Esa solicitud ya no está pendiente', 409);
+  return solicitudRecuperacion(idSol);
+}
+
 /* ── Aceptaciones legales ───────────────────────────────── */
 
 /* Anota que alguien aceptó un documento en su versión vigente.
@@ -5792,6 +6107,10 @@ module.exports = {
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
   cifrarClave, claveCorrecta, cambiarClave,
+  /* Fase 10.1: cambio de correo, reversión y recuperación de cuenta. */
+  cerrarOtrasDe, cambiarCorreo, revertirCambioCorreo, anularClave,
+  HORAS_ESPERA_RECUPERACION, crearSolicitudRecuperacion, solicitudRecuperacion,
+  solicitudesRecuperacion, expedienteRecuperacion, anularRecuperacionesDe, resolverRecuperacion,
   usuarioPorCorreo, usuarioPorId, crearCuenta, organizacionDe, sucursalPrincipal,
   abrirSesion, sesion, cerrarSesion, cerrarTodoDe,
   crearCodigo, verificarCodigo, marcarCorreoVerificado,

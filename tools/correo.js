@@ -255,6 +255,11 @@ function plantillaCodigo({ codigo, tipo, nombre, minutos }) {
       titulo: 'Cambio de contraseña',
       cuerpo: 'Use este código para establecer una contraseña nueva en su cuenta.',
     },
+    cambio_correo: {
+      asunto: `${codigo} es su código para cambiar de correo · MercaMaquinarias`,
+      titulo: 'Cambio de correo',
+      cuerpo: 'Use este código para confirmar que esta dirección será el nuevo correo de su cuenta.',
+    },
   };
   const t = textos[tipo] || textos.verificacion;
   const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
@@ -1405,7 +1410,192 @@ function enviarTarjetaPorVencer({ para, nombre, marca, ultimos4, venceMes, vence
   });
 }
 
+/* ── Cuenta: cambio de correo y recuperación (fase 10.1) ─────── */
+
+/* Fecha y hora en la hora del país. Un servidor en UTC diría «a partir
+   del martes 03:00» a quien lo espera desde el lunes por la noche. */
+const fechaHoraDO = (iso) => new Date(iso).toLocaleString('es-DO', {
+  timeZone: 'America/Santo_Domingo', day: 'numeric', month: 'long', year: 'numeric',
+  hour: 'numeric', minute: '2-digit',
+});
+
+/* j***@dominio.com: lo bastante para que el titular reconozca el correo
+   y no lo bastante para que el aviso regale la dirección completa. */
+function enmascararCorreo(correo) {
+  const [local, dominio] = String(correo || '').split('@');
+  if (!dominio) return '***';
+  return `${local.slice(0, 1)}***@${dominio}`;
+}
+
+const saludoDe = (nombre) => (nombre ? `Hola, ${nombre}:` : 'Hola:');
+const enlaceSoporte = `<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>`;
+
+/* Al correo ANTERIOR: es quien puede decir «no fui yo». Con enlace cuando
+   el cambio lo hizo el titular desde el panel; sin él cuando lo aprobó el
+   personal tras una recuperación (el correo antiguo es justo el perdido). */
+function enviarAvisoCambioCorreo({ para, nombre, nuevo, enlaceRevertir }) {
+  const saludo = saludoDe(nombre);
+  const masc = enmascararCorreo(nuevo);
+  const p1 = `El correo de su cuenta de MercaMaquinarias cambió a ${masc}.`;
+  const p2 = enlaceRevertir
+    ? 'Si fue usted, no hay nada que hacer. Si no fue usted, use el enlace de abajo: devuelve la cuenta a este correo, cierra todas las sesiones y anula la contraseña actual. El enlace vale 7 días.'
+    : `Si no reconoce este cambio, escriba de inmediato a ${SOPORTE}.`;
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: 'El correo de su cuenta de MercaMaquinarias cambió',
+    texto: [saludo, '', p1, '', p2, ...(enlaceRevertir ? ['', `No fui yo: ${enlaceRevertir}`] : []), '',
+      'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'El correo de su cuenta cambió',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      accion: enlaceRevertir ? { texto: 'No fui yo', url: enlaceRevertir } : undefined,
+      nota: `Si necesita ayuda escríbanos a ${enlaceSoporte}.`,
+    }),
+  });
+}
+
+/* Al correo NUEVO: confirmación. */
+function enviarCorreoCambiado({ para, nombre }) {
+  const saludo = saludoDe(nombre);
+  const p1 = 'Este es ahora el correo de su cuenta de MercaMaquinarias. Desde hoy use esta dirección para iniciar sesión y recibirá aquí los avisos de su cuenta.';
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: 'Su correo de MercaMaquinarias se actualizó',
+    texto: [saludo, '', p1, '', `Si necesita ayuda escriba a ${SOPORTE}.`, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'Su correo se actualizó',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1)],
+      nota: `Si necesita ayuda escríbanos a ${enlaceSoporte}.`,
+    }),
+  });
+}
+
+/* Al correo de CONTACTO: acuse de la solicitud. Nunca por teléfono. */
+function enviarRecuperacionRecibida({ para, nombre, referencia, desde }) {
+  const saludo = saludoDe(nombre);
+  const cuando = fechaHoraDO(desde);
+  const p1 = `Recibimos su solicitud para recuperar su cuenta. Su referencia es ${referencia}.`;
+  const p2 = `Por seguridad no se resuelve antes del ${cuando}. Si necesitamos más datos para comprobar que la cuenta es suya, se los pediremos por este mismo correo, nunca por teléfono.`;
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: `Recibimos su solicitud ${referencia} · MercaMaquinarias`,
+    texto: [saludo, '', p1, '', p2, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'Recibimos su solicitud',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      extra: tarjeta(filas([['Referencia', referencia], ['Se resuelve desde', cuando]])),
+      nota: `Puede escribirnos respondiendo a este correo o a ${enlaceSoporte}.`,
+    }),
+  });
+}
+
+/* Al correo de la CUENTA: si el titular existe, es quien puede frenarlo
+   con solo entrar. */
+function enviarAvisoRecuperacionAlTitular({ para, nombre, contactoEnmascarado, desde }) {
+  const saludo = saludoDe(nombre);
+  const cuando = fechaHoraDO(desde);
+  const p1 = `Alguien pidió pasar su cuenta de MercaMaquinarias a otro correo (${contactoEnmascarado}). No se resuelve antes del ${cuando}.`;
+  const p2 = 'Si fue usted, no haga nada. Si no fue usted, entre a su cuenta: la solicitud se anula sola. Le recomendamos cambiar también su contraseña.';
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: 'Alguien pidió cambiar el correo de su cuenta · MercaMaquinarias',
+    texto: [saludo, '', p1, '', p2, '', `${SITIO}/cuenta.html`, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'Piden cambiar el correo de su cuenta',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      accion: { texto: 'Entrar a mi cuenta', url: `${SITIO}/cuenta.html` },
+      nota: `Si necesita ayuda escríbanos a ${enlaceSoporte}.`,
+    }),
+  });
+}
+
+/* Al buzón de soporte: hay una solicitud que revisar en la consola. */
+function avisarRecuperacionInterna(s) {
+  const cuando = fechaHoraDO(s.resolver_desde);
+  const texto = [
+    `Nueva solicitud de recuperación de cuenta ${s.referencia}.`, '',
+    '── Datos ──',
+    `Correo de la cuenta: ${s.correo_cuenta}${s.usuario_id ? '' : ' (no existe cuenta con ese correo)'}`,
+    `Correo de contacto: ${s.correo_contacto}`,
+    `Nombre: ${s.nombre}`,
+    s.telefono ? `Teléfono: ${s.telefono}` : null,
+    s.rnc ? `RNC: ${s.rnc}` : null, '',
+    '── Lo que puede probar ──',
+    s.detalle, '',
+    `Revísela en /admin.html a partir de ${cuando}.`,
+  ].filter((l) => l !== null).join('\n');
+  return avisarInternamente({
+    buzon: 'soporte',
+    asunto: `Recuperación de cuenta · ${s.referencia}`,
+    texto,
+    html: envoltura({
+      titulo: 'Solicitud de recuperación de cuenta',
+      responderA: BUZONES.soporte,
+      parrafos: [`<b style="color:${AZUL}">${esc(s.nombre)}</b> pide pasar la cuenta ${esc(s.correo_cuenta)} a ${esc(s.correo_contacto)}.`,
+        `Revísela en /admin.html a partir de ${esc(cuando)}.`],
+      extra: tarjeta(filas([['Referencia', s.referencia], ['Teléfono', s.telefono], ['RNC', s.rnc]]))
+        + `<p style="margin:0;font-family:${TIPO};font-size:14px;line-height:1.6;color:${GRIS};white-space:pre-wrap">${esc(s.detalle)}</p>`,
+    }),
+  });
+}
+
+/* Al correo NUEVO tras aprobar: la cuenta ya está aquí, falta la contraseña. */
+function enviarRecuperacionAprobada({ para, nombre }) {
+  const saludo = saludoDe(nombre);
+  const enlace = `${SITIO}/cuenta.html`;
+  const p1 = 'Su cuenta de MercaMaquinarias ya está en este correo.';
+  const p2 = 'Para entrar, abra la página de su cuenta, pulse «Olvidé mi contraseña», escriba este correo y cree una contraseña nueva.';
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: 'Su cuenta ya está en este correo · MercaMaquinarias',
+    texto: [saludo, '', p1, '', p2, '', enlace, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'Su cuenta está recuperada',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      accion: { texto: 'Ir a mi cuenta', url: enlace },
+      nota: `Si necesita ayuda escríbanos a ${enlaceSoporte}.`,
+    }),
+  });
+}
+
+/* Genérico a propósito: no dice qué dato falló ni si la cuenta existe. */
+function enviarRecuperacionRechazada({ para, referencia }) {
+  const p1 = `No pudimos comprobar que la cuenta de su solicitud ${referencia} sea suya.`;
+  const p2 = 'Si quiere que la revisemos de nuevo, responda a este correo con más datos: qué anuncios tiene publicados, la referencia de un pago o el NCF de un comprobante, y desde cuándo tiene la cuenta.';
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: `Sobre su solicitud ${referencia} · MercaMaquinarias`,
+    texto: ['Hola:', '', p1, '', p2, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'No pudimos completar su solicitud',
+      saludo: 'Hola:',
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      nota: `También puede escribirnos a ${enlaceSoporte}.`,
+    }),
+  });
+}
+
 module.exports = {
+  plantillaCodigo, enmascararCorreo, enviarAvisoCambioCorreo, enviarCorreoCambiado,
+  enviarRecuperacionRecibida, enviarAvisoRecuperacionAlTitular, avisarRecuperacionInterna,
+  enviarRecuperacionAprobada, enviarRecuperacionRechazada,
   enviarRenovacionProxima, enviarRenovacionRechazada, enviarTarjetaPorVencer,
   enviar, enviarCodigo, enviarAvisoCambioClave,
   enviarSolicitudDealer, enviarResolucionDealer, enviarSolicitudServicio,
