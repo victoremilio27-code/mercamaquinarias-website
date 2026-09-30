@@ -2549,6 +2549,14 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
       'clienteDeRenovacion trae el cliente del último pago aprobado, con su RNC');
     const sinPrevio = db.clienteDeRenovacion(sA);
     ok(sinPrevio && (sinPrevio.correo === `a22-${SELLO}@prueba.invalid` || sinPrevio.razonSocial || sinPrevio.rnc), 'sin pago aprobado previo cae en los datos del propietario');
+
+    // 10. La consola de solo lectura distingue la automática de la manual
+    const consola = db.renovacionesParaConsola({ limite: 500 }).renovaciones;
+    const enConsola = (idPago) => consola.find((x) => x.id === idPago);
+    ok(enConsola(pA[0].id) && enConsola(pA[0].id).automatica === true && enConsola(pM.id) && enConsola(pM.id).automatica === false,
+      'renovacionesParaConsola marca la renovación automática y la manual');
+    const fuenteAdmin = fs.readFileSync(path.join(__dirname, '..', 'assets', 'admin.js'), 'utf8');
+    ok(fuenteAdmin.includes('Automática') && fuenteAdmin.includes('Manual'), 'admin.js rotula «Automática» y «Manual»');
     apagar();
   }
 

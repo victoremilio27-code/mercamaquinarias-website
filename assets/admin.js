@@ -949,7 +949,7 @@ function cobroHTML(p) {
       <span class="sol__fecha">${fechaHora(p.creado)}</span>
     </div>
     <p class="sol__meta">${esc(p.concepto || 'Membresía')}${p.anuncio_titulo ? ` · Anuncio: ${esc(p.anuncio_titulo)}` : ''}</p>
-    <p class="sol__meta">${esc(TIPOS_COBRO_ROTULO[p.tipo] || 'Membresía')} · ${esc(METODOS_ROTULO[p.procesador] || p.procesador)} · ${esc(ESTADOS_COBRO_ROTULO[p.estado] || p.estado)}</p>
+    <p class="sol__meta">${esc(TIPOS_COBRO_ROTULO[p.tipo] || 'Membresía')}${p.tipo === 'renovacion' ? ` ${p.automatica ? '(Automática)' : '(Manual)'}` : ''} · ${esc(METODOS_ROTULO[p.procesador] || p.procesador)} · ${esc(ESTADOS_COBRO_ROTULO[p.estado] || p.estado)}</p>
     <p class="sol__meta num">Base ${esc(importePago(p.base ?? p.subtotal))} · ${p.base == null ? 'sin ajuste' : `Ajuste ${esc(importePago(p.ajuste))}`} · ITBIS ${esc(importePago(p.itbis))} · Total ${esc(importePago(p.total))}</p>
   </li>`;
 }
