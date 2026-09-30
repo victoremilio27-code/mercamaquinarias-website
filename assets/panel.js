@@ -234,11 +234,11 @@ function estadoRenovacionAuto(r) {
   if (!r.renovacion_automatica) return r.fin ? `Tu anuncio vence el ${fechaCorta(r.fin)}.` : '';
   const t = r.renovacionTarjeta;
   const proximo = r.proximoIntento ? fechaCorta(String(r.proximoIntento).slice(0, 10)) : '';
-  const con = t ? ` con ${t.marca} terminada en ${t.ultimos4}` : '';
+  const base = t ? `Se renovará automáticamente con ${t.marca} terminada en ${t.ultimos4}` : 'Se renovará automáticamente';
   if (r.renovacionIntentos > 0) {
-    return `Se renovará automáticamente${con}. El último cobro de la renovación no se aprobó; lo intentaremos otra vez${proximo ? ` el ${proximo}` : ' pronto'}.`;
+    return `${base}. El último cobro de la renovación no se aprobó; lo intentaremos otra vez${proximo ? ` el ${proximo}` : ' pronto'}.`;
   }
-  return `Se renovará automáticamente${con}${proximo ? ` el ${proximo}` : ''}.`;
+  return `${base}${proximo ? ` el ${proximo}` : ''}.`;
 }
 
 /* Planes que ya vencieron y se pueden volver a contratar sin rehacer
@@ -258,6 +258,31 @@ function planesVencidosHTML() {
     ? `<span class="celda-nota">Renovación en espera · ref. ${esc(r.renovacion_pendiente)}</span>`
     : `<button type="button" class="btn btn--linea btn--chico" data-renovar-plan="${esc(r.id)}">Renovar plan</button>`}
     </li>`).join('')}</ul>
+  </section>`;
+}
+
+/* «Tarjetas guardadas»: solo con CardNet activo (el servidor manda
+   `tarjetas`; apagado es null y no se pinta nada). Solo marca, últimos
+   cuatro y vencimiento: la API nunca manda el token. */
+function tarjetasGuardadasHTML() {
+  if (!Array.isArray(TARJETAS)) return '';
+  const fila = (t) => {
+    const mes = String(t.venceMes == null ? '' : t.venceMes).padStart(2, '0');
+    const anio = String(t.venceAnio == null ? '' : t.venceAnio).slice(-2);
+    return `<li class="membresia" data-tarjeta="${esc(t.id)}">
+      <span class="membresia__cabeza">
+        <b class="membresia__nivel">${esc(t.marca)} terminada en ${esc(t.ultimos4)}</b>
+        <span class="membresia__vigencia">vence ${esc(mes)}/${esc(anio)}</span>
+      </span>
+      ${t.activo ? '' : '<span class="celda-nota">pendiente de activar</span>'}
+      <button type="button" class="btn btn--linea btn--chico" data-borrar-tarjeta="${esc(t.id)}">Borrar</button>
+    </li>`;
+  };
+  return `<section class="tarjetas-guardadas" aria-labelledby="t-tarjetas">
+    <h3 class="transferencia__titulo" id="t-tarjetas">Tarjetas guardadas</h3>
+    ${TARJETAS.length
+    ? `<ul class="membresias">${TARJETAS.map(fila).join('')}</ul>`
+    : '<p class="panel__texto">No tiene tarjetas guardadas. Se guardan al pagar con tarjeta.</p>'}
   </section>`;
 }
 
@@ -453,6 +478,7 @@ function pintarPlanParticular(caja, org) {
       <p class="panel__texto">Cada equipo se publica con su propio plan: elija Estándar, Destacada o Premium al publicarlo y pague solo esa publicación.</p>
       ${pagosEnEsperaHTML()}
       ${planesVencidosHTML()}
+      ${tarjetasGuardadasHTML()}
       <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
       <a class="btn btn--ambar" href="publicar.html">Publicar un equipo</a>`;
     return;
@@ -468,6 +494,7 @@ function pintarPlanParticular(caja, org) {
 
     <ul class="membresias">${MEMBRESIAS.map(tarjetaPlanParticular).join('')}</ul>
     ${planesVencidosHTML()}
+    ${tarjetasGuardadasHTML()}
 
     <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
 
@@ -503,6 +530,7 @@ function pintarPlan() {
       <p class="panel__texto">Una publicación activa es cada equipo que tiene a la vista en el catálogo. Elija el nivel y cuántas publicaciones activas quiere tener a la vez; cuando venda un equipo, esa capacidad queda libre para publicar otro.</p>
       ${pagosEnEsperaHTML()}
       ${planesVencidosHTML()}
+      ${tarjetasGuardadasHTML()}
       <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
       <a class="btn btn--ambar" href="planes.html">Ver los planes</a>`;
     return;
@@ -531,6 +559,7 @@ function pintarPlan() {
 
     <ul class="membresias">${MEMBRESIAS.map(tarjetaMembresia).join('')}</ul>
     ${planesVencidosHTML()}
+    ${tarjetasGuardadasHTML()}
 
     <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
 
@@ -1823,25 +1852,90 @@ async function montarPanel() {
 
   /* Interruptor de la renovación automática de un plan. Solo existe si
      el servidor la ofrece; si el PUT falla, la casilla vuelve a como
-     estaba y se dice por qué. */
-  $('#panelPlan').addEventListener('change', async (ev) => {
-    const chk = ev.target.closest('[data-renovacion-auto]');
-    if (!chk || !RENOVACION_AUTO.disponible) return;
-    const activar = chk.checked;
+     estaba y se dice por qué. Con CardNet, activar exige una tarjeta
+     guardada: con varias y sin tarjeta ya elegida para ese plan se pide
+     elegir con un <select> en línea (sin prompt()); con una sola se manda
+     esa; sin ninguna no se llama al servidor. */
+  async function ponerRenovacionAuto(chk, id, activar, metodoPago) {
     chk.disabled = true;
     try {
-      const r = await api(`/membresias/${encodeURIComponent(chk.dataset.renovacionAuto)}/renovacion-automatica`, {
-        metodo: 'PUT', cuerpo: { activar },
+      const r = await api(`/membresias/${encodeURIComponent(id)}/renovacion-automatica`, {
+        metodo: 'PUT', cuerpo: { activar, ...(metodoPago ? { metodoPago } : {}) },
       });
       if (!r) throw new Error('No hay conexión con el servidor.');
-      const ren = renovableDe(chk.dataset.renovacionAuto);
+      const ren = renovableDe(id);
       if (ren) ren.renovacion_automatica = activar;
+      // Recarga para que el estado diga la tarjeta y la fecha reales.
+      await recargarTodo();
       avisoPlan(activar ? 'Renovación automática activada.' : 'Renovación automática desactivada.', false);
     } catch (e) {
       chk.checked = !activar;
       avisoPlan(e.message);
     } finally {
       chk.disabled = false;
+    }
+  }
+
+  $('#panelPlan').addEventListener('change', async (ev) => {
+    const chk = ev.target.closest('[data-renovacion-auto]');
+    if (!chk || !RENOVACION_AUTO.disponible) return;
+    const id = chk.dataset.renovacionAuto;
+    const activar = chk.checked;
+    if (activar && Array.isArray(TARJETAS)) {
+      const activas = TARJETAS.filter((t) => t.activo);
+      const ren = renovableDe(id);
+      if (!activas.length) {
+        chk.checked = false;
+        avisoPlan('Para renovar automáticamente hace falta una tarjeta guardada. Se guarda la primera vez que paga con tarjeta.');
+        return;
+      }
+      if (activas.length > 1 && !(ren && ren.renovacionTarjeta)) {
+        chk.checked = false;
+        const pie = chk.closest('.membresia__renovar');
+        if (pie && !pie.querySelector('[data-renovacion-elegir]')) {
+          const opciones = activas.map((t) => `<option value="${esc(t.id)}">${esc(t.marca)} terminada en ${esc(t.ultimos4)}</option>`).join('');
+          pie.insertAdjacentHTML('beforeend', `<span class="renovar-auto" data-renovacion-elegir="${esc(id)}">
+            <label>Renovar con <select data-renovacion-tarjeta>${opciones}</select></label>
+            <button type="button" class="btn btn--linea btn--chico" data-renovacion-confirmar="${esc(id)}">Activar</button>
+          </span>`);
+        }
+        avisoPlan('Elija con qué tarjeta se renovará este plan.', false);
+        return;
+      }
+      await ponerRenovacionAuto(chk, id, true, activas.length === 1 ? activas[0].id : '');
+      return;
+    }
+    await ponerRenovacionAuto(chk, id, activar, '');
+  });
+
+  // «Activar» tras elegir la tarjeta entre varias.
+  $('#panelPlan').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-renovacion-confirmar]');
+    if (!b) return;
+    const caja = b.closest('[data-renovacion-elegir]');
+    const lista = caja && caja.querySelector('[data-renovacion-tarjeta]');
+    const chk = caja && caja.parentNode.querySelector('[data-renovacion-auto]');
+    if (!lista || !chk || !lista.value) return;
+    chk.checked = true;
+    b.disabled = true;
+    await ponerRenovacionAuto(chk, b.dataset.renovacionConfirmar, true, lista.value);
+    b.disabled = false;
+  });
+
+  // «Borrar» una tarjeta guardada, con confirmación. api() lanza.
+  $('#panelPlan').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-borrar-tarjeta]');
+    if (!b) return;
+    if (!window.confirm('Se borrará esta tarjeta. Las compras ya hechas no cambian y, si renovaba algún plan, su renovación automática se apagará.')) return;
+    b.disabled = true;
+    try {
+      const r = await api(`/metodos-pago/${encodeURIComponent(b.dataset.borrarTarjeta)}`, { metodo: 'DELETE' });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      await recargarTodo();
+      avisoPlan('Tarjeta borrada.', false);
+    } catch (e) {
+      b.disabled = false;
+      avisoPlan(e.message);
     }
   });
 
