@@ -1737,6 +1737,570 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     apagar();
   }
 
+  console.log('\n19. api.js: la notificación de CardNet, autenticada, releída e idempotente');
+  const REF_INFORME = '"MercaMaquinarias · informe mensual\\nDel 2026-09-01 al 2026-09-30\\n\\nDinero\\n──────\\n  Cobros aprobados ............... 2 · RD$ 4,720\\n\\nComprobantes emitidos\\n─────────────────────\\n  B02 ............................ 2 · RD$ 4,720\\n\\nComprobantes autorizados que quedan\\n───────────────────────────────────\\n  B02 · Consumidor final . 498 · vence 2027-12-31\\n\\nCatálogo\\n────────\\n  Equipos publicados en el periodo ........... 3\\n  Activos ahora mismo ........................ 5\\n  Vencidos ................................... 1\\n  Vendidos ................................... 0\\n\\n  Por categoría:\\n        5  camiones\\n\\nCuentas\\n───────\\n  Cuentas nuevas ............................. 4\\n  Total de cuentas .......................... 40\\n  Dealers nuevos ............................. 1\\n  Dealers aprobados .......................... 2\\n\\nTráfico del sitio\\n─────────────────\\n  Páginas vistas ........................... 100\\n  Visitantes distintos ...................... 60\\n\\nInterés en los anuncios\\n───────────────────────\\n  Fichas vistas ............................. 50\\n  Pidieron el teléfono ....................... 3\\n  Escribieron por WhatsApp ................... 4\\n\\nEste informe lo genera el propio sitio. Si una cifra no cuadra,\\nel dato está en la base y se puede recalcular.\\n\\nMercaMaquinarias"';
+  {
+    const db = require('./db');
+    const api = require('./api');
+    const pagos = require('./pagos');
+    const precios = require('../assets/precios.js');
+    const legales = require('../assets/legales.js');
+    const { EventEmitter } = require('events');
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    let n = 0;
+    db.secuenciasNcf();
+
+    /* Como en la sección 17, con una opción más: `crudo` manda el cuerpo tal
+       cual (para probar un JSON inválido). */
+    const pedir = ({ metodo = 'GET', url, cuerpo, crudo, cabeceras = {} }) => new Promise((resolver) => {
+      const req = new EventEmitter();
+      req.method = metodo;
+      req.url = url;
+      req.headers = { 'user-agent': 'prueba-cardnet', ...cabeceras };
+      req.socket = { remoteAddress: '127.0.0.1' };
+      req.destroy = () => {};
+      const res = {
+        codigo: 0,
+        setHeader() {},
+        writeHead(c) { res.codigo = c; return res; },
+        destroy() {},
+        end(dato) {
+          let datos = null;
+          try { datos = dato ? JSON.parse(dato) : null; } catch { datos = null; }
+          resolver({ codigo: res.codigo, datos });
+        },
+      };
+      api.manejar(req, res, new URL(url, 'http://localhost').pathname);
+      setImmediate(() => {
+        if (crudo !== undefined) req.emit('data', Buffer.from(crudo, 'utf8'));
+        else if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+        req.emit('end');
+      });
+    });
+    const cuenta = (etiqueta) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+        db.registrarAceptacion({ usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba' });
+      });
+      const org = db.organizacionDe(idUsuario).id;
+      return { idUsuario, org, cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}`, 'cf-connecting-ip': '201.9.9.9' } };
+    };
+    const tarjeta = (idOrg) => db.guardarMetodoPago({
+      idOrg, procesador: 'cardnet', clienteId: 'C-19',
+      perfil: { perfilId: `PF19-${SELLO}-${++n}`, token: `CT__19-${SELLO}-${n}`, marca: 'Visa', ultimos4: '1111', venceMes: 12, venceAnio: 2030, activo: true },
+    });
+    const borrador = (idOrg) => {
+      const id = db.crearBorrador({ idOrg, idPlan: 'destacado', dias: 30 });
+      db.guardarBorrador(id, idOrg, {
+        categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
+        precio: 2500000, provincia: 'Santo Domingo',
+        fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+        telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+      });
+      return id;
+    };
+    const post = (url, quien, cuerpo = {}) => pedir({ metodo: 'POST', url, cuerpo, cabeceras: quien.cabeceras });
+    const b02 = () => d.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B02' AND activa = 1").get().siguiente;
+    const fila = (id) => d.prepare('SELECT * FROM pagos WHERE id = ?').get(id);
+    const facturasDe = (idPago) => d.prepare("SELECT COUNT(*) AS n FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'").get(idPago).n;
+    const idFactura = (idPago) => (d.prepare("SELECT id FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'").get(idPago) || {}).id;
+    const estadoAnuncio = (id) => d.prepare('SELECT estado FROM anuncios WHERE id = ?').get(id).estado;
+    const eventos = (idPago, tipo) => db.eventosDePago(idPago).filter((e) => e.tipo === tipo);
+    const totalEventos = () => d.prepare('SELECT COUNT(*) AS n FROM pagos_eventos').get().n;
+    const compras = () => llamadas.filter((l) => /purchase/.test(l.url)).length;
+    const AUTH = () => cardnet.autorizacionEsperada();
+    const basic = (llave) => `Basic ${Buffer.from(`${llave}:`).toString('base64')}`;
+    const aviso = (id, extra = {}) => ({ Notification: { ResourceType: 'purchase', ResourceObject: { PurchaseId: id, ...extra } } });
+    const notif = (cuerpo, autorizacion, extra = {}) => pedir({
+      metodo: 'POST', url: '/api/pagos/cardnet/notificacion', cuerpo,
+      cabeceras: { ...(autorizacion === undefined ? {} : { authorization: autorizacion }), 'cf-connecting-ip': '54.1.1.1' }, ...extra,
+    });
+    const compraCN = (id, ref, extra = {}) => ({
+      estado: 200, cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: id, AuthorizationCode: 'AU19', Order: ref, ...extra },
+    });
+    const CAPTURA = 'https://labservicios.cardnet.com.do/captura/x19';
+    const clienteCN = { estado: 200, cuerpo: { CustomerId: 'C-19', CaptureURL: CAPTURA, UniqueID: 'S19', PaymentProfiles: [] } };
+    /* Un banco que responde a lo del cliente y, a las compras, lo que diga `compra(op)`. */
+    const banco = (compra) => doble((op) => {
+      if (/purchase/.test(op.url)) return compra(op);
+      return op.metodo === 'POST' ? { estado: 200, cuerpo: { CustomerId: 'C-19' } } : clienteCN;
+    });
+    /* Un pago de tarjeta pendiente de publicación, creado por la ruta de verdad. */
+    const pendiente = async (etiqueta) => {
+      encender('lab');
+      const q = cuenta(etiqueta);
+      const idB = borrador(q.org);
+      banco(() => compraCN('P19-NO', 'NO'));
+      const r = await post(`/api/borradores/${idB}/pago`, q, { metodo: 'cardnet' });
+      const pago = fila(r.datos.pago.id);
+      return { q, idB, id: pago.id, ref: pago.referencia };
+    };
+
+    // Apagado: 404 idéntico a una ruta inexistente, sin leer el cuerpo ni anotar nada
+    apagar();
+    const eventosAntes = totalEventos();
+    let r = await notif(aviso('P19-X'), basic(LLAVE_PRIV));
+    const inexistente = await pedir({ metodo: 'POST', url: '/api/pagos/otra/cosa/rara', cuerpo: {} });
+    ok(r.codigo === 404 && r.datos.error === 'Ruta inexistente' && r.datos.error === inexistente.datos.error,
+      `apagado: ${r.codigo} «${(r.datos || {}).error}», igual que una ruta inexistente`);
+    r = await notif(undefined, undefined, { crudo: '{esto no es json' });
+    ok(r.codigo === 404 && totalEventos() === eventosAntes, 'apagado: ni con un JSON inválido se lee el cuerpo, y no se anota nada');
+
+    // Autenticación antes que el cuerpo, sin evento
+    encender('lab');
+    const antesAuth = totalEventos();
+    doble(() => null);
+    r = await notif(aviso('P19-X'));
+    ok(r.codigo === 401 && r.datos.error === 'No autorizado', `sin cabecera: ${r.codigo}`);
+    r = await notif(aviso('P19-X'), basic('otra-llave'));
+    ok(r.codigo === 401, `Basic con otra llave: ${r.codigo}`);
+    r = await notif(aviso('P19-X'), `Bearer ${LLAVE_PRIV}`);
+    ok(r.codigo === 401, `esquema que no es Basic: ${r.codigo}`);
+    r = await notif(aviso('P19-X'), AUTH().replace('Basic ', 'basic '));
+    ok(r.codigo === 401, `Basic en minúsculas no pasa: ${r.codigo}`);
+    r = await notif(undefined, basic('otra-llave'), { crudo: '{esto no es json' });
+    ok(r.codigo === 401, `JSON inválido con llave incorrecta: 401 (la autenticación va antes): ${r.codigo}`);
+    r = await notif(undefined, AUTH(), { crudo: '{esto no es json' });
+    ok(r.codigo === 400, `JSON inválido con la llave correcta: 400: ${r.codigo}`);
+    ok(totalEventos() === antesAuth && llamadas.length === 0, 'ningún 401 ni 400 anotó un evento ni llamó a CardNet');
+
+    // Aprobado, releído en CardNet
+    const A = await pendiente('a19');
+    ok(A.id && fila(A.id).estado === 'pendiente', 'el pago de partida está pendiente');
+    banco(() => compraCN('P19-A', A.ref));
+    let antes = b02();
+    r = await notif(aviso('P19-A'), AUTH());
+    ok(r.codigo === 200 && r.datos.ok === true, `aviso con la llave correcta: ${r.codigo}`);
+    ok(llamadas.filter((l) => l.metodo === 'GET' && /purchase\/P19-A/.test(l.url)).length === 1 && compras() === 1,
+      'se volvió a preguntar a CardNet por la compra (una sola llamada, GET)');
+    ok(fila(A.id).estado === 'aprobado' && estadoAnuncio(A.idB) === 'activo' && facturasDe(A.id) === 1 && b02() === antes + 1,
+      'pago aprobado, anuncio activo, una factura, B02 +1');
+    ok(fila(A.id).procesador_id === 'P19-A' && fila(A.id).autorizacion === 'AU19', 'procesador_id y autorización guardados');
+    /* «recibida» se anota antes de saber de qué pago habla el aviso, así
+       que va sin pago enlazado y con el cuerpo ya limpio. */
+    const recibidas = d.prepare("SELECT cuerpo FROM pagos_eventos WHERE tipo = 'recibida' AND cuerpo LIKE '%P19-A%'").all();
+    ok(recibidas.length === 1 && JSON.parse(recibidas[0].cuerpo).Notification.ResourceObject.PurchaseId === 'P19-A',
+      'un evento «recibida» con el cuerpo del aviso');
+    ok(!JSON.stringify(d.prepare("SELECT cuerpo FROM pagos_eventos WHERE tipo = 'recibida'").all()).includes(LLAVE_PRIV),
+      'los eventos no llevan la llave');
+    const factura1 = idFactura(A.id);
+
+    // El mismo aviso otra vez: un comprobante, un NCF
+    antes = b02();
+    r = await notif(aviso('P19-A'), AUTH());
+    ok(r.codigo === 200 && facturasDe(A.id) === 1 && idFactura(A.id) === factura1 && b02() === antes,
+      `aviso repetido: 200, la misma factura, B02 sin avanzar (${b02() - antes})`);
+    r = await notif(aviso('P19-A'), AUTH());
+    ok(r.codigo === 200 && facturasDe(A.id) === 1 && b02() === antes, 'y un tercero igual');
+
+    // Rechazado
+    const B = await pendiente('b19');
+    banco(() => compraCN('P19-B', B.ref, { Status: 'Rejected', ResponseCode: '51' }));
+    antes = b02();
+    r = await notif(aviso('P19-B'), AUTH());
+    ok(r.codigo === 200 && fila(B.id).estado === 'rechazado' && fila(B.id).codigo_respuesta === '51'
+      && facturasDe(B.id) === 0 && b02() === antes && estadoAnuncio(B.idB) === 'borrador',
+      `rechazado en la consulta: 200, pago rechazado con código, sin factura, B02 igual`);
+
+    // El cuerpo dice aprobado, la consulta dice rechazado: manda la consulta
+    const C = await pendiente('c19');
+    banco(() => compraCN('P19-C', C.ref, { Status: 'Rejected', ResponseCode: '05' }));
+    r = await notif(aviso('P19-C', { Status: 'Approved', ResponseCode: '00', Order: C.ref }), AUTH());
+    ok(r.codigo === 200 && fila(C.id).estado === 'rechazado' && facturasDe(C.id) === 0, 'el cuerpo decía aprobado y la consulta rechazado: rechazado');
+
+    // Ignoradas: referencia desconocida, pago que no es de CardNet, otro tipo de recurso
+    banco(() => compraCN('P19-D', 'REF-QUE-NO-EXISTE'));
+    r = await notif(aviso('P19-D'), AUTH());
+    ok(r.codigo === 200 && d.prepare("SELECT COUNT(*) AS n FROM pagos_eventos WHERE tipo = 'ignorada' AND cuerpo LIKE '%referencia desconocida%'").get().n === 1,
+      `referencia desconocida: 200 y un evento «ignorada» (${r.codigo})`);
+    const otraOrg = cuenta('t19').org;
+    const pTransf = db.registrarCobro({
+      idOrg: otraOrg, idSusc: null,
+      cobro: { ...precios.desglose(1800), referencia: `R19-${SELLO}-T`, procesador: 'transferencia' },
+      intencion: { tipo: 'compra', idPlan: 'estandar', cupo: 1, dias: 30, concepto: 'Estándar · 1 cupo', cliente: { razonSocial: 'X', correo: 'x@prueba.invalid' }, correoCliente: 'x@prueba.invalid' },
+    });
+    banco(() => compraCN('P19-E', pTransf.referencia));
+    r = await notif(aviso('P19-E'), AUTH());
+    ok(r.codigo === 200 && fila(pTransf.id).estado === 'pendiente' && facturasDe(pTransf.id) === 0
+      && d.prepare("SELECT COUNT(*) AS n FROM pagos_eventos WHERE tipo = 'ignorada' AND cuerpo LIKE '%no es de CardNet%'").get().n === 1,
+      'un pago de transferencia con esa referencia: 200, ignorada, intacto');
+    banco(() => compraCN('P19-F', 'X'));
+    r = await notif({ Notification: { ResourceType: 'refund', ResourceObject: { PurchaseId: 'P19-F' } } }, AUTH());
+    ok(r.codigo === 200 && llamadas.length === 0 && d.prepare("SELECT COUNT(*) AS n FROM pagos_eventos WHERE tipo = 'ignorada' AND cuerpo LIKE '%no es una compra%'").get().n === 1,
+      'ResourceType que no es una compra: 200, ignorada, sin consultar');
+
+    // Fallos propios: 500 para que CardNet reintente
+    const E = await pendiente('e19');
+    doble(() => ({ estado: 0, cuerpo: null, fallo: 'sin red' }));
+    const errorOriginal = console.error;
+    const silencio = [];
+    console.error = (...a) => silencio.push(a.join(' '));
+    try {
+      r = await notif(aviso('P19-G'), AUTH());
+      ok(r.codigo === 500 && fila(E.id).estado === 'pendiente', `consulta a CardNet caída: ${r.codigo}, el pago sigue pendiente`);
+      banco(() => compraCN('P19-G', E.ref));
+      const resolverOriginal = pagos.resolver;
+      pagos.resolver = () => { throw new Error('fallo propio simulado'); };
+      try {
+        r = await notif(aviso('P19-G'), AUTH());
+      } finally {
+        pagos.resolver = resolverOriginal;
+      }
+      ok(r.codigo === 500 && fila(E.id).estado === 'pendiente', `una excepción propia: ${r.codigo}`);
+    } finally {
+      console.error = errorOriginal;
+    }
+    // Y CardNet reintenta y ahora sí
+    r = await notif(aviso('P19-G'), AUTH());
+    ok(r.codigo === 200 && fila(E.id).estado === 'aprobado' && facturasDe(E.id) === 1, 'el reintento de CardNet completa el pago');
+
+    // Sin tope por IP
+    doble(() => null);
+    const codigos = [];
+    for (let i = 0; i < 100; i++) codigos.push((await notif({ Notification: { ResourceType: 'refund' } }, AUTH())).codigo);
+    ok(codigos.every((c) => c === 200), `cien avisos seguidos de la misma IP: ninguno 429 (${[...new Set(codigos)].join(',')})`);
+
+    // Orden de RUTAS y forma del código
+    const iNotif = api.RUTAS.findIndex(([, re]) => re.source.includes('cardnet\\/notificacion'));
+    const iGenericas = api.RUTAS.map(([, re], i) => (re.source.includes('api\\/pagos\\/([\\w-]+)') ? i : -1)).filter((i) => i >= 0);
+    ok(iNotif >= 0 && iGenericas.length >= 2 && iGenericas.every((i) => iNotif < i),
+      `la notificación (${iNotif}) va antes de las rutas /api/pagos/:id (${iGenericas.join(',')})`);
+    const fuente = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
+    const cuerpoFn = fuente.slice(fuente.indexOf('const notificacionCardnet'), fuente.indexOf('const verPago'));
+    ok(cuerpoFn.includes('timingSafeEqual') && cuerpoFn.includes("createHash('sha256')") && !cuerpoFn.includes('db.permitir'),
+      'la ruta compara con timingSafeEqual sobre SHA-256 y no llama a db.permitir');
+    ok(!/authorization\s*(===|!==)/.test(cuerpoFn), 'y nunca compara la cabecera con ===');
+    apagar();
+  }
+
+  console.log('\n20. pagos.reconciliar: la red de seguridad cada 10 minutos');
+  {
+    const db = require('./db');
+    const api = require('./api');
+    const pagos = require('./pagos');
+    const legales = require('../assets/legales.js');
+    const { EventEmitter } = require('events');
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    let n = 0;
+    db.secuenciasNcf();
+
+    const pedir = ({ metodo = 'GET', url, cuerpo, cabeceras = {} }) => new Promise((resolver) => {
+      const req = new EventEmitter();
+      req.method = metodo;
+      req.url = url;
+      req.headers = { 'user-agent': 'prueba-cardnet', ...cabeceras };
+      req.socket = { remoteAddress: '127.0.0.1' };
+      req.destroy = () => {};
+      const res = {
+        codigo: 0, setHeader() {}, writeHead(c) { res.codigo = c; return res; }, destroy() {},
+        end(dato) {
+          let datos = null;
+          try { datos = dato ? JSON.parse(dato) : null; } catch { datos = null; }
+          resolver({ codigo: res.codigo, datos });
+        },
+      };
+      api.manejar(req, res, new URL(url, 'http://localhost').pathname);
+      setImmediate(() => {
+        if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+        req.emit('end');
+      });
+    });
+    const cuenta = (etiqueta) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+        db.registrarAceptacion({ usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba' });
+      });
+      const org = db.organizacionDe(idUsuario).id;
+      return { idUsuario, org, cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}`, 'cf-connecting-ip': '201.10.10.10' } };
+    };
+    const tarjeta = (idOrg) => db.guardarMetodoPago({
+      idOrg, procesador: 'cardnet', clienteId: 'C-20',
+      perfil: { perfilId: `PF20-${SELLO}-${++n}`, token: `CT__20-${SELLO}-${n}`, marca: 'Visa', ultimos4: '1111', venceMes: 12, venceAnio: 2030, activo: true },
+    });
+    const borrador = (idOrg) => {
+      const id = db.crearBorrador({ idOrg, idPlan: 'destacado', dias: 30 });
+      db.guardarBorrador(id, idOrg, {
+        categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
+        precio: 2500000, provincia: 'Santo Domingo',
+        fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+        telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+      });
+      return id;
+    };
+    const post = (url, quien, cuerpo = {}) => pedir({ metodo: 'POST', url, cuerpo, cabeceras: quien.cabeceras });
+    const b02 = () => d.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B02' AND activa = 1").get().siguiente;
+    const fila = (id) => d.prepare('SELECT * FROM pagos WHERE id = ?').get(id);
+    const facturasDe = (idPago) => d.prepare("SELECT COUNT(*) AS n FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'").get(idPago).n;
+    const estadoAnuncio = (id) => d.prepare('SELECT estado FROM anuncios WHERE id = ?').get(id).estado;
+    const eventos = (idPago, tipo) => db.eventosDePago(idPago).filter((e) => e.tipo === tipo);
+    const compras = () => llamadas.filter((l) => /purchase/.test(l.url)).length;
+    const envejecer = (id, minutos) => d.prepare('UPDATE pagos SET creado = ? WHERE id = ?')
+      .run(new Date(Date.now() - minutos * 60000).toISOString(), id);
+    const compraCN = (id, ref, extra = {}) => ({
+      estado: 200, cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: id, AuthorizationCode: 'AU20', Order: ref, ...extra },
+    });
+    const clienteCN = { estado: 200, cuerpo: { CustomerId: 'C-20', CaptureURL: 'https://labservicios.cardnet.com.do/captura/x20', UniqueID: 'S20', PaymentProfiles: [] } };
+    const banco = (compra) => doble((op) => {
+      if (/purchase/.test(op.url)) return compra(op);
+      return op.metodo === 'POST' ? { estado: 200, cuerpo: { CustomerId: 'C-20' } } : clienteCN;
+    });
+    const pendiente = async (etiqueta, { conTarjeta = false } = {}) => {
+      encender('lab');
+      const q = cuenta(etiqueta);
+      const idB = borrador(q.org);
+      banco(() => compraCN('P20-NO', 'NO'));
+      const r = await post(`/api/borradores/${idB}/pago`, q, { metodo: 'cardnet' });
+      const pago = fila(r.datos.pago.id);
+      let t = null;
+      if (conTarjeta) {
+        t = tarjeta(q.org);
+        db.enlazarMetodoPago(pago.id, t.id);
+      }
+      return { q, idB, id: pago.id, ref: pago.referencia, total: pago.total, t };
+    };
+    const silenciar = async (fn) => {
+      const original = console.error;
+      console.error = () => {};
+      try { return await fn(); } finally { console.error = original; }
+    };
+
+    /* Las secciones anteriores dejaron pagos pendientes envejecidos a
+       propósito (la 14, para probar las consultas de base). Aquí se
+       rejuvenecen: esta sección cuenta exactamente lo que ella misma crea. */
+    d.prepare("UPDATE pagos SET creado = ? WHERE procesador = 'cardnet' AND estado = 'pendiente'").run(new Date().toISOString());
+
+    // Apagado: no llama a nada
+    apagar();
+    doble(() => null);
+    let r = await pagos.reconciliar();
+    ok(r.apagado === true && r.revisados === 0 && llamadas.length === 0, `apagado: ${JSON.stringify(r)}, sin llamadas`);
+
+    // Aprobado en CardNet, pendiente en la base (aviso y navegador perdidos)
+    const A = await pendiente('a20');
+    db.anotarRespuestaProcesador(A.id, { procesadorId: 'P20-A' });
+    envejecer(A.id, 15);
+    banco(() => compraCN('P20-A', A.ref));
+    let antes = b02();
+    r = await pagos.reconciliar();
+    ok(r.recuperados.length === 1 && r.recuperados[0].referencia === A.ref && r.recuperados[0].total === A.total && r.recuperados[0].id === A.id,
+      `recuperado con su referencia y total: ${JSON.stringify(r.recuperados)}`);
+    ok(fila(A.id).estado === 'aprobado' && estadoAnuncio(A.idB) === 'activo' && facturasDe(A.id) === 1 && b02() === antes + 1,
+      'aprobado, anuncio activo, una factura y B02 +1');
+    const des = eventos(A.id, 'descuadre');
+    ok(des.length === 1 && des[0].origen === 'reconciliacion' && des[0].procesador === 'cardnet', 'un evento descuadre con origen reconciliacion');
+    antes = b02();
+    r = await pagos.reconciliar();
+    ok(r.recuperados.length === 0 && r.revisados === 0 && b02() === antes && eventos(A.id, 'descuadre').length === 1 && facturasDe(A.id) === 1,
+      'segunda pasada: nada cambia, B02 igual, sin descuadre nuevo');
+
+    // Rechazado en CardNet
+    const B = await pendiente('b20');
+    db.anotarRespuestaProcesador(B.id, { procesadorId: 'P20-B' });
+    envejecer(B.id, 15);
+    banco(() => compraCN('P20-B', B.ref, { Status: 'Rejected', ResponseCode: '51' }));
+    antes = b02();
+    r = await pagos.reconciliar();
+    ok(fila(B.id).estado === 'rechazado' && fila(B.id).codigo_respuesta === '51' && facturasDe(B.id) === 0 && b02() === antes
+      && eventos(B.id, 'descuadre').length === 0 && r.rechazados === 1 && r.recuperados.length === 0,
+      `rechazado con código, sin factura y sin descuadre (${JSON.stringify(r)})`);
+
+    // Sin procesador_id, con intento: se reenvía con el mismo UniqueID
+    const C = await pendiente('c20', { conTarjeta: true });
+    db.anotarEventoPago({ pagoId: C.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado', cuerpo: { referencia: C.ref } });
+    envejecer(C.id, 30);
+    banco(() => compraCN('P20-C', C.ref));
+    antes = b02();
+    r = await pagos.reconciliar();
+    const envio = llamadas.find((l) => l.metodo === 'POST' && /purchase/.test(l.url));
+    ok(envio && envio.cuerpo.UniqueID === C.ref && compras() === 1, 'se reenvió purchase con el mismo UniqueID (la referencia)');
+    ok(fila(C.id).estado === 'aprobado' && facturasDe(C.id) === 1 && b02() === antes + 1 && eventos(C.id, 'descuadre').length === 1
+      && r.recuperados.length === 1, 'recuperado por reenvío: aprobado, una factura, un descuadre');
+
+    // Sin intento: 25 horas abandonado; 2 horas, intacto; 5 minutos, ni se mira
+    const D = await pendiente('d20');
+    envejecer(D.id, 25 * 60);
+    const E = await pendiente('e20');
+    envejecer(E.id, 2 * 60);
+    const F = await pendiente('f20');
+    db.anotarRespuestaProcesador(F.id, { procesadorId: 'P20-F' });
+    envejecer(F.id, 5);
+    banco(() => compraCN('P20-F', F.ref));
+    antes = b02();
+    r = await pagos.reconciliar();
+    ok(fila(D.id).estado === 'rechazado' && fila(D.id).codigo_respuesta === 'abandonado' && /^abandonado/.test(fila(D.id).motivo)
+      && facturasDe(D.id) === 0 && b02() === antes, `sin intento y 25 horas: abandonado (${fila(D.id).estado}, ${fila(D.id).codigo_respuesta})`);
+    ok(fila(E.id).estado === 'pendiente' && fila(F.id).estado === 'pendiente' && llamadas.length === 0,
+      'sin intento y 2 horas sigue pendiente; con 5 minutos no se consulta; ninguna llamada');
+
+    // Con el evento aprobado-sin-aplicar no se vuelve a consultar
+    const G = await pendiente('g20', { conTarjeta: true });
+    db.anotarRespuestaProcesador(G.id, { procesadorId: 'P20-G' });
+    db.anotarEventoPago({ pagoId: G.id, procesador: 'cardnet', origen: 'cobro', tipo: 'aprobado-sin-aplicar', cuerpo: { referencia: G.ref } });
+    envejecer(G.id, 60);
+    banco(() => compraCN('P20-G', G.ref));
+    await pagos.reconciliar();
+    ok(llamadas.length === 0 && fila(G.id).estado === 'pendiente', 'un pago con aprobado-sin-aplicar no se consulta ni se cobra otra vez');
+
+    // Intento previo + lo comprado ya no se puede aplicar: sin guarda, un evento, nunca rechazado
+    apagar();
+    const H = cuenta('h20');
+    let rr = await post('/api/membresias', H, { plan: 'destacado', cupo: 1, dias: 30 });
+    const suscH = rr.datos.membresia.id;
+    encender('lab');
+    banco(() => compraCN('P20-NO', 'NO'));
+    rr = await post(`/api/membresias/${suscH}/ampliar`, H, { cupo: 2, metodo: 'cardnet' });
+    const idH = rr.datos.pago.id;
+    const tH = tarjeta(H.org);
+    db.enlazarMetodoPago(idH, tH.id);
+    db.anotarEventoPago({ pagoId: idH, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado', cuerpo: { referencia: fila(idH).referencia } });
+    d.prepare('UPDATE suscripciones SET fin = ? WHERE id = ?').run(new Date(Date.now() - 86400000).toISOString(), suscH);
+    envejecer(idH, 20);
+    banco(() => compraCN('P20-H', fila(idH).referencia));
+    antes = b02();
+    await silenciar(() => pagos.reconciliar());
+    ok(compras() === 1 && eventos(idH, 'aprobado-sin-aplicar').length === 1 && facturasDe(idH) === 0 && b02() === antes
+      && fila(idH).estado === 'pendiente', 'ampliación ya no aplicable: se reenvió, UN evento aprobado-sin-aplicar, sin NCF, no rechazado');
+    banco(() => compraCN('P20-H', fila(idH).referencia));
+    await silenciar(() => pagos.reconciliar());
+    ok(llamadas.length === 0 && eventos(idH, 'aprobado-sin-aplicar').length === 1, 'y la pasada siguiente ya no lo toca');
+
+    // Rechazado por «reemplazado» y llega un aprobado por notificación: visible en cobrosSinAplicar
+    const I = await pendiente('i20');
+    pagos.anularPendienteSinCobro(I.id);
+    ok(fila(I.id).estado === 'rechazado' && fila(I.id).codigo_respuesta === 'reemplazado', 'el pendiente sin cobro se anuló como reemplazado');
+    banco(() => compraCN('P20-I', I.ref));
+    antes = b02();
+    const auth = cardnet.autorizacionEsperada();
+    const avisoI = await pedir({ metodo: 'POST', url: '/api/pagos/cardnet/notificacion', cuerpo: { Notification: { ResourceType: 'purchase', ResourceObject: { PurchaseId: 'P20-I' } } },
+      cabeceras: { authorization: auth } });
+    ok(avisoI.codigo === 200 && eventos(I.id, 'aprobado-sin-aplicar').length === 1 && facturasDe(I.id) === 0 && b02() === antes && fila(I.id).estado === 'rechazado',
+      `aviso aprobado sobre un pago reemplazado: evento aprobado-sin-aplicar, sin NCF (${avisoI.codigo})`);
+    const sin = db.cobrosSinAplicar();
+    ok(sin.some((x) => x.referencia === I.ref && x.estado === 'rechazado') && sin.some((x) => x.referencia === G.ref && x.estado === 'pendiente'),
+      'cobrosSinAplicar trae el rechazado y el pendiente, por el evento');
+    ok(new Set(sin.map((x) => x.id)).size === sin.length && sin.filter((x) => x.id === idH).length === 1, 'y cada pago una sola vez');
+
+    // CardNet falla: pendiente, fallidos, y los demás se revisan
+    const J = await pendiente('j20');
+    db.anotarRespuestaProcesador(J.id, { procesadorId: 'P20-J' });
+    envejecer(J.id, 90);
+    const K = await pendiente('k20');
+    db.anotarRespuestaProcesador(K.id, { procesadorId: 'P20-K' });
+    envejecer(K.id, 40);
+    let vez = 0;
+    banco((op) => {
+      vez++;
+      if (/P20-J/.test(op.url)) throw new Error('la red se cayó');
+      return compraCN('P20-K', K.ref);
+    });
+    r = await silenciar(() => pagos.reconciliar());
+    ok(fila(J.id).estado === 'pendiente' && r.fallidos >= 1 && fila(K.id).estado === 'aprobado' && r.recuperados.some((x) => x.id === K.id),
+      `una consulta caída deja el pago pendiente y cuenta como fallido; el siguiente se revisa (${JSON.stringify({ f: r.fallidos, v: vez })})`);
+    banco(() => ({ estado: 503, cuerpo: null }));
+    r = await silenciar(() => pagos.reconciliar());
+    ok(fila(J.id).estado === 'pendiente' && r.fallidos >= 1, 'un 503 de CardNet tampoco resuelve nada');
+
+    // Consultas del informe
+    const hoyDia = new Date().toISOString().slice(0, 10);
+    const desc = db.descuadresEntre(hoyDia, hoyDia);
+    ok(desc.some((x) => x.referencia === A.ref && x.total === A.total) && desc.some((x) => x.referencia === C.ref),
+      `descuadresEntre trae los recuperados con referencia y total (${desc.length})`);
+    ok(db.descuadresEntre('2000-01-01', '2000-01-02').length === 0, 'y ninguno fuera del periodo');
+    const atascados = db.pagosCardnetAtascados({ minutos: 60 });
+    ok(atascados.some((x) => x.id === J.id) && atascados.some((x) => x.id === E.id) && !atascados.some((x) => x.id === F.id)
+      && !atascados.some((x) => x.id === A.id) && !atascados.some((x) => x.id === G.id),
+      'pagosCardnetAtascados: pendientes de más de una hora, sin los aprobados, los de 5 minutos ni los sin aplicar');
+    apagar();
+  }
+
+  console.log('\n21. tareas.js: la tarea, el informe a gerencia y el temporizador');
+  {
+    const db = require('./db');
+    const tareas = require('./tareas');
+    const { spawnSync } = require('child_process');
+    const informeFijo = (extra = {}) => ({
+      desde: '2026-09-01', hasta: '2026-09-30',
+      dinero: { cobros: { n: 2, total: 4720 }, devueltos: { n: 0, total: 0 } },
+      comprobantes: { porTipo: [{ tipo: 'B02', n: 2, total: 4720 }], sinEnviar: 0, recibos: 0 },
+      ncf: [{ tipo: 'B02', nombre: 'Consumidor final', quedan: 498, vence: '2027-12-31' }],
+      anuncios: { publicados: 3, activos: 5, vencidos: 1, vendidos: 0, porCategoria: [{ categoria: 'camiones', n: 5 }] },
+      cuentas: { nuevas: 4, total: 40, dealersNuevos: 1, dealersAprobados: 2, dealersPendientes: 0 },
+      trafico: { vistas: 100, unicos: 60, porPagina: [] },
+      contactos: { vistas: 50, telefono: 3, whatsapp: 4 },
+      solicitudes: [],
+      ...extra,
+    });
+    const REF = JSON.parse(REF_INFORME);
+
+    // Apagado: idéntico al de antes de la fase (referencia sacada del código de la fase anterior)
+    apagar();
+    ok(tareas.componerInforme(informeFijo(), 'mensual') === REF, 'apagado y sin pasarela: el informe sale idéntico al de antes');
+    ok(tareas.componerInforme(informeFijo({ pasarela: { recuperados: [], atascados: 0, sinAplicar: [] } }), 'mensual') === REF,
+      'apagado y con todo a cero: idéntico también');
+    encender('lab');
+    ok(tareas.componerInforme(informeFijo({ pasarela: { recuperados: [], atascados: 0, sinAplicar: [] } }), 'mensual').includes('Pasarela de pago'),
+      'con CardNet activo la sección aparece aunque esté a cero');
+
+    // Con descuadres
+    apagar();
+    const conTodo = tareas.componerInforme(informeFijo({
+      pasarela: { recuperados: [{ referencia: 'TE-2026-AAAAAA', total: 2360 }], atascados: 1, sinAplicar: [{ referencia: 'TE-2026-BBBBBB', total: 3889 }] },
+    }), 'mensual');
+    ok(conTodo.includes('Pasarela de pago') && /Pagos recuperados por la conciliación \.+ 1/.test(conTodo) && conTodo.includes('TE-2026-AAAAAA')
+      && /Pagos con tarjeta atascados \.+ 1/.test(conTodo) && /Cobrados sin aplicar \(devolver\) \.+ 1/.test(conTodo)
+      && conTodo.includes('TE-2026-BBBBBB') && conTodo.includes('RD$ 3,889'), 'la sección «Pasarela de pago» con las tres filas y las referencias');
+    console.log(conTodo.split('\n').slice(4, 18).map((x) => `      | ${x}`).join('\n'));
+    ok(conTodo.indexOf('Pasarela de pago') > conTodo.indexOf('Dinero') && conTodo.indexOf('Pasarela de pago') < conTodo.indexOf('Comprobantes emitidos'),
+      'va después de «Dinero»');
+    const real = db.informe({ desde: '2026-01-01', hasta: '2026-12-31' });
+    ok(real.pasarela && Array.isArray(real.pasarela.recuperados) && typeof real.pasarela.atascados === 'number' && Array.isArray(real.pasarela.sinAplicar),
+      'db.informe() trae pasarela { recuperados, atascados, sinAplicar }');
+    /* Lo que dejó la sección 20: un aprobado sobre un pago «reemplazado»
+       (rechazado en nuestra base) y un descuadre recuperado. Tienen que
+       salir en el texto real que recibe gerencia. */
+    const hoyD = new Date().toISOString().slice(0, 10);
+    const hoyInf = db.informe({ desde: hoyD, hasta: hoyD });
+    const textoReal = tareas.componerInforme(hoyInf, 'semanal');
+    const reemplazado = hoyInf.pasarela.sinAplicar.find((x) => x.estado === 'rechazado');
+    ok(reemplazado && textoReal.includes('Pasarela de pago') && textoReal.includes(reemplazado.referencia)
+      && hoyInf.pasarela.recuperados.length >= 1 && /Cobrados sin aplicar \(devolver\) \.+ [1-9]/.test(textoReal),
+      'un aprobado sobre un pago reemplazado y un descuadre salen en «Pasarela de pago» del informe real');
+
+    // La tarea, en su propio proceso, con una base vacía
+    const env = { ...process.env, MERCA_DB: path.join(BANCO, 'tareas-seco.db'), MERCA_FACTURAS: path.join(BANCO, 'facturas-seco') };
+    for (const k of Object.keys(env)) if (k.startsWith('MERCA_CARDNET')) delete env[k];
+    const seco = spawnSync(process.execPath, [path.join(__dirname, 'tareas.js'), 'reconciliar', '--seco'], { env, encoding: 'utf8' });
+    ok(seco.status === 0 && /CardNet apagado/.test(seco.stdout), `node tools/tareas.js reconciliar --seco apagado: sale ${seco.status} y dice que CardNet está apagado`);
+    const diaria = spawnSync(process.execPath, [path.join(__dirname, 'tareas.js'), '--seco'], { env, encoding: 'utf8' });
+    ok(diaria.status === 0 && /nada que conciliar|CardNet apagado/.test(diaria.stdout), `la tanda diaria (--seco) incluye reconciliar sin error (${diaria.status})`);
+    ok(typeof tareas.TAREAS.reconciliar === 'function', 'reconciliar está en TAREAS');
+    const encendida =spawnSync(process.execPath, [path.join(__dirname, 'tareas.js'), 'reconciliar', '--seco'], {
+      env: { ...env, MERCA_CARDNET: 'lab', MERCA_CARDNET_LLAVE_PUB: LLAVE_PUB, MERCA_CARDNET_LLAVE_PRIV: LLAVE_PRIV, MERCA_ENV: path.join(BANCO, 'no-existe.env') }, encoding: 'utf8' });
+    ok(encendida.status === 0 && /revisaría \d+ pago/.test(encendida.stdout) && !/Sin red|ENOTFOUND/.test(encendida.stderr),
+      'encendido, --seco cuenta lo que revisaría sin llamar a nadie');
+
+    // El temporizador
+    const raiz = path.join(__dirname, '..', 'deploy');
+    const timer = fs.readFileSync(path.join(raiz, 'mercamaquinarias-pagos.timer'), 'utf8');
+    const servicio = fs.readFileSync(path.join(raiz, 'mercamaquinarias-pagos.service'), 'utf8');
+    ok(timer.includes('OnUnitActiveSec=10min') && timer.includes('OnBootSec=5min') && timer.includes('Persistent=true'), 'el temporizador corre cada 10 minutos');
+    ok(servicio.includes('tools/tareas.js reconciliar') && servicio.includes('EnvironmentFile=/etc/mercamaquinarias.env') && servicio.includes('MERCA_FACTURAS='),
+      'el servicio corre la tarea con el entorno y la carpeta de facturas');
+    ok(!timer.includes('\r') && !servicio.includes('\r'), 'los dos archivos de deploy/ van en LF');
+    const fuenteTareas = fs.readFileSync(path.join(__dirname, 'tareas.js'), 'utf8');
+    ok(!/contador/i.test(fuenteTareas.slice(fuenteTareas.indexOf('async function reconciliarPagos'), fuenteTareas.indexOf('const TAREAS'))),
+      'la tarea de conciliación no envía nada a un contador');
+    apagar();
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);

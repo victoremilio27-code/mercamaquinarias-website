@@ -33,6 +33,7 @@ const facturas = require('./facturas');
 const pagos = require('./pagos');
 const transferencia = require('./transferencia');
 const cardnet = require('./cardnet');
+const crypto = require('crypto');
 
 /* CardNet, igual que la transferencia: si alguien lo pidió (`lab` o
    `produccion`) y aun así no está encendido, es porque falta una llave o
@@ -4223,6 +4224,63 @@ const confirmarPagoConTarjeta = conSesion(async (req, res, ctx, idPago) => {
   return responder(res, 200, { pago: pagoPublico(pago), comprobante: null });
 });
 
+/* La notificación de CardNet: la primera red de seguridad del cobro (la
+   segunda es `pagos.reconciliar`). Si el navegador se cierra antes de
+   confirmar, este aviso completa el pago.
+
+   - Apagado responde 404 «Ruta inexistente», igual que cualquier ruta que
+     no existe, sin leer el cuerpo.
+   - Se autentica ANTES de leer el cuerpo: `Authorization: Basic` con la
+     llave privada. Se compara con `timingSafeEqual` sobre los SHA-256 de
+     ambas cabeceras y nunca con `===` (filtra por tiempo qué prefijo
+     acertó); el hash iguala longitudes, porque `timingSafeEqual` lanza si
+     no coinciden. Sin detalle en el 401.
+   - Nunca se cree el estado que diga el cuerpo: se vuelve a preguntar a
+     CardNet por la compra y se resuelve con lo que conteste, por la misma
+     `pagos.resolver` que el cobro y la conciliación (un solo comprobante
+     por mucho que el aviso se repita).
+   - Responde 200 solo al terminar. Si algo propio falla (consulta caída,
+     base), 500: responder 200 sin haber terminado haría que CardNet no
+     reintentara y el aviso se perdería.
+   - Sin `db.permitir` a propósito: CardNet reintenta, y un
+     estrangulamiento por IP convertiría un fallo pasajero en un pago
+     perdido. Quien no tiene la llave se corta en la autenticación. */
+const notificacionCardnet = async (req, res) => {
+  if (!cardnet.activo()) return fallo(res, 404, 'Ruta inexistente');
+
+  const hash = (t) => crypto.createHash('sha256').update(String(t || '')).digest();
+  const esperada = cardnet.autorizacionEsperada();
+  const recibida = req.headers && req.headers.authorization;
+  if (!esperada || !crypto.timingSafeEqual(hash(recibida), hash(esperada))) {
+    return fallo(res, 401, 'No autorizado');
+  }
+
+  const cuerpo = await leerCuerpo(req);
+  db.anotarEventoPago({ procesador: 'cardnet', origen: 'notificacion', tipo: 'recibida', cuerpo: cardnet.limpiar(cuerpo) });
+  const ignorar = (motivo) => {
+    db.anotarEventoPago({ procesador: 'cardnet', origen: 'notificacion', tipo: 'ignorada', cuerpo: { motivo } });
+    return responder(res, 200, { ok: true });
+  };
+
+  try {
+    const idCompra = cardnet.compraDeNotificacion(cuerpo);
+    if (!idCompra) return ignorar('no es una compra');
+
+    const n = await cardnet.consultarCompra(idCompra);
+    if (!n.ok) throw new Error(`CardNet no devolvió la compra ${idCompra} · ${n.fallo || n.estado}`);
+
+    const pago = n.referencia ? db.pagoPorReferencia(n.referencia) : null;
+    if (!pago) return ignorar('referencia desconocida');
+    if (pago.procesador !== 'cardnet') return ignorar('el pago no es de CardNet');
+
+    pagos.resolver(pago, { ...n, procesadorId: n.procesadorId || idCompra, origen: 'notificacion' });
+    return responder(res, 200, { ok: true });
+  } catch (e) {
+    console.error('API notificación de CardNet', e);
+    return fallo(res, 500, 'Error del servidor');
+  }
+};
+
 /* El estado de un pago propio: lo que la pantalla consulta mientras el
    banco confirma. Sin la intención, que lleva los datos fiscales. */
 const verPago = conSesion((req, res, ctx, idPago) => {
@@ -4815,9 +4873,10 @@ const RUTAS = [
   ['POST', /^\/api\/membresias\/([\w-]+)\/renovar$/, renovarMembresia],
   ['PUT',  /^\/api\/membresias\/([\w-]+)\/renovacion-automatica$/, cambiarRenovacionAutomatica],
 
-  /* Cobro con tarjeta (CardNet). La notificación de CardNet (06-06) irá
-     ANTES de este bloque: `/api/pagos/([\w-]+)` casaría `cardnet` como si
+  /* Cobro con tarjeta (CardNet). La notificación va PRIMERA de este
+     bloque: `/api/pagos/([\w-]+)/confirmar` casaría `cardnet` como si
      fuera el id de un pago. */
+  ['POST',   /^\/api\/pagos\/cardnet\/notificacion$/,    notificacionCardnet],
   ['POST',   /^\/api\/pagos\/([\w-]+)\/confirmar$/,      confirmarPagoConTarjeta],
   ['GET',    /^\/api\/pagos\/([\w-]+)$/,                 verPago],
   ['GET',    /^\/api\/metodos-pago$/,                    misMetodosPago],

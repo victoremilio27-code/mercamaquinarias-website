@@ -323,6 +323,24 @@ function componerInforme(i, periodo) {
     l.push(fila('Devoluciones', `${i.dinero.devueltos.n} · ${pesos(i.dinero.devueltos.total)}`));
   }
 
+  /* Un cobro aprobado en la pasarela sin fila aprobada nuestra, o cobrado
+     y sin poder aplicar, tiene que ser ruidoso: es dinero de un cliente.
+     Este informe ya lo leen gerencia y facturación (nunca un contador:
+     sale solo por `mandarInforme`). Con CardNet apagado y sin nada que
+     contar, la sección no existe y el informe sale como siempre. */
+  const p = i.pasarela || {};
+  const recuperados = p.recuperados || [];
+  const sinAplicar = p.sinAplicar || [];
+  const atascados = p.atascados || 0;
+  if (require('./cardnet').activo() || recuperados.length || sinAplicar.length || atascados) {
+    l.push(titulo('Pasarela de pago'));
+    l.push(fila('Pagos recuperados por la conciliación', recuperados.length));
+    recuperados.forEach((r) => l.push(`    ${r.referencia} · ${pesos(r.total)}`));
+    l.push(fila('Pagos con tarjeta atascados', atascados));
+    l.push(fila('Cobrados sin aplicar (devolver)', sinAplicar.length));
+    sinAplicar.forEach((r) => l.push(`    ${r.referencia} · ${pesos(r.total)}`));
+  }
+
   l.push(titulo('Comprobantes emitidos'));
   if (!i.comprobantes.porTipo.length) {
     l.push('  Ninguno en el periodo.');
@@ -552,6 +570,22 @@ function limpiarBorradores() {
   anotar('borradores', `${borrados} borrador(es) abandonado(s) borrado(s)`);
 }
 
+/* La conciliación de pagos con tarjeta: el proceso de `mercamaquinarias-pagos`
+   la corre cada 10 minutos y la tanda diaria la repite por si el
+   temporizador no estuviera instalado. Es idempotente y barata. Con CardNet
+   apagado no llama a nada. */
+async function reconciliarPagos() {
+  const cardnet = require('./cardnet');
+  if (!cardnet.activo()) return anotar('reconciliar', 'CardNet apagado: nada que conciliar');
+  const pagos = require('./pagos');
+  if (SECO) {
+    const n = db.pagosCardnetPorReconciliar({ minutos: 10 }).length;
+    return anotar('reconciliar', `revisaría ${n} pago(s) con tarjeta pendientes`);
+  }
+  const r = await pagos.reconciliar();
+  anotar('reconciliar', `${r.revisados} pago(s) revisados · ${r.recuperados.length} recuperados · ${r.rechazados} rechazados · ${r.fallidos} fallidos`);
+}
+
 const TAREAS = {
   suscripciones: vencerMembresias,
   caducar,
@@ -567,6 +601,7 @@ const TAREAS = {
   huerfanos: recogerHuerfanos,
   respaldo: respaldar,
   optimizar,
+  reconciliar: reconciliarPagos,
 };
 
 async function principal() {
@@ -613,4 +648,4 @@ async function principal() {
    tanda ni terminar el proceso. */
 if (require.main === module) principal();
 
-module.exports = { TAREAS, vencerMembresias, avisarRecordatorios };
+module.exports = { TAREAS, vencerMembresias, avisarRecordatorios, componerInforme };

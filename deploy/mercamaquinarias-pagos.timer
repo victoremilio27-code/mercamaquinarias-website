@@ -1,0 +1,23 @@
+# Despierta la conciliación de pagos con tarjeta cada 10 minutos.
+#
+# Diez minutos: el aviso de CardNet se pierde en cada reinicio del
+# droplet, y un pago aprobado sin reflejo en la base no debe esperar más
+# de eso. Tampoco menos: un comprador puede estar aún confirmando en su
+# navegador y la tarea solo toca pagos de más de 10 minutos.
+#
+# Con CardNet apagado la tarea no hace nada, así que instalar este
+# temporizador antes de encender la pasarela es inocuo.
+#
+# `Persistent=true` recupera la ejecución perdida si el servidor estuvo
+# apagado, en vez de saltársela.
+
+[Unit]
+Description=Conciliación de pagos con tarjeta de MercaMaquinarias cada 10 minutos
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
