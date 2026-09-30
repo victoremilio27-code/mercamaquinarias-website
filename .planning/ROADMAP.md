@@ -336,7 +336,11 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   1. Victor descarga, en un solo archivo, todos los comprobantes de un mes con su resumen.
   2. El paquete cuadra con lo emitido: los mismos NCF, los mismos importes y el mismo ITBIS que tiene la base.
   3. No existe ningún camino por el que el sistema envíe eso a un contador: la descarga manual es el único.
-**Plans**: TBD
+**Plans**: 4 planes en 4 olas
+- [ ] 12-01-PLAN.md — Cimientos de solo lectura: consultas del periodo en `tools/db.js`, `reponerPdfsDe` en `tools/facturas.js`, `tools/lote.js` con el mes de Santo Domingo y el ZIP a mano, y `lote:probar` en el CI
+- [ ] 12-02-PLAN.md — El paquete: resumen fiscal y sin valor fiscal, `resumen.csv`, `resumen.pdf`, `LEEME.txt`, PDF tal como se emitieron, y las barreras de cuadre, PDF que falta y fecha irregular
+- [ ] 12-03-PLAN.md — Rutas GET de administración (vista previa y descarga), guarda «ningún envío automático» y permisos en la auditoría
+- [ ] 12-04-PLAN.md — Consola: botón «Descargar paquete del mes» con su línea de vista previa y comprobación en la auditoría del administrador
 **Notas**: El envío automático al contador está **prohibido** por decisión de Victor; si algún día parece que «falta», no falta. Un comprobante emitido nunca se borra ni se reescribe, así que el paquete solo lee. El PDF se genera con `tools/pdf.js`, sin dependencias nuevas.
 
 ### Phase 13: Deuda técnica de seguridad y mantenibilidad
