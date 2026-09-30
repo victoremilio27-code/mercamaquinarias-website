@@ -43,7 +43,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
 - [x] **Phase 05.3: Renovación, vencimientos y alertas** (INSERTED) - Renovar sin rehacer el anuncio, suscripciones que vencen de verdad y avisos a 7, 3 y 1 día
 - [x] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo (completed 2026-09-30)
-- [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
+- [x] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor (completed 2026-09-30)
 - [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
 - [ ] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana
@@ -241,7 +241,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 06-07-PLAN.md — (ola 4) Pantallas: iframe de CardNet y selector compartido en assets/cardnet.js; pagar la publicación y el plan con tarjeta; apagado, igual que hoy
 - [x] 06-08-PLAN.md — (ola 5) Renovación automática por publicación y por capacidad: misma construcción que la manual, aviso a 7 días, tres intentos antes del fin, correos, tarjeta por vencer y marca en la consola
 - [x] 06-09-PLAN.md — (ola 5) Panel: renovar y ampliar con tarjeta, tarjetas guardadas e interruptor de renovación automática con su tarjeta
-- [ ] 06-10-PLAN.md — (ola 6) Los cinco criterios de extremo a extremo sobre el modelo nuevo, auditorías con navegador y procedimiento de encendido en deploy/README.md
+- [x] 06-10-PLAN.md — (ola 6) Los cinco criterios de extremo a extremo sobre el modelo nuevo, auditorías con navegador y procedimiento de encendido en deploy/README.md
 **UI hint**: yes
 **Notas**: PCI es frontera dura — la tokenización ocurre en el navegador; ninguna ruta nuestra puede recibir datos de tarjeta. Diseño completo en `.planning/research/cardnet.md`: módulo `tools/cardnet.js` con `https.request` a mano y cero dependencias, `POST /v1/api/purchase` para el primer cobro y las renovaciones, ruta de notificación antes de cualquier patrón genérico `/api/pagos/...`, autenticada con `crypto.timingSafeEqual` y sin limitador por IP. Las claves de QA publicadas por CardNet no entran al repositorio ni a `.env.example`. Pruebas con arnés propio (`tools/probar-pagos.js`) y doble de `tools/cardnet.js`: la red no se toca; las variables de entorno se fijan **antes** del `require` de `tools/db.js`. Queda una pregunta abierta de mayor impacto para CardNet: confirmar que `DataDo.Invoice` es un número de orden del comercio y no el NCF de la DGII.
 **Replanificado desde el 06-02 el 2026-09-30 (antes: «Replanificar desde el 06-02», 2026-09-26):** el modelo comercial (fases 05.1-05.4) cambia a quién se cobra: la renovación automática es por publicación del particular (una suscripción de un cupo por publicación) y por capacidad del dealer, con la casilla de consentimiento que ya guarda la 05.3, y el importe sale de la fórmula única de la 05.1. La migración del 06-02 a medias (`claude/fase-06-cardnet`, commit «wip») se rehace contra ese modelo.
@@ -408,7 +408,7 @@ entrega valor sin esperar a la siguiente.
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
 | 5. Cobro por transferencia bancaria | 5/5 | Complete   | 2026-09-25 |
-| 6. CardNet construido y apagado | 9/10 | In Progress|  |
+| 6. CardNet construido y apagado | 10/10 | Complete   | 2026-09-30 |
 | 7. Verificación y soporte al dealer | 6/6 | Complete   | 2026-09-25 |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |
 | 9. Contactos verificados y estafas | 0/TBD | Not started | - |
