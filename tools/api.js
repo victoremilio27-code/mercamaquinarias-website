@@ -32,6 +32,17 @@ const legales = require('../assets/legales.js');
 const facturas = require('./facturas');
 const pagos = require('./pagos');
 const transferencia = require('./transferencia');
+const cardnet = require('./cardnet');
+
+/* CardNet, igual que la transferencia: si alguien lo pidió (`lab` o
+   `produccion`) y aun así no está encendido, es porque falta una llave o
+   está mal escrita, y el sitio seguiría cobrando por otro método sin que
+   nadie lo notara. Se avisa una vez al arrancar, con los NOMBRES de lo
+   que falta y nunca con sus valores: son llaves. */
+if (['lab', 'produccion'].includes(String(process.env.MERCA_CARDNET || '').trim())
+  && cardnet.faltantes().length) {
+  console.warn(`cardnet: faltan o no validan ${cardnet.faltantes().join(', ')}. CardNet queda apagado.`);
+}
 
 /* La transferencia se apaga sola si falta un dato o uno no valida, y
    eso es lo correcto con la cuenta a medias. Pero un error de tecleo
@@ -2657,6 +2668,150 @@ function clienteDeCompra(c, ctx) {
   };
 }
 
+/* ── Cobro con tarjeta (CardNet): lo que comparten las cinco rutas ──
+   Las cinco rutas de cobro (publicación, compra, ampliación, renovar
+   anuncio y renovar plan) ya tenían el mismo molde, y la tarjeta no
+   puede añadir cinco copias de lo mismo: estos ayudantes se escriben
+   una vez. Ninguno lee del cuerpo nada de tarjeta: solo `metodoPago`,
+   que es un id de una tarjeta que ya vive en la base, ligada a la
+   organización de la sesión. Lo demás que llegue se ignora. */
+
+/* La tarjeta guardada que el comprador eligió, validada ANTES de anotar
+   ningún pago. `null`: no pidió ninguna (o el método no es la tarjeta).
+   `false`: pidió una que no es suya, está borrada o inactiva; ya se
+   respondió 400 y la ruta tiene que terminar sin anotar nada. */
+function tarjetaPedida(res, c, org, cobro) {
+  if (cobro.procesador !== 'cardnet') return null;
+  if (c.metodoPago === undefined || c.metodoPago === null || c.metodoPago === '') return null;
+  const m = typeof c.metodoPago === 'string' ? db.metodoPagoDe(c.metodoPago, org.id) : null;
+  if (!m || m.activo !== 1) {
+    fallo(res, 400, 'Esa tarjeta no es suya o no existe.');
+    return false;
+  }
+  return m;
+}
+
+/* Si CardNet no abre el formulario, el comprador recibe el texto (502,
+   «no se le cobró nada») y no un 500 anónimo. */
+const fallarCaptura = (res, e) => (e && (e.codigo === 502 || e.codigo === 409)
+  ? fallo(res, e.codigo, e.message)
+  : falloInterno(res, e));
+
+/* Lo que la 202 de un pago con tarjeta añade a lo de siempre:
+   `{ redireccion, origen }` si el banco pide una verificación (3DS);
+   `aviso` propio si el banco aprobó y no se pudo aplicar; y, si el pago
+   todavía no tiene tarjeta, `cardnet: { urlCaptura, origen }` para que
+   el navegador abra el formulario del banco. Si CardNet no abre la
+   captura, el pago recién anotado se anula sin cobrar (no bloquea el
+   borrador ni la membresía) y el error sube con su código. */
+async function extrasDeTarjeta(pago, r, ctx, cliente) {
+  const extra = {};
+  if (r.redireccion) {
+    extra.redireccion = r.redireccion;
+    extra.origen = cardnet.origenCaptura();
+  }
+  if (r.sinAplicar) extra.aviso = r.motivo;
+  const actual = db.pagoPorId(pago.id);
+  if (actual && !actual.metodo_pago_id) {
+    try {
+      extra.cardnet = await pagos.prepararCaptura(actual, {
+        correo: ctx.usuario.correo,
+        nombre: (cliente && cliente.razonSocial) || ctx.usuario.nombre,
+        rnc: cliente && cliente.rnc,
+      });
+    } catch (e) {
+      pagos.anularPendienteSinCobro(pago.id);
+      throw e;
+    }
+  }
+  return extra;
+}
+
+/* El 202 de un pago con tarjeta que no quedó ni aprobado ni rechazado. */
+async function responderPendienteConTarjeta(res, ctx, pago, r, cliente, cuerpo, aviso) {
+  try {
+    const extra = await extrasDeTarjeta(pago, r, ctx, cliente);
+    return responder(res, 202, { ...cuerpo, aviso, ...extra });
+  } catch (e) {
+    return fallarCaptura(res, e);
+  }
+}
+
+/* Un pago de tarjeta rechazado dice el motivo del banco; el texto de la
+   ruta es para los demás procesadores, que no lo traen. */
+const textoDeRechazo = (pago, r, textoDeLaRuta) =>
+  (pago.procesador === 'cardnet' && r.motivo) || textoDeLaRuta;
+
+/* R-02: un pendiente de tarjeta que nunca llegó a CardNet no puede
+   bloquear el borrador ni la membresía (los índices únicos solo admiten
+   un pendiente). Devuelve 'anulado' si quien vuelve a pagar pidió OTRO
+   método y ya se liberó el sitio (la ruta sigue su camino normal),
+   'retomar' si hay que seguir con ese mismo pago, y null si el
+   pendiente no es de esta clase y se trata como siempre (uno CON
+   intento de cobro pudo cobrarse: lo resuelve la conciliación). Todo
+   síncrono: la ampliación no admite un `await` entre esta comprobación
+   y `registrarCobro`. */
+function decidirPendienteSinCobro(c, pendiente) {
+  if (!pagos.pendienteSinCobro(pendiente)) return null;
+  const pedido = c.metodo;
+  if (pedido !== undefined && pedido !== null && pedido !== '' && pedido !== 'cardnet') {
+    let procesador = null;
+    try { procesador = pagos.procesadorDeCobro(pedido); } catch (_) { /* no vale: se retoma la tarjeta */ }
+    if (procesador && procesador !== 'cardnet') {
+      pagos.anularPendienteSinCobro(pendiente.id);
+      return 'anulado';
+    }
+  }
+  return 'retomar';
+}
+
+/* Retoma un pendiente de tarjeta sin cobro: con una tarjeta guardada
+   se cobra; sin ella se vuelve a abrir la captura (URL nueva, mismo
+   pago). `terminar(pago, r)` es el final de la ruta de origen. */
+async function retomarPendienteDeTarjeta(res, ctx, c, pendiente, terminar) {
+  const tarjeta = tarjetaPedida(res, c, ctx.organizacion, { procesador: 'cardnet' });
+  if (tarjeta === false) return undefined;
+  if (tarjeta) db.enlazarMetodoPago(pendiente.id, tarjeta.id);
+  const r = await pagos.cobrar(db.pagoPorId(pendiente.id));
+  return terminar(db.pagoPorId(pendiente.id), r);
+}
+
+/* La casilla de renovación automática viaja en la INTENCIÓN del pago y
+   solo se guarda cuando el banco aprueba (R-03): un pago que no se
+   aprueba no autoriza cobros futuros, y con transferencia no hay
+   tarjeta con la que cobrarlos. Solo la marca el propietario. */
+const casillaDeRenovacion = (c, cobro, org) =>
+  (c.renovacionAutomatica === true && cobro.procesador === 'cardnet' && org.rol === 'propietario'
+    ? { renovacionAutomatica: { texto: TEXTO_RENOVACION_AUTOMATICA, aceptada: new Date().toISOString() } }
+    : {});
+
+/* El final de la compra de capacidad, después de `pagos.cobrar`. */
+async function terminarCompra(res, ctx, pago, r, cobro, cliente) {
+  if (r.estado === 'rechazado') {
+    return fallo(res, 402, textoDeRechazo(pago, r, NO_APROBADO), { pago: pagoPublico(r.pago) });
+  }
+  if (r.estado !== 'aprobado') {
+    const cuerpo = {
+      membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
+    };
+    if (pago.procesador === 'cardnet') {
+      return responderPendienteConTarjeta(res, ctx, pago, r, cliente, cuerpo, EN_PROCESO);
+    }
+    if (pago.procesador === 'transferencia') {
+      responder(res, 202, { ...cuerpo, aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta() });
+      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
+    }
+    return responder(res, 202, { ...cuerpo, aviso: EN_PROCESO });
+  }
+  return responder(res, 201, {
+    membresia: r.membresia,
+    cobro: cobroPublico(cobro),
+    comprobante: comprobantePublico(r.comprobante),
+    sesion: sesionPublica(ctx.usuario.id),
+    pago: pagoPublico(r.pago),
+  });
+}
+
 const comprarMembresia = conSesion(async (req, res, ctx) => {
   if (exigirAceptacion(res, ctx.usuario.id, legales.PARA_PAGAR)) return undefined;
 
@@ -2693,6 +2848,9 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
     }
   }
 
+  const tarjeta = tarjetaPedida(res, c, org, cobro);
+  if (tarjeta === false) return undefined;
+
   const fiscal = clienteDeCompra(c, ctx);
   if (fiscal.error) return fallo(res, 400, fiscal.error);
   const { cliente } = fiscal;
@@ -2726,32 +2884,12 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
       concepto: `${plan.nombre} · ${cupo} ${cupo === 1 ? 'publicación activa' : 'publicaciones activas'} · ${dias} días`,
       cliente,
       correoCliente: ctx.usuario.correo,
+      ...casillaDeRenovacion(c, cobro, org),
     },
   });
+  if (tarjeta) db.enlazarMetodoPago(pago.id, tarjeta.id);
   const r = await pagos.cobrar(pago);
-
-  if (r.estado === 'rechazado') {
-    return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
-  }
-  if (r.estado !== 'aprobado') {
-    if (pago.procesador === 'transferencia') {
-      responder(res, 202, {
-        membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
-        aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta(),
-      });
-      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
-    }
-    return responder(res, 202, {
-      membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago), aviso: EN_PROCESO,
-    });
-  }
-  return responder(res, 201, {
-    membresia: r.membresia,
-    cobro: cobroPublico(cobro),
-    comprobante: comprobantePublico(r.comprobante),
-    sesion: sesionPublica(ctx.usuario.id),
-    pago: pagoPublico(r.pago),
-  });
+  return terminarCompra(res, ctx, pago, r, cobro, cliente);
 });
 
 const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
@@ -2776,7 +2914,18 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
      intercala otra petición sin un `await` en medio, por eso no hace
      falta un índice único. Si alguien añade un `await` aquí abajo, esta
      garantía se pierde. */
-  const ampliando = db.pagoPendienteDeAmpliacion(s.id);
+  let ampliando = db.pagoPendienteDeAmpliacion(s.id);
+  if (ampliando) {
+    /* Un pendiente de tarjeta sin intento de cobro no bloquea (R-02):
+       se retoma, o se anula si pide otro método. Todo síncrono hasta el
+       `registrarCobro`, como pide el comentario de arriba. */
+    const decision = decidirPendienteSinCobro(c, ampliando);
+    if (decision === 'retomar') {
+      return retomarPendienteDeTarjeta(res, ctx, c, ampliando,
+        (p, r) => terminarAmpliacion(res, ctx, p, r, { total: p.total, referencia: p.referencia }));
+    }
+    if (decision === 'anulado') ampliando = null;
+  }
   if (ampliando) {
     return fallo(res, 409,
       `Esa membresía ya tiene una ampliación en espera (ref. ${ampliando.referencia || ampliando.id}). `
@@ -2819,6 +2968,9 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
     }
   }
 
+  const tarjeta = tarjetaPedida(res, c, org, cobro);
+  if (tarjeta === false) return undefined;
+
   if (!(cobro.total > 0)) {
     const membresia = db.ampliarCupos({ idSusc, idOrg: org.id, cupoNuevo, cobro });
     return responder(res, 200, {
@@ -2849,23 +3001,31 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
       correoCliente: ctx.usuario.correo,
     },
   });
+  if (tarjeta) db.enlazarMetodoPago(pago.id, tarjeta.id);
   const r = await pagos.cobrar(pago);
+  return terminarAmpliacion(res, ctx, pago, r, cobro);
+});
 
+/* El final de la ampliación, después de `pagos.cobrar`. Sirve también
+   cuando se retoma un pendiente de tarjeta sin cobro. */
+async function terminarAmpliacion(res, ctx, pago, r, cobro) {
+  const idSusc = pago.suscripcion_id;
   if (r.estado === 'rechazado') {
-    return fallo(res, 402, NO_APROBADO, { pago: pagoPublico(r.pago) });
+    return fallo(res, 402, textoDeRechazo(pago, r, NO_APROBADO), { pago: pagoPublico(r.pago) });
   }
   if (r.estado !== 'aprobado') {
+    const cuerpo = {
+      membresia: db.suscripcion(idSusc, ctx.organizacion.id), cobro: cobroPublico(cobro), comprobante: null,
+      pago: pagoPublico(r.pago),
+    };
+    if (pago.procesador === 'cardnet') {
+      return responderPendienteConTarjeta(res, ctx, pago, r, intencionDePago(pago).cliente, cuerpo, EN_PROCESO);
+    }
     if (pago.procesador === 'transferencia') {
-      responder(res, 202, {
-        membresia: db.suscripcion(idSusc, org.id), cobro: cobroPublico(cobro), comprobante: null,
-        pago: pagoPublico(r.pago), aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta(),
-      });
+      responder(res, 202, { ...cuerpo, aviso: EN_ESPERA_TRANSFERENCIA, transferencia: datosDeCuenta() });
       return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
     }
-    return responder(res, 202, {
-      membresia: db.suscripcion(idSusc, org.id), cobro: cobroPublico(cobro), comprobante: null,
-      pago: pagoPublico(r.pago), aviso: EN_PROCESO,
-    });
+    return responder(res, 202, { ...cuerpo, aviso: EN_PROCESO });
   }
   return responder(res, 200, {
     membresia: r.membresia,
@@ -2873,7 +3033,7 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
     comprobante: comprobantePublico(r.comprobante),
     pago: pagoPublico(r.pago),
   });
-});
+}
 
 /* Mover un equipo de una membresía a otra: lo que el anunciante
    entiende como "pasar este camión a Destacado". */
@@ -3539,7 +3699,17 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
 
   const b = db.borradorDe(idAnuncio, org.id);
   if (!b) return fallo(res, 404, 'Ese borrador no es suyo o no existe');
-  if (b.pagoPendiente) return responderPagoEnEspera(res, b.pagoPendiente);
+  if (b.pagoPendiente) {
+    /* R-02: un pendiente de tarjeta que nunca llegó al banco no deja el
+       borrador atado: se retoma con una captura nueva (o con la tarjeta
+       guardada que elija) o, si pide otro método, se anula y se sigue. */
+    const decision = decidirPendienteSinCobro(c, b.pagoPendiente);
+    if (decision === 'retomar') {
+      return retomarPendienteDeTarjeta(res, ctx, c, b.pagoPendiente,
+        (p, r) => terminarPublicacion(res, ctx, p, r, { total: p.total, referencia: p.referencia }, idAnuncio));
+    }
+    if (decision !== 'anulado') return responderPagoEnEspera(res, b.pagoPendiente);
+  }
 
   const plan = db.planPorId(b.plan_elegido);
   if (!plan || !plan.activo) {
@@ -3595,6 +3765,9 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
     return fallo(res, e.codigo || 400, e.message);
   }
 
+  const tarjeta = tarjetaPedida(res, c, org, cobro);
+  if (tarjeta === false) return undefined;
+
   const equipo = pagos.nombreDeEquipo(db.anuncio(idAnuncio) || {});
   let pago;
   try {
@@ -3607,6 +3780,7 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
         concepto: `Publicación ${plan.nombre} · ${equipo} · ${dias} días`,
         cliente,
         correoCliente: ctx.usuario.correo,
+        ...casillaDeRenovacion(c, cobro, org),
       },
     });
   } catch (e) {
@@ -3618,23 +3792,29 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
     return falloInterno(res, e);
   }
 
+  if (tarjeta) db.enlazarMetodoPago(pago.id, tarjeta.id);
   const r = await pagos.cobrar(pago);
+  return terminarPublicacion(res, ctx, pago, r, cobro, idAnuncio);
+});
 
+/* El final de pagar la publicación, después de `pagos.cobrar`. Sirve
+   también cuando se retoma un pendiente de tarjeta sin cobro. */
+async function terminarPublicacion(res, ctx, pago, r, cobro, idAnuncio) {
   if (r.estado === 'rechazado') {
-    return fallo(res, 402, NO_APROBADO_PUBLICACION, { pago: pagoPublico(r.pago) });
+    return fallo(res, 402, textoDeRechazo(pago, r, NO_APROBADO_PUBLICACION), { pago: pagoPublico(r.pago) });
   }
   if (r.estado !== 'aprobado') {
+    const cuerpo = {
+      anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
+    };
+    if (pago.procesador === 'cardnet') {
+      return responderPendienteConTarjeta(res, ctx, pago, r, intencionDePago(pago).cliente, cuerpo, EN_PROCESO_PUBLICACION);
+    }
     if (pago.procesador === 'transferencia') {
-      responder(res, 202, {
-        anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
-        aviso: EN_ESPERA_PUBLICACION, transferencia: datosDeCuenta(),
-      });
+      responder(res, 202, { ...cuerpo, aviso: EN_ESPERA_PUBLICACION, transferencia: datosDeCuenta() });
       return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
     }
-    return responder(res, 202, {
-      anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
-      aviso: EN_PROCESO_PUBLICACION,
-    });
+    return responder(res, 202, { ...cuerpo, aviso: EN_PROCESO_PUBLICACION });
   }
   return responder(res, 201, {
     anuncio: db.anuncio(idAnuncio),
@@ -3643,7 +3823,7 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
     comprobante: comprobantePublico(r.comprobante),
     pago: pagoPublico(r.pago),
   });
-});
+}
 
 /* ── Renovar (fase 05.3) ─────────────────────────────────────
    Hasta la 05.3 renovar no existía: quien quería seguir publicado tenía
@@ -3663,13 +3843,10 @@ const EN_ESPERA_RENOVACION = 'Transfiera el importe con la referencia indicada. 
 /* La renovación automática (MOD-12, D-11 y D-12) solo se ofrece con
    CardNet encendido: sin tarjeta guardada no hay con qué cobrarla, y
    ofrecer algo que no se va a cobrar engaña (el anunciante creería que
-   su anuncio sigue solo y vencería igual). Se lee el entorno en cada
-   llamada para que las pruebas lo cambien en caliente. Los valores son
-   los de research/cardnet.md (apagado | lab | produccion); cualquier
-   otro cuenta como apagado, igual que hará `cardnet.activo()` de la
-   fase 6, que sustituirá a esta función. */
-const renovacionAutomaticaDisponible = () =>
-  ['lab', 'produccion'].includes(String(process.env.MERCA_CARDNET || '').trim());
+   su anuncio sigue solo y vencería igual). La 05.3 leía el entorno a
+   mano y anunciaba que la fase 6 lo sustituiría: es `cardnet.activo()`,
+   que exige el modo Y las dos llaves (con `lab` y sin llaves, apagada). */
+const renovacionAutomaticaDisponible = () => cardnet.activo();
 
 /* El texto que acepta quien activa la casilla: sección 21 del modelo
    comercial, tal cual. Se guarda ESTE, nunca uno que llegue del
@@ -3704,7 +3881,16 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
   const org = ctx.organizacion;
 
   const enEspera = db.pagoPendienteDeRenovacion(s.id);
-  if (enEspera) return responderRenovacionEnEspera(res, enEspera);
+  if (enEspera) {
+    /* R-02: un pendiente de tarjeta sin intento de cobro se retoma o se
+       anula (si pide otro método) en vez de dejar la membresía atada. */
+    const decision = decidirPendienteSinCobro(c, enEspera);
+    if (decision === 'retomar') {
+      return retomarPendienteDeTarjeta(res, ctx, c, enEspera,
+        (p, r) => terminarRenovacion(res, ctx, p, r, { total: p.total, referencia: p.referencia }, p.anuncio_id || null));
+    }
+    if (decision !== 'anulado') return responderRenovacionEnEspera(res, enEspera);
+  }
 
   // Y con una ampliación esperando no se renueva: una sola operación de capacidad a la vez (05.4 D-12).
   const ampliacion = db.pagoPendienteDeAmpliacion(s.id);
@@ -3737,12 +3923,10 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
   if (fiscal.error) return fallo(res, 400, fiscal.error);
   const { cliente } = fiscal;
 
-  /* La casilla del pago (D-12): solo con CardNet encendido y solo el
-     propietario, que es quien autoriza cobros futuros. Apagada, lo que
-     mande el navegador no hace nada. */
-  if (c.renovacionAutomatica === true && renovacionAutomaticaDisponible() && org.rol === 'propietario') {
-    db.guardarRenovacionAutomatica({ idSusc: s.id, idOrg: org.id, activar: true, texto: TEXTO_RENOVACION_AUTOMATICA });
-  }
+  /* La casilla del pago (D-12) ya NO se guarda aquí antes de cobrar:
+     viaja en la intención del pago y se aplica al aprobarse (R-03). Un
+     pago que no se aprueba no autoriza cobros futuros, y con
+     transferencia no hay tarjeta con la que cobrarlos. */
 
   // Importe cero (promoción): aprobado al instante y sin comprobante.
   if (!(cobro.total > 0)) {
@@ -3768,6 +3952,9 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
     return fallo(res, e.codigo || 400, e.message);
   }
 
+  const tarjeta = tarjetaPedida(res, c, org, cobro);
+  if (tarjeta === false) return undefined;
+
   const concepto = idAnuncio
     ? `Renovación ${s.plan_nombre} · ${pagos.nombreDeEquipo(db.anuncio(idAnuncio) || {})} · ${dias} días`
     : `Renovación ${s.plan_nombre} · ${cupo} publicaciones · ${dias} días`;
@@ -3783,6 +3970,7 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
         concepto,
         cliente,
         correoCliente: ctx.usuario.correo,
+        ...casillaDeRenovacion(c, cobro, org),
       },
     });
   } catch (e) {
@@ -3794,23 +3982,29 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
     return falloInterno(res, e);
   }
 
+  if (tarjeta) db.enlazarMetodoPago(pago.id, tarjeta.id);
   const r = await pagos.cobrar(pago);
+  return terminarRenovacion(res, ctx, pago, r, cobro, idAnuncio);
+}
 
+/* El final de renovar, después de `pagos.cobrar`. Sirve también cuando
+   se retoma un pendiente de tarjeta sin cobro. */
+async function terminarRenovacion(res, ctx, pago, r, cobro, idAnuncio) {
   if (r.estado === 'rechazado') {
-    return fallo(res, 402, NO_APROBADO_RENOVACION, { pago: pagoPublico(r.pago) });
+    return fallo(res, 402, textoDeRechazo(pago, r, NO_APROBADO_RENOVACION), { pago: pagoPublico(r.pago) });
   }
   if (r.estado !== 'aprobado') {
-    if (pago.procesador === 'transferencia') {
-      responder(res, 202, {
-        anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
-        aviso: EN_ESPERA_RENOVACION, transferencia: datosDeCuenta(),
-      });
-      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto });
-    }
-    return responder(res, 202, {
+    const cuerpo = {
       anuncio: null, membresia: null, cobro: cobroPublico(cobro), comprobante: null, pago: pagoPublico(r.pago),
-      aviso: EN_PROCESO_RENOVACION,
-    });
+    };
+    if (pago.procesador === 'cardnet') {
+      return responderPendienteConTarjeta(res, ctx, pago, r, intencionDePago(pago).cliente, cuerpo, EN_PROCESO_RENOVACION);
+    }
+    if (pago.procesador === 'transferencia') {
+      responder(res, 202, { ...cuerpo, aviso: EN_ESPERA_RENOVACION, transferencia: datosDeCuenta() });
+      return avisarTransferenciaPedida(ctx, { referencia: pago.referencia, total: pago.total, concepto: intencionDePago(pago).concepto });
+    }
+    return responder(res, 202, { ...cuerpo, aviso: EN_PROCESO_RENOVACION });
   }
   return responder(res, 201, {
     anuncio: idAnuncio ? db.anuncio(idAnuncio) : null,
