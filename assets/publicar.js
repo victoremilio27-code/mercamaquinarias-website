@@ -1378,6 +1378,10 @@ async function cargarMembresias() {
   const r = await api('/membresias', { silencioso: true });
   MEMBRESIAS = (r && r.membresias) || [];
   EXENTA = !!(r && r.exenta);
+  // Solo llegan con CardNet activo: apagado, la respuesta no cambia y
+  // estas dos se quedan vacías (el selector no se pinta).
+  TARJETAS = (r && Array.isArray(r.tarjetas)) ? r.tarjetas : [];
+  RENOVACION_AUTO = (r && r.renovacionAutomatica) || { disponible: false };
 }
 
 /* Cuenta particular de verdad: ni dealer ni exenta. Sirve para que los
@@ -1395,6 +1399,12 @@ const esParticularCuenta = () => !!(haySesion() && SESION.organizacion
 let MODO = 'capacidad';
 let PLANES = [];
 let METODOS_PAGO = [];
+/* Tarjetas guardadas, texto de la renovación automática y total del
+   pedido: lo primero y lo segundo salen de GET /api/membresias (solo con
+   CardNet activo); el total, del resumen que calculó el servidor. */
+let TARJETAS = [];
+let RENOVACION_AUTO = { disponible: false };
+let TOTAL_PUBLICAR = 0;
 
 /* Lo último que el SERVIDOR aceptó como plan/días de este borrador.
    Sirve para no mandar un PUT de más cuando se vuelve al paso del plan
@@ -2183,6 +2193,45 @@ async function publicarConCapacidadLibre() {
   }
 }
 
+/* El selector de método de pago (tarjeta / transferencia, tarjeta
+   guardada y casilla de renovación). Vive en un contenedor propio que
+   se crea aquí, junto a `#metodoPublicar`; sin CardNet o con total cero
+   no existe y la pantalla es la de siempre. La tarjeta nunca se teclea
+   aquí: solo se elige cómo pagar, y el número va en el iframe de CardNet. */
+function pintarSelectorMetodoPublicar(conTarjeta) {
+  let caja = $('#selectorMetodoPublicar');
+  if (!conTarjeta) { if (caja) caja.remove(); return; }
+
+  if (!caja) {
+    caja = document.createElement('div');
+    caja.id = 'selectorMetodoPublicar';
+    caja.addEventListener('change', () => {
+      const btn = $('#btnPublicar');
+      if (btn && !btn.classList.contains('btn--ocupado')) btn.textContent = textoBotonPublicar(TOTAL_PUBLICAR);
+    });
+    const ancla = $('#metodoPublicar');
+    if (!ancla) return;
+    ancla.insertAdjacentElement('afterend', caja);
+  }
+  caja.innerHTML = CardnetCaptura.selectorDeMetodo({
+    metodos: METODOS_PAGO,
+    tarjetas: TARJETAS,
+    renovacion: RENOVACION_AUTO,
+    prefijo: 'pub',
+    previo: CardnetCaptura.leerEstado(caja),
+  });
+}
+
+/* Lo que dice el botón de pagar según el método elegido. */
+function textoBotonPublicar(total) {
+  if (total === 0) return 'Publicar sin costo';
+  const elegido = CardnetCaptura.leerMetodo($('#selectorMetodoPublicar')).metodo;
+  if (elegido === 'cardnet') return `Pagar ${pesos(total)} con tarjeta y publicar`;
+  return METODOS_PAGO.includes('transferencia')
+    ? `Pedir datos para transferir ${pesos(total)}`
+    : `Pagar ${pesos(total)} y publicar`;
+}
+
 /* El resumen del último paso, con el precio FINAL del servidor: el
    navegador no calcula lo que se cobra, solo lo enseña (T-05.2-21). */
 function pintarResumenPublicacionServidor(b) {
@@ -2202,14 +2251,17 @@ function pintarResumenPublicacionServidor(b) {
   const bloqueFiscal = $('#bloqueFiscalPublicar');
   if (bloqueFiscal) bloqueFiscal.hidden = !(total > 0);
 
+  TOTAL_PUBLICAR = total;
+  const conTarjeta = total > 0 && METODOS_PAGO.includes('cardnet');
   const metodo = $('#metodoPublicar');
   if (metodo) {
-    const conTransferencia = METODOS_PAGO.includes('transferencia') && total > 0;
+    const conTransferencia = METODOS_PAGO.includes('transferencia') && total > 0 && !conTarjeta;
     metodo.hidden = !conTransferencia;
     metodo.textContent = conTransferencia
       ? 'Forma de pago: transferencia bancaria. Le damos los datos y la referencia al confirmar; el anuncio se publica cuando recibamos el ingreso.'
       : '';
   }
+  pintarSelectorMetodoPublicar(conTarjeta);
 
   caja.innerHTML = `
     <h3 class="pedido__titulo">Resumen de su publicación</h3>
@@ -2224,11 +2276,7 @@ function pintarResumenPublicacionServidor(b) {
 
   if (btn) {
     btn.disabled = !b.completo;
-    btn.textContent = total === 0
-      ? 'Publicar sin costo'
-      : (METODOS_PAGO.includes('transferencia')
-        ? `Pedir datos para transferir ${pesos(total)}`
-        : `Pagar ${pesos(total)} y publicar`);
+    btn.textContent = textoBotonPublicar(total);
 
     if (!document.querySelector('#legalPagoPublicacion')) {
       const aviso = document.createElement('p');
@@ -2279,6 +2327,30 @@ async function actualizarResumenPublicacion() {
   pintarResumenPublicacionServidor(r.borrador);
 }
 
+/* Qué hace esta pantalla con cada desenlace de un pago con tarjeta. La
+   confirmación con el servidor la hace cardnet.js; la respuesta de
+   confirmación no trae `cobro`, así que se le pone el total que calculó
+   el servidor para el resumen. */
+function manejadoresDePagoPublicacion(restaurar) {
+  const conCobro = (d) => ({
+    ...d,
+    cobro: d.cobro || { total: TOTAL_PUBLICAR, referencia: (d.pago || {}).referencia },
+  });
+  return {
+    alAprobar: (datos) => {
+      borrarBorrador();
+      if (datos && datos.anuncio) pintarConfirmacionPublicacion(conCobro(datos));
+      else pintarEspera({ ...conCobro(datos || {}), aviso: 'Recibimos su pago. Su anuncio se publica en unos minutos.' });
+    },
+    // El motivo del banco, tal cual lo dice el servidor.
+    alRechazar: (texto) => restaurar(texto || 'El banco no aprobó el pago. No se le cobró nada.'),
+    alEsperar: (aviso, datos) => {
+      borrarBorrador();
+      pintarEspera({ ...conCobro(datos || {}), aviso });
+    },
+  };
+}
+
 /* Pide el pago del borrador (POST /api/borradores/:id/pago). El
    navegador nunca manda importes: el servidor calcula con el plan y
    los días guardados en el borrador (T-05.2-21). */
@@ -2299,7 +2371,12 @@ async function pagarPublicacion() {
   };
 
   const cuerpo = {};
-  if (METODOS_PAGO.includes('transferencia')) cuerpo.metodo = 'transferencia';
+  // Con el selector de CardNet en pantalla manda lo que elegió: método,
+  // tarjeta guardada y casilla (cada clave solo si procede). Sin selector,
+  // el cuerpo es el de siempre.
+  const elegido = CardnetCaptura.leerMetodo($('#selectorMetodoPublicar'));
+  if (elegido.metodo) Object.assign(cuerpo, elegido);
+  else if (METODOS_PAGO.includes('transferencia')) cuerpo.metodo = 'transferencia';
   if ($('#pub-conRnc') && $('#pub-conRnc').checked) {
     Object.assign(cuerpo, {
       conRnc: true,
@@ -2316,6 +2393,21 @@ async function pagarPublicacion() {
     // Ya no hay nada que guardar: un PUT tardío sobre un borrador que
     // acaba de pasar a pago o a anuncio solo daría 409 o 404.
     clearTimeout(temporizadorGuardado);
+
+    /* Con tarjeta nueva, el servidor da la dirección del formulario de
+       CardNet: se abre el modal y el borrador local NO se borra todavía
+       (si cancela, sigue ahí). Quien confirma es cardnet.js, no esta
+       página. */
+    const manejadores = manejadoresDePagoPublicacion(restaurar);
+    if (r.cardnet) {
+      CardnetCaptura.abrir({ pago: r.pago, captura: r.cardnet, ...manejadores });
+      return;
+    }
+    // Tarjeta guardada con verificación del banco (3-D Secure).
+    if (r.redireccion) {
+      CardnetCaptura.tratar({ estado: 202, datos: r }, manejadores, { idPago: (r.pago || {}).id });
+      return;
+    }
 
     if (r.pago && r.pago.estado === 'pendiente') {
       borrarBorrador();

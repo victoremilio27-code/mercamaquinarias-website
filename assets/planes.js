@@ -60,11 +60,37 @@ const destinoPropio = () => (/^[a-z0-9-]+\.html(?:[?#]|$)/i.test(destino()) ? de
 
 const porTransferencia = () => METODOS_PAGO.includes('transferencia');
 
+/* Tarjetas guardadas y texto de la renovación automática: solo llegan de
+   GET /api/membresias con CardNet activo. Apagado quedan vacías y el
+   selector de método no se pinta. */
+let TARJETAS_PLAN = [];
+let RENOVACION_PLAN = { disponible: false };
+const guardarExtrasDeCardnet = (mios) => {
+  if (!mios) return;
+  TARJETAS_PLAN = Array.isArray(mios.tarjetas) ? mios.tarjetas : [];
+  RENOVACION_PLAN = mios.renovacionAutomatica || { disponible: false };
+};
+
+/* Lo que está elegido en el selector del pedido: 'cardnet',
+   'transferencia' o '' si el selector no está en pantalla. */
+const metodoElegido = () => CardnetCaptura.leerMetodo($('#resumenPlan')).metodo || '';
+
 /* Solo se paga por transferencia lo que cuesta algo. Una cuenta exenta
    o un pedido a RD$0 (la promoción del Estándar) sale aprobado al
    instante, igual que antes de la fase: prometerle unos datos
-   bancarios que no van a llegar sería mentirle. */
-const pagaPorTransferencia = (ped) => porTransferencia() && !EXENTA_PLAN && !!ped && ped.total > 0;
+   bancarios que no van a llegar sería mentirle. Con el selector de
+   tarjeta en pantalla, solo si eligió transferencia. */
+const pagaPorTransferencia = (ped, elegido = metodoElegido()) => porTransferencia()
+  && !EXENTA_PLAN && !!ped && ped.total > 0 && elegido !== 'cardnet';
+
+/* El texto del botón de contratar según el método elegido. */
+function textoBotonContratar(ped) {
+  if (EXENTA_PLAN) return 'Activar sin costo';
+  if (ped.total > 0 && metodoElegido() === 'cardnet') return `Pagar ${pesos(ped.total)} con tarjeta`;
+  return pagaPorTransferencia(ped)
+    ? `Pedir datos para transferir ${pesos(ped.total)}`
+    : `Contratar por ${pesos(ped.total)}`;
+}
 
 /* Un 202 de las rutas de cobro. Durante la fase 3 el navegador lo
    trataba como una compra hecha —«Listo. Contrató…», vuelta al
@@ -308,6 +334,17 @@ function pintarPedido() {
   vence.setDate(vence.getDate() + DIAS_PLAN);
   const venceIso = vence.toISOString().slice(0, 10);
 
+  /* Selector de método (tarjeta / transferencia): solo con CardNet
+     activo y algo que pagar. Se conserva lo que ya eligió al repintar. */
+  const conTarjeta = !EXENTA_PLAN && ped.total > 0 && METODOS_PAGO.includes('cardnet');
+  const previo = conTarjeta ? CardnetCaptura.leerEstado(caja) : {};
+  const elegidoAhora = conTarjeta ? (previo.metodo === 'transferencia' && porTransferencia() ? 'transferencia' : 'cardnet') : '';
+  const selector = conTarjeta
+    ? CardnetCaptura.selectorDeMetodo({
+      metodos: METODOS_PAGO, tarjetas: TARJETAS_PLAN, renovacion: RENOVACION_PLAN, prefijo: 'plan', previo,
+    })
+    : '';
+
   caja.innerHTML = EXENTA_PLAN
     ? `<h3 class="pedido__titulo">Sin costo</h3>
        <p class="pedido__vacio">${icono('i-check')} Su cuenta publica sin pagar y sin límite de equipos.</p>`
@@ -318,15 +355,14 @@ function pintarPedido() {
          ${ped.gratis ? `<div><dt>De regalo</dt><dd class="num">${ped.gratis}</dd></div>` : ''}
          <div class="pedido__total"><dt>Total · ITBIS incluido</dt><dd class="num">${pesos(ped.total)}</dd></div>
        </dl>
-       ${pagaPorTransferencia(ped)
-    ? `<p class="pedido__metodo"><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
-    : ''}`;
+       ${selector}
+       ${pagaPorTransferencia(ped, elegidoAhora)
+    ? `<p class="pedido__metodo" data-texto-transferencia><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
+    : (conTarjeta && porTransferencia()
+      ? `<p class="pedido__metodo" data-texto-transferencia hidden><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
+      : '')}`;
 
-  $('#btnContratar').textContent = EXENTA_PLAN
-    ? 'Activar sin costo'
-    : pagaPorTransferencia(ped)
-      ? `Pedir datos para transferir ${pesos(ped.total)}`
-      : `Contratar por ${pesos(ped.total)}`;
+  $('#btnContratar').textContent = textoBotonContratar(ped);
 
   /* Qué se acepta al pulsar, junto al botón que lo acepta.
      Escondido en el pie no serviría: la advertencia tiene que estar
@@ -504,6 +540,7 @@ async function recargarCuenta() {
   if (mios) {
     MIS_CUPOS = mios.membresias || MIS_CUPOS;
     PAGOS_PENDIENTES = mios.pagosPendientes || [];
+    guardarExtrasDeCardnet(mios);
   }
   pintarMisCupos();
   pintarRecordatorio();
@@ -527,17 +564,69 @@ async function contratar() {
   const antes = btn.textContent;
   btn.textContent = pagaPorTransferencia(ped) ? 'Pidiendo los datos…' : 'Contratando…';
 
+  /* Con el formulario de CardNet abierto el botón sigue ocupado: se
+     restaura cuando el modal termina (rechazo o cancelación), no antes. */
+  let modalAbierto = false;
+  const restaurar = () => {
+    btn.disabled = false;
+    btn.classList.remove('btn--ocupado');
+    btn.textContent = antes;
+  };
+  const cupoPedido = CUPOS_PEDIDOS;
+
+  /* Compra hecha: lo mismo que antes de CardNet. */
+  const terminarCompra = async () => {
+    if (destino()) { location.href = destino(); return; }
+    try {
+      const mios = await api('/membresias', { silencioso: true });
+      MIS_CUPOS = (mios || {}).membresias || MIS_CUPOS;
+    } catch (_) { /* se queda la lista que había */ }
+    pintarMisCupos();
+    avisar(`Listo. Contrató ${cupoPedido} ${cupoPedido === 1 ? 'publicación activa' : 'publicaciones activas'} de ${ped.nivel.nombre}.`, true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  /* Qué hace esta pantalla con cada desenlace del pago con tarjeta; la
+     confirmación con el servidor la hace cardnet.js. */
+  const manejadores = {
+    alAprobar: async () => { await terminarCompra(); restaurar(); },
+    // El motivo del banco, tal cual lo dice el servidor.
+    alRechazar: (texto) => { avisar(texto || 'El banco no aprobó el pago. No se le cobró nada.'); restaurar(); },
+    alEsperar: async (aviso, datos) => {
+      const mios = await recargarCuenta();
+      pintarEspera(datos || {}, btn.closest('.acciones') || btn, aviso || avisoSinCuenta(datos || {}, mios));
+      restaurar();
+    },
+  };
+
   try {
-    /* El método solo se manda si el servidor lo ofrece. Con la
-       transferencia apagada el cuerpo es el de siempre. */
+    /* El método solo se manda si el servidor lo ofrece. Con el selector
+       de CardNet en pantalla manda lo elegido (método, tarjeta guardada
+       y casilla, cada clave solo si procede); con la transferencia
+       apagada y sin CardNet el cuerpo es el de siempre. */
+    const elegido = CardnetCaptura.leerMetodo($('#resumenPlan'));
     const cuerpo = {
       plan: ped.nivel.id, cupo: CUPOS_PEDIDOS, dias: DIAS_PLAN,
-      ...(porTransferencia() ? { metodo: 'transferencia' } : {}),
+      ...(elegido.metodo ? elegido : (porTransferencia() ? { metodo: 'transferencia' } : {})),
       ...datosFiscales(),
     };
 
     const r = await api('/membresias', { metodo: 'POST', cuerpo });
     if (!r) throw new Error('No hay conexión con el servidor.');
+
+    /* Tarjeta nueva: el servidor da la dirección del formulario de
+       CardNet y se abre el modal. */
+    if (r.cardnet) {
+      modalAbierto = true;
+      CardnetCaptura.abrir({ pago: r.pago, captura: r.cardnet, ...manejadores });
+      return;
+    }
+    // Tarjeta guardada con verificación del banco (3-D Secure).
+    if (r.redireccion) {
+      modalAbierto = true;
+      CardnetCaptura.tratar({ estado: 202, datos: r }, manejadores, { idPago: (r.pago || {}).id });
+      return;
+    }
 
     /* Pedido anotado pero sin cobrar: ni vuelta al borrador (no tiene
        cupo con qué publicarlo) ni «Listo». Los datos se quedan aquí. */
@@ -549,18 +638,11 @@ async function contratar() {
 
     /* Con destino se vuelve solo: el anunciante venía de su borrador y
        devolverlo ahí es la mitad de la mejora. */
-    if (destino()) { location.href = destino(); return; }
-
-    MIS_CUPOS = (await api('/membresias', { silencioso: true }) || {}).membresias || MIS_CUPOS;
-    pintarMisCupos();
-    avisar(`Listo. Contrató ${CUPOS_PEDIDOS} ${CUPOS_PEDIDOS === 1 ? 'publicación activa' : 'publicaciones activas'} de ${ped.nivel.nombre}.`, true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    await terminarCompra();
   } catch (e) {
     avisar(e.message);
   } finally {
-    btn.disabled = false;
-    btn.classList.remove('btn--ocupado');
-    btn.textContent = antes;
+    if (!modalAbierto) restaurar();
   }
 }
 
@@ -640,6 +722,7 @@ async function montarPlanes() {
     MIS_CUPOS = (mios && mios.membresias) || [];
     PAGOS_PENDIENTES = (mios && mios.pagosPendientes) || [];
     EXENTA_PLAN = !!(mios && mios.exenta);
+    guardarExtrasDeCardnet(mios);
   }
 
   // Depende de EXENTA_PLAN y de la sesión, así que se decide después de
@@ -684,6 +767,18 @@ async function montarPlanes() {
   cuantos.addEventListener('blur', () => { cuantos.value = String(CUPOS_PEDIDOS); });
 
   $('#btnContratar').addEventListener('click', contratar);
+
+  /* Cambiar de método (tarjeta / transferencia) solo cambia el texto del
+     botón y el aviso de transferencia; el pedido no se repinta para no
+     quitarle el foco al radio. */
+  $('#resumenPlan').addEventListener('change', () => {
+    const ped = pedidoPlan();
+    if (!ped) return;
+    const btn = $('#btnContratar');
+    if (btn && !btn.classList.contains('btn--ocupado')) btn.textContent = textoBotonContratar(ped);
+    const aviso = $('#resumenPlan [data-texto-transferencia]');
+    if (aviso) aviso.hidden = !pagaPorTransferencia(ped);
+  });
 
   $('#misCupos').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ampliar]');
