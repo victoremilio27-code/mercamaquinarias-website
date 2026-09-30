@@ -45,8 +45,8 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo (completed 2026-09-30)
 - [x] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor (completed 2026-09-30)
 - [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
-- [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
-- [ ] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana
+- [x] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país (completed 2026-09-25)
+- [x] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana (completed 2026-09-25)
 - [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
