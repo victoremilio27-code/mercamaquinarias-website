@@ -146,11 +146,11 @@ huérfanos y sin duplicados.
 | PAGO-01 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, verificado contra `tools/db.js` y `db/schema.sql:549` |
 | PAGO-02 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, verificado contra `tools/db.js` |
 | PAGO-03 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, comportamiento actual que se conserva |
-| PAGO-04 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md` |
-| PAGO-05 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`, implicaciones de PCI-DSS |
-| PAGO-06 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`, unidades del importe |
-| PAGO-07 | Phase 6 — CardNet construido y apagado | Pendiente | `research/cardnet.md`; `facturas.emitirPorPago` ya es idempotente |
-| PAGO-08 | Phase 6 — CardNet construido y apagado | Pendiente | Patrón ya validado con Brevo y Anthropic |
+| PAGO-04 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | `research/cardnet.md` |
+| PAGO-05 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | `research/cardnet.md`, implicaciones de PCI-DSS |
+| PAGO-06 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | `research/cardnet.md`, unidades del importe |
+| PAGO-07 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | `research/cardnet.md`; `facturas.emitirPorPago` ya es idempotente |
+| PAGO-08 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | Patrón ya validado con Brevo y Anthropic |
 | PAGO-09 | Phase 5 — Cobro por transferencia bancaria | Completo (2026-09-25) | Contingencia propuesta en `cardnet.md` para no depender de la afiliación |
 | MOD-01 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
 | MOD-02 | Phase 05.1 — Precio único | Hecho 2026-09-26 (PR #35) | `research/modelo-comercial.md` |
