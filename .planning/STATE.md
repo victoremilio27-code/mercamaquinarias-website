@@ -16,7 +16,7 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-09-29, noche) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-09-30, madrugada) — EMPIEZA AQUÍ
 
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
@@ -30,41 +30,36 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 - **En producción:** fases 05.1 (precio único), 05.2 (publicar este equipo) y 05.3 (renovación,
   vencimientos y avisos 7/3/1; PR #39, «Sitio arriba: 069fcee»). La casilla de renovación automática está
-  construida y **apagada** (`MERCA_CARDNET`). Condiciones de contratación en la 2.2.
-- **Preparado sin planificar todavía:** la 05.4 y la 12 tienen `CONTEXT.md` y `RESEARCH.md`; la facturación
+  construida y **apagada** (`MERCA_CARDNET`).
+- **05.4 (dealer con capacidad y consola de solo lectura):** planes 01-07 en producción (PR #44, «Sitio
+  arriba: a67f249»); el 08 (recorrido de punta a punta y auditorías) y la verificación (`human_needed`: solo
+  faltan dos revisiones visuales de Victor, ver «Preguntas») van en el PR de cierre. Contratación en la
+  **2.3**: quien aceptó la 2.2 vuelve a aceptar antes de su próximo pago.
+- **Preparado sin planificar todavía:** la 12 tiene `CONTEXT.md` y `RESEARCH.md`; la facturación
   electrónica tiene `research/facturacion-electronica.md`.
 - **En la nube:** puppeteer como root necesita un envoltorio de Chrome en el scratchpad con `--no-sandbox` y
   el proxy del entorno, vía `PUPPETEER_EXECUTABLE_PATH` (ver «Decisions»); nunca se toca `tools/` por eso.
 
 ### Lo que falta, en orden
 
-1. **Fase 05.4 — dealer con capacidad de publicaciones activas y consola.** `gsd-plan-phase 05.4`: ya hay
-   `05.4-CONTEXT.md` (D-01 a D-20) y `05.4-RESEARCH.md`, **no repetir la investigación**; directo al
-   planificador (Opus) y al comprobador (Opus). Reparto propuesto: 01 guardas del servidor y prorrateo con
-   pruebas primero (toca `aprobarPago`); 02 panel del dealer y sección de ampliar; 03 textos sin
-   «cupo», asistente, concepto del comprobante solo hacia adelante y contratación 2.3; 04 consola de
-   solo lectura; 05 batería y auditorías. Ola 0: `tools/probar-capacidad.js`, script `capacidad:probar` y su
-   paso de CI (en LF). Las pruebas que hoy exigen «cupo» (`probar-publicacion.js:736`,
-   `probar-transferencia.js`, `prueba-chat.js`) se invierten en el mismo plan que cambia el texto. Después,
-   ejecutar, verificar, PR, fusionar y comprobar «Sitio arriba».
-2. **Fase 6 — CardNet.** Replanificar desde el 06-02 contra el modelo nuevo: la migración `2026-10-cardnet`
+1. **Fase 6 — CardNet.** Replanificar desde el 06-02 contra el modelo nuevo: la migración `2026-10-cardnet`
    no vuelve a crear las columnas `renovacion_*` de la 05.3, y el cobro recurrente respeta las guardas de la
    05.4 (una operación de capacidad pendiente por membresía; `aprobarPago` no suma a una membresía vencida).
    Ejecutar y entregar apagada.
-3. **Fase 12 — lote mensual de comprobantes.** Planificar ya con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP
+2. **Fase 12 — lote mensual de comprobantes.** Planificar ya con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP
    escrito a mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni
    `lotes_contador`, restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista
    la e-CF, el lote incluye también el XML y la representación impresa.
-4. **Papeleo del ROADMAP.** Las fases 2, 3 y 4 tienen todos sus planes hechos pero sin VERIFICATION ni casilla;
+3. **Papeleo del ROADMAP.** Las fases 2, 3 y 4 tienen todos sus planes hechos pero sin VERIFICATION ni casilla;
    la 8 y la 9 tienen VERIFICATION pero sin casilla. Verificar lo que falte y marcar.
-5. **Facturación electrónica (e-CF) — en espera.** Victor todavía no ha solicitado ser emisor electrónico; lo
+4. **Facturación electrónica (e-CF) — en espera.** Victor todavía no ha solicitado ser emisor electrónico; lo
    hace en **octubre de 2026**. Cuando diga que está presentada: insertar la fase «6.1 e-CF» con `gsd-phase`
    (propuesta en §7 de la investigación: FE-01 a FE-13, construida y apagada tras `MERCA_ECF`, ejecutada con
    Sonnet 5.5) y planificarla. Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador.
-6. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan
+5. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan
    personas y protocolo de inspección); 13, 15 y 16 se planifican cuando se acerquen, porque tocan archivos que
    la 05.4 y la 6 aún cambian.
-7. **Deuda anotada para la 13 (no bloquea):** `fechaCorta` de `assets/panel.js` y de los PDF pinta la fecha en
+6. **Deuda anotada para la 13 (no bloquea):** `fechaCorta` de `assets/panel.js` y de los PDF pinta la fecha en
    UTC; `tipoRecordatorio` redondea hacia arriba («vence mañana» el mismo día del corte); desborde de
    `panel.html` a 390 px; `destino` sin validar en `assets/planes.js`; `tools/admin.js` cambia el sello sin
    bitácora; borrar `proximamente.html` y `vercel.json` (con el visto bueno de Victor).
@@ -78,7 +73,13 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 - 05.4 P14: página pública del dealer solo con Premium (**por defecto**) o con cualquier nivel con capacidad
   viva.
 - 05.4: la contratación 2.3 obliga a todos a aceptar de nuevo antes de su próximo pago, a dos semanas del
-  lanzamiento. **Por defecto se sube**; la alternativa es dejar esas cláusulas para después.
+  lanzamiento. **Ya subida y en producción** (PR #44); revisar la redacción de 1.1, 1.2 y 4.2.
+- 05.4: `legal.html` aún dice «cupos» en el preámbulo (l. 90), la tabla de privacidad (l. 225) y la política
+  de publicación §3 (l. 288). Cambiarlo sube versión de esos documentos y pide nueva aceptación: decide él.
+- 05.4 revisión visual (lo único que dejó `human_needed` la verificación): panel del dealer (resumen,
+  membresías, «Agregar publicaciones activas» con «ITBIS incluido»/«Sin costo» y «La quinta no se cobra») en
+  móvil y escritorio, claro y oscuro; y la consola con datos reales (Publicaciones, Pagos, Renovaciones con
+  «llega con CardNet», capacidad en Empresas sin RNC). Detalle en `05.4-08-SUMMARY.md` («Lista para Victor»).
 - 12 (con el contador): ¿Formato 607 de la DGII y en qué formato? (**por defecto no se genera**; el CSV trae
   los campos); ¿ZIP (**por defecto**) o un solo PDF?; ¿contenido del paquete (PDF de cada comprobante,
   `resumen.csv` con `;`, `resumen.pdf`, `LEEME.txt`)?; ¿recibos no fiscales dentro, aparte (**por defecto**)?;
