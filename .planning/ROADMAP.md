@@ -42,7 +42,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
 - [x] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
 - [x] **Phase 05.3: Renovación, vencimientos y alertas** (INSERTED) - Renovar sin rehacer el anuncio, suscripciones que vencen de verdad y avisos a 7, 3 y 1 día
-- [ ] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo
+- [x] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo (completed 2026-09-30)
 - [ ] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor
 - [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
@@ -217,7 +217,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 05.4-05-PLAN.md — Mensajes de la API y correos sin «cupo» y concepto del comprobante solo hacia adelante, con las pruebas invertidas
 - [x] 05.4-06-PLAN.md — Asistente con los dos caminos y contratación 2.3
 - [x] 05.4-07-PLAN.md — Consola de solo lectura: publicaciones por estado, pagos de todos los métodos con desglose, renovaciones y dealers con capacidad
-- [ ] 05.4-08-PLAN.md — Recorrido de la sección 39, auditorías de navegador y batería completa
+- [x] 05.4-08-PLAN.md — Recorrido de la sección 39, auditorías de navegador y batería completa
 **UI hint**: yes
 **Notas**: Queda por decidir (P9) si ampliar se cobra al precio pactado o al vigente; por defecto al precio de lista del plan, que es lo que ya hace hoy.
 
