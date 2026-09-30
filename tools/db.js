@@ -3275,6 +3275,12 @@ function renovarSinCosto({ idOrg, idSusc, idAnuncio = null, dias, cobro }) {
     d.prepare('ROLLBACK').run();
     throw e;
   }
+  /* Con la promoción toda renovación es de importe cero y no pasa por
+     `confirmarPago`, que es quien reprograma la renovación automática
+     (06-04). Sin esto el `proximo_cargo` seguía siendo el del fin ANTERIOR
+     y la tarea diaria cobraba a una suscripción recién renovada. No hace
+     nada si la suscripción no tiene renovación automática. */
+  reprogramarRenovacion(idSusc);
   return {
     membresia: suscripcion(idSusc, idOrg),
     anuncio: idAnuncio ? anuncio(idAnuncio) : null,
@@ -3669,7 +3675,9 @@ function filasDeCobros(donde, args, limite) {
      ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(...args, topeConsola(limite))
     .map(({ intencion, ...p }) => {
       const i = intencionDe({ intencion });
-      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null };
+      /* `automatica`: la renovación que cobró sola la tarea diaria (06-08), para que la consola de
+         solo lectura la distinga de la que pagó el cliente a mano. */
+      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null, automatica: !!i.automatica };
     });
 }
 
@@ -3935,6 +3943,143 @@ function reprogramarRenovacion(idSusc) {
     .run(sumarDias(-3, s.fin), idSusc);
   return true;
 }
+
+/* ── La renovación automática (06-08) ──────────────────────────
+   Todo el calendario va por DÍAS, no por horas. El temporizador de la
+   tanda diaria tiene `RandomizedDelaySec=300` y puede haberse retrasado;
+   un reintento a «ahora + 24 h» exactas se saltaría un día cuando la
+   tarea corre unos minutos antes que la víspera. Por eso `proximo_cargo`
+   se compara por su día (AAAA-MM-DD, en UTC) con el día de `ahora`: la
+   tarea de cualquier hora de ese día lo recoge, y los tres intentos caen
+   en fin − 3, fin − 2 y fin − 1. Los `proximo_cargo` que fijan
+   `activarRenovacionConTarjeta` y `reprogramarRenovacion` (fin − 3 días
+   con su hora) valen igual: solo importa su día. */
+const diaDe = (t) => new Date(t).toISOString().slice(0, 10);
+const comienzoDelDiaSiguiente = (t) => new Date(Date.parse(`${diaDe(t)}T00:00:00.000Z`) + 86400000).toISOString();
+const MAX_INTENTOS_RENOVACION = 3;
+
+/* Propietario de la organización: a quien se avisa y se factura. */
+const SQL_PROPIETARIO = `(SELECT usuario_id FROM miembros WHERE organizacion_id = s.organizacion_id AND rol = 'propietario' LIMIT 1)`;
+
+/* Las suscripciones que hoy toca cobrar solas: casilla puesta, activas,
+   con un intento pendiente cuyo día ya llegó y todavía sin vencer. */
+function suscripcionesPorRenovar(momento = new Date()) {
+  const t = new Date(momento).toISOString();
+  return abrir().prepare(`
+    SELECT s.*, p.nombre AS plan_nombre, p.activo AS plan_activo,
+           u.correo AS correo, u.nombre AS nombre
+      FROM suscripciones s
+      JOIN planes p ON p.id = s.plan_id
+      LEFT JOIN usuarios u ON u.id = ${SQL_PROPIETARIO}
+     WHERE s.estado = 'activa' AND s.renovacion_automatica = 1
+       AND s.fin IS NOT NULL AND s.anuncios_incluidos IS NOT NULL AND s.fin > ?
+       AND s.proximo_cargo IS NOT NULL AND substr(s.proximo_cargo, 1, 10) <= ?
+       AND s.renovacion_intentos < ${MAX_INTENTOS_RENOVACION}
+     ORDER BY s.fin`).all(t, diaDe(t))
+    .map((s) => ({ ...s, precio_vigente: conPrecioVigente(planPorId(s.plan_id)).precio_vigente }));
+}
+
+/* Anota un intento ANTES de cobrar: si el proceso muere a mitad, la
+   tarea no repite el intento el mismo día. El siguiente cae al comienzo
+   del día que sigue, mientras sea anterior al día de `fin` y queden
+   intentos; si no, NULL y la suscripción vence por el camino de siempre. */
+function anotarIntentoRenovacion(idSusc, momento = new Date()) {
+  const d = abrir();
+  const s = d.prepare('SELECT fin, renovacion_intentos AS n FROM suscripciones WHERE id = ?').get(idSusc);
+  if (!s) return null;
+  const intentos = (s.n || 0) + 1;
+  const sig = comienzoDelDiaSiguiente(momento);
+  const proximo = intentos < MAX_INTENTOS_RENOVACION && s.fin && sig.slice(0, 10) < s.fin.slice(0, 10) ? sig : null;
+  d.prepare('UPDATE suscripciones SET renovacion_intentos = ?, proximo_cargo = ? WHERE id = ?')
+    .run(intentos, proximo, idSusc);
+  return { intentos, proximo, quedan: proximo ? MAX_INTENTOS_RENOVACION - intentos : 0 };
+}
+
+/* Con qué nombre sale el comprobante de una renovación sola: el cliente
+   del último pago aprobado de la suscripción (con su RNC si lo tenía);
+   si no hay, los últimos datos fiscales de la organización; si tampoco,
+   el propietario. */
+function clienteDeRenovacion(idSusc) {
+  const d = abrir();
+  const s = d.prepare(`SELECT s.organizacion_id AS org, u.correo, u.nombre
+                         FROM suscripciones s LEFT JOIN usuarios u ON u.id = ${SQL_PROPIETARIO}
+                        WHERE s.id = ?`).get(idSusc);
+  if (!s) return {};
+  const ultimo = d.prepare(`SELECT intencion FROM pagos
+                             WHERE suscripcion_id = ? AND estado = 'aprobado' AND total > 0
+                             ORDER BY confirmado DESC, creado DESC, rowid DESC LIMIT 1`).get(idSusc);
+  if (ultimo) {
+    const c = intencionDe({ intencion: ultimo.intencion }).cliente;
+    if (c && typeof c === 'object' && Object.keys(c).length) return c;
+  }
+  return ultimosDatosFiscales(s.org) || { razonSocial: s.nombre || null, correo: s.correo || null };
+}
+
+/* El único anuncio de una suscripción (la del particular por publicación),
+   o null si tiene varios (capacidad del dealer) o ninguno. */
+function anuncioUnicoDeSuscripcion(idSusc) {
+  const filas = abrir().prepare(`SELECT id FROM anuncios WHERE suscripcion_id = ? AND estado <> 'borrador' LIMIT 2`).all(idSusc);
+  return filas.length === 1 ? filas[0].id : null;
+}
+
+/* Quien cobra solo necesita saber si la tarjeta se puede usar. */
+const tarjetaUsable = (m) => !!m && m.activo === 1 && !m.borrado && (m.fallos_seguidos || 0) < 3;
+
+/* Los avisos de 7 días: casilla puesta, activa, fin dentro de la semana y
+   aún sin aviso de ESTE ciclo (`renovacion_avisada` guarda el `fin`
+   avisado; al renovarse el fin cambia y el ciclo siguiente avisa otra
+   vez). Trae la tarjeta y la fecha del primer intento. */
+function suscripcionesPorAvisar(momento = new Date()) {
+  const t = new Date(momento).toISOString();
+  const d = abrir();
+  return d.prepare(`
+    SELECT s.*, p.nombre AS plan_nombre, p.activo AS plan_activo,
+           u.correo AS correo, u.nombre AS nombre
+      FROM suscripciones s
+      JOIN planes p ON p.id = s.plan_id
+      LEFT JOIN usuarios u ON u.id = ${SQL_PROPIETARIO}
+     WHERE s.estado = 'activa' AND s.renovacion_automatica = 1 AND s.metodo_pago_id IS NOT NULL
+       AND s.fin IS NOT NULL AND s.anuncios_incluidos IS NOT NULL
+       AND s.fin > ? AND s.fin <= ?
+       AND COALESCE(s.renovacion_avisada, '') <> s.fin
+     ORDER BY s.fin`).all(t, sumarDias(7, t))
+    .map((s) => {
+      const m = d.prepare('SELECT * FROM metodos_pago WHERE id = ? AND organizacion_id = ? AND borrado IS NULL')
+        .get(s.metodo_pago_id, s.organizacion_id) || null;
+      const primero = s.proximo_cargo && diaDe(s.proximo_cargo) > diaDe(t) ? diaDe(s.proximo_cargo) : diaDe(t);
+      return {
+        ...s, precio_vigente: conPrecioVigente(planPorId(s.plan_id)).precio_vigente,
+        marca: m ? m.marca : null, ultimos4: m ? m.ultimos4 : null,
+        usable: tarjetaUsable(m) && s.plan_activo === 1, primerIntento: primero,
+      };
+    });
+}
+
+const anotarAvisoRenovacion = (idSusc, fin) =>
+  abrir().prepare('UPDATE suscripciones SET renovacion_avisada = ? WHERE id = ?').run(fin, idSusc).changes > 0;
+
+/* Las tarjetas que vencen en 15 días o menos (o ya vencidas) y sostienen
+   alguna renovación automática viva. Vencen el último día del mes que
+   dice el perfil. Un aviso por tarjeta y vencimiento (`AAAA-MM`). */
+function tarjetasPorVencer(momento = new Date()) {
+  const t = new Date(momento).getTime();
+  const filas = abrir().prepare(`
+    SELECT m.*, u.correo AS correo, u.nombre AS nombre
+      FROM metodos_pago m
+      LEFT JOIN usuarios u ON u.id = (SELECT usuario_id FROM miembros WHERE organizacion_id = m.organizacion_id AND rol = 'propietario' LIMIT 1)
+     WHERE m.borrado IS NULL AND m.vence_mes IS NOT NULL AND m.vence_anio IS NOT NULL
+       AND EXISTS (SELECT 1 FROM suscripciones s WHERE s.metodo_pago_id = m.id AND s.estado = 'activa' AND s.renovacion_automatica = 1)`).all();
+  return filas
+    .map((m) => {
+      const mes = `${m.vence_anio}-${String(m.vence_mes).padStart(2, '0')}`;
+      const ultimoDia = Date.UTC(m.vence_anio, m.vence_mes, 0);
+      return { ...m, mes, faltan: (ultimoDia - t) / 86400000 };
+    })
+    .filter((m) => m.faltan <= 15 && m.aviso_vencimiento !== m.mes);
+}
+
+const anotarAvisoVencimiento = (idMetodo, mes) =>
+  abrir().prepare('UPDATE metodos_pago SET aviso_vencimiento = ? WHERE id = ?').run(mes, idMetodo).changes > 0;
 
 /* Los cobros de CardNet que llevan más de `minutos` esperando: la red de
    seguridad de la conciliación. Los que ya tienen el evento
@@ -4885,8 +5030,15 @@ const tipoRecordatorio = (vence, momento) => {
 
    No hay en la base una preferencia de «no quiero avisos» (D-10); si
    algún día existe, se filtra aquí. */
-function recordatoriosPendientes(momento = ahora()) {
+function recordatoriosPendientes(momento = ahora(), { omitirAutomaticas = false } = {}) {
   const d = abrir();
+  /* Con CardNet activo, una suscripción que se va a renovar sola (casilla
+     puesta y tarjeta usable) no recibe los avisos 7/3/1: dirían «vence»
+     de algo que no vencerá. Sin la opción, todo sale como antes. */
+  const seRenuevaSola = d.prepare(`SELECT 1 FROM suscripciones s
+                                    JOIN metodos_pago m ON m.id = s.metodo_pago_id
+                                   WHERE s.id = ? AND s.renovacion_automatica = 1
+                                     AND m.activo = 1 AND m.borrado IS NULL AND m.fallos_seguidos < 3`);
   const yaEsta = d.prepare(`SELECT 1 FROM recordatorios
                              WHERE anuncio_id = ? AND tipo = ? AND vence = ?
                                AND (resultado IS NULL OR resultado <> 'fallido')`);
@@ -4906,7 +5058,8 @@ function recordatoriosPendientes(momento = ahora()) {
       AND a.vence <= ?
     ORDER BY a.vence`).all(momento, sumarDias(7, momento))
     .map((a) => ({ ...conNombres(a), tipo: tipoRecordatorio(a.vence, momento) }))
-    .filter((a) => a.tipo && !yaEsta.get(a.id, a.tipo, a.vence));
+    .filter((a) => a.tipo && !yaEsta.get(a.id, a.tipo, a.vence)
+      && !(omitirAutomaticas && a.suscripcion_id && seRenuevaSola.get(a.suscripcion_id)));
 }
 
 /* Aparta un recordatorio ANTES de enviarlo. Es lo que impide dos
@@ -5633,7 +5786,9 @@ module.exports = {
   clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,
   borrarMetodoPago, enlazarMetodoPago, anotarResultadoTarjeta, anotarRespuestaProcesador, anotarEventoPago,
   eventosDePago, huboIntentoDeCobro, intencionAplicable, activarRenovacionConTarjeta, desactivarRenovacion,
-  reprogramarRenovacion, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
+  reprogramarRenovacion, suscripcionesPorRenovar, anotarIntentoRenovacion, clienteDeRenovacion,
+  anuncioUnicoDeSuscripcion, suscripcionesPorAvisar, anotarAvisoRenovacion, tarjetasPorVencer,
+  anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
   cifrarClave, claveCorrecta, cambiarClave,

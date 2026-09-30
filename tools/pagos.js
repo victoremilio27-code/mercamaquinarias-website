@@ -35,6 +35,50 @@ const correo = require('./correo');
    transporte y el cobro tiene que ver la sustitución. */
 const cardnet = require('./cardnet');
 const { transferenciaActiva } = require('./transferencia');
+const precios = require('../assets/precios.js');
+
+/* La referencia de un cobro: `TE-AAAA-XXXXXX`. Un solo generador para
+   comprar, ampliar, pagar un borrador, renovar a mano y renovar solo;
+   antes vivía en api.js y la renovación automática (que no pasa por
+   api.js) habría necesitado una copia. La `TE-` es del nombre viejo del
+   proyecto y se conserva: cambiarla rompería la búsqueda de referencias
+   ya emitidas. */
+const referenciaCobro = () =>
+  `TE-${new Date().getFullYear()}-${db.id().slice(0, 6).toUpperCase()}`;
+
+/* El cobro y la intención de RENOVAR una suscripción, la misma
+   construcción para la renovación manual (`pedirRenovacion`) y la
+   automática (`renovarAutomaticas`): renovar a mano y renovar solo cobran
+   lo mismo porque salen de aquí (R-04). El importe es el de la fórmula
+   única con el precio VIGENTE del plan (`precios.precioRenovacion`), el
+   cupo y el ciclo guardados en la suscripción; no se propone ningún
+   precio y del navegador no entra nada. `s` es una fila con
+   `precio_vigente`, `plan_nombre`, `plan_id`, `dias_ciclo` y
+   `anuncios_incluidos` (`suscripcionRenovable` o `suscripcionesPorRenovar`).
+
+   `automatica` marca la intención de la renovación que cobró sola la
+   tarea; `renovacionAutomatica` (`{ texto, aceptada }`) es la casilla que
+   el propietario marcó en una renovación manual con tarjeta. */
+function cobroDeRenovacion(s, { idAnuncio = null, cliente, correoCliente, automatica = false, renovacionAutomatica = null } = {}) {
+  const dias = s.dias_ciclo === 60 ? 60 : 30;
+  const cupo = s.anuncios_incluidos;
+  const cobro = {
+    ...precios.precioRenovacion({ precioUnitario: s.precio_vigente, cupo, dias }),
+    referencia: referenciaCobro(),
+  };
+  const concepto = idAnuncio
+    ? `Renovación ${s.plan_nombre} · ${nombreDeEquipo(db.anuncio(idAnuncio) || {})} · ${dias} días`
+    : `Renovación ${s.plan_nombre} · ${cupo} publicaciones · ${dias} días`;
+  const intencion = {
+    tipo: 'renovacion', idSusc: s.id, idAnuncio, idPlan: s.plan_id, cupo, dias,
+    concepto,
+    cliente,
+    correoCliente,
+    ...(automatica ? { automatica: true } : {}),
+    ...(renovacionAutomatica ? { renovacionAutomatica } : {}),
+  };
+  return { cobro, intencion };
+}
 
 /* Lo que se imprime como línea de detalle.
  *
@@ -635,7 +679,108 @@ async function reconciliar({ minutos = 10, ahora = new Date() } = {}) {
   return salida;
 }
 
+/* La renovación automática: la suscripción (una publicación del
+ * particular o la capacidad del dealer) se renueva sola con la tarjeta
+ * guardada, si y solo si su propietario marcó la casilla (05.3) y hay una
+ * tarjeta con la que cobrar.
+ *
+ * POR QUÉ EL CALENDARIO ES NUESTRO. CardNet no gestiona suscripciones
+ * (`PlanID` está «Reservado» en su API): lo único que ofrece es el mismo
+ * `purchase` con el token guardado. Se cobra por `cobrar` → `PROCESADORES
+ * .cardnet` → `cardnet.cobrar`, EXACTAMENTE igual que el primer pago
+ * (PAGO-04); si CardNet exigiera un indicador de cobro recurrente, va solo
+ * en `cardnet.cuerpoCompra` [POR CONFIRMAR EN LAB], nunca aquí.
+ *
+ * POR QUÉ TRES INTENTOS Y SIEMPRE ANTES DE `fin`. Las redes penalizan
+ * reintentar sin límite un cobro rechazado, y el modelo pide respetar la
+ * fecha de expiración: los intentos son a fin − 3, fin − 2 y fin − 1 (por
+ * DÍAS, ver db.suscripcionesPorRenovar). Si los tres fallan, la
+ * suscripción vence en su fecha por el camino de siempre y el cliente
+ * recibió tres correos con cómo renovar a mano.
+ *
+ * Nunca cobra si el importe no sale de `cobroDeRenovacion`, ni si hay
+ * una renovación o una ampliación pendiente en la suscripción (05.4: una
+ * sola operación de capacidad a la vez). Repetirla el mismo día no crea
+ * otro pago: el intento se anota ANTES de cobrar y la consulta ya no
+ * devuelve la suscripción hasta el día siguiente.
+ *
+ * Devuelve `{ revisadas, cobradas, rechazadas, pendientes, omitidas }`;
+ * las rechazadas llevan lo que hace falta para el correo. Cada
+ * suscripción en su `try/catch`: una rota no impide cobrar las demás. */
+async function renovarAutomaticas({ ahora = new Date() } = {}) {
+  if (!cardnet.activo()) return { apagado: true };
+  const salida = { revisadas: 0, cobradas: [], gratuitas: [], rechazadas: [], pendientes: [], omitidas: [] };
+  const omitir = (s, motivo) => salida.omitidas.push({ idSusc: s.id, motivo });
+
+  for (const s of db.suscripcionesPorRenovar(ahora)) {
+    salida.revisadas++;
+    try {
+      if (!s.plan_activo) { omitir(s, 'el plan ya no se ofrece'); continue; }
+      const metodo = s.metodo_pago_id ? db.metodoPagoDe(s.metodo_pago_id, s.organizacion_id) : null;
+      if (!metodo) { omitir(s, 'la tarjeta ya no existe'); continue; }
+      if (metodo.activo !== 1) { omitir(s, 'la tarjeta no está activa'); continue; }
+      if ((metodo.fallos_seguidos || 0) >= 3) { omitir(s, 'la tarjeta está pausada por tres fallos seguidos'); continue; }
+      if (db.pagoPendienteDeRenovacion(s.id)) { omitir(s, 'ya tiene una renovación pendiente'); continue; }
+      if (db.pagoPendienteDeAmpliacion(s.id)) { omitir(s, 'ya tiene una ampliación pendiente'); continue; }
+
+      // Antes de cobrar: un fallo a mitad no repite el intento el mismo día.
+      const intento = db.anotarIntentoRenovacion(s.id, ahora);
+      const { cobro, intencion } = cobroDeRenovacion(s, {
+        idAnuncio: s.anuncios_incluidos === 1 ? db.anuncioUnicoDeSuscripcion(s.id) : null,
+        cliente: db.clienteDeRenovacion(s.id),
+        correoCliente: s.correo || null,
+        automatica: true,
+      });
+      /* Importe cero (la promoción de lanzamiento): no hay nada que cobrar
+         ni comprobante que emitir, y `registrarCobro` lo rechaza. Se
+         renueva por el mismo camino que la renovación manual de importe
+         cero. */
+      if (!(cobro.total > 0)) {
+        db.renovarSinCosto({ idOrg: s.organizacion_id, idSusc: s.id, idAnuncio: intencion.idAnuncio, dias: intencion.dias, cobro });
+        salida.gratuitas.push({ idSusc: s.id, referencia: cobro.referencia });
+        continue;
+      }
+      let pago;
+      try {
+        pago = db.registrarCobro({
+          idOrg: s.organizacion_id, idSusc: s.id, idAnuncio: intencion.idAnuncio,
+          cobro: { ...cobro, procesador: 'cardnet' }, intencion,
+        });
+      } catch (e) {
+        if (e && e.codigo === 409) { omitir(s, 'ya tiene una renovación pendiente'); continue; }
+        throw e;
+      }
+      db.enlazarMetodoPago(pago.id, metodo.id);
+
+      EN_CURSO.add(pago.id);
+      let r;
+      try {
+        r = await cobrar(db.pagoPorId(pago.id));
+      } finally {
+        EN_CURSO.delete(pago.id);
+      }
+
+      if (r.estado === 'aprobado') {
+        salida.cobradas.push({ idSusc: s.id, idPago: pago.id, referencia: pago.referencia, total: pago.total });
+      } else if (r.estado === 'rechazado') {
+        salida.rechazadas.push({
+          idSusc: s.id, idAnuncio: intencion.idAnuncio || null, correo: s.correo || null, nombre: s.nombre || null,
+          concepto: intencion.concepto, motivo: r.motivo || (r.pago && r.pago.motivo) || null,
+          intento: intento.intentos, quedan: intento.quedan, fin: s.fin,
+        });
+      } else {
+        salida.pendientes.push({ idSusc: s.id, idPago: pago.id, referencia: pago.referencia });
+      }
+    } catch (e) {
+      omitir(s, `error: ${e.message}`);
+      console.error(`pagos: la renovación automática de ${s.id} falló · ${e.message}`);
+    }
+  }
+  return salida;
+}
+
 module.exports = {
+  referenciaCobro, cobroDeRenovacion, renovarAutomaticas,
   reconciliar, confirmarPago, rechazarPago, cobrar, resolver, PROCESADORES, lineaDeCupos,
   metodosDeCobro, procesadorDeCobro, avisarAnuncioPublicado, nombreDeEquipo,
   prepararCaptura, registrarTarjeta, confirmarConTarjeta, activarTarjeta,

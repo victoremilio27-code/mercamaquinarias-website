@@ -1277,7 +1277,136 @@ const enviarBienvenida = ({ para, nombre, esDealer }) => enviar({
   }),
 });
 
+/* ── Renovación automática con tarjeta (06-08) ────────────
+   Tres correos al propietario de la cuenta, nunca a un contador. De tú,
+   como los avisos de 7/3/1 días que sustituyen. Solo marca y últimos
+   cuatro dígitos de la tarjeta: jamás el token. El soporte es el correo y
+   el asistente del sitio; no hay teléfono. */
+const dineroRD = (n) => `RD$${Number(n).toLocaleString('en-US')}`;
+const enlacePanel = (idAnuncio) => (idAnuncio
+  ? `${SITIO}/panel.html?renovar=${encodeURIComponent(idAnuncio)}`
+  : `${SITIO}/panel.html`);
+const nombreDeTarjeta = (marca, ultimos4) => [marca, ultimos4 ? `terminada en ${ultimos4}` : null].filter(Boolean).join(' ') || 'tu tarjeta';
+
+/* Siete días antes: el importe, la tarjeta, cuándo se intentará el cobro y
+   cómo apagarlo. Con `noSeRenovara` (la tarjeta ya no sirve o el plan ya no
+   se ofrece) dice lo contrario, para que nadie confíe en una renovación
+   que no va a ocurrir. `total` en 0 (promoción) se dice sin costo. */
+function enviarRenovacionProxima({ para, nombre, concepto, total, fecha: cuando, marca, ultimos4, noSeRenovara = false, idAnuncio = null }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const tarjetaTxt = nombreDeTarjeta(marca, ultimos4);
+  const importe = Number(total) > 0 ? `${dineroRD(total)} (ITBIS incluido)` : 'sin costo';
+  const enlace = enlacePanel(idAnuncio);
+  const asunto = noSeRenovara
+    ? 'Tu renovación automática no se podrá cobrar'
+    : 'Tu renovación automática se cobrará pronto';
+  const parrafo = noSeRenovara
+    ? `Tu suscripción (${concepto}) vence pronto y con ${tarjetaTxt} NO podremos renovarlo solo. Renuévalo tú desde el panel para no perder la publicación.`
+    : `El ${fecha(cuando)} intentaremos renovar tu suscripción (${concepto}) con ${tarjetaTxt}, por ${importe}.`;
+  return enviar({
+    para,
+    responderA: BUZONES.facturacion,
+    asunto: `${asunto} · MercaMaquinarias`,
+    texto: [
+      saludo, '',
+      parrafo,
+      noSeRenovara ? null : 'Si no quieres que se renueve solo, apágalo en tu panel antes de esa fecha, o cambia de tarjeta.',
+      noSeRenovara ? null : 'Si la tarjeta es rechazada, te avisaremos y podrás renovar a mano.',
+      '',
+      `Tu panel: ${enlace}`, '',
+      `Escríbenos a ${BUZONES.facturacion} o usa el asistente del sitio si necesitas ayuda.`, '',
+      'MercaMaquinarias',
+    ].filter((l) => l !== null).join('\n'),
+    html: envoltura({
+      titulo: asunto,
+      saludo,
+      responderA: BUZONES.facturacion,
+      parrafos: [esc(parrafo)],
+      extra: tarjeta(filas([
+        ['Renovación', concepto],
+        ['Importe', importe],
+        ['Tarjeta', tarjetaTxt],
+        [noSeRenovara ? 'Vence' : 'Primer intento', fecha(cuando)],
+      ])),
+      accion: { texto: noSeRenovara ? 'Renovar ahora' : 'Ver o apagar la renovación', url: enlace },
+      nota: `Si necesitas ayuda escríbenos a <a href="mailto:${esc(BUZONES.facturacion)}" style="color:${AMBAR}">${esc(BUZONES.facturacion)}</a> o usa el asistente del sitio.`,
+    }),
+  });
+}
+
+/* Cada rechazo: el motivo del banco, el intento, cuántos quedan y cómo
+   renovar a mano. En el último dice que no se reintentará. */
+function enviarRenovacionRechazada({ para, nombre, concepto, motivo, intento, quedan, fin, idAnuncio = null }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const enlace = enlacePanel(idAnuncio);
+  const ultimo = !(quedan > 0);
+  const linea = ultimo
+    ? `No pudimos renovar tu suscripción (${concepto}) y no lo intentaremos de nuevo. Vence el ${fecha(fin)}: renuévalo a mano desde el panel para seguir publicado.`
+    : `No pudimos renovar tu suscripción (${concepto}): intento ${intento} de 3. Volveremos a intentarlo mañana; te quedan ${quedan} ${quedan === 1 ? 'intento' : 'intentos'} antes del ${fecha(fin)}. También puedes renovarlo a mano o cambiar de tarjeta desde el panel.`;
+  const asunto = ultimo ? 'No pudimos renovar tu publicación' : 'Tu renovación automática fue rechazada';
+  return enviar({
+    para,
+    responderA: BUZONES.facturacion,
+    asunto: `${asunto} · MercaMaquinarias`,
+    texto: [
+      saludo, '',
+      linea, '',
+      `Motivo del banco: ${motivo || 'el banco no dio un motivo'}`, '',
+      'No se te cobró nada por este intento y no se emitió comprobante.',
+      `Renovar a mano: ${enlace}`, '',
+      `Escríbenos a ${BUZONES.facturacion} o usa el asistente del sitio si necesitas ayuda.`, '',
+      'MercaMaquinarias',
+    ].join('\n'),
+    html: envoltura({
+      titulo: asunto,
+      saludo,
+      responderA: BUZONES.facturacion,
+      parrafos: [esc(linea), 'No se te cobró nada por este intento y no se emitió comprobante.'],
+      extra: tarjeta(filas([
+        ['Renovación', concepto],
+        ['Motivo del banco', motivo || 'el banco no dio un motivo'],
+        ['Intento', `${intento} de 3`],
+        ['Vence', fecha(fin)],
+      ])),
+      accion: { texto: 'Renovar a mano', url: enlace },
+      nota: `Si necesitas ayuda escríbenos a <a href="mailto:${esc(BUZONES.facturacion)}" style="color:${AMBAR}">${esc(BUZONES.facturacion)}</a> o usa el asistente del sitio.`,
+    }),
+  });
+}
+
+/* La tarjeta guardada vence este mes (o ya venció): sin una vigente la
+   renovación automática dejará de cobrarse. */
+function enviarTarjetaPorVencer({ para, nombre, marca, ultimos4, venceMes, venceAnio }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const tarjetaTxt = nombreDeTarjeta(marca, ultimos4);
+  const vence = `${String(venceMes).padStart(2, '0')}/${venceAnio}`;
+  const enlace = `${SITIO}/panel.html`;
+  const linea = `${tarjetaTxt.charAt(0).toUpperCase()}${tarjetaTxt.slice(1)} vence en ${vence}. Agrega una tarjeta vigente en tu panel para que tu renovación automática siga funcionando.`;
+  return enviar({
+    para,
+    responderA: BUZONES.facturacion,
+    asunto: 'Tu tarjeta guardada está por vencer · MercaMaquinarias',
+    texto: [
+      saludo, '',
+      linea, '',
+      `Tu panel: ${enlace}`, '',
+      `Escríbenos a ${BUZONES.facturacion} o usa el asistente del sitio si necesitas ayuda.`, '',
+      'MercaMaquinarias',
+    ].join('\n'),
+    html: envoltura({
+      titulo: 'Tu tarjeta guardada está por vencer',
+      saludo,
+      responderA: BUZONES.facturacion,
+      parrafos: [esc(linea)],
+      extra: tarjeta(filas([['Tarjeta', tarjetaTxt], ['Vence', vence]])),
+      accion: { texto: 'Cambiar de tarjeta', url: enlace },
+      nota: `Si necesitas ayuda escríbenos a <a href="mailto:${esc(BUZONES.facturacion)}" style="color:${AMBAR}">${esc(BUZONES.facturacion)}</a> o usa el asistente del sitio.`,
+    }),
+  });
+}
+
 module.exports = {
+  enviarRenovacionProxima, enviarRenovacionRechazada, enviarTarjetaPorVencer,
   enviar, enviarCodigo, enviarAvisoCambioClave,
   enviarSolicitudDealer, enviarResolucionDealer, enviarSolicitudServicio,
   enviarAnuncioPublicado, asuntoRecordatorio, enviarRecordatorioVencimiento, enviarAnuncioVencido,
