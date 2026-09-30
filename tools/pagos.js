@@ -568,8 +568,75 @@ function anularPendienteSinCobro(idPago) {
   });
 }
 
+/* La red de seguridad del cobro con tarjeta: cada 10 minutos (temporizador
+   `mercamaquinarias-pagos`) completa lo que ni el navegador ni el aviso de
+   CardNet completaron. Ninguna integración de pago debe depender solo del
+   aviso: el droplet se reinicia en cada despliegue y un aviso que llega
+   con el servidor caído se pierde.
+
+   Solo mira pagos de más de `minutos` (10): un comprador puede estar aún
+   confirmando, y `EN_CURSO` solo protege dentro de UN proceso; esta tarea
+   corre en otro. Aun así, lo que se cuele es seguro: el `UniqueID` es la
+   referencia del pago y `confirmarPago` es idempotente, así que un doble
+   intento da un solo comprobante y un solo NCF.
+
+   - con `procesador_id`: se vuelve a preguntar a CardNet;
+   - sin él pero con intento anotado (`cobro-enviado`): la respuesta se
+     perdió, y se reenvía `purchase` con el mismo `UniqueID`, que devuelve
+     el resultado ya obtenido sin cobrar dos veces. NO se mira la guarda:
+     rechazar un cobro que pudo entrar lo haría invisible (R-05);
+   - sin intento: la tarjeta nunca se capturó; pasadas 24 horas se anula
+     como abandonado, sin NCF.
+   Un pago que pasa de pendiente a aprobado aquí es un descuadre: queda un
+   evento `descuadre` que sale en el informe a gerencia.
+   Cada pago en su `try/catch`: uno roto no impide revisar los demás. */
+async function reconciliar({ minutos = 10, ahora = new Date() } = {}) {
+  if (!cardnet.activo()) return { apagado: true, revisados: 0 };
+  const salida = { revisados: 0, recuperados: [], rechazados: 0, fallidos: 0 };
+  const ABANDONO_MS = 24 * 3600 * 1000;
+
+  for (const p of db.pagosCardnetPorReconciliar({ minutos, ahora })) {
+    if (EN_CURSO.has(p.id)) continue;
+    try {
+      let respuesta = null;
+      if (p.procesador_id) {
+        respuesta = await cardnet.consultarCompra(p.procesador_id);
+      } else if (p.huboIntento) {
+        respuesta = await PROCESADORES.cardnet(p);
+      } else if (new Date(ahora).getTime() - new Date(p.creado).getTime() > ABANDONO_MS) {
+        salida.revisados++;
+        const r = rechazarPago(p.id, { codigo: 'abandonado', motivo: 'abandonado: la tarjeta nunca se capturó' });
+        if (r.cambiado) salida.rechazados++;
+        continue;
+      } else {
+        continue;
+      }
+
+      salida.revisados++;
+      // Sin respuesta de CardNet (red caída, 5xx): el pago sigue pendiente.
+      if (respuesta.ok === false) { salida.fallidos++; continue; }
+
+      const antes = db.pagoPorId(p.id);
+      const r = resolver(antes, { ...respuesta, origen: 'reconciliacion' });
+      if (antes.estado === 'pendiente' && r.estado === 'aprobado') {
+        db.anotarEventoPago({
+          pagoId: p.id, procesador: 'cardnet', origen: 'reconciliacion', tipo: 'descuadre',
+          cuerpo: { referencia: antes.referencia, total: antes.total, procesadorId: respuesta.procesadorId || antes.procesador_id || null },
+        });
+        salida.recuperados.push({ id: p.id, referencia: antes.referencia, total: antes.total });
+      } else if (r.estado === 'rechazado') {
+        salida.rechazados++;
+      }
+    } catch (e) {
+      salida.fallidos++;
+      console.error(`pagos: la conciliación falló con el pago ${p.id} · ${e.message}`);
+    }
+  }
+  return salida;
+}
+
 module.exports = {
-  confirmarPago, rechazarPago, cobrar, resolver, PROCESADORES, lineaDeCupos,
+  reconciliar, confirmarPago, rechazarPago, cobrar, resolver, PROCESADORES, lineaDeCupos,
   metodosDeCobro, procesadorDeCobro, avisarAnuncioPublicado, nombreDeEquipo,
   prepararCaptura, registrarTarjeta, confirmarConTarjeta, activarTarjeta,
   pendienteSinCobro, anularPendienteSinCobro,

@@ -3953,6 +3953,45 @@ function pagosCardnetPorReconciliar({ minutos = 10, ahora: hasta = new Date() } 
     .filter((p) => !p.sinAplicar);
 }
 
+/* Lo que sale en la sección «Pasarela de pago» del informe a gerencia
+   (06-06). Tres consultas, todas de lectura.
+
+   `descuadresEntre`: los pagos que la conciliación tuvo que completar
+   porque ni el navegador ni el aviso de CardNet lo hicieron. `hasta` es
+   un día (como en `informe`) y cuenta entero. */
+function descuadresEntre(desde, hasta) {
+  const tope = /^\d{4}-\d{2}-\d{2}$/.test(String(hasta)) ? `${hasta}T23:59:59Z` : hasta;
+  return abrir().prepare(`SELECT p.id, p.referencia, p.total, e.creado
+                            FROM pagos_eventos e JOIN pagos p ON p.id = e.pago_id
+                           WHERE e.tipo = 'descuadre' AND e.creado >= ? AND e.creado <= ?
+                           ORDER BY e.id`).all(desde, tope);
+}
+
+/* Pendientes de tarjeta que llevan más de `minutos` esperando. Los que ya
+   tienen `aprobado-sin-aplicar` no se cuentan aquí: salen en
+   `cobrosSinAplicar`, y contarlos dos veces daría una cifra que no cuadra. */
+function pagosCardnetAtascados({ minutos = 60, ahora: hasta = new Date() } = {}) {
+  const limite = new Date(new Date(hasta).getTime() - minutos * 60000).toISOString();
+  return abrir().prepare(`SELECT p.id, p.referencia, p.total, p.creado FROM pagos p
+                           WHERE p.procesador = 'cardnet' AND p.estado = 'pendiente' AND p.creado < ?
+                             AND NOT EXISTS (SELECT 1 FROM pagos_eventos e
+                                              WHERE e.pago_id = p.id AND e.tipo = 'aprobado-sin-aplicar')
+                           ORDER BY p.creado`).all(limite);
+}
+
+/* Cobros que el banco aprobó y que no se pudieron aplicar: hay que
+   devolver el dinero a mano. Se busca por el EVENTO y no por el estado
+   del pago: un aprobado de CardNet que llega sobre un pago ya rechazado
+   (`reemplazado`, `abandonado`) queda `rechazado` en nuestra base, y
+   buscar «pendientes» lo dejaría invisible. Un pago sale una sola vez. */
+function cobrosSinAplicar() {
+  return abrir().prepare(`SELECT p.id, p.referencia, p.total, p.estado, p.organizacion_id,
+                                 MIN(e.creado) AS fecha
+                            FROM pagos_eventos e JOIN pagos p ON p.id = e.pago_id
+                           WHERE e.tipo = 'aprobado-sin-aplicar'
+                           GROUP BY p.id ORDER BY MIN(e.id)`).all();
+}
+
 /* ── Membresía de las cuentas internas ──────────────────────
    Las cuentas del equipo no compran capacidad. Se les da una única
    membresía Premium sin límite y sin fecha de fin, creada la primera
@@ -5195,6 +5234,13 @@ function informe({ desde, hasta }) {
                       FROM metricas_diarias WHERE dia >= ? AND dia <= ?`, desde, hasta),
 
     trafico: trafico({ desde, hasta }),
+
+    // Pasarela de pago: solo ruidosa cuando algo no cuadra (ver tareas.js).
+    pasarela: {
+      recuperados: descuadresEntre(desde, hasta),
+      atascados: pagosCardnetAtascados({ minutos: 60 }).length,
+      sinAplicar: cobrosSinAplicar(),
+    },
   };
 }
 
@@ -5587,7 +5633,7 @@ module.exports = {
   clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,
   borrarMetodoPago, enlazarMetodoPago, anotarResultadoTarjeta, anotarRespuestaProcesador, anotarEventoPago,
   eventosDePago, huboIntentoDeCobro, intencionAplicable, activarRenovacionConTarjeta, desactivarRenovacion,
-  reprogramarRenovacion, pagosCardnetPorReconciliar,
+  reprogramarRenovacion, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
   cifrarClave, claveCorrecta, cambiarClave,
