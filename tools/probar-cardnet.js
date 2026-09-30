@@ -468,6 +468,112 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     ok(hallazgos.length === 0, hallazgos.length ? `campos de tarjeta en el código:\n        ${hallazgos.join('\n        ')}` : 'ningún campo de tarjeta en tools/, assets/, db/, deploy/ ni en los .html');
   }
 
+  console.log('\n13. La migración 2026-10-cardnet: última, única, sin duplicar lo de la 05.3');
+  {
+    const { DatabaseSync } = require('node:sqlite');
+    const { execFileSync } = require('child_process');
+    const db = require('./db');
+    const d = db.abrir();
+
+    /* Es la última de MIGRACIONES: se lee el orden en que quedaron
+       anotadas y el texto del archivo. */
+    const anotadas = d.prepare('SELECT id FROM migraciones ORDER BY aplicada, rowid').all().map((r) => r.id);
+    ok(anotadas[anotadas.length - 1] === '2026-10-cardnet', `es la última migración anotada (${anotadas[anotadas.length - 1]})`);
+    ok(anotadas.filter((x) => x === '2026-10-cardnet').length === 1, 'anotada una sola vez');
+
+    const fuente = fs.readFileSync(path.join(__dirname, 'db.js'), 'utf8');
+    const desde = fuente.indexOf("['2026-10-cardnet', [");
+    const cuerpo = fuente.slice(desde, fuente.indexOf('\n];', desde));
+    ok(desde > 0 && fuente.indexOf("['2026-10-cardnet'", desde + 1) === -1, 'una sola entrada en el archivo');
+    ok(fuente.indexOf("['2026-09-renovacion', [") < desde, 'va detrás de 2026-09-renovacion');
+    const REPETIDAS = ['renovacion_automatica', 'renovacion_aceptada', 'renovacion_texto', 'proximo_cargo'];
+    ok(REPETIDAS.every((c) => !cuerpo.includes(c)), 'no vuelve a crear el consentimiento de la 05.3 ni proximo_cargo');
+
+    /* Una base vieja migrada y una nueva tienen las mismas columnas: la
+       vieja sale de vaciar la migración de una copia de la nueva. */
+    const copia = path.join(BANCO, 'vieja.db');
+    d.exec(`VACUUM INTO '${copia.replace(/'/g, "''")}'`);
+    const v = new DatabaseSync(copia);
+    v.exec("DELETE FROM migraciones WHERE id = '2026-10-cardnet'");
+    for (const x of ['ux_pagos_cardnet_referencia', 'ix_pagos_procesador_id', 'ux_metodos_perfil']) v.exec(`DROP INDEX IF EXISTS ${x}`);
+    for (const x of ['tr_pagos_eventos_sin_cambios', 'tr_pagos_eventos_sin_borrado']) v.exec(`DROP TRIGGER IF EXISTS ${x}`);
+    v.exec('DROP TABLE pagos_eventos');
+    v.exec('DROP TABLE clientes_procesador');
+    const NUEVAS = {
+      pagos: ['procesador_id', 'autorizacion', 'codigo_respuesta', 'motivo', 'intentos'],
+      metodos_pago: ['procesador_cliente_id', 'procesador_perfil_id', 'activo', 'fallos_seguidos', 'borrado', 'aviso_vencimiento'],
+      suscripciones: ['metodo_pago_id', 'renovacion_intentos', 'renovacion_avisada'],
+    };
+    for (const [tabla, cols] of Object.entries(NUEVAS)) for (const c of [...cols].reverse()) v.exec(`ALTER TABLE ${tabla} DROP COLUMN ${c}`);
+
+    /* Filas de antes: dos demo con la MISMA referencia (no impiden
+       migrar) y una suscripción con su consentimiento. */
+    const t = new Date().toISOString();
+    v.exec("INSERT INTO organizaciones (id, tipo, nombre, creada) VALUES ('org-vieja', 'particular', 'Vieja', '" + t + "')");
+    const pg = v.prepare(`INSERT INTO pagos (id, organizacion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
+                          VALUES (?, 'org-vieja', 100, 18, 118, 'aprobado', 'REF-REPETIDA', ?, ?)`);
+    pg.run('pago-viejo-1', 'demo', t);
+    pg.run('pago-viejo-2', 'transferencia', t);
+    v.exec(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, estado, precio_pactado, inicio, creada,
+                                       renovacion_automatica, renovacion_aceptada, renovacion_texto)
+            VALUES ('susc-vieja', 'org-vieja', 'estandar', 'vigencia', 'activa', 1800, '${t}', '${t}', 1, '2026-09-01T00:00:00.000Z', 'texto viejo')`);
+    v.close();
+
+    const salida = execFileSync(process.execPath, ['-e', `
+      const db = require(${JSON.stringify(path.join(__dirname, 'db.js'))});
+      const d = db.abrir();
+      const cols = (t) => d.prepare('PRAGMA table_info(' + t + ')').all().map((c) => c.name + ':' + c.type + ':' + c.notnull + ':' + c.dflt_value).sort();
+      const susc = d.prepare("SELECT renovacion_automatica AS a, renovacion_aceptada AS b, renovacion_texto AS c, renovacion_intentos AS i FROM suscripciones WHERE id = 'susc-vieja'").get();
+      const veces = d.prepare("SELECT COUNT(*) AS n FROM migraciones WHERE id = '2026-10-cardnet'").get().n;
+      const pagos = d.prepare("SELECT COUNT(*) AS n FROM pagos WHERE referencia = 'REF-REPETIDA'").get().n;
+      let cardnetDoble = null;
+      const ins = d.prepare("INSERT INTO pagos (id, organizacion_id, subtotal, itbis, total, estado, referencia, procesador, creado) VALUES (?, 'org-vieja', 1, 0, 1, 'pendiente', 'REF-CN', 'cardnet', 'x')");
+      ins.run('cn-1');
+      try { ins.run('cn-2'); } catch (e) { cardnetDoble = e.message; }
+      console.log(JSON.stringify({ pagos: cols('pagos'), metodos: cols('metodos_pago'), susc: cols('suscripciones'), suscFila: susc, veces, repetidas: pagos, cardnetDoble }));
+    `], { env: { ...process.env, MERCA_DB: copia }, encoding: 'utf8' });
+    const vieja = JSON.parse(salida.trim().split('\n').pop());
+    const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => `${c.name}:${c.type}:${c.notnull}:${c.dflt_value}`).sort();
+    ok(JSON.stringify(vieja.pagos) === JSON.stringify(cols('pagos')), 'pagos: la base vieja migrada y la nueva tienen las mismas columnas');
+    ok(JSON.stringify(vieja.metodos) === JSON.stringify(cols('metodos_pago')), 'metodos_pago: mismas columnas');
+    ok(JSON.stringify(vieja.susc) === JSON.stringify(cols('suscripciones')), 'suscripciones: mismas columnas');
+    ok(vieja.veces === 1, 'la migración corrió una vez sobre la base vieja');
+    ok(vieja.repetidas === 2, 'dos pagos antiguos con la misma referencia no impidieron migrar');
+    ok(vieja.suscFila.a === 1 && vieja.suscFila.c === 'texto viejo' && vieja.suscFila.b === '2026-09-01T00:00:00.000Z' && vieja.suscFila.i === 0,
+      'la suscripción vieja conserva su consentimiento y sale con intentos = 0');
+    ok(/UNIQUE constraint failed/i.test(vieja.cardnetDoble || ''), 'dos pagos cardnet con la misma referencia: el segundo lanza por UNIQUE');
+
+    /* Abrir de nuevo no reaplica: la base de esta prueba ya se abrió al
+       cargar db.js y otra vez arriba. */
+    const otraVez = execFileSync(process.execPath, ['-e', `
+      const d = require(${JSON.stringify(path.join(__dirname, 'db.js'))}).abrir();
+      console.log(d.prepare("SELECT COUNT(*) AS n FROM migraciones WHERE id = '2026-10-cardnet'").get().n);
+    `], { env: { ...process.env, MERCA_DB: process.env.MERCA_DB }, encoding: 'utf8' });
+    ok(otraVez.trim() === '1', 'abrir la base otra vez no vuelve a anotar la migración');
+
+    /* Referencias iguales en demo y transferencia entran; en cardnet no. */
+    const ref = 'REF-' + Date.now();
+    const insp = d.prepare(`INSERT INTO pagos (id, organizacion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
+                            SELECT ?, id, 1, 0, 1, 'pendiente', ?, ?, ? FROM organizaciones LIMIT 1`);
+    d.exec("INSERT OR IGNORE INTO organizaciones (id, tipo, nombre, creada) VALUES ('org-c13', 'particular', 'C13', '" + t + "')");
+    const insq = d.prepare(`INSERT INTO pagos (id, organizacion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
+                            VALUES (?, 'org-c13', 1, 0, 1, 'pendiente', ?, ?, ?)`);
+    void insp;
+    insq.run('c13-a', ref, 'demo', t);
+    ok(lanza(() => insq.run('c13-b', ref, 'demo', t)) === null, 'dos demo con la misma referencia: ambos entran');
+    insq.run('c13-c', ref + 'x', 'cardnet', t);
+    ok(/UNIQUE/i.test((lanza(() => insq.run('c13-d', ref + 'x', 'cardnet', t)) || {}).message || ''), 'dos cardnet con la misma referencia: el segundo lanza');
+
+    /* pagos_eventos es de solo añadir. */
+    d.prepare("INSERT INTO pagos_eventos (pago_id, procesador, origen, tipo, cuerpo, creado) VALUES ('c13-a', 'cardnet', 'prueba', 'x', '{}', ?)").run(t);
+    ok(/no se modifican/.test((lanza(() => d.exec("UPDATE pagos_eventos SET tipo = 'y'")) || {}).message || ''), 'UPDATE de pagos_eventos: aborta con el texto del disparador');
+    ok(/no se borran/.test((lanza(() => d.exec('DELETE FROM pagos_eventos')) || {}).message || ''), 'DELETE de pagos_eventos: aborta con el texto del disparador');
+
+    /* Columnas con DEFAULT en filas antiguas. */
+    const f = d.prepare("SELECT intentos FROM pagos WHERE id = 'c13-a'").get();
+    ok(f.intentos === 0, 'intentos de un pago sin cobrar vale 0');
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);

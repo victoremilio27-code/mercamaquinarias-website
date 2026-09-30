@@ -1130,6 +1130,82 @@ const MIGRACIONES = [
     `CREATE INDEX IF NOT EXISTS ix_suscripciones_fin ON suscripciones (fin)
        WHERE estado = 'activa' AND fin IS NOT NULL`,
   ]],
+
+  /* Fase 6: lo que CardNet devuelve necesita dónde vivir.
+
+     - El pago de pasarela guarda el id de la compra en CardNet, la
+       autorización, el código y el motivo del rechazo y cuántos
+       intentos de cobro lleva: sin eso la conciliación no tiene a qué
+       agarrarse cuando el aviso no llega.
+     - `pagos_eventos` es el rastro de solo añadir de todo lo que se
+       envió y se recibió (avisos, consultas, cobros). Como la bitácora
+       de administración, los disparadores abortan un UPDATE o un DELETE
+       aunque alguien escriba SQL a mano.
+     - `ux_pagos_cardnet_referencia` es la clave de idempotencia: la
+       referencia viaja en `UniqueID` y dos cobros de pasarela con la
+       misma serían dos cargos a la tarjeta por una compra. Es PARCIAL
+       porque las referencias antiguas (demo, transferencia) nunca se
+       garantizaron únicas: un índice total podría tumbar el arranque en
+       producción con datos que ya existen.
+     - `metodos_pago` gana los identificadores de CardNet, el borrado
+       lógico (un pago cobrado con la tarjeta tiene que seguir
+       apuntándole) y los contadores de fallos y de aviso de vencimiento.
+       Sigue sin admitir nada más que el token y lo mínimo para
+       reconocer la tarjeta.
+     - `suscripciones` solo gana tarjeta, intentos y el ciclo ya avisado.
+       El consentimiento (aceptación y texto) NO se vuelve a crear: lo
+       creó `2026-09-renovacion`. La fecha del próximo intento reutiliza
+       `proximo_cargo`, que existe desde el esquema original y nadie
+       escribía.
+
+     Los índices sobre columnas nuevas de tablas existentes van solo
+     aquí, no en db/schema.sql: abrir() ejecuta el esquema antes de
+     migrar(). */
+  ['2026-10-cardnet', [
+    'ALTER TABLE pagos ADD COLUMN procesador_id TEXT',
+    'ALTER TABLE pagos ADD COLUMN autorizacion TEXT',
+    'ALTER TABLE pagos ADD COLUMN codigo_respuesta TEXT',
+    'ALTER TABLE pagos ADD COLUMN motivo TEXT',
+    'ALTER TABLE pagos ADD COLUMN intentos INTEGER NOT NULL DEFAULT 0',
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_cardnet_referencia ON pagos (referencia) WHERE procesador = 'cardnet'",
+    'CREATE INDEX IF NOT EXISTS ix_pagos_procesador_id ON pagos (procesador, procesador_id)',
+    'ALTER TABLE metodos_pago ADD COLUMN procesador_cliente_id TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN procesador_perfil_id TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN activo INTEGER NOT NULL DEFAULT 1',
+    'ALTER TABLE metodos_pago ADD COLUMN fallos_seguidos INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE metodos_pago ADD COLUMN borrado TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN aviso_vencimiento TEXT',
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_metodos_perfil ON metodos_pago (organizacion_id, procesador, procesador_perfil_id)
+       WHERE procesador_perfil_id IS NOT NULL`,
+    'ALTER TABLE suscripciones ADD COLUMN metodo_pago_id TEXT',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_intentos INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_avisada TEXT',
+    `CREATE TABLE IF NOT EXISTS clientes_procesador (
+       organizacion_id TEXT NOT NULL,
+       procesador      TEXT NOT NULL,
+       cliente_id      TEXT NOT NULL,
+       creado          TEXT NOT NULL,
+       PRIMARY KEY (organizacion_id, procesador))`,
+    `CREATE TABLE IF NOT EXISTS pagos_eventos (
+       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+       pago_id    TEXT,
+       procesador TEXT NOT NULL,
+       origen     TEXT NOT NULL,
+       tipo       TEXT NOT NULL,
+       cuerpo     TEXT,
+       creado     TEXT NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS ix_pagos_eventos_pago ON pagos_eventos (pago_id, id)',
+    `CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_cambios
+       BEFORE UPDATE ON pagos_eventos
+     BEGIN
+       SELECT RAISE(ABORT, 'Los eventos de pago no se modifican');
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_borrado
+       BEFORE DELETE ON pagos_eventos
+     BEGIN
+       SELECT RAISE(ABORT, 'Los eventos de pago no se borran');
+     END`,
+  ]],
 ];
 
 function migrar() {
