@@ -36,8 +36,8 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] **Phase 1: Barrera de pruebas en la fusión** - Ninguna fusión a `main` llega a producción sin que pasen las pruebas que ya existen
 - [x] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper
  (completed 2026-09-25)
-- [ ] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma
-- [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
+- [x] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma (completed 2026-09-30, verificada retroactivamente)
+- [x] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada (completed 2026-09-30, verificada retroactivamente; falta la revisión visual)
 - [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
 - [x] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
 - [x] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
@@ -105,9 +105,9 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   4. Un cobro rechazado deja el pago en `rechazado`, sin cupos otorgados y sin ningún NCF consumido.
   5. Una compra de importe cero sigue quedando aprobada al instante y sin emitir nada, como hoy.
 **Plans**: 3 planes en 3 olas
-- [ ] 03-01-PLAN.md — Migracion de pagos y transicion pendiente/aprobado/rechazado en la base, con su arnes de pruebas
-- [ ] 03-02-PLAN.md — tools/pagos.js: confirmarPago como unico punto que otorga cupos y emite comprobante
-- [ ] 03-03-PLAN.md — Compra y ampliacion pasan por la transicion, guardas de solo-cero y pagos:probar en la barrera de CI
+- [x] 03-01-PLAN.md — Migracion de pagos y transicion pendiente/aprobado/rechazado en la base, con su arnes de pruebas
+- [x] 03-02-PLAN.md — tools/pagos.js: confirmarPago como unico punto que otorga cupos y emite comprobante
+- [x] 03-03-PLAN.md — Compra y ampliacion pasan por la transicion, guardas de solo-cero y pagos:probar en la barrera de CI
 **Notas**: Es el prerrequisito de todo PAGO y vale por sí solo: hoy `anotarPago` escribe `'aprobado'` a mano en el SQL (`tools/db.js:2147`) y `comprarMembresia` compone el cobro con `procesador: 'demo'` (`tools/api.js:1983`), de modo que un rechazo otorgaría cupos y emitiría un NCF de dinero que nunca entró. El `CHECK` de `pagos.estado` ya admite `pendiente`. Columnas nuevas solo por migración añadida al final de `MIGRACIONES`. `facturas.emitirPorPago` ya es idempotente — no se reescribe.
 
 ### Phase 4: Bandeja de solicitudes y bitácora de la consola
@@ -120,10 +120,10 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
   3. Toda escritura hecha en nombre de otra organización queda anotada con quién la hizo, cuándo y sobre qué organización.
   4. Esa bitácora se puede consultar desde la consola filtrando por organización, y un reclamo de un cliente empresa se puede contestar con ella delante.
 **Plans**: 4 planes en 3 olas
-- [ ] 04-01-PLAN.md — Bitacora de solo anadir en la base, enNombreDe como unica puerta transaccional, atendida_por y bitacora:probar en CI
-- [ ] 04-02-PLAN.md — Sello y alta de dealer pasan por la bitacora, GET /api/admin/bitacora y guarda sobre RUTAS
-- [ ] 04-03-PLAN.md — Bandeja de solicitudes de servicio en admin.html sin filtros de servicios apagados
-- [ ] 04-04-PLAN.md — La bitacora en la consola filtrable por organizacion, bateria completa y verificacion humana en los dos temas
+- [x] 04-01-PLAN.md — Bitacora de solo anadir en la base, enNombreDe como unica puerta transaccional, atendida_por y bitacora:probar en CI
+- [x] 04-02-PLAN.md — Sello y alta de dealer pasan por la bitacora, GET /api/admin/bitacora y guarda sobre RUTAS
+- [x] 04-03-PLAN.md — Bandeja de solicitudes de servicio en admin.html sin filtros de servicios apagados
+- [x] 04-04-PLAN.md — La bitacora en la consola filtrable por organizacion, bateria completa y verificacion humana en los dos temas
 **UI hint**: yes
 **Notas**: `listarSolicitudesServicio` y `marcarSolicitudServicio` ya existen en la API y ninguna pantalla las usa. La bitácora (ADMIN-05) va en esta fase, antes que cualquier acción en nombre de otro (fases 5 y 7), para no tener que retro-instrumentar escrituras que ya estarían sueltas. Toda ruta nueva bajo `/api/admin/*` se envuelve en `conAdmin` y se comprueba con `npm run auditar:permisos`; `conAdmin` responde 404, no 403, a propósito. No se publica ningún teléfono en las pantallas de soporte.
 

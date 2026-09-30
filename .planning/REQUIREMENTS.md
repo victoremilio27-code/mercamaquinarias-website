@@ -143,9 +143,9 @@ huérfanos y sin duplicados.
 
 | Requisito | Fase | Estado | Origen |
 |---|---|---|---|
-| PAGO-01 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, verificado contra `tools/db.js` y `db/schema.sql:549` |
-| PAGO-02 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, verificado contra `tools/db.js` |
-| PAGO-03 | Phase 3 — El pago deja de darse por cobrado | Pendiente | `research/cardnet.md`, comportamiento actual que se conserva |
+| PAGO-01 | Phase 3 — El pago deja de darse por cobrado | Hecho (verificado 2026-09-30) | `research/cardnet.md`, verificado contra `tools/db.js` y `db/schema.sql:549` |
+| PAGO-02 | Phase 3 — El pago deja de darse por cobrado | Hecho (verificado 2026-09-30) | `research/cardnet.md`, verificado contra `tools/db.js` |
+| PAGO-03 | Phase 3 — El pago deja de darse por cobrado | Hecho (verificado 2026-09-30) | `research/cardnet.md`, comportamiento actual que se conserva |
 | PAGO-04 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | `research/cardnet.md` |
 | PAGO-05 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | `research/cardnet.md`, implicaciones de PCI-DSS |
 | PAGO-06 | Phase 6 — CardNet construido y apagado | Construido y apagado 2026-09-30 (falta certificar en lab) | `research/cardnet.md`, unidades del importe |
@@ -167,11 +167,11 @@ huérfanos y sin duplicados.
 | MOD-13 | Phase 05.4 — Dealer con capacidad | Hecho 2026-09-30 (PR #44) | `research/modelo-comercial.md` |
 | MOD-14 | Phase 05.4 — Dealer con capacidad | Hecho 2026-09-30 (PR #44) | `research/modelo-comercial.md` |
 | MOD-15 | Phase 05.3 — Renovación y alertas | Hecho 2026-09-29 (PR #39) | `research/modelo-comercial.md` |
-| ADMIN-01 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | `codebase/CONCERNS.md` — rutas sin pantalla |
+| ADMIN-01 | Phase 4 — Bandeja de solicitudes y bitácora | Hecho (verificado 2026-09-30) | `codebase/CONCERNS.md` — rutas sin pantalla |
 | ADMIN-02 | Phase 7 — Verificación y soporte al dealer | Pendiente | `codebase/CONCERNS.md` — solo por línea de comandos hoy |
 | ADMIN-03 | Phase 7 — Verificación y soporte al dealer | Pendiente | `research/mercado.md`, huecos priorizados; cumple CONF-01 |
 | ADMIN-04 | Phase 7 — Verificación y soporte al dealer | Pendiente | Petición de Victor del 2026-09-25 |
-| ADMIN-05 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | Decisión de Victor del 2026-09-25 sobre el registro |
+| ADMIN-05 | Phase 4 — Bandeja de solicitudes y bitácora | Hecho (verificado 2026-09-30) | Decisión de Victor del 2026-09-25 sobre el registro |
 | ADMIN-06 | Phase 5 — Cobro por transferencia bancaria | Completo (2026-09-25) | Contingencia propuesta en `cardnet.md`; soporta PAGO-09 |
 | CAT-01 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, verificado en `tools/db.js` |
 | CAT-02 | Phase 8 — Moneda y disponibilidad en el catálogo | Pendiente | `research/mercado.md`, huecos priorizados |
