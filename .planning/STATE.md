@@ -66,7 +66,11 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
    membresía; si no, añadir al procedimiento lo que falte (sin tocar precios). Probar el procedimiento entero
    antes en local con `db:demo`. Preguntar a Victor el correo y el nombre de empresa que quiere (datos
    reales: una sola pregunta agrupada).
-2. **Fase 12 — lote mensual de comprobantes.** Planificar con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP escrito a
+2. **Fase 12 — lote mensual de comprobantes. PLANIFICADA el 2026-09-30** en la rama
+   `claude/fase-12-lote-comprobantes` (sin PR): 4 planes en 4 olas y `12-VALIDATION.md`, revisados por el
+   comprobador (3 bloqueantes y 11 advertencias corregidos). **Espera a Victor:** si se ejecuta ya, adelantándola
+   a la 11 (bloqueada por contenido), y las preguntas del contador (607, formato, recibos, corte, PDF repuesto,
+   selector de mes sin preseleccionar). Se planificó con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP escrito a
    mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni `lotes_contador`,
    restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista la e-CF, el lote
    incluye también el XML y la representación impresa.
