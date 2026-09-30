@@ -16,7 +16,7 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-09-30, madrugada) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-09-30, tarde) — EMPIEZA AQUÍ
 
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
@@ -28,44 +28,68 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 ### Dónde estamos
 
-- **En producción:** fases 05.1 (precio único), 05.2 (publicar este equipo) y 05.3 (renovación,
-  vencimientos y avisos 7/3/1; PR #39, «Sitio arriba: 069fcee»). La casilla de renovación automática está
-  construida y **apagada** (`MERCA_CARDNET`).
-- **05.4 (dealer con capacidad y consola de solo lectura):** entera en producción (PR #44 y #45, «Sitio
-  arriba: 7edc796»); verificación `human_needed` (dos revisiones visuales de Victor, ver «Preguntas»).
-  Contratación en la **2.3**: quien aceptó la 2.2 vuelve a aceptar antes de su próximo pago.
-- **Fase 6 (CardNet) construida, probada y apagada** en la rama `claude/fervent-keller-fwbp80` (PR de
-  cierre abierto, **sin fusionar**): 10 planes, verificación 5/5 `human_needed`, W-01 arreglado. **No se
-  fusiona hasta que Victor confirme el respaldo verificado de la base de producción** (la migración
-  `2026-10-cardnet` se aplica sola al reiniciar tras el despliegue; `deploy/desplegar-mercamaquinarias` no
-  respalda) o diga que se fusione sin él. Encender: `deploy/README.md` §10c y `06-USER-SETUP.md`.
+- **Todo en producción** (último despliegue «Sitio arriba: d86d47a», PR #46, 2026-09-30 15:56 UTC): fases 2,
+  3, 4, 5, 05.1, 05.2, 05.3, 05.4, 6, 7, 8, 9 y 10 (la 3, 4, 8 y 9 sin su casilla en el ROADMAP, ver «Papeleo»).
+- **05.4 (dealer con capacidad y consola de solo lectura):** entera (PR #44 y #45). Ni una cadena visible dice
+  «cupo» salvo `legal.html` (ver «Preguntas»). Contratación en la **2.3**: quien aceptó la 2.2 vuelve a
+  aceptar antes de su próximo pago. Verificación `human_needed` (revisión visual de Victor).
+- **Fase 6 (CardNet) en producción y APAGADA** (`MERCA_CARDNET` sin fijar): 10 planes, verificación 5/5
+  `human_needed`, W-01 arreglado. La migración `2026-10-cardnet` ya se aplicó en producción; Victor hizo el
+  respaldo verificado antes (`/var/backups/mercamaquinarias/antes-cardnet.db`, `integrity_check` = ok) —
+  conservarlo unos días. Encender: `deploy/README.md` §10c y `06-USER-SETUP.md`; el temporizador
+  `mercamaquinarias-pagos` NO lo instala el despliegue (§10c).
+- **Servidor:** Ubuntu 24.04 en el droplet `137.184.111.241` (acceso `ssh root@…`); pedía reinicio por kernel y
+  se le dijo a Victor que reiniciara tras el despliegue. El repositorio del VPS es del usuario
+  `mercamaquinarias` (git como root da «dubious ownership»: usar `sudo -u mercamaquinarias git …`). **No
+  actualizar a Ubuntu 26.04 antes del lanzamiento.** `sqlite3` ya está instalado allí.
 - **Preparado sin planificar todavía:** la 12 tiene `CONTEXT.md` y `RESEARCH.md`; la facturación
   electrónica tiene `research/facturacion-electronica.md`.
-- **En la nube:** puppeteer como root necesita un envoltorio de Chrome en el scratchpad con `--no-sandbox` y
-  el proxy del entorno, vía `PUPPETEER_EXECUTABLE_PATH` (ver «Decisions»); nunca se toca `tools/` por eso.
+- **En la nube:** puppeteer como root necesita un envoltorio de Chrome en el scratchpad con `--no-sandbox`,
+  `--disable-dev-shm-usage --no-zygote --disable-gpu --ignore-certificate-errors`, vía
+  `PUPPETEER_EXECUTABLE_PATH` (ver «Decisions»); nunca se toca `tools/` por eso. Las auditorías tienen el
+  puerto 8080 fijo: con agentes en paralelo, solo el orquestador corre el navegador tras fusionar cada ola,
+  y hay que matar el servidor con `lsof -t -i :8080 | xargs -r kill` (un servidor viejo apuntando a una base
+  borrada ya hizo fallar la auditoría del administrador una vez). La red de la nube NO alcanza
+  `mercamaquinarias.com`: el sitio en vivo se confirma con el «Sitio arriba» del registro del paso
+  `desplegar` en GitHub Actions.
 
 ### Lo que falta, en orden
 
-1. **Fase 6 — fusionar y desplegar** en cuanto Victor confirme el respaldo (ver «Dónde estamos»). Antes de
-   encender CardNet: que `cobrosSinAplicar` se pueda marcar como devuelto (hoy el informe los repite para
-   siempre) y certificar en lab lo marcado «POR CONFIRMAR EN LAB» (W-01 incluido).
-2. **Fase 12 — lote mensual de comprobantes.** Planificar ya con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP
-   escrito a mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni
-   `lotes_contador`, restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista
-   la e-CF, el lote incluye también el XML y la representación impresa.
-3. **Papeleo del ROADMAP.** Las fases 2, 3 y 4 tienen todos sus planes hechos pero sin VERIFICATION ni casilla;
-   la 8 y la 9 tienen VERIFICATION pero sin casilla. Verificar lo que falte y marcar.
-4. **Facturación electrónica (e-CF) — en espera.** Victor todavía no ha solicitado ser emisor electrónico; lo
-   hace en **octubre de 2026**. Cuando diga que está presentada: insertar la fase «6.1 e-CF» con `gsd-phase`
-   (propuesta en §7 de la investigación: FE-01 a FE-13, construida y apagada tras `MERCA_ECF`, ejecutada con
-   Sonnet 5.5) y planificarla. Recomendación: proveedor autorizado (PSFE) por API detrás de un adaptador.
-5. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan
-   personas y protocolo de inspección); 13, 15 y 16 se planifican cuando se acerquen, porque tocan archivos que
-   la 05.4 y la 6 aún cambian.
-6. **Deuda anotada para la 13 (no bloquea):** `fechaCorta` de `assets/panel.js` y de los PDF pinta la fecha en
+1. **Cuenta de dealer de prueba para Victor (pedida el 2026-09-30).** Una cuenta de empresa (dealer) con
+   página de dealer publicada y **exenta de pagos**, para su uso personal y de pruebas, y darle las
+   credenciales. Hay que hacerla **en producción**, así que la corre Victor por SSH en el VPS con los comandos
+   exactos que le prepare la sesión: `tools/admin.js crear <correo> "<Nombre>" --empresa "<Razón social>"
+   --rnc <RNC> --exenta [--clave "…"]` (como el usuario `mercamaquinarias`, con las variables de
+   `/etc/mercamaquinarias.env` y `MERCA_DB`), y la contraseña se le entrega en el chat. Antes, comprobar en
+   el código qué necesita la página pública del dealer para estar visible (P14: hoy solo con Premium,
+   `encenderPerfilSiProcede`/`perfil_publico` en `tools/db.js`) y si una cuenta `exenta_pago` la obtiene sin
+   membresía; si no, añadir al procedimiento lo que falte (sin tocar precios). Probar el procedimiento entero
+   antes en local con `db:demo`. Preguntar a Victor el correo y el nombre de empresa que quiere (datos
+   reales: una sola pregunta agrupada).
+2. **Fase 12 — lote mensual de comprobantes.** Planificar con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP escrito a
+   mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni `lotes_contador`,
+   restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista la e-CF, el lote
+   incluye también el XML y la representación impresa.
+3. **Antes de encender CardNet (no bloquea el lanzamiento, que va con transferencia):** que los cobros
+   `aprobado-sin-aplicar` se puedan marcar como devueltos (hoy «Pasarela de pago» los repite en cada informe);
+   certificar en lab lo marcado «POR CONFIRMAR EN LAB» (forma del `message` del iframe, que admita ser
+   embebido, alto para 3-D Secure, orden de perfiles nuevos, W-01 con otra tarjeta y mismo `UniqueID`, si el
+   cobro recurrente exige un indicador) e instalar el temporizador `mercamaquinarias-pagos`.
+4. **Papeleo del ROADMAP.** Las fases 1, 3 y 4 sin VERIFICATION ni casilla (la 1 además espera la protección
+   de rama, paso manual de Victor); la 8 y la 9 tienen VERIFICATION pero sin casilla. Verificar lo que falte y
+   marcar.
+5. **Facturación electrónica (e-CF) — en espera.** Victor la solicita en **octubre de 2026**. Cuando diga que
+   está presentada: insertar la fase «6.1 e-CF» con `gsd-phase` (propuesta en §7 de la investigación: FE-01 a
+   FE-13, construida y apagada tras `MERCA_ECF`, ejecutada con Sonnet 5.5) y planificarla. Recomendación:
+   proveedor autorizado (PSFE) por API detrás de un adaptador.
+6. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan
+   personas y protocolo de inspección); 13, 15 y 16 se planifican cuando se acerquen.
+7. **Deuda anotada para la 13 (no bloquea):** `fechaCorta` de `assets/panel.js` y de los PDF pinta la fecha en
    UTC; `tipoRecordatorio` redondea hacia arriba («vence mañana» el mismo día del corte); desborde de
    `panel.html` a 390 px; `destino` sin validar en `assets/planes.js`; `tools/admin.js` cambia el sello sin
-   bitácora; borrar `proximamente.html` y `vercel.json` (con el visto bueno de Victor).
+   bitácora; borrar `proximamente.html` y `vercel.json` (con el visto bueno de Victor); el script de despliegue
+   no respalda la base antes de una migración (cada migración nueva exige el respaldo manual de Victor antes
+   de fusionar); el temporizador de pagos no lo instala el despliegue.
 
 ### Preguntas para Victor (se trabaja con el valor por defecto si no contesta)
 
@@ -83,6 +107,11 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
   membresías, «Agregar publicaciones activas» con «ITBIS incluido»/«Sin costo» y «La quinta no se cobra») en
   móvil y escritorio, claro y oscuro; y la consola con datos reales (Publicaciones, Pagos, Renovaciones con
   «llega con CardNet», capacidad en Empresas sin RNC). Detalle en `05.4-08-SUMMARY.md` («Lista para Victor»).
+- 06-08: durante la promoción de lanzamiento (renovación a RD$0) la renovación automática renueva gratis,
+  sin cobrar ni emitir comprobante, igual que el botón manual (**por defecto**, reversible); la alternativa es
+  dejar vencer esas suscripciones.
+- 06-09: «Tu anuncio vence el {fecha}.» va de tú (texto literal de `modelo-comercial.md`) y el resto del panel
+  trata de usted: ¿se pasa a usted?
 - 12 (con el contador): ¿Formato 607 de la DGII y en qué formato? (**por defecto no se genera**; el CSV trae
   los campos); ¿ZIP (**por defecto**) o un solo PDF?; ¿contenido del paquete (PDF de cada comprobante,
   `resumen.csv` con `;`, `resumen.pdf`, `LEEME.txt`)?; ¿recibos no fiscales dentro, aparte (**por defecto**)?;
