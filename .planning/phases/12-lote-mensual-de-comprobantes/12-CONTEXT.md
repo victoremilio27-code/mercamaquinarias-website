@@ -86,7 +86,7 @@ fin de mes; facturación electrónica (e-CF); la fase 13 de deuda técnica.
   `tools/db.js` (todo el SQL vive allí), **solo lectura y sin LIMIT**: `comprobantesDelPeriodo(desde,
   hasta)`. Ninguna migración. `tools/facturas.js` solo aporta lo que ya exporta (`leerPdf`,
   `rutaAbsoluta`, `dibujar`) más, como mucho, un `reponerPdfsDe(filas)`; **no se cambia cómo se
-  emite ni cómo se dibuja un comprobante** (un plan que toque `facturas.js` lo ejecuta Opus).
+  emite ni cómo se dibuja un comprobante** (un plan que toque `facturas.js` lo verifica Opus; la ejecución siempre es Sonnet 5.5).
 - **D-13** `exportarFacturas` (CSV suelto) **no se toca** y sigue como está; el CSV del paquete puede
   compartir columnas con él pero es otro archivo, con su propia prueba.
 

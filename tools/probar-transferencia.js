@@ -730,8 +730,8 @@ db.cargarSecuencia({
   const ultimaFila = (accion) =>
     consulta('SELECT * FROM bitacora_admin WHERE accion = ? ORDER BY id DESC LIMIT 1', accion);
   const leer = (texto) => { try { return JSON.parse(texto); } catch (_) { return null; } };
-  const TEXTO_D07 = 'La membresía que ampliaba este pago ya no existe. No se añadió ningún cupo ni se '
-    + 'emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
+  const TEXTO_D07 = 'La membresía que ampliaba este pago ya no existe o ya venció. No se añadió capacidad '
+    + 'ni se emitió comprobante. Anule el pago y devuelva la transferencia al cliente.';
 
   const idCompraTr = compraTransferencia && compraTransferencia.pago && compraTransferencia.pago.id;
   const idAmpliaTr = ampliacionTransferencia && ampliacionTransferencia.pago && ampliacionTransferencia.pago.id;

@@ -33,6 +33,7 @@
     "publicacion:probar": "node tools/probar-publicacion.js",
     "renovacion:probar": "node tools/probar-renovacion.js",
     "recordatorios:probar": "node tools/probar-recordatorios.js",
+    "capacidad:probar": "node tools/probar-capacidad.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
     "precios:probar": "node --test tools/precios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",

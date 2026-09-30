@@ -64,5 +64,14 @@
   "agent_skills": {},
   "features": {},
   "mode": "yolo",
-  "granularity": "fine"
+  "granularity": "fine",
+  "models": {
+    "execution": "sonnet"
+  },
+  "model_overrides": {
+    "gsd-executor": "claude-sonnet-5-5",
+    "gsd-code-fixer": "claude-sonnet-5-5",
+    "gsd-debugger": "claude-sonnet-5-5",
+    "gsd-doc-writer": "claude-sonnet-5-5"
+  }
 }

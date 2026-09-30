@@ -56,7 +56,7 @@ automático → D-11 y prueba de guarda.
 - **CRLF en el repositorio** (no en `.sh`, `deploy/` ni `.github/workflows/`); editar con las herramientas de edición, no comparando cadenas con `\n`.
 - **Fusionar a `main` despliega a producción**: rama y PR; un PR por fase; CI en verde (`pruebas` y `navegador`).
 - Todo en español (identificadores, comentarios que explican qué falló antes y por qué el código es así, textos, commits).
-- Plan que toque el comprobante, ITBIS o NCF (`tools/facturas.js`) lo ejecuta Opus; hoy la fase no debería tocarlo (ver D-12).
+- Plan que toque el comprobante, ITBIS o NCF (`tools/facturas.js`) lo ejecuta Sonnet 5.5 como todo y lo verifica Opus; hoy la fase no debería tocarlo (ver D-12).
 - No se publica teléfono ni dirección de la empresa; para facturas el domicilio registrado está en `tools/correo.js` (`EMPRESA`).
 
 ## Resumen

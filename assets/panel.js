@@ -140,8 +140,48 @@ function guardarPagos(r) {
 const membresiaDe = (a) => MEMBRESIAS.find((m) => m.id === a.suscripcion_id) || null;
 
 const cupoTexto = (m) => (m.anuncios_incluidos == null
-  ? `${m.ocupados} publicados · sin límite`
-  : `${m.ocupados} de ${m.anuncios_incluidos} ${m.anuncios_incluidos === 1 ? 'cupo' : 'cupos'}`);
+  ? 'Sin límite de publicaciones activas'
+  : `${m.ocupados} de ${m.anuncios_incluidos} publicaciones activas permitidas`);
+
+/* Resumen del dealer (D-04): se calcula en el navegador con lo que ya
+   llega de /api/mis-anuncios, sin ruta nueva. Vale también para la cuenta
+   exenta, que comparte la rama del dealer. Pausadas y vencidas se cuentan
+   aparte de las activas: una pausada sigue ocupando capacidad. */
+function resumenDealer(anuncios, membresias) {
+  const cuenta = (estado) => anuncios.filter((a) => a.estado === estado).length;
+  const sinLimite = membresias.some((m) => m.libres === null || m.libres === undefined);
+  const disponible = membresias.reduce((n, m) => n + (Number(m.libres) || 0), 0);
+  const planes = [...new Set(membresias.map((m) => m.plan_nombre).filter(Boolean))];
+  const fines = membresias.map((m) => m.fin).filter(Boolean).sort();
+  return {
+    activas: cuenta('activo'),
+    pausadas: cuenta('pausado'),
+    vendidas: cuenta('vendido'),
+    vencidas: cuenta('vencido'),
+    retiradas: cuenta('retirado'),
+    disponible,
+    sinLimite,
+    planes,
+    vence: fines.length ? fines[0] : null,
+  };
+}
+
+function resumenDealerHTML(res) {
+  const activas = res.pausadas
+    ? `${res.activas} activas · ${res.pausadas} pausadas ocupan capacidad`
+    : `${res.activas} activas`;
+  const capacidad = res.sinLimite
+    ? 'Sin límite de publicaciones activas'
+    : `${res.disponible} ${res.disponible === 1 ? 'publicación' : 'publicaciones'}`;
+  return `<dl class="plan-estado resumen-dealer">
+      <div><dt>Publicaciones activas</dt><dd>${esc(activas)}</dd></div>
+      <div><dt>Vendidas</dt><dd>${res.vendidas}</dd></div>
+      <div><dt>Vencidas</dt><dd>${res.vencidas}</dd></div>
+      <div><dt>Capacidad disponible</dt><dd>${esc(capacidad)}</dd></div>
+      <div><dt>Plan</dt><dd>${esc(res.planes.join(' · ') || '—')}</dd></div>
+      <div><dt>Vence el</dt><dd>${res.vence ? esc(fechaCorta(res.vence)) : 'Sin vencimiento'}</dd></div>
+    </dl>`;
+}
 
 /* Una barra que se lee de un vistazo: cuánto de lo pagado está en uso.
    Sin límite no tiene barra, porque no hay nada que llenar. */
@@ -149,7 +189,7 @@ function barraCupos(m) {
   if (m.anuncios_incluidos == null) return '';
   const pct = Math.min(100, Math.round((m.ocupados / m.anuncios_incluidos) * 100));
   const lleno = m.libres === 0;
-  return `<span class="cupos" role="img" aria-label="${m.ocupados} de ${m.anuncios_incluidos} cupos en uso">
+  return `<span class="cupos" role="img" aria-label="${m.ocupados} de ${m.anuncios_incluidos} publicaciones activas en uso">
     <span class="cupos__barra${lleno ? ' cupos__barra--lleno' : ''}" style="--uso:${pct}%"></span>
   </span>`;
 }
@@ -209,8 +249,8 @@ function tarjetaMembresia(m) {
   const sig = m.siguiente;
   const nota = !sig ? ''
     : sig.gratuito
-      ? '<span class="membresia__gratis">El siguiente cupo no le cuesta nada</span>'
-      : `<span class="membresia__siguiente">Un cupo más: ${pesos(sig.total)} hasta su renovación</span>`;
+      ? '<span class="membresia__gratis">La siguiente publicación activa no le cuesta nada</span>'
+      : `<span class="membresia__siguiente">Una publicación activa más: ${pesos(sig.total)} hasta su vencimiento</span>`;
 
   return `<li class="membresia${m.libres === 0 ? ' membresia--llena' : ''}" data-membresia="${esc(m.id)}">
     <span class="membresia__cabeza">
@@ -222,7 +262,7 @@ function tarjetaMembresia(m) {
     ${nota}
     ${m.anuncios_incluidos == null ? '' : `
       <button type="button" class="btn btn--linea btn--chico" data-ampliar="${esc(m.id)}">
-        Añadir cupos
+        Agregar publicaciones activas
       </button>`}
     ${pieRenovarPlan(m)}
   </li>`;
@@ -294,7 +334,7 @@ function pagosEnEsperaHTML() {
     <h3 class="transferencia__titulo" id="t-pagos-espera">Pagos en espera de confirmación</h3>
     <p class="panel__texto">${esParticular()
       ? 'Su anuncio se publica cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'
-      : 'Sus cupos aparecerán aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'}</p>
+      : 'Lo contratado aparecerá aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'}</p>
     ${PAGOS_PENDIENTES.map(tarjetaPagoEnEspera).join('')}
   </section>`;
 }
@@ -333,10 +373,15 @@ function pintarMetricas(resumen) {
       ? `Sobre ${miles(t.vistas)} ${t.vistas === 1 ? 'visita' : 'visitas'}`
       : `${Math.round((contactos / t.vistas) * 100)} % de quienes vieron sus anuncios`;
 
+  const pausados = ANUNCIOS.filter((a) => a.estado === 'pausado').length;
+  const tarjetaActivos = esParticular()
+    ? tarjetaMetrica('i-grafico', miles(activos), 'Anuncios activos', `${inactivos} inactivo${inactivos === 1 ? '' : 's'}`)
+    : tarjetaMetrica('i-grafico', miles(activos), 'Publicaciones activas', `${pausados} pausadas ocupan capacidad`);
+
   $('#metricas').innerHTML = [
     tarjetaMetrica('i-ojo', miles(t.vistas || 0), 'Visualizaciones', 'Últimos 30 días'),
     tarjetaMetrica('i-telefono', miles(contactos), 'Contactos', tasa),
-    tarjetaMetrica('i-grafico', miles(activos), 'Anuncios activos', `${inactivos} inactivo${inactivos === 1 ? '' : 's'}`),
+    tarjetaActivos,
     tarjetaMetrica('i-estrella', miles(t.favoritos || 0), 'Guardados',
       `Compradores que lo guardaron · ${miles(t.compartidos || 0)} ${t.compartidos === 1 ? 'compartido' : 'compartidos'}`),
   ].join('');
@@ -424,8 +469,8 @@ function pintarPlan() {
 
   if (!MEMBRESIAS.length) {
     caja.innerHTML = `
-      <h2 class="panel__titulo" id="t-plan"><em>Sin</em> cupos contratados</h2>
-      <p class="panel__texto">Un cupo es el sitio que ocupa un equipo publicado. Elija el nivel y cuántos equipos quiere publicar; después reparte los cupos entre sus máquinas y los reutiliza cuando venda alguna.</p>
+      <h2 class="panel__titulo" id="t-plan"><em>Sin</em> publicaciones activas contratadas</h2>
+      <p class="panel__texto">Una publicación activa es cada equipo que tiene a la vista en el catálogo. Elija el nivel y cuántas publicaciones activas quiere tener a la vez; cuando venda un equipo, esa capacidad queda libre para publicar otro.</p>
       ${pagosEnEsperaHTML()}
       ${planesVencidosHTML()}
       <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
@@ -435,19 +480,22 @@ function pintarPlan() {
 
   const totalLibres = MEMBRESIAS.reduce((n, m) => (m.libres === null ? n : n + m.libres), 0);
   const sinLimite = MEMBRESIAS.some((m) => m.libres === null);
+  const resumen = resumenDealer(ANUNCIOS, MEMBRESIAS);
 
   caja.innerHTML = `
     <div class="panel__cabeza">
       <h2 class="panel__titulo panel__titulo--limpio" id="t-plan">
-        <em>Sus</em> cupos
+        <em>Sus</em> publicaciones activas
       </h2>
       <p class="panel__meta">
-        ${sinLimite ? 'Puede publicar sin límite'
+        ${sinLimite ? 'Sin límite de publicaciones activas'
           : totalLibres > 0
-            ? `${totalLibres} ${totalLibres === 1 ? 'cupo libre' : 'cupos libres'} para publicar`
-            : 'Sin cupos libres'}
+            ? `Capacidad disponible: ${totalLibres}`
+            : 'Sin capacidad disponible'}
       </p>
     </div>
+
+    ${resumenDealerHTML(resumen)}
 
     ${pagosEnEsperaHTML()}
 
@@ -466,7 +514,7 @@ function pintarPlan() {
     </dl>
 
     ${totalLibres === 0 && !sinLimite
-      ? `<p class="realce">${icono('i-aviso')} <span>No le quedan cupos libres. Añada cupos a una membresía —solo paga los días que le quedan— o marque un equipo como vendido para liberar el suyo.</span></p>`
+      ? `<p class="realce">${icono('i-aviso')} <span>No le queda capacidad disponible. Agregue publicaciones activas a su plan —solo paga los días que le quedan— o marque un equipo como vendido para liberar capacidad.</span></p>`
       : ''}
 
     <div class="acciones acciones--pie">
@@ -554,7 +602,7 @@ function selectorPlan(a) {
     const suya = actual && m.id === actual.id;
     const lleno = m.libres === 0 && !suya;
     const pocas = (a.fotos || a.total_fotos || 0) > m.fotos_maximas;
-    const motivo = lleno ? (esParticular() ? ' · sin capacidad libre' : ' · sin cupos libres')
+    const motivo = lleno ? ' · sin capacidad disponible'
       : pocas ? ` · admite ${m.fotos_maximas} fotos` : '';
     return `<option value="${esc(m.id)}"${suya ? ' selected' : ''}${lleno || pocas ? ' disabled' : ''}>${esc(m.plan_nombre)}${motivo}</option>`;
   }).join('');
@@ -679,13 +727,11 @@ function filaAnuncio(a) {
 function pintarTabla() {
   const lista = FILTRO === 'todos'
     ? ANUNCIOS
-    : FILTRO === 'activos'
-      ? ANUNCIOS.filter((a) => a.estado === 'activo')
+    : ESTADO_DE_FILTRO[FILTRO]
+      ? ANUNCIOS.filter((a) => a.estado === ESTADO_DE_FILTRO[FILTRO])
       // Un borrador no es un anuncio inactivo: nunca llegó a publicarse,
       // así que tiene su propio filtro y no infla el de "Inactivos".
-      : FILTRO === 'borradores'
-        ? ANUNCIOS.filter((a) => a.estado === 'borrador')
-        : ANUNCIOS.filter((a) => a.estado !== 'activo' && a.estado !== 'borrador');
+      : ANUNCIOS.filter((a) => a.estado !== 'activo' && a.estado !== 'borrador');
 
   // La fila del tren motriz se dibuja debajo de su anuncio y solo
   // cuando está abierta: la tabla no carga cuatro selectores por cada
@@ -703,15 +749,36 @@ function pintarTabla() {
       : 'Ningún anuncio en este estado.';
 }
 
+/* Estado real que casa cada filtro del dealer (D-06). El particular sigue
+   con «Inactivos», que agrupa todo lo que no está activo ni es borrador. */
+const ESTADO_DE_FILTRO = {
+  activos: 'activo', pausados: 'pausado', vendidos: 'vendido',
+  vencidos: 'vencido', retirados: 'retirado', borradores: 'borrador',
+};
+
 function pintarFiltros() {
   const activos = ANUNCIOS.filter((a) => a.estado === 'activo').length;
   const borradores = ANUNCIOS.filter((a) => a.estado === 'borrador').length;
   const inactivos = ANUNCIOS.length - activos - borradores;
-  const opciones = [
-    ['todos', `Todos (${ANUNCIOS.length})`],
-    ['activos', `Activos (${activos})`],
-    ['inactivos', `Inactivos (${inactivos})`],
-  ];
+  const cuenta = (estado) => ANUNCIOS.filter((a) => a.estado === estado).length;
+  const opciones = esParticular()
+    ? [
+      ['todos', `Todos (${ANUNCIOS.length})`],
+      ['activos', `Activos (${activos})`],
+      ['inactivos', `Inactivos (${inactivos})`],
+    ]
+    : [
+      ['todos', `Todos (${ANUNCIOS.length})`],
+      ['activos', `Activos (${activos})`],
+      ['pausados', `Pausados (${cuenta('pausado')})`],
+      ['vendidos', `Vendidos (${cuenta('vendido')})`],
+      ['vencidos', `Vencidos (${cuenta('vencido')})`],
+      ['retirados', `Retirados (${cuenta('retirado')})`],
+    ];
+  // Un filtro guardado que este modo no ofrece (p. ej. «inactivos» del
+  // particular) vuelve a «todos» en vez de dejar la tabla sin explicación.
+  if (!esParticular() && FILTRO === 'inactivos') FILTRO = 'todos';
+  if (esParticular() && ['pausados', 'vendidos', 'vencidos', 'retirados'].includes(FILTRO)) FILTRO = 'todos';
   // Solo se enseña si hay alguno: quien nunca dejó un borrador a medias
   // no necesita un filtro vacío.
   if (borradores) opciones.push(['borradores', `Borradores (${borradores})`]);
@@ -743,7 +810,7 @@ function pintarEmpresa() {
       aprobada: {
         clase: 'pastilla--verde',
         rotulo: 'Aprobada',
-        nota: 'Su empresa está aprobada. La página pública aparece en el directorio mientras tenga cupos Premium activos.',
+        nota: 'Su empresa está aprobada. La página pública aparece en el directorio mientras tenga el nivel Premium contratado.',
       },
       rechazada: {
         clase: 'pastilla--roja',
@@ -765,7 +832,7 @@ function pintarEmpresa() {
           ? `<a href="dealer.html?d=${encodeURIComponent(org.slug)}">/dealer.html?d=${esc(org.slug)}</a>`
           : 'Al aprobarse la cuenta'}</dd></div>
         <div><dt>Visible en el directorio</dt><dd>${aprobada
-          ? (org.perfilPublico ? 'Sí' : 'Al contratar cupos Premium')
+          ? (org.perfilPublico ? 'Sí' : 'Al contratar el nivel Premium')
           : 'No, hasta que se apruebe'}</dd></div>
       </dl>
       <p class="panel__nota">${revision.nota}</p>
@@ -776,7 +843,7 @@ function pintarEmpresa() {
 
   caja.innerHTML = `
     <h2 class="panel__titulo" id="t-empresa"><em>¿Comercializa</em> maquinaria de forma habitual?</h2>
-    <p class="panel__texto">Solicite la cuenta de empresa: revisamos los datos y, una vez aprobada, se genera su página pública con todo el inventario y aparece en el directorio al contratar cupos del nivel Premium. Los equipos que ya publicó se mantienen.</p>
+    <p class="panel__texto">Solicite la cuenta de empresa: revisamos los datos y, una vez aprobada, se genera su página pública con todo el inventario y aparece en el directorio al contratar el nivel Premium. Los equipos que ya publicó se mantienen.</p>
     <form class="form-rnc solicitud" id="formRnc" novalidate>
       <fieldset class="solicitud__bloque">
         <legend class="solicitud__titulo">La empresa</legend>
@@ -1067,7 +1134,7 @@ async function montarPanel() {
 
   /* Vuelve a pedir las membresías y repinta. Se llama después de todo
      lo que mueve un cupo —publicar no, que eso recarga la página, pero
-     sí vender, mover o ampliar—, porque los cupos libres cambian y la
+     sí vender, mover o ampliar—, porque la capacidad disponible cambia y la
      tabla tiene que reflejarlo al momento. */
   async function refrescarCupos() {
     const r = await api('/membresias', { silencioso: true });
@@ -1139,68 +1206,14 @@ async function montarPanel() {
     } catch (_) { /* sin portapapeles: caída silenciosa */ }
   });
 
-  /* Añadir cupos a una membresía viva. Se pregunta cuántos y se dice
-     lo que cuesta ANTES de cobrarlo: prorrateado por los días que
-     queden, que casi siempre es bastante menos de lo que la gente
-     espera. */
-  $('#panelPlan').addEventListener('click', async (ev) => {
+  /* Añadir publicaciones activas a una membresía viva (D-08/D-09). Antes
+     esto eran tres copias con cuadros del navegador, una de ellas sin «ITBIS
+     incluido». Ahora abre la sección «Agregar publicaciones activas»
+     (abrirAmpliacion, más abajo), que enseña capacidad, días y precio. */
+  $('#panelPlan').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-ampliar]');
     if (!btn) return;
-
-    const m = MEMBRESIAS.find((x) => x.id === btn.dataset.ampliar);
-    if (!m) return;
-
-    const cuantos = prompt(
-      `¿Cuántos equipos quiere poder publicar en total con su membresía ${m.plan_nombre}?\n\n`
-      + `Ahora tiene ${m.anuncios_incluidos}. Solo paga los días que le quedan, `
-      + `y cada quinto cupo no se cobra.`,
-      String(m.anuncios_incluidos + 1));
-    if (cuantos === null) return;
-
-    const cupo = Number(String(cuantos).replace(/\D+/g, ''));
-    if (!cupo || cupo <= m.anuncios_incluidos) {
-      avisoPlan(`Indique una cantidad mayor que ${m.anuncios_incluidos}.`);
-      return;
-    }
-
-    // La cifra se calcula aquí con el mismo módulo que usa el
-    // servidor, así que lo que se confirma es lo que se cobra.
-    const previo = precioAmpliacion({
-      precioUnitario: m.precio_unitario,
-      cupoActual: m.anuncios_incluidos,
-      cupoNuevo: cupo,
-      dias: m.dias_ciclo || 30,
-      diasRestantes: diasHasta(m.fin) ?? (m.dias_ciclo || 30),
-    });
-
-    const cuantoMas = cupo - m.anuncios_incluidos;
-    const texto = EXENTA || previo.total === 0
-      ? `Añadir ${cuantoMas} ${cuantoMas === 1 ? 'cupo' : 'cupos'} sin costo. ¿Confirma?`
-      : `Añadir ${cuantoMas} ${cuantoMas === 1 ? 'cupo' : 'cupos'} cuesta ${pesos(previo.total)} `
-        + `(ITBIS incluido) por los días que le quedan.\n\n¿Confirma?`;
-    if (!confirm(texto)) return;
-
-    btn.disabled = true;
-    try {
-      const r = await api(`/membresias/${encodeURIComponent(m.id)}/ampliar`, {
-        metodo: 'POST', cuerpo: { cupo },
-      });
-      if (!r) throw new Error('No hay conexión con el servidor.');
-      await refrescarCupos();
-
-      /* 202: la ampliación quedó pedida, no hecha. La membresía sigue
-         con los cupos que tenía y el pago aparece arriba, en «Pagos en
-         espera», con la referencia y los datos. Decir aquí que «pasó a
-         N cupos» era lo que hacía la fase 3 con un pago sin cobrar. */
-      if (r.pago && r.pago.estado === 'pendiente') {
-        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
-        return;
-      }
-      avisoPlan(`Su membresía ${m.plan_nombre} pasó a ${cupo} cupos.`, false);
-    } catch (e) {
-      avisoPlan(e.message);
-      btn.disabled = false;
-    }
+    abrirAmpliacion(btn.dataset.ampliar);
   });
 
   /* Abrir y cerrar el editor de motor y transmisión. */
@@ -1251,7 +1264,7 @@ async function montarPanel() {
         + 'Se borran el anuncio, sus fotografías y sus estadísticas, y no se puede deshacer. '
         + (esParticular()
           ? 'Si estaba publicado, su plan vuelve a tener capacidad para otro equipo mientras dure.\n\n'
-          : 'Su cupo queda libre para publicar otro equipo.\n\n')
+          : 'Esa capacidad queda libre para publicar otro equipo.\n\n')
         + 'Si solo quiere dejar de venderlo, use «Marcar vendido»: conserva las visitas y los contactos.';
     if (!confirm(confirmacion)) return;
 
@@ -1270,7 +1283,7 @@ async function montarPanel() {
       pintarTabla();
       avisoPlan(esBorrador
         ? 'Borrador eliminado.'
-        : `${nombre} se eliminó.${esParticular() ? '' : ' Su cupo vuelve a estar libre.'}`, false);
+        : `${nombre} se eliminó.${esParticular() ? '' : ' Esa capacidad vuelve a estar libre.'}`, false);
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Eliminar';
@@ -1359,15 +1372,15 @@ async function montarPanel() {
 
     // Vender libera capacidad, que es medio motivo para hacerlo. Se dice
     // aquí para que nadie descubra después que podía haber publicado
-    // otro equipo sin pagar. El particular no tiene "cupo": el mismo
+    // otro equipo sin pagar. El particular no tiene capacidad propia: el mismo
     // motivo se lo dice avisoPlan tras la respuesta, con el texto
     // exacto de D-15 y un atajo para publicar otro equipo.
     if (estado === 'vendido' && !confirm(esParticular()
       ? '¿Marcar este equipo como vendido?\n\n'
         + 'El anuncio deja de aparecer en el catálogo y queda en su historial con sus fotos, visitas y contactos.'
       : '¿Marcar este equipo como vendido?\n\n'
-        + 'El anuncio deja de aparecer en el catálogo y su cupo queda libre '
-        + 'para publicar otra máquina sin volver a pagar.')) return;
+        + 'El anuncio deja de aparecer en el catálogo y libera capacidad '
+        + 'para publicar otro equipo sin volver a pagar.')) return;
 
     btn.disabled = true;
     const r = await api(`/anuncios/${encodeURIComponent(idAnuncio)}`, {
@@ -1381,6 +1394,15 @@ async function montarPanel() {
     pintarMetricas(datos.resumen || {});
     await refrescarCupos();
 
+    // El dealer (y la exenta) lee el mismo aviso con el texto de D-07: lo
+    // vendido libera capacidad en su plan, no un pago aparte.
+    if (estado === 'vendido' && !esParticular()) {
+      avisoPlan(
+        'Este equipo fue vendido. Ahora puede publicar otro equipo con la capacidad disponible de su plan.',
+        false,
+        { href: 'publicar.html', texto: 'Publicar otro equipo' },
+      );
+    }
     if (estado === 'vendido' && esParticular()) {
       avisoPlan(
         `Este equipo fue vendido. Ahora puedes publicar otro equipo${r.capacidadLibre ? ' con la capacidad disponible de tu plan.' : '.'}`,
@@ -1523,6 +1545,7 @@ async function montarPanel() {
       caja.hidden = true;
     }
 
+    cerrarAmpliacion();
     avisoRen('');
     if (faltanLegales('pagar').length) {
       montarAvisoLegal('pagar');
@@ -1597,6 +1620,109 @@ async function montarPanel() {
     }
   }
 
+  /* ── Agregar publicaciones activas (MOD-13, 05.4) ──────────
+     Sección a imagen de «Renovar». El precio que se enseña sale de
+     precioAmpliacion (assets/precios.js), la misma función con la que
+     cobra el servidor, y los días de diasRestantes, no de diasHasta: los
+     dos redondean distinto y un día de diferencia es plata de diferencia.
+     El navegador nunca manda un importe: solo `cupo` y, si se ofrece,
+     `metodo`; el servidor lo recalcula. */
+  let AMPLIAR_OBJETIVO = null;
+
+  const avisoAmp = (mensaje, ok = false) => {
+    const el = $('#avisoAmpliar');
+    el.hidden = !mensaje;
+    el.textContent = mensaje || '';
+    el.classList.toggle('acceso__aviso--ok', ok);
+  };
+
+  function cerrarAmpliacion() {
+    AMPLIAR_OBJETIVO = null;
+    $('#panelAmpliar').hidden = true;
+    avisoAmp('');
+  }
+
+  // Cuántas publicaciones quiere agregar, acotado a lo que cabe bajo el tope.
+  function cantidadAmpliar() {
+    if (!AMPLIAR_OBJETIVO) return 0;
+    const cabe = Math.max(0, CUPO_MAXIMO - AMPLIAR_OBJETIVO.m.anuncios_incluidos);
+    const n = Math.trunc(Number($('#ampliarCantidad').value));
+    return Number.isFinite(n) && n >= 1 ? Math.min(n, cabe) : 0;
+  }
+
+  function pintarPrecioAmpliar() {
+    if (!AMPLIAR_OBJETIVO) return;
+    const { m, restantes } = AMPLIAR_OBJETIVO;
+    const cantidad = cantidadAmpliar();
+    const el = $('#ampliarPrecio');
+    if (!cantidad) {
+      el.textContent = 'Indique cuántas publicaciones activas quiere agregar.';
+      $('#btnConfirmarAmpliar').disabled = true;
+      return;
+    }
+    const previo = precioAmpliacion({
+      precioUnitario: m.precio_unitario,
+      cupoActual: m.anuncios_incluidos,
+      cupoNuevo: m.anuncios_incluidos + cantidad,
+      dias: m.dias_ciclo || 30,
+      diasRestantes: restantes,
+    });
+    AMPLIAR_OBJETIVO.previo = previo;
+    const gratisTxt = previo.gratis > 0
+      ? ` La quinta no se cobra: ${previo.gratis} de las que agrega ${previo.gratis === 1 ? 'va' : 'van'} sin costo.`
+      : '';
+    el.textContent = (EXENTA || previo.total === 0
+      ? 'Sin costo.'
+      : `${pesos(previo.total)} ITBIS incluido, por los ${restantes} días que quedan hasta el vencimiento.`)
+      + gratisTxt;
+    $('#btnConfirmarAmpliar').disabled = faltanLegales('pagar').length > 0;
+  }
+
+  function abrirAmpliacion(idSusc) {
+    const m = MEMBRESIAS.find((x) => x.id === idSusc && x.anuncios_incluidos != null);
+    if (!m) return;
+
+    const restantes = diasRestantes(m.fin) ?? (m.dias_ciclo || 30);
+    AMPLIAR_OBJETIVO = { m, restantes, previo: null };
+
+    $('#ampliarResumen').innerHTML = `
+      <p class="panel__texto"><b>${esc(m.plan_nombre)}</b>: ${esc(m.anuncios_incluidos)} publicaciones activas permitidas · ${esc(m.ocupados)} en uso</p>
+      <p class="panel__texto">Vence el ${esc(fechaCorta(m.fin))} · quedan ${esc(restantes)} días</p>`;
+
+    const tope = Math.max(1, CUPO_MAXIMO - m.anuncios_incluidos);
+    const campo = $('#ampliarCantidad');
+    campo.max = String(tope);
+    campo.value = '1';
+
+    const metodos = $('#ampliarMetodos');
+    metodos.hidden = METODOS_PAGO.length < 2;
+    metodos.innerHTML = METODOS_PAGO.length > 1
+      ? '<legend class="comprobante__titulo">Forma de pago</legend>' + METODOS_PAGO.map((mt, i) => `
+        <label class="opcion opcion--chica">
+          <input type="radio" name="metodoAmp" value="${esc(mt)}"${i === 0 ? ' checked' : ''}>
+          <span class="opcion__cuerpo"><b class="opcion__nombre">${esc(ROTULO_METODO[mt] || mt)}</b></span>
+        </label>`).join('')
+      : '';
+
+    avisoAmp('');
+    if (faltanLegales('pagar').length) {
+      montarAvisoLegal('pagar');
+      avisoAmp('Antes de pagar hace falta aceptar las condiciones nuevas (arriba).');
+    }
+
+    cerrarRenovacion();
+    const btn = $('#btnConfirmarAmpliar');
+    btn.classList.remove('btn--ocupado');
+    pintarPrecioAmpliar();
+    const sec = $('#panelAmpliar');
+    sec.hidden = false;
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('#t-ampliar').focus({ preventScroll: true });
+  }
+
+  $('#ampliarCantidad').addEventListener('input', pintarPrecioAmpliar);
+  $('#btnCancelarAmpliar').addEventListener('click', cerrarAmpliacion);
+
   $('#btnPagarRenovacion').addEventListener('click', pagarRenovacion);
   $('#btnCancelarRenovacion').addEventListener('click', cerrarRenovacion);
   document.querySelectorAll('input[name="tipoComprobanteRen"]').forEach((rad) => {
@@ -1649,6 +1775,55 @@ async function montarPanel() {
      anuncio de esta cuenta y nunca se pinta (T-05.3-17). */
   const idRenovar = new URLSearchParams(location.search).get('renovar');
   if (idRenovar && ANUNCIOS.some((x) => x.id === idRenovar)) abrirRenovacion({ idAnuncio: idRenovar });
+
+  /* Solo `cupo` y `metodo`: nunca importe (T-05.4-09). `api()` lanza, así
+     que va con su try/catch. Un 202 no es una ampliación hecha: la
+     membresía sigue con lo que tenía y el pago queda en «Pagos en
+     espera» (T-05.4-11). */
+  async function confirmarAmpliacion() {
+    const obj = AMPLIAR_OBJETIVO;
+    if (!obj) return;
+    const cantidad = cantidadAmpliar();
+    if (!cantidad) { pintarPrecioAmpliar(); return; }
+    const { m } = obj;
+    const btn = $('#btnConfirmarAmpliar');
+
+    const metodo = document.querySelector('input[name="metodoAmp"]:checked');
+    const cupo = m.anuncios_incluidos + cantidad;
+
+    btn.disabled = true;
+    btn.classList.add('btn--ocupado');
+    avisoAmp('');
+    try {
+      const r = await api(`/membresias/${encodeURIComponent(m.id)}/ampliar`, {
+        metodo: 'POST', cuerpo: { cupo, ...(metodo ? { metodo: metodo.value } : {}) },
+      });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      await refrescarCupos();
+      cerrarAmpliacion();
+
+      if (r.pago && r.pago.estado === 'pendiente') {
+        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+        return;
+      }
+      avisoPlan(`Su plan ${m.plan_nombre} pasó a ${cupo} publicaciones activas permitidas.`, false);
+    } catch (e) {
+      btn.disabled = false;
+      btn.classList.remove('btn--ocupado');
+      const msg = e.message || 'No se pudo agregar las publicaciones.';
+      avisoAmp(msg);
+      // 409 de condiciones sin aceptar: mismo enlace que la sección de renovar.
+      // Cualquier otro 409 (operación en espera) ya trae su referencia en `msg`.
+      if (/debe aceptar/i.test(msg)) montarAvisoLegal('pagar');
+    }
+  }
+  $('#btnConfirmarAmpliar').addEventListener('click', confirmarAmpliacion);
+
+  /* Enlace panel.html?ampliar=<id>. El valor sale de la URL: solo abre si
+     coincide EXACTAMENTE con una membresía de esta cuenta con límite y
+     nunca se pinta (T-05.4-08). */
+  const idAmpliar = new URLSearchParams(location.search).get('ampliar');
+  if (idAmpliar && MEMBRESIAS.some((x) => x.id === idAmpliar && x.anuncios_incluidos != null)) abrirAmpliacion(idAmpliar);
 
   $('#btnSalir').addEventListener('click', async () => {
     await api('/cuenta/salir', { metodo: 'POST', silencioso: true });

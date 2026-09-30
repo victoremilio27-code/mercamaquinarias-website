@@ -108,13 +108,13 @@ function tarjetaCupoCapacidad(m) {
     </span>
     <span class="membresia__cupo num">${m.anuncios_incluidos == null
       ? `${m.ocupados} publicados · sin límite`
-      : `${m.libres} ${m.libres === 1 ? 'cupo libre' : 'cupos libres'} de ${m.anuncios_incluidos}`}</span>
+      : `${m.ocupados} de ${m.anuncios_incluidos} publicaciones activas permitidas · capacidad disponible: ${m.libres}`}</span>
     ${sig ? (sig.total === 0
-      ? '<span class="membresia__gratis">El siguiente cupo no le cuesta nada</span>'
-      : `<span class="membresia__siguiente">Un cupo más: ${pesos(sig.total)} hasta su renovación</span>`) : ''}
+      ? '<span class="membresia__gratis">La siguiente no le cuesta nada</span>'
+      : `<span class="membresia__siguiente">Una publicación activa más: ${pesos(sig.total)} hasta su vencimiento</span>`) : ''}
     ${m.anuncios_incluidos == null ? '' : `
       <button type="button" class="btn btn--linea btn--chico" data-ampliar="${esc(m.id)}">
-        Añadir cupos a ${esc(m.plan_nombre)}
+        Agregar publicaciones activas a ${esc(m.plan_nombre)}
       </button>`}
   </li>`;
 }
@@ -167,7 +167,7 @@ function pintarMisCupos() {
     avisar(capacidad
       ? (sinLimite
         ? 'Su cuenta publica sin límite. No necesita contratar nada.'
-        : `Le ${libres === 1 ? 'queda' : 'quedan'} ${libres} ${libres === 1 ? 'cupo libre' : 'cupos libres'}: puede publicar sin pagar nada más.`)
+        : `Tiene capacidad disponible: ${libres} ${libres === 1 ? 'publicación activa' : 'publicaciones activas'}. Puede publicar sin pagar nada más.`)
       : 'Tiene capacidad disponible en su plan: puede publicar otro equipo sin pagar.', true);
   } else {
     atajo.hidden = true;
@@ -265,7 +265,7 @@ function pintarTablaComparativa() {
     ['Estadísticas de visitas y contactos', () => 'Sí'],
     // Para el particular esto no es un cupo que se reutiliza: es que
     // el plan sigue vivo y cubre otro equipo cuando venda el actual.
-    [capacidad ? 'Cupo reutilizable al vender' : 'Publicar otro equipo al vender, mientras dure el plan', () => 'Sí'],
+    [capacidad ? 'Capacidad reutilizable al vender' : 'Publicar otro equipo al vender, mientras dure el plan', () => 'Sí'],
   ];
 
   $('#tablaPlanes').innerHTML = `
@@ -315,11 +315,11 @@ function pintarPedido() {
        <dl class="pedido__lista">
          <div><dt>${esc(ped.nivel.nombre)} · ${ped.cupo} ${ped.cupo === 1 ? 'equipo' : 'equipos'}</dt></div>
          <div><dt>Vigencia</dt><dd class="num">${DIAS_PLAN} días · hasta el ${fechaLarga(venceIso)}</dd></div>
-         ${ped.gratis ? `<div><dt>Cupos de regalo</dt><dd class="num">${ped.gratis}</dd></div>` : ''}
+         ${ped.gratis ? `<div><dt>De regalo</dt><dd class="num">${ped.gratis}</dd></div>` : ''}
          <div class="pedido__total"><dt>Total · ITBIS incluido</dt><dd class="num">${pesos(ped.total)}</dd></div>
        </dl>
        ${pagaPorTransferencia(ped)
-    ? `<p class="pedido__metodo"><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; los cupos y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
+    ? `<p class="pedido__metodo"><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
     : ''}`;
 
   $('#btnContratar').textContent = EXENTA_PLAN
@@ -354,8 +354,8 @@ function pintarRegla() {
   const faltan = CUPOS_POR_UNO_GRATIS - (CUPOS_PEDIDOS % CUPOS_POR_UNO_GRATIS);
 
   el.innerHTML = gratis > 0
-    ? `${icono('i-check')} <span>${gratis === 1 ? 'Se le regala' : 'Se le regalan'} <b>${gratis} ${gratis === 1 ? 'cupo' : 'cupos'}</b>: paga ${cuposCobrados(CUPOS_PEDIDOS)} de ${CUPOS_PEDIDOS}.${faltan < CUPOS_POR_UNO_GRATIS ? ` Con ${faltan} más, otro gratis.` : ''}</span>`
-    : `${icono('i-etiqueta')} <span>Uno gratis por cada ${CUPOS_POR_UNO_GRATIS}. Le ${faltan === 1 ? 'falta' : 'faltan'} <b>${faltan}</b> para que el siguiente no se cobre.</span>`;
+    ? `${icono('i-check')} <span>${gratis === 1 ? 'Se le regala' : 'Se le regalan'} <b>${gratis} ${gratis === 1 ? 'publicación activa' : 'publicaciones activas'}</b>: paga ${cuposCobrados(CUPOS_PEDIDOS)} de ${CUPOS_PEDIDOS}.${faltan < CUPOS_POR_UNO_GRATIS ? ` Con ${faltan} más, otro gratis.` : ''}</span>`
+    : `${icono('i-etiqueta')} <span>Una de cada ${CUPOS_POR_UNO_GRATIS} publicaciones activas no se cobra. Le ${faltan === 1 ? 'falta' : 'faltan'} <b>${faltan}</b> para que el siguiente no se cobre.</span>`;
 }
 
 /* Qué bloques de la página se ven, según MODO_PLANES. Se llama una
@@ -438,7 +438,7 @@ function htmlTransferencia(t, cobro) {
     <p class="transferencia__nota">Esto no es un comprobante fiscal. Se lo enviamos por correo cuando confirmemos el pago; le mandamos también estos datos a su correo.</p>
     ${volver ? `<p class="transferencia__volver">
       <a class="btn btn--linea btn--chico" href="${esc(volver)}">Volver a mi borrador</a>
-      <span>Se publicará cuando lleguen los cupos.</span>
+      <span>Se publicará cuando se confirme el pago.</span>
     </p>` : ''}`;
 }
 
@@ -553,7 +553,7 @@ async function contratar() {
 
     MIS_CUPOS = (await api('/membresias', { silencioso: true }) || {}).membresias || MIS_CUPOS;
     pintarMisCupos();
-    avisar(`Listo. Contrató ${CUPOS_PEDIDOS} ${CUPOS_PEDIDOS === 1 ? 'cupo' : 'cupos'} de ${ped.nivel.nombre}.`, true);
+    avisar(`Listo. Contrató ${CUPOS_PEDIDOS} ${CUPOS_PEDIDOS === 1 ? 'publicación activa' : 'publicaciones activas'} de ${ped.nivel.nombre}.`, true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) {
     avisar(e.message);
@@ -612,58 +612,14 @@ function montarComprobante() {
   });
 }
 
-/* Ampliar lo que ya tiene, prorrateado. Es el caso de quien se quedó
-   sin cupos: no se le hace pasar otra vez por la compra entera. */
-async function ampliar(id) {
+/* Ampliar vive en un solo sitio: el panel (D-09). Aquí había tres copias
+   de la misma acción —una con un cuadro de texto, otra con confirm() sin «ITBIS
+   incluido»— y cada una cobraba con un texto distinto. Ahora el botón solo
+   lleva al panel, que valida el id y muestra el precio final completo. */
+function ampliar(id) {
   const m = MIS_CUPOS.find((x) => x.id === id);
   if (!m) return;
-
-  const cuantos = prompt(
-    `¿Cuántos equipos quiere poder publicar en total con ${m.plan_nombre}?\n\n`
-    + `Ahora tiene ${m.anuncios_incluidos}. Solo paga los días que le queden, y cada quinto cupo no se cobra.`,
-    String(m.anuncios_incluidos + 1));
-  if (cuantos === null) return;
-
-  const cupo = Number(String(cuantos).replace(/\D+/g, ''));
-  if (!cupo || cupo <= m.anuncios_incluidos) {
-    avisar(`Indique una cantidad mayor que ${m.anuncios_incluidos}.`);
-    return;
-  }
-
-  const previo = precioAmpliacion({
-    precioUnitario: m.precio_unitario,
-    cupoActual: m.anuncios_incluidos,
-    cupoNuevo: cupo,
-    dias: m.dias_ciclo || 30,
-    diasRestantes: diasRestantes(m.fin) ?? (m.dias_ciclo || 30),
-  });
-
-  const nuevos = cupo - m.anuncios_incluidos;
-  const texto = EXENTA_PLAN || previo.total === 0
-    ? `Añadir ${nuevos} ${nuevos === 1 ? 'cupo' : 'cupos'} sin costo. ¿Confirma?`
-    : `Añadir ${nuevos} ${nuevos === 1 ? 'cupo' : 'cupos'} cuesta ${pesos(previo.total)} por los días que le quedan.\n\n¿Confirma?`;
-  if (!confirm(texto)) return;
-
-  try {
-    const r = await api(`/membresias/${encodeURIComponent(id)}/ampliar`, {
-      metodo: 'POST',
-      cuerpo: { cupo, ...(porTransferencia() ? { metodo: 'transferencia' } : {}) },
-    });
-    if (!r) throw new Error('No hay conexión con el servidor.');
-
-    /* En espera la membresía sigue con los cupos que tenía: decir que
-       «pasó a N cupos» era anunciar algo que todavía no ha pasado. */
-    if (enEspera(r)) {
-      const mios = await recargarCuenta();
-      avisar(avisoSinCuenta(r, mios), true);
-      if (r.transferencia) pintarEspera(r, $('#avisoPlanes'));
-      return;
-    }
-
-    MIS_CUPOS = (await api('/membresias', { silencioso: true }) || {}).membresias || MIS_CUPOS;
-    pintarMisCupos();
-    avisar(`${m.plan_nombre} pasó a ${cupo} cupos.`, true);
-  } catch (e) { avisar(e.message); }
+  location.href = 'panel.html?ampliar=' + encodeURIComponent(id);
 }
 
 /* ── Arranque ────────────────────────────────────────────── */

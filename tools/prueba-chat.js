@@ -102,6 +102,17 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
 
   comprobar(/ITBIS incluido/.test(sis), 'el prompt dice «ITBIS incluido»');
 
+  /* Modelo de la 05.4 (D-16): ya no se venden «cupos». El asistente
+     cuenta los dos caminos —el particular paga cada publicación, la
+     empresa contrata publicaciones activas— y las reglas de capacidad. */
+  comprobar(!/cupo/i.test(sis), 'el prompt no dice «cupo» en ninguna parte');
+  comprobar(/particular/i.test(sis) && /publicaciones activas/.test(sis),
+    'el prompt explica los dos caminos: particular y publicaciones activas de la empresa');
+  comprobar(/no se cobra/i.test(sis), 'el prompt dice que una de cada cinco no se cobra');
+  comprobar(/prorrate|d[ií]as que (queden|quedan)/i.test(sis), 'el prompt dice que ampliar se prorratea');
+  comprobar(/Pausar NO (la )?libera/i.test(sis) && /vendido/.test(sis),
+    'el prompt dice que pausar no libera y vender sí');
+
   /* Solo se mira la sección de tarifas (la que arma `tarifas()`, con
      líneas «- Nombre: precio. Hasta N fotos…»): el resto del prompt ya
      habla de «comisión» al describir el costo de importar un equipo
@@ -116,8 +127,10 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
     if (p.precio_vigente > 0) {
       const total = precios.desglose(p.precio_vigente).total;
       comprobar(sis.includes(pesosProbeta(total)), `${p.nombre}: el prompt anuncia el total ${pesosProbeta(total)}`);
-      comprobar(!sis.includes(`${pesosProbeta(p.precio_vigente)} por cupo`),
-        `${p.nombre}: el prompt NO anuncia la base ${pesosProbeta(p.precio_vigente)} por cupo`);
+      comprobar(!sis.includes(`${pesosProbeta(p.precio_vigente)} por publicación`),
+        `${p.nombre}: el prompt NO anuncia la base ${pesosProbeta(p.precio_vigente)} por publicación`);
+      comprobar(sis.includes(`${pesosProbeta(total)} por publicación de 30 días`),
+        `${p.nombre}: el total se dice «por publicación de 30 días»`);
     } else if (p.precio_normal) {
       const totalNormal = precios.desglose(p.precio_normal).total;
       comprobar(sis.includes(pesosProbeta(totalNormal)),

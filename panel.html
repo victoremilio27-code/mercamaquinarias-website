@@ -135,6 +135,29 @@
       </div>
     </section>
 
+    <!-- Agregar publicaciones activas a una membresía viva (05.4). Oculta
+         hasta que panel.js la abre. La cifra que se enseña sale de
+         precioAmpliacion, la misma función con la que cobra el servidor;
+         el navegador solo manda la cantidad y, si se ofrece, el método. -->
+    <section class="panel" id="panelAmpliar" aria-labelledby="t-ampliar" hidden>
+      <h2 class="panel__titulo" id="t-ampliar" tabindex="-1">Agregar publicaciones activas</h2>
+      <div id="ampliarResumen"></div>
+
+      <label class="campo-v"><span>Cuántas publicaciones activas quiere agregar</span>
+        <input type="number" id="ampliarCantidad" min="1" inputmode="numeric" value="1">
+      </label>
+      <p class="panel__texto" id="ampliarPrecio" aria-live="polite"></p>
+
+      <fieldset class="renovar-metodos" id="ampliarMetodos"></fieldset>
+
+      <p class="acceso__aviso" id="avisoAmpliar" role="alert" hidden></p>
+
+      <div class="acciones acciones--pie">
+        <button class="btn btn--ambar" type="button" id="btnConfirmarAmpliar">Confirmar</button>
+        <button class="btn btn--linea" type="button" id="btnCancelarAmpliar">Cancelar</button>
+      </div>
+    </section>
+
     <h2 class="visualmente-oculto" id="t-metricas">Métricas</h2>
     <ul class="tarjetas-metrica" id="metricas" aria-labelledby="t-metricas"></ul>
 
@@ -302,7 +325,7 @@
     <div class="pie__col">
       <h3 class="pie__titulo">Enlaces</h3>
       <ul class="pie__lista pie__lista--marcada">
-        <li><a href="planes.html"><b>Planes y precios:</b> cupos, niveles y beneficios</a></li>
+        <li><a href="planes.html"><b>Planes y precios:</b> publicaciones, niveles y beneficios</a></li>
         <li><a href="dealers.html"><b>Directorio:</b> dealers y talleres</a></li>
       </ul>
       <p class="pie__sede">Santo Domingo, República Dominicana</p>

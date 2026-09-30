@@ -469,7 +469,7 @@ no fiscal y regularización, y **decir al contador** que hay una contingencia de
 **Fase 6.1 (INSERTADA): Facturación electrónica e-CF construida, probada y apagada**
 Va **entre la 6 y la 11**. Es un cambio de orden respecto a lo que fijó Victor (transporte → lote → deuda), porque tiene
 una fecha legal propia que cae dentro de v2; necesita su visto bueno. Se ejecuta con perfil `quality` (toca NCF e
-ITBIS), con Opus.
+ITBIS); la ejecución con Sonnet 5.5, como toda ejecución desde el 2026-09-29.
 
 **Goal:** Que, cuando la DGII certifique a la empresa como emisor electrónico, encender un interruptor baste para emitir
 E31, E32 y E34 desde `confirmarPago`, sin cambiar cupos, precios ni el camino de cobro; y que mientras tanto todo el sitio
@@ -521,7 +521,7 @@ sandbox del proveedor. La fase se construye y prueba con un **doble** del provee
    credenciales reales: **criterio humano de Victor**).
 7. Ningún camino envía un comprobante a un contador de forma automática; el lote sigue siendo descarga manual.
 
-**Plan de cortes:** 1) migración y secuencias E (con pruebas, Opus), 2) XML + firma + QR + RI, 3) adaptador y máquina de
+**Plan de cortes:** 1) migración y secuencias E (con pruebas), 2) XML + firma + QR + RI, 3) adaptador y máquina de
 estados, 4) `decidirTipo`, notas de crédito, consola y guías. Los 1 y 2 se pueden hacer en paralelo con dos agentes si
 no tocan los mismos archivos (`db.js` y `facturas.js` lo tocan el 1 y el 4, no el 2).
 

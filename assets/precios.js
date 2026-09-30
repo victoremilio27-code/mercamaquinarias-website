@@ -101,7 +101,13 @@ function precioCompra({ precioUnitario, cupo, dias }) {
    porque es el momento en que la regla se vuelve visible. */
 function precioAmpliacion({ precioUnitario, cupoActual, cupoNuevo, dias, diasRestantes }) {
   const d = duracion(dias);
-  const restantes = Math.max(0, Math.min(Number(diasRestantes), d.dias));
+  // Antes había un tope de un ciclo (Math.min con d.dias). Tras una renovación
+  // anticipada (05.3 suma el periodo al final) `fin` puede quedar a más de un
+  // ciclo, y el tope cobraba 30 días de una capacidad que dura 50.
+  // Punto aislado P13 (valor por defecto, reversible): si Victor contesta que
+  // como mucho un ciclo, se vuelve a poner el tope en esta línea y se invierte
+  // el caso de 50 días de la prueba.
+  const restantes = Math.max(0, Number(diasRestantes) || 0);
   const diferencia = cuposCobrados(cupoNuevo) - cuposCobrados(cupoActual);
 
   const base = diferencia <= 0 ? 0
