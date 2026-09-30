@@ -28,12 +28,10 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 ### Dónde estamos
 
-- **Fase 10.1 (recuperar la cuenta y cambiar el correo) HECHA y SIN FUSIONAR** en la rama `claude/recuperar-cuenta`
-  (PR abierto). Pedida por Victor el 2026-09-30. Batería completa y navegador en verde en local; verificación
-  `human_needed` (`10.1-VERIFICATION.md`). **No se fusiona hasta que Victor haga el respaldo verificado**: la
-  migración `2026-10-cuenta-recuperacion` rehace la tabla `codigos` (su CHECK no admitía `cambio_correo`) y
-  crea `cambios_correo` y `solicitudes_recuperacion`. Con su «respaldo hecho» + CI en verde: fusionar y
-  comprobar el «Sitio arriba» del paso `desplegar`.
+- **Fase 10.1 (recuperar la cuenta y cambiar el correo) EN PRODUCCIÓN** desde el 2026-09-30 22:30 UTC
+  («Sitio arriba: 0d05858», PR #48). Victor hizo antes el respaldo verificado
+  (`/var/backups/mercamaquinarias/antes-recuperar-cuenta.db`, `integrity_check` = ok): conservarlo unos días.
+  Verificación `human_needed`: su revisión visual del panel, `cuenta.html` y la consola (`10.1-VERIFICATION.md`).
 
 - **Todo en producción** (último despliegue «Sitio arriba: d86d47a», PR #46, 2026-09-30 15:56 UTC): fases 2,
   3, 4, 5, 05.1, 05.2, 05.3, 05.4, 6, 7, 8, 9 y 10 (la 3, 4, 8 y 9 sin su casilla en el ROADMAP, ver «Papeleo»).
