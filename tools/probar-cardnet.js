@@ -2301,6 +2301,257 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     apagar();
   }
 
+  console.log('\n22. Renovación automática: cobroDeRenovacion y pagos.renovarAutomaticas');
+  {
+    const db = require('./db');
+    const pagos = require('./pagos');
+    const precios = require('../assets/precios.js');
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    const DIA = 86400000;
+    let n = 0;
+    db.secuenciasNcf();
+    const enDias = (x) => new Date(Date.now() + x * DIA).toISOString();
+    const b02 = () => d.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B02' AND activa = 1").get().siguiente;
+    const facturasDe = (idPago) => d.prepare("SELECT COUNT(*) AS n FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'").get(idPago).n;
+    const pagosDe = (idSusc) => d.prepare('SELECT * FROM pagos WHERE suscripcion_id = ? ORDER BY creado, rowid').all(idSusc);
+    const fila = (idSusc) => d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(idSusc);
+    const comprasDe = (token) => llamadas.filter((l) => /purchase/.test(l.url) && l.cuerpo && l.cuerpo.TrxToken === token);
+    const cuenta = (etiqueta) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      return db.organizacionDe(idUsuario).id;
+    };
+    const tarjeta = (idOrg) => db.guardarMetodoPago({
+      idOrg, procesador: 'cardnet', clienteId: 'C-22',
+      perfil: { perfilId: `PF22-${SELLO}-${++n}`, token: `CT__22-${SELLO}-${n}`, marca: 'Visa', ultimos4: '4242', venceMes: 12, venceAnio: 2035, activo: true },
+    });
+    /* Una suscripción con lo que la renovación automática necesita. `proximo` es el día del intento. */
+    const susc = (idOrg, { fin = enDias(3), cupo = 1, plan = 'estandar', auto = 1, metodo = null, proximo = new Date(Date.now() - 3600000).toISOString(), intentos = 0 } = {}) => {
+      const idSusc = `susc22-${SELLO}-${++n}`;
+      d.prepare(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
+                   anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+                 VALUES (?, ?, ?, 'vigencia', NULL, 'activa', 1800, ?, 30, ?, ?, ?, ?)`)
+        .run(idSusc, idOrg, plan, cupo, enDias(-27), fin, auto ? proximo : null, new Date().toISOString());
+      d.prepare(`UPDATE suscripciones SET renovacion_automatica = ?, renovacion_aceptada = ?, renovacion_texto = ?,
+                        metodo_pago_id = ?, renovacion_intentos = ? WHERE id = ?`)
+        .run(auto, auto ? new Date().toISOString() : null, auto ? 'Acepto la renovación automática' : null, metodo ? metodo.id : null, intentos, idSusc);
+      return idSusc;
+    };
+    const CL = { razonSocial: 'Cliente de prueba', correo: 'cliente@prueba.invalid' };
+    const aprobado = () => doble((op) => ({
+      estado: 200, cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: `P22-${op.cuerpo.UniqueID}`, AuthorizationCode: 'AU22', Order: op.cuerpo.Order },
+    }));
+    const rechazado = () => doble(() => ({ estado: 200, cuerpo: { ResponseCode: '51', Status: 'Rejected' } }));
+    const mias = (lista, id) => (lista || []).filter((x) => x.idSusc === id);
+
+    // Lo que dejaron las secciones anteriores no entra en esta
+    d.prepare("UPDATE suscripciones SET renovacion_automatica = 0 WHERE id NOT LIKE 'susc22-%'").run();
+
+    /* La promoción de lanzamiento (precio 0) deja toda renovación en importe
+       cero: se prueba primero, con la promoción puesta a propósito, y luego se
+       quita para que el resto pruebe cobros con importe. */
+    d.prepare("UPDATE planes SET precio_promocional = 0, promo_hasta = '2099-01-01'").run();
+    {
+      const orgZ = cuenta('z22');
+      const tZ = tarjeta(orgZ);
+      const sZ = susc(orgZ, { metodo: tZ });
+      encender('lab');
+      aprobado();
+      const finZ = fila(sZ).fin;
+      const rz = await pagos.renovarAutomaticas({ ahora: new Date() });
+      const pz = pagosDe(sZ);
+      const proxZ = new Date(fila(sZ).fin); proxZ.setDate(proxZ.getDate() - 3);
+      ok(mias(rz.gratuitas, sZ).length === 1 && pz.length === 1 && pz[0].procesador === 'sin-costo' && pz[0].total === 0
+        && comprasDe(tZ.token).length === 0 && fila(sZ).fin > finZ && fila(sZ).proximo_cargo === proxZ.toISOString(),
+        'con importe cero (promoción): se renueva sin llamar a CardNet, sin comprobante, y se reprograma el próximo intento');
+      apagar();
+    }
+    d.prepare('UPDATE planes SET precio_promocional = NULL, promo_hasta = NULL').run();
+
+    // 1. cobroDeRenovacion: la misma construcción para renovar a mano y solo
+    const orgA = cuenta('a22');
+    const tA = tarjeta(orgA);
+    const sA = susc(orgA, { metodo: tA });
+    const fA = db.suscripcionRenovable(sA, orgA);
+    const esperado = precios.precioRenovacion({ precioUnitario: fA.precio_vigente, cupo: 1, dias: 30 });
+    const manual = pagos.cobroDeRenovacion(fA, { cliente: CL, correoCliente: CL.correo });
+    ok(['base', 'ajuste', 'subtotal', 'itbis', 'total'].every((k) => manual.cobro[k] === esperado[k]),
+      `cobroDeRenovacion sale de precios.precioRenovacion: total ${manual.cobro.total} = ${esperado.total}`);
+    ok(/^TE-\d{4}-[0-9A-F]{6}$/.test(manual.cobro.referencia) && typeof pagos.referenciaCobro === 'function',
+      `la referencia sale de pagos.referenciaCobro: ${manual.cobro.referencia}`);
+    ok(manual.intencion.tipo === 'renovacion' && manual.intencion.idSusc === sA && manual.intencion.cupo === 1
+      && manual.intencion.dias === 30 && !('automatica' in manual.intencion) && !('renovacionAutomatica' in manual.intencion)
+      && /^Renovación .+ · 1 publicaciones · 30 días$/.test(manual.intencion.concepto),
+      `la intención manual: ${JSON.stringify(manual.intencion)}`);
+    const conMarca = pagos.cobroDeRenovacion(fA, { cliente: CL, correoCliente: CL.correo, automatica: true, renovacionAutomatica: { texto: 'x', aceptada: 'y' } });
+    ok(conMarca.intencion.automatica === true && conMarca.intencion.renovacionAutomatica.texto === 'x', 'con automatica y la casilla, la intención lleva las dos');
+    const fuenteApi = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
+    const cuerpoRenovar = fuenteApi.slice(fuenteApi.indexOf('async function pedirRenovacion'), fuenteApi.indexOf('async function pedirRenovacion') + 6000);
+    const hasta = cuerpoRenovar.indexOf('\nasync function', 30) > 0 ? cuerpoRenovar.slice(0, cuerpoRenovar.indexOf('\nasync function', 30)) : cuerpoRenovar;
+    ok(!/const referenciaCobro/.test(fuenteApi) && hasta.includes('pagos.cobroDeRenovacion(') && !/precioRenovacion\(/.test(hasta),
+      'api.js ya no define su referencia y pedirRenovacion cobra por pagos.cobroDeRenovacion');
+
+    // 2. Apagado: no hace nada
+    apagar();
+    doble(() => null);
+    let r = await pagos.renovarAutomaticas({ ahora: new Date() });
+    ok(r.apagado === true && llamadas.length === 0 && pagosDe(sA).length === 0, `apagado: ${JSON.stringify(r)}, sin llamadas ni pagos`);
+
+    // 3. Particular con casilla y tarjeta: un cobro, al precio manual, por la transición única
+    encender('lab');
+    aprobado();
+    const finAntes = fila(sA).fin;
+    const ncf0 = b02();
+    r = await pagos.renovarAutomaticas({ ahora: new Date() });
+    const pA = pagosDe(sA);
+    const intA = pA[0] ? JSON.parse(pA[0].intencion) : {};
+    ok(mias(r.cobradas, sA).length === 1 && pA.length === 1 && pA[0].estado === 'aprobado' && pA[0].procesador === 'cardnet',
+      `un cobro aprobado por cardnet: ${JSON.stringify(mias(r.cobradas, sA))}`);
+    ok(intA.tipo === 'renovacion' && intA.automatica === true && pA[0].total === esperado.total && pA[0].metodo_pago_id === tA.id
+      && pA[0].referencia !== manual.cobro.referencia,
+      `intención renovacion automatica, importe ${pA[0] && pA[0].total} = el manual ${esperado.total}, tarjeta enlazada, referencia nueva`);
+    const cA = comprasDe(tA.token);
+    ok(cA.length === 1 && cA[0].cuerpo.Amount === cardnet.aCentavos(esperado.total), `purchase con el token guardado y Amount ${cA[0] && cA[0].cuerpo.Amount}`);
+    const finDespues = fila(sA);
+    const finEsperado = new Date(finAntes); finEsperado.setDate(finEsperado.getDate() + 30);
+    ok(finDespues.fin === finEsperado.toISOString(), `fin alargado 30 días desde el fin anterior: ${finDespues.fin}`);
+    ok(facturasDe(pA[0].id) === 1 && b02() === ncf0 + 1, 'una factura y B02 +1');
+    const prox = new Date(finDespues.fin); prox.setDate(prox.getDate() - 3);
+    ok(finDespues.renovacion_intentos === 0 && finDespues.proximo_cargo === prox.toISOString(),
+      `intentos 0 y proximo_cargo = nuevo fin − 3 días: ${finDespues.proximo_cargo}`);
+    // Repetida el mismo día: no cobra otra vez
+    const compras0 = llamadas.filter((l) => /purchase/.test(l.url)).length;
+    r = await pagos.renovarAutomaticas({ ahora: new Date() });
+    ok(pagosDe(sA).length === 1 && mias(r.cobradas, sA).length === 0 && llamadas.filter((l) => /purchase/.test(l.url)).length === compras0 && b02() === ncf0 + 1,
+      'repetir la tarea no crea otro pago ni consume otro NCF');
+
+    // 4. Capacidad del dealer (cupo 5)
+    const orgD = cuenta('d22');
+    const tD = tarjeta(orgD);
+    const sD = susc(orgD, { cupo: 5, metodo: tD });
+    const fD = db.suscripcionRenovable(sD, orgD);
+    const esperadoD = precios.precioRenovacion({ precioUnitario: fD.precio_vigente, cupo: 5, dias: 30 });
+    aprobado();
+    r = await pagos.renovarAutomaticas({ ahora: new Date() });
+    const pD = pagosDe(sD);
+    ok(mias(r.cobradas, sD).length === 1 && pD.length === 1 && pD[0].total === esperadoD.total && esperadoD.total > esperado.total
+      && /5 publicaciones/.test(JSON.parse(pD[0].intencion).concepto),
+      `capacidad de 5: importe de 5 publicaciones ${pD[0] && pD[0].total} (una: ${esperado.total})`);
+    ok(fila(sD).anuncios_incluidos === 5 && fila(sD).fin > fD.fin, 'la capacidad no cambia y el fin se alarga');
+
+    // 5. Rechazo: intento 1, sigue activa, mismo día no se repite
+    const orgR = cuenta('r22');
+    const tR = tarjeta(orgR);
+    const sR = susc(orgR, { metodo: tR });
+    rechazado();
+    const ncf1 = b02();
+    r = await pagos.renovarAutomaticas({ ahora: new Date() });
+    const rr = mias(r.rechazadas, sR)[0];
+    const pR = pagosDe(sR);
+    ok(rr && rr.intento === 1 && rr.quedan === 2 && rr.motivo && rr.correo === `r22-${SELLO}@prueba.invalid` && pR.length === 1 && pR[0].estado === 'rechazado',
+      `rechazada con motivo, intento 1 y quedan 2: ${JSON.stringify(rr)}`);
+    ok(facturasDe(pR[0].id) === 0 && b02() === ncf1 && fila(sR).estado === 'activa' && fila(sR).renovacion_intentos === 1
+      && fila(sR).proximo_cargo.slice(0, 10) === new Date(Date.now() + DIA).toISOString().slice(0, 10),
+      `sin factura, sigue activa, intentos 1 y próximo intento mañana: ${fila(sR).proximo_cargo}`);
+    r = await pagos.renovarAutomaticas({ ahora: new Date() });
+    ok(pagosDe(sR).length === 1, 'repetida el mismo día, ningún segundo pago');
+
+    // 6. El calendario por días: fin a las 23:50 y la tarea a cualquier hora
+    const orgC = cuenta('c22');
+    const tC = tarjeta(orgC);
+    const sC = susc(orgC, { metodo: tC, fin: '2031-03-13T23:50:00.000Z', proximo: '2031-03-10T23:50:00.000Z' });
+    const corridas = [
+      ['2031-03-10T00:03:00Z', 1], ['2031-03-10T06:00:00Z', 1], ['2031-03-10T23:58:00Z', 1],
+      ['2031-03-11T00:03:00Z', 2], ['2031-03-11T23:58:00Z', 2],
+      ['2031-03-12T00:03:00Z', 3], ['2031-03-12T23:58:00Z', 3],
+      ['2031-03-13T00:03:00Z', 3], ['2031-03-13T23:40:00Z', 3],
+    ];
+    rechazado();
+    const quedan = [];
+    for (const [cuando, esperados] of corridas) {
+      const rc = await pagos.renovarAutomaticas({ ahora: new Date(cuando) });
+      const suyo = mias(rc.rechazadas, sC)[0];
+      if (suyo) quedan.push(`${cuando.slice(0, 10)}:${suyo.intento}/${suyo.quedan}`);
+      ok(pagosDe(sC).length === esperados, `${cuando}: ${esperados} pago(s) de la suscripción (hay ${pagosDe(sC).length})`);
+    }
+    ok(JSON.stringify(quedan) === '["2031-03-10:1/2","2031-03-11:2/1","2031-03-12:3/0"]',
+      `un intento en fin − 3, fin − 2 y fin − 1, sin repetir ni saltar: ${quedan.join(' ')}`);
+    ok(fila(sC).renovacion_intentos === 3 && fila(sC).proximo_cargo === null && fila(sC).estado === 'activa',
+      'tres intentos, ningún cuarto, y sigue activa hasta su fecha');
+    d.prepare('UPDATE suscripciones SET fin = ? WHERE id = ?').run(enDias(-1), sC);
+    db.vencerSuscripciones();
+    ok(fila(sC).estado === 'vencida', 'tras los tres rechazos la suscripción vence en su fecha por el camino de siempre');
+    ok(new Set(pagosDe(sC).map((p) => p.referencia)).size === 3, 'cada intento fue un pago nuevo con su referencia');
+
+    // 7. Guardas: otra operación pendiente, sin casilla, plan inactivo, tarjeta que no sirve
+    const orgG = cuenta('g22');
+    const tG = tarjeta(orgG);
+    const pendienteDe = (idSusc, orgId, tipo, extra = {}) => d.prepare('SELECT id FROM pagos WHERE id = ?').get(
+      db.registrarCobro({ idOrg: orgId, idSusc, cobro: { ...precios.desglose(1800), referencia: `R22-${SELLO}-${++n}`, procesador: 'transferencia' },
+        intencion: { tipo, idSusc, concepto: 'x', cliente: CL, ...extra } }).id).id;
+    const sAmp = susc(orgG, { metodo: tG });
+    pendienteDe(sAmp, orgG, 'ampliacion', { anadidos: 1 });
+    const sRen = susc(orgG, { metodo: tG });
+    pendienteDe(sRen, orgG, 'renovacion', { cupo: 1, dias: 30 });
+    const sSin = susc(orgG, { metodo: tG, auto: 0 });
+    const sPlan = susc(orgG, { metodo: tG, plan: 'destacado' });
+    const tBorrada = tarjeta(orgG);
+    const sBorr = susc(orgG, { metodo: tBorrada });
+    d.prepare('UPDATE metodos_pago SET borrado = ? WHERE id = ?').run(new Date().toISOString(), tBorrada.id);
+    const tInact = tarjeta(orgG);
+    const sInact = susc(orgG, { metodo: tInact });
+    d.prepare('UPDATE metodos_pago SET activo = 0 WHERE id = ?').run(tInact.id);
+    const tPausa = tarjeta(orgG);
+    const sPausa = susc(orgG, { metodo: tPausa });
+    d.prepare('UPDATE metodos_pago SET fallos_seguidos = 3 WHERE id = ?').run(tPausa.id);
+    d.prepare("UPDATE planes SET activo = 0 WHERE id = 'destacado'").run();
+    aprobado();
+    r = await pagos.renovarAutomaticas({ ahora: new Date() });
+    d.prepare("UPDATE planes SET activo = 1 WHERE id = 'destacado'").run();
+    const motivo = (id) => (mias(r.omitidas, id)[0] || {}).motivo || '';
+    ok(/ampliación/.test(motivo(sAmp)) && pagosDe(sAmp).length === 1 && fila(sAmp).renovacion_intentos === 0,
+      `ampliación pendiente: omitida («${motivo(sAmp)}») y no se pide otra operación`);
+    ok(/renovación pendiente/.test(motivo(sRen)) && pagosDe(sRen).length === 1, `renovación manual pendiente: omitida («${motivo(sRen)}»)`);
+    ok(pagosDe(sSin).length === 0 && !r.omitidas.some((o) => o.idSusc === sSin) && r.cobradas.every((c) => c.idSusc !== sSin),
+      'sin la casilla activada no se cobra nunca sola');
+    ok(/plan/.test(motivo(sPlan)) && pagosDe(sPlan).length === 0, `plan inactivo: omitida («${motivo(sPlan)}»)`);
+    ok(/no existe/.test(motivo(sBorr)) && pagosDe(sBorr).length === 0, `tarjeta borrada: omitida («${motivo(sBorr)}»)`);
+    ok(/no está activa/.test(motivo(sInact)) && pagosDe(sInact).length === 0, `tarjeta inactiva: omitida («${motivo(sInact)}»)`);
+    ok(/pausada/.test(motivo(sPausa)) && pagosDe(sPausa).length === 0, `tarjeta con tres fallos: omitida («${motivo(sPausa)}»)`);
+    ok([tBorrada, tInact, tPausa].every((t) => comprasDe(t.token).length === 0), 'a ninguna tarjeta que no sirve se le llama');
+
+    // 8. La casilla de una renovación MANUAL con tarjeta sigue activando la automática al aprobarse
+    const orgM = cuenta('m22');
+    const tM = tarjeta(orgM);
+    const sM = susc(orgM, { auto: 0, fin: enDias(10) });
+    const fM = db.suscripcionRenovable(sM, orgM);
+    const { cobro: cM, intencion: iM } = pagos.cobroDeRenovacion(fM, {
+      cliente: CL, correoCliente: CL.correo, renovacionAutomatica: { texto: 'Acepto la renovación automática', aceptada: new Date().toISOString() },
+    });
+    const pM = db.registrarCobro({ idOrg: orgM, idSusc: sM, cobro: { ...cM, procesador: 'cardnet' }, intencion: iM });
+    db.enlazarMetodoPago(pM.id, tM.id);
+    aprobado();
+    const rm = await pagos.cobrar(db.pagoPorId(pM.id));
+    ok(rm.estado === 'aprobado' && fila(sM).renovacion_automatica === 1 && fila(sM).metodo_pago_id === tM.id
+      && fila(sM).renovacion_texto === 'Acepto la renovación automática',
+      'renovación manual pagada con tarjeta y casilla: queda la renovación automática con esa tarjeta');
+
+    // 9. El comprobante sale a nombre del cliente del último pago aprobado
+    const orgF = cuenta('f22');
+    const sF = susc(orgF, { metodo: tarjeta(orgF) });
+    const previo = db.registrarCobro({ idOrg: orgF, idSusc: sF, cobro: { ...precios.desglose(1800), referencia: `R22-${SELLO}-${++n}`, procesador: 'transferencia' },
+      intencion: { tipo: 'compra', idPlan: 'estandar', cupo: 1, dias: 30, concepto: 'x', cliente: { razonSocial: 'Empresa Prueba, S.R.L.', rnc: '101010101' } } });
+    d.prepare("UPDATE pagos SET estado = 'aprobado', confirmado = ? WHERE id = ?").run(new Date().toISOString(), previo.id);
+    ok(db.clienteDeRenovacion(sF).rnc === '101010101' && db.clienteDeRenovacion(sF).razonSocial === 'Empresa Prueba, S.R.L.',
+      'clienteDeRenovacion trae el cliente del último pago aprobado, con su RNC');
+    const sinPrevio = db.clienteDeRenovacion(sA);
+    ok(sinPrevio && (sinPrevio.correo === `a22-${SELLO}@prueba.invalid` || sinPrevio.razonSocial || sinPrevio.rnc), 'sin pago aprobado previo cae en los datos del propietario');
+    apagar();
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);

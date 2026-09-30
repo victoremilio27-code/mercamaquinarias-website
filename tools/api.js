@@ -2463,8 +2463,7 @@ const esExenta = (idUsuario) => !!(db.organizacionDe(idUsuario) || {}).exenta_pa
 // también lleva base y ajuste (a 0) y se guarda igual (D-04).
 const SIN_COSTO = precios.desglose(0);
 
-const referenciaCobro = () =>
-  `TE-${new Date().getFullYear()}-${db.id().slice(0, 6).toUpperCase()}`;
+// La referencia de un cobro vive en pagos.referenciaCobro (un solo generador).
 
 /* ── Rutas: membresías ──────────────────────────────────────
    Se compra capacidad y después se publica. Antes se publicaba y el
@@ -2851,10 +2850,10 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
      que retirarla tenga efecto en la compra siguiente sin esperar a
      que caduque ninguna sesión. */
   const cobro = esExenta(ctx.usuario.id)
-    ? { ...SIN_COSTO, referencia: referenciaCobro(), procesador: 'interna' }
+    ? { ...SIN_COSTO, referencia: pagos.referenciaCobro(), procesador: 'interna' }
     : {
       ...precios.precioCompra({ precioUnitario: precioUnitario(plan), cupo, dias }),
-      referencia: referenciaCobro(),
+      referencia: pagos.referenciaCobro(),
     };
 
   /* El procesador lo elige el SERVIDOR (D-03). Antes era el literal
@@ -2970,7 +2969,7 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
 
   const dias = s.dias_ciclo || 30;
   const cobro = esExenta(ctx.usuario.id)
-    ? { ...SIN_COSTO, referencia: referenciaCobro(), procesador: 'interna' }
+    ? { ...SIN_COSTO, referencia: pagos.referenciaCobro(), procesador: 'interna' }
     : {
       ...precios.precioAmpliacion({
         precioUnitario: s.precio_unitario,
@@ -2979,7 +2978,7 @@ const ampliarMembresia = conSesion(async (req, res, ctx, idSusc) => {
         dias,
         diasRestantes: precios.diasRestantes(s.fin) ?? dias,
       }),
-      referencia: referenciaCobro(),
+      referencia: pagos.referenciaCobro(),
     };
 
   // El procesador lo elige el servidor, igual que en la compra (D-03).
@@ -3751,7 +3750,7 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
   const dias = b.dias_elegidos;
   const cobro = {
     ...precios.precioCompra({ precioUnitario: precioUnitario(plan), cupo: 1, dias }),
-    referencia: referenciaCobro(),
+    referencia: pagos.referenciaCobro(),
   };
 
   const fiscal = clienteDeCompra(c, ctx);
@@ -3935,16 +3934,15 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
      el método de pago y los datos fiscales: un importe, cupo, plan o
      número de días que mande el navegador no se mira, ni para
      rechazarlo. */
-  const dias = s.dias_ciclo === 60 ? 60 : 30;
-  const cupo = s.anuncios_incluidos;
-  const cobro = {
-    ...precios.precioRenovacion({ precioUnitario: s.precio_vigente, cupo, dias }),
-    referencia: referenciaCobro(),
-  };
-
   const fiscal = clienteDeCompra(c, ctx);
   if (fiscal.error) return fallo(res, 400, fiscal.error);
   const { cliente } = fiscal;
+  /* Renovar a mano y renovar solo cobran lo mismo porque salen de la
+     misma función (R-04): `pagos.cobroDeRenovacion`. */
+  const { cobro, intencion } = pagos.cobroDeRenovacion(s, {
+    idAnuncio, cliente, correoCliente: ctx.usuario.correo,
+  });
+  const dias = intencion.dias;
 
   /* La casilla del pago (D-12) ya NO se guarda aquí antes de cobrar:
      viaja en la intención del pago y se aplica al aprobarse (R-03). Un
@@ -3978,9 +3976,6 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
   const tarjeta = tarjetaPedida(res, c, org, cobro);
   if (tarjeta === false) return undefined;
 
-  const concepto = idAnuncio
-    ? `Renovación ${s.plan_nombre} · ${pagos.nombreDeEquipo(db.anuncio(idAnuncio) || {})} · ${dias} días`
-    : `Renovación ${s.plan_nombre} · ${cupo} publicaciones · ${dias} días`;
   let pago;
   try {
     pago = db.registrarCobro({
@@ -3988,13 +3983,8 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
       idSusc: s.id,
       idAnuncio,
       cobro,
-      intencion: {
-        tipo: 'renovacion', idSusc: s.id, idAnuncio, idPlan: s.plan_id, cupo, dias,
-        concepto,
-        cliente,
-        correoCliente: ctx.usuario.correo,
-        ...casillaDeRenovacion(c, cobro, org),
-      },
+      // La casilla se decide aquí porque depende del procesador elegido arriba.
+      intencion: { ...intencion, ...casillaDeRenovacion(c, cobro, org) },
     });
   } catch (e) {
     /* La carrera: otra petición anotó la renovación entre la lectura y
