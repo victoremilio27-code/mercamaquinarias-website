@@ -607,3 +607,295 @@ de un resumen de búsqueda (ver Fuentes) y **debe confirmarse con el contador o 
 
 **Fecha de la investigación:** 2026-09-29
 **Válida hasta:** 30 días (el código de `facturas` cambia poco; revisar si otra fase toca `tools/facturas.js` o `tools/db.js`).
+
+## Formato 607 (R-01)
+
+**Investigado:** 2026-09-30. **Sustituye** a la sección «Formato 607 de la DGII (solo por si Victor o su contador lo piden)»
+de más arriba, que queda como historia: Victor contestó SÍ (R-01) y aquí está lo que hace falta para planificarlo.
+**Confianza global: MEDIA.** Las columnas que el sitio va a rellenar (1 a 9 y 17 a 19) están confirmadas por dos
+fuentes independientes; el resto va vacío y su orden exacto no cambia lo que sale.
+
+### Qué se pudo leer y qué no
+
+- **dgii.gov.do, ayuda.dgii.gov.do y todos los blogs contables están bloqueados** por el proxy de salida de esta
+  sesión (`EGRESS_BLOCKED`: dgii.gov.do, ayuda.dgii.gov.do, pdf4pro.com, studocu.com, docs.admcloud.net,
+  bolsillopractico.com, sincosoft…, cr.com.do). **No se abrió ningún PDF de la DGII.** Lo que se cita de la DGII viene
+  de los resúmenes del buscador sobre sus páginas (el título y la URL son reales, el texto es el extracto del
+  buscador). Las fechas de las páginas del centro de ayuda se sacan del identificador de la URL (sus 8 primeros
+  dígitos hexadecimales son la marca de tiempo de creación): las CA38xx son del 2020-08-18, que parece la fecha de la
+  migración del centro de ayuda y no la de redacción.
+- **Sí se leyó código real** que genera el TXT del 607 y lleva años en uso en empresas dominicanas: el módulo
+  `dgii_reports` de Odoo 12 de la comunidad dominicana (Indexa / iterativo, LGPL-3, versión 12.0.1.2.1),
+  `raw.githubusercontent.com/odoo-dominicana/l10n-dominicana/12.0/dgii_reports/models/dgii_report.py`
+  (`process_607_report_data`, `_generate_607_txt`, `_compute_607_data`) y `ncf_manager/models/account_invoice.py`
+  (códigos de tipo de ingreso). Es una implementación, no la norma: donde discrepa del extracto de la DGII se dice.
+
+Etiquetas: **[DGII-buscador]** = extracto del buscador sobre una página de la DGII, sin abrirla;
+**[ODOO]** = leído en el código de Odoo; **[CÓDIGO]** = leído en este repositorio; **NO CONFIRMADO** = ni una cosa ni la otra.
+
+### Marco normativo
+
+| Dato | Valor | Fuente |
+|------|-------|--------|
+| Norma | Norma General 07-2018 (9 de marzo de 2018), modificada por la 10-2018 y la 05-2019; formato vigente desde el período mayo 2018 | [DGII-buscador] «Llenado y envío del Formato 607» y extractos que citan la NG 07-18 arts. 4, 8 y 13 |
+| Plazo | Los primeros 15 días del mes siguiente al de la facturación (art. 8) | [DGII-buscador] |
+| Mes sin operaciones | Se remite igual, «de manera informativa» (en cero). Cómo se marca en la Oficina Virtual: **NO CONFIRMADO** | [DGII-buscador] |
+| Facturación electrónica | Quien emite el 100 % en e-CF no presenta 607 ni 608 (Ley 32-23 y NG 01-20) | [DGII-buscador] «Envío 607 con facturación electrónica» (2025-06-06), «ELIMINACION ENVIO 606-607» (2023-09-23) |
+
+### El archivo
+
+- **Encabezado, una línea:** `607|<RNC o cédula del que remite>|<AAAAMM>|<cantidad de registros>`.
+  El extracto de la DGII da los tres campos (RNC/cédula, período de 6 posiciones AAAAMM, cantidad de registros, con un
+  máximo de 65 000) [DGII-buscador, CA3840, «¿Cómo está compuesto el formato 607?»]; Odoo escribe exactamente
+  `"607|{}|{}|{}".format(rnc, periodo, cantidad)` [ODOO]. **CONFIRMADO por dos fuentes.**
+- **La cantidad es la de líneas de detalle del archivo**, no la de comprobantes del mes: Odoo resta las facturas de
+  consumo menores de 250 000 que deja fuera del TXT (`line - excluded_line`) [ODOO].
+- **Separador `|`, una línea por comprobante, 23 campos** (22 barras) [ODOO; «23 columnas» en DGII-buscador].
+- **Importes:** punto decimal, sin separador de miles (la DGII lo exige en su herramienta: «10.18», no «10,18»)
+  [DGII-buscador, CA3904 alertas de la herramienta de Excel]. Odoo escribe dos decimales (`{:.2f}`) y **siempre en
+  positivo** (`abs`) [ODOO].
+- **Fechas:** `AAAAMMDD` [ODOO `strftime("%Y%m%d")`].
+- **Relleno con espacios:** Odoo rellena algunos campos con espacios a la derecha (`ljust(11)`, `ljust(12)`), resto del
+  formato de ancho fijo anterior a 2018. Con el separador `|` no hace falta, y el extracto de la DGII no lo menciona.
+  **No se rellena. NO CONFIRMADO que la herramienta lo exija**; es la primera pregunta de validación para el contador.
+- **Fin de línea:** Odoo escribe CRLF y termina con un salto de línea tras la última línea [ODOO]. Se hace igual.
+- **Codificación:** el 607 no lleva nombres ni direcciones (solo dígitos, letras de NCF y puntos), así que el
+  archivo es ASCII puro y la codificación no importa. **Sin BOM** (el BOM del CSV del paquete no va aquí: sería basura
+  delante del `607`).
+- **Nombre:** la herramienta de la DGII genera `DGII_F_607_<RNC>_<AAAAMM>.TXT` (ejemplo `DGII_F_607_130000000_201702.TXT`)
+  [DGII-buscador]; Odoo usa `DGII_607_<RNC>_<AAAAMM>.txt` [ODOO]. R-01 fijó `607-AAAAMM.txt` y **se respeta** (decisión
+  bloqueada); el LEEME dice que, si la Oficina Virtual pide el nombre de la herramienta, basta con renombrarlo.
+  **NO CONFIRMADO** que la Oficina Virtual valide el nombre del archivo.
+
+### Columnas del detalle, en orden
+
+«Rellena» dice lo que pone MercaMaquinarias (ver el mapeo más abajo).
+
+| # | Campo | Formato | Fuente del orden y del formato | Rellena |
+|---|-------|---------|-------------------------------|---------|
+| 1 | RNC o cédula del cliente | dígitos, sin guiones; 9 (RNC) u 11 (cédula) | [ODOO `formated_rnc_cedula` quita guiones y solo admite 9 u 11]; [DGII-buscador] | `facturas.rnc` |
+| 2 | Tipo de identificación | `1` RNC, `2` cédula (`3` sin identificación, solo consumidor final: **NO CONFIRMADO**, el extracto puede ser del formato anterior a 2018) | [ODOO: 1 si 9 dígitos, 2 si 11]; [DGII-buscador] | `1` |
+| 3 | NCF | 11 posiciones (`B0100000016`); 13 si es e-CF | [ODOO]; [CÓDIGO `tomarNcf`: prefijo + 8 dígitos] | `facturas.ncf` |
+| 4 | NCF modificado | solo notas de crédito o débito; hasta 19 posiciones | [DGII-buscador «19 posiciones alfanuméricas»]; [ODOO] | `facturas.ncf_modificado` en B04 |
+| 5 | Tipo de ingreso | `01` operaciones (no financieros), `02` financieros, `03` extraordinarios, `04` arrendamientos, `05` venta de activo depreciable, `06` otros | [ODOO `ncf_manager` `income_type`, por defecto `01`] | `01` (a confirmar por el contador) |
+| 6 | Fecha del comprobante | AAAAMMDD | [ODOO]; [DGII-buscador «fecha en que se realizó la venta»] | `facturas.fecha` en hora de Santo Domingo |
+| 7 | Fecha de retención | AAAAMMDD; solo si un tercero retuvo | [ODOO]; [DGII-buscador] | vacío |
+| 8 | Monto facturado | sin ITBIS, ISC, propina ni otros impuestos | [DGII-buscador]; [ODOO `amount_untaxed`] | `facturas.subtotal` |
+| 9 | ITBIS facturado | | [ODOO]; [DGII-buscador] | `facturas.itbis` |
+| 10 | ITBIS retenido por terceros | | [ODOO]; [DGII-buscador] | vacío |
+| 11 | ITBIS percibido | no se usa salvo norma que lo habilite | [ODOO lo deja vacío]; [DGII-buscador «déjelo en blanco o en cero»] | vacío |
+| 12 | Retención de renta (ISR) por terceros | | [ODOO]; [DGII-buscador] | vacío |
+| 13 | ISR percibido | igual que el 11 | [ODOO vacío]; [DGII-buscador] | vacío |
+| 14 | Impuesto selectivo al consumo (ISC) | | [ODOO] | vacío |
+| 15 | Otros impuestos/tasas | | [ODOO] | vacío |
+| 16 | Monto propina legal | | [ODOO] | vacío |
+| 17 | Efectivo | importe CON todos los impuestos | [ODOO]; [DGII-buscador «17. Efectivo»; «con todos los impuestos: 1 000 + 180 → 1 180»] | si `metodo_pago = efectivo` |
+| 18 | Cheque / transferencia / depósito | ídem | [ODOO]; [DGII-buscador «18»] | si `transferencia` |
+| 19 | Tarjeta de débito/crédito | ídem | [ODOO]; [DGII-buscador «19»] | si `cardnet` (o el viejo `tarjeta`) |
+| 20 | Venta a crédito | ídem | [ODOO]; [DGII-buscador «20»] | vacío |
+| 21 | Bonos o certificados de regalo | ídem | **Orden en conflicto:** la DGII (extracto) pone 21 bonos, 22 permuta; Odoo escribe 21 permuta, 22 bonos | vacío |
+| 22 | Permuta | ídem | ídem | vacío |
+| 23 | Otras formas de venta | ídem | [ODOO]; [DGII-buscador] | si `demo` (con aviso) |
+
+**El conflicto 21/22 no afecta a lo que genera el sitio:** los dos van vacíos siempre. Tampoco afecta el orden
+exacto de 10 a 16, todos vacíos. Las columnas que llevan datos (1 a 9, 17, 18, 19 y 23) coinciden en las dos fuentes.
+
+### Consumo (B02), notas de crédito (B04), anulados (608) y recibos
+
+- **B02 con monto facturado (sin ITBIS) menor de RD$250 000: NO van en el TXT.** Se declaran como un resumen en la
+  Oficina Virtual («Resumen general de facturas de consumo», dentro de «Enviar archivos», marcando la casilla de que se
+  envían facturas de consumo menores de 250 000): cantidad de NCF emitidos, monto facturado, ITBIS facturado, ISC,
+  otros impuestos, propina legal y el total por forma de venta. Ese resumen **incluye todas** las de consumo, también
+  las de 250 000 o más. Base: NG 07-18 arts. 4 y 13, modificada por la NG 10-18 [DGII-buscador, CA3842 y «¿Cómo se
+  deben reportar las facturas de consumo electrónicas inferiores a RD$250,000?» CA4419]. Odoo hace exactamente eso:
+  excluye del TXT los `02` con `amount_untaxed < 250000` y acumula el resto en campos `csmr_*` [ODOO].
+- **B02 de 250 000 o más: van línea a línea en el TXT con la cédula o el RNC del comprador**; no hay RNC genérico, hay
+  que pedírselo al cliente [DGII-buscador, «Facturas de consumo mayores de 250,000» (2025-04-15) y
+  «Se pueden enviar los B02 por el formulario 607» (2024-01-25)].
+- **B04: van en el 607 como una línea más**, con sus propios datos y el NCF del comprobante que modifican en la
+  columna 4, en positivo; **las columnas 17 a 23 no hace falta llenarlas**. Las notas que afectan a facturas de consumo
+  van también línea a línea aunque sean menores de 250 000 [DGII-buscador, «NOTA DE CREDITO EN 607» (2024-01-23) y
+  «Notas de Crédito facturas de consumo»]. Odoo las escribe en positivo con `abs` [ODOO]. Cada una va en el 607 del mes
+  en que se emitió, no en el del original (coincide con la Trampa 9 y D-05).
+- **608 es otra cosa:** solo los NCF que se anularon del todo (deterioro, error de impresión, corrección, etc.) y que
+  no llegaron a valer. **Una factura entregada y luego revertida con nota de crédito NO va al 608**: la factura original
+  sigue en el 607 de su mes y la B04 en el de ella [DGII-buscador, «Qué se reporta en el 608»]. Por eso, en este sitio,
+  **ningún comprobante de la tabla `facturas` va al 608**: `anulado_por` significa «tiene nota de crédito», no «NCF
+  anulado». El único caso de 608 posible es un NCF consumido sin comprobante (ver riesgo R5 más abajo).
+- **Recibos (`tipo = 'recibo'`, sin NCF): no van en el 607.** No son comprobantes fiscales [CÓDIGO; el 607 identifica
+  cada línea por NCF].
+
+### Mapeo contra la base [CÓDIGO: `tools/db.js`, `tools/facturas.js`, `tools/pagos.js`, `tools/api.js`, `tools/correo.js`]
+
+Hechos del código que fijan el mapeo:
+
+- Importes en **pesos enteros** (`assets/precios.js` `desglose`, «Pesos enteros (D-03 de la fase 05.1)»;
+  `crearFactura` hace `Math.round`). En el TXT: `String(n) + '.00'`, sin pasar por coma flotante.
+- `subtotal` es el **gravado** (base + ajuste del 3 %): es el «monto facturado» correcto, y el 3 % no aparece aparte en
+  ningún sitio, como pide `modelo-comercial.md`. `descuento` existe pero hoy ningún camino de emisión lo rellena (siempre 0).
+- `rnc` se guarda **solo con dígitos y siempre 9** (`rncValido` exige 9; la cédula de 11 se dejó de aceptar). Tipo de
+  identificación = `1` siempre que haya RNC. El generador quita igualmente todo lo que no sea dígito (filas viejas).
+- El **RNC del emisor** es `correo.EMPRESA.rnc` = `'1-31-27975-9'` (o `MERCA_RNC`), **con guiones**: el encabezado
+  lleva `131279759`.
+- `metodo_pago` = `pago.procesador`: `transferencia`, `cardnet`, `demo`; en `METODOS` también `efectivo`, `tarjeta`,
+  `interna`. `interna` y `sin-costo` son importe 0 y **no emiten comprobante** (`pagos.emitir` sale si `total` no es > 0).
+- `fecha` es ISO UTC (el momento en que entró el dinero). La fecha del 607 es su **día en Santo Domingo** (UTC−4),
+  el mismo corte que D-04: `2026-10-01T03:59:59.999Z` es el 20260930 y va en el 607 de septiembre.
+- Notas de crédito: copian `subtotal`, `itbis`, `total`, `rnc` y `metodo_pago` del original, en positivo, y
+  `ncf_modificado = original.ncf || original.numero`: **si el original era un recibo, el «NCF modificado» es el número
+  interno `MM-AAAA-NNNNNN`**, que no es un NCF.
+
+| Columna | Qué pone el sitio | Certeza |
+|---------|-------------------|---------|
+| Encabezado | `607` · RNC del emisor sin guiones · AAAAMM del mes de Santo Domingo · líneas de detalle | Segura |
+| 1 RNC/cédula | `rnc` sin no-dígitos | Segura en B01/B04 |
+| 2 Tipo ID | `1` si 9 dígitos, `2` si 11 | Segura |
+| 3 NCF | `ncf` | Segura |
+| 4 NCF modificado | `ncf_modificado` en `nota_credito`; vacío en lo demás | Segura si empieza por `B` o `E`; ver R3 |
+| 5 Tipo de ingreso | `01` | **Supuesta**: vender publicaciones y capacidad es la operación del negocio; la decide el contador |
+| 6 Fecha | `fecha` → día de Santo Domingo, AAAAMMDD | Segura (ver R2 sobre el PDF) |
+| 7 Fecha retención | vacío | No se sabe: el cliente paga el total en línea y el sitio no registra retenciones |
+| 8 Monto facturado | `subtotal` + `.00` | Segura |
+| 9 ITBIS facturado | `itbis` + `.00` | Segura |
+| 10–13 Retenciones y percibidos | vacío | No se sabe (10, 12) o no aplica (11, 13). R-01: «lo que no se pueda saber va vacío» |
+| 14–16 ISC, otros, propina | vacío | El sitio no cobra ninguno; vacío por coherencia con R-01 (ver pregunta P2) |
+| 17 Efectivo | `total` si `efectivo` | Segura (hoy no ocurre) |
+| 18 Cheque/transf./dep. | `total` si `transferencia` | Segura |
+| 19 Tarjeta | `total` si `cardnet` o `tarjeta` | Segura |
+| 20–22 Crédito, bonos, permuta | vacío | El sitio solo emite comprobante de lo ya cobrado (`condicion_pago = 'Pagado'`) |
+| 23 Otras formas | `total` si `demo` o cualquier valor desconocido, y **aviso en el LEEME** | Ver R4 |
+| 17–23 en una B04 | todo vacío | [DGII-buscador]: no hace falta en notas de crédito |
+
+**Qué entra en el TXT** (y el orden, estable para que dos descargas den los mismos bytes: por `fecha` y luego `numero`):
+
+1. `factura_credito_fiscal` (B01) con NCF, del mes → línea.
+2. `nota_credito` (B04) con NCF, del mes, cuyo `ncf_modificado` es un NCF → línea con columnas 17–23 vacías.
+3. `factura_consumo` (B02) con `subtotal < 250000` → **fuera del TXT**; suma al bloque «Resumen de facturas de consumo»
+   del LEEME (cantidad, monto facturado, ITBIS, ISC 0, otros 0, propina 0, y total por forma de venta).
+4. `factura_consumo` con `subtotal >= 250000` → **fuera del TXT y aviso**: el sitio no pide cédula a quien compra sin RNC,
+   así que no puede escribir una línea válida. Entra en el resumen de consumo y el LEEME la lista como «requiere la
+   identificación del comprador». Hoy no existe la secuencia B02, así que no ocurre.
+5. `nota_credito` cuyo `ncf_modificado` no es un NCF (anula un recibo) → **fuera del TXT y aviso** (R3).
+6. `recibo` → fuera, sin aviso (no es fiscal).
+
+Los comprobantes anulados (con `anulado_por`) **siguen en el TXT** con sus datos originales: la anulación es la B04.
+
+### Qué debe decir el LEEME sobre el 607
+
+1. Que `607-AAAAMM.txt` es un **borrador** generado por el sitio a petición de Victor, que el sitio **no lo envía** a la
+   DGII ni a nadie, y que lo revisa y lo sube el contador (con la herramienta de pre-validación de la DGII y la Oficina
+   Virtual) antes del día 15.
+2. RNC del emisor, período, cantidad de líneas y la suma de monto facturado e ITBIS del TXT (para cuadrar a ojo).
+3. Qué columnas van vacías y por qué: tipo de ingreso fijado en `01`; retenciones y fechas de retención vacías porque el
+   sitio cobra el total en línea y no sabe si el cliente retuvo después; ISC, otros impuestos y propina vacíos porque no
+   se cobran; formas de venta: transferencia → columna 18, CardNet → 19.
+4. El bloque **«Resumen de facturas de consumo (para la Oficina Virtual)»** con los totales de B02, aunque sea cero.
+5. La lista **«Revisar a mano»**: B02 de 250 000 o más sin identificación, B04 sobre recibos, cobros `demo`, y los
+   comprobantes cuya fecha impresa en el PDF no coincide con la del 607 (R2).
+6. Que los recibos sin NCF no están en el 607 a propósito, y que ningún comprobante del paquete va al 608.
+7. Que, si el mes no tiene líneas, el TXT lleva solo el encabezado con `0` y que la forma de declarar el mes en cero
+   la decide el contador.
+8. Que el nombre `DGII_F_607_<RNC>_<AAAAMM>.TXT` es el que genera la herramienta de la DGII, por si hace falta renombrarlo.
+
+### Casos de prueba para el arnés
+
+Datos: emisor `MERCA_RNC=1-31-27975-9`, período `2026-10` (Santo Domingo: de `2026-10-01T04:00:00.000Z` incluido a
+`2026-11-01T04:00:00.000Z` excluido). Las líneas esperadas se generaron con un script en esta sesión (22 barras cada una).
+RNC de clientes ficticios.
+
+| # | Entrada (fila de `facturas`) | Esperado |
+|---|------------------------------|----------|
+| T1 | B01 `B0100000016`, rnc `101000017`, subtotal 1030, itbis 185, total 1215, `transferencia`, fecha `2026-10-05T14:00:00.000Z` | `101000017\|1\|B0100000016\|\|01\|20261005\|\|1030.00\|185.00\|\|\|\|\|\|\|\|\|1215.00\|\|\|\|\|` |
+| T2 | B01 `B0100000017`, rnc `101000025`, 5150 / 927 / 6077, `cardnet`, fecha `2026-11-01T02:30:00.000Z` (22:30 del 31 en Santo Domingo) | En el 607 de **octubre**: `101000025\|1\|B0100000017\|\|01\|20261031\|\|5150.00\|927.00\|\|\|\|\|\|\|\|\|\|6077.00\|\|\|\|` y en el LEEME como «fecha del PDF distinta» (el PDF imprime 01/11/2026) |
+| T3 | B04 `B0400000001`, `ncf_modificado` `B0100000016`, rnc `101000017`, 1030 / 185 / 1215, `transferencia`, fecha `2026-10-20T15:00:00.000Z` | `101000017\|1\|B0400000001\|B0100000016\|01\|20261020\|\|1030.00\|185.00\|\|\|\|\|\|\|\|\|\|\|\|\|\|` (T1 sigue en el archivo aunque tenga `anulado_por`) |
+| T4 | B01 `B0100000018`, rnc `101000033`, 2060 / 371 / 2431, `demo`, fecha `2026-10-10T12:00:00.000Z` | `101000033\|1\|B0100000018\|\|01\|20261010\|\|2060.00\|371.00\|\|\|\|\|\|\|\|\|\|\|\|\|\|2431.00` y aviso en el LEEME |
+| T5 | recibo sin NCF del mes | ninguna línea; el conteo del encabezado no lo cuenta |
+| T6 | B02 subtotal 5000 | ninguna línea; resumen de consumo: 1 NCF, 5000.00, 900.00 |
+| T7 | B02 subtotal 250000 | ninguna línea; aviso «requiere identificación»; sí suma al resumen de consumo |
+| T8 | B04 con `ncf_modificado` `MM-2026-000123` | ninguna línea; aviso «nota de crédito sobre recibo» |
+| T9 | B01 con fecha `2026-10-01T03:59:59.999Z` | no está en el de octubre; en el de septiembre con fecha `20260930` |
+| T10 | T1 a T9 juntos | encabezado `607\|131279759\|202610\|4` (T1, T2, T3, T4); fin de línea CRLF; ninguna línea con un carácter fuera de ASCII; 23 campos por línea; sin BOM |
+| T11 | mes sin comprobantes | `607\|131279759\|202610\|0` y nada más |
+| T12 | generar dos veces el mismo mes | bytes idénticos |
+| T13 | rnc guardado como `1-01-00001-7` (fila vieja) | columna 1 `101000017`, columna 2 `1` |
+
+Comprobaciones generales para el arnés: la suma de la columna 8 y de la 9 de las líneas B01 menos las B04 coincide con
+el bloque fiscal del `resumen.csv`; cada línea que no es B04 tiene exactamente una de las columnas 17–23 con importe y
+ese importe es `subtotal + itbis`; generar el 607 no escribe en la base (el mismo hash de `facturas` antes y después,
+como D-01) ni llama a `correo` (D-11).
+
+### Riesgos fiscales
+
+- **R1 — Es un borrador.** Varias reglas de formato (relleno con espacios, vacío frente a `0.00`, nombre del archivo,
+  tipo de identificación `3`) no se pudieron confirmar en la fuente. Si la herramienta de pre-validación lo rechaza, el
+  contador lo corrige a mano o se ajusta el generador; ningún dato de la base cambia. Mitigación: el LEEME lo dice y la
+  primera vez se pasa por la herramienta de la DGII antes de subirlo.
+- **R2 — Fecha del PDF distinta de la del 607.** El PDF imprime la fecha en UTC (`fechaCorta`, diferido a la fase 13),
+  así que lo cobrado entre las 20:00 y las 24:00 de Santo Domingo sale en el papel con el día siguiente, y el último día
+  del mes con el mes siguiente. El cliente declara en su 606 la fecha del papel y la DGII cruza 606 contra 607. El 607
+  debe llevar la fecha correcta (Santo Domingo), pero el LEEME tiene que listar esos comprobantes para que el contador lo
+  sepa. **Recomendación a la fase:** subir de prioridad el arreglo de `fechaCorta` para los comprobantes nuevos antes del
+  lanzamiento, porque ahora hay un documento fiscal que choca con él. Los ya emitidos no se tocan.
+- **R3 — Nota de crédito sobre un recibo.** `emitirNotaCredito` consume un B04 aunque el original no tenga NCF, y le
+  pone como «NCF modificado» el número interno. Esa línea no pasa la validación del 607, y el B04 consumido tampoco va
+  al 608. El generador no la inventa: la saca del TXT y la lista. Qué hacer con ese B04 lo decide el contador (pregunta
+  P5). Si la respuesta es «no debe pasar», el arreglo es impedir en `emitirNotaCredito` la nota de crédito sobre un
+  recibo: es tocar `tools/facturas.js` (plan verificado por Opus) y no forma parte de esta fase.
+- **R4 — Cobros `demo` con NCF.** `demo` aprueba siempre y solo se ofrece si la transferencia y CardNet están apagadas
+  (`metodosDeCobro`). Si en producción se emitió una B01 con `demo`, hay un comprobante fiscal por dinero que no entró.
+  El generador lo pone en «otras formas» para que el TXT cuadre y lo avisa; decidir si se revierte con B04 es del contador.
+- **R5 — NCF consumido sin comprobante.** `tomarNcf` avanza la secuencia antes de `crearFactura`; si la inserción falla
+  (tras cinco choques de número, o un error de disco), el NCF queda gastado sin fila y la DGII verá un salto. Ese es el
+  único candidato al 608 (tipo `08`, errores en secuencia, o el que diga el contador). **Sugerencia para el plan** (barata,
+  solo lectura): el LEEME puede listar los huecos entre los NCF del mes y `secuencias_ncf.siguiente`, sin escribir nada.
+- **R6 — B02 grande sin identificación.** Hoy no hay B02; cuando exista, una venta de consumo de 250 000 o más sin
+  cédula no se puede declarar bien. Hay que pedir la cédula en la compra por encima del umbral; es otra fase.
+- **R7 — El sitio no es la única fuente de ventas.** El 607 cubre solo lo facturado por el sitio. Si la empresa factura
+  otras cosas con sus B01/B02 fuera del sitio, el contador tiene que fusionarlas; el LEEME lo dice.
+- **R8 — Facturación electrónica.** Si la empresa pasa al 100 % de e-CF, el 607 deja de presentarse (Ley 32-23). El
+  generador no hace daño, pero sobraría; está pendiente de la respuesta del contador sobre e-CF (STATE).
+
+### Preguntas para el contador (de una sola tanda, vía Victor)
+
+- **P1.** ¿Acepta la herramienta de pre-validación los campos vacíos sin relleno de espacios, o hay que rellenarlos o
+  poner `0.00` en las retenciones, ISC, otros impuestos y propina?
+- **P2.** ¿Tipo de ingreso `01` (ingresos por operaciones, no financieros) para las publicaciones y la capacidad de
+  dealer?
+- **P3.** Retenciones: ¿algún cliente persona jurídica o del Estado retiene ITBIS o ISR a la empresa sobre estos cobros?
+  Si pasa, lo añade él al borrador; el sitio no puede saberlo.
+- **P4.** ¿Con qué nombre sube el archivo (`607-AAAAMM.txt` del paquete o `DGII_F_607_<RNC>_<AAAAMM>.TXT`)?
+- **P5.** ¿Qué hace con una nota de crédito B04 emitida sobre un recibo sin NCF (R3)? ¿Y con una B01 cobrada con `demo`
+  (R4)?
+- **P6.** ¿La empresa factura algo fuera del sitio que también vaya en el 607 (R7)? ¿Va a pasar a e-CF y cuándo (R8)?
+- **P7.** Para un mes sin ventas, ¿lo declara en cero en la Oficina Virtual o sube un TXT con el encabezado y `0`?
+
+### Suposiciones de esta sección (se suman al registro de arriba)
+
+| # | Afirmación | Riesgo si es falsa |
+|---|-----------|--------------------|
+| A7 | Campos vacíos sin relleno son válidos en el TXT | La herramienta lo rechaza; el contador rellena o se ajusta el generador (P1) |
+| A8 | Tipo de ingreso `01` para todo lo que cobra el sitio | Clasificación errónea en el IT-1/IR-2; se cambia una constante (P2) |
+| A9 | Las B04 llevan vacías las columnas 17–23 | Si la herramienta exige forma de venta, se copia la del original |
+| A10 | El orden de las columnas 10–16 y 20–22 es el de Odoo | Ninguno mientras vayan vacías |
+| A11 | El umbral de 250 000 se compara con el monto facturado sin ITBIS | Si la DGII contara el total con ITBIS, una B02 con subtotal entre 211 865 y 249 999 debería ir línea a línea; hoy no hay B02 |
+
+### Fuentes de esta sección
+
+- **Código leído (ALTA para lo que hace esa implementación):**
+  `https://raw.githubusercontent.com/odoo-dominicana/l10n-dominicana/12.0/dgii_reports/models/dgii_report.py`,
+  `…/12.0/ncf_manager/models/account_invoice.py`, `…/12.0/ncf_manager/models/account.py`,
+  `…/12.0/dgii_reports/__manifest__.py`, descargados el 2026-09-30.
+- **Extractos del buscador sobre páginas de la DGII (MEDIA, sin abrir):**
+  «Llenado y envío del Formato de Venta de Bienes y Servicios (607) Instructivo»
+  (`dgii.gov.do/publicacionesOficiales/bibliotecaVirtual/contribuyentes/formatoEnvioDatos/Documents/7-LlenadoyenvioFomato607HastaAbril.pdf`);
+  «Guía informativa sobre los Formatos de Envío de Datos» (`…/formatoEnvioDatos/Documents/1-Guia-Informativa-sobre-los-Fomatos-Envio-de-Datos.pdf`);
+  «Instructivo … Formato 608» (`…/3-Instructivo-de-llenado-y-env%C3%ADo-Formato-608.pdf`);
+  `ayuda.dgii.gov.do`: CA3840 «¿Cómo está compuesto el formato 607?», CA3842 «¿Dónde y cómo debo reportar las facturas de
+  consumo … inferiores a RD$250,000?», CA3838 «¿Cuáles facturas debo reportar en el formato 607?», CA3904 «alertas … en
+  la herramienta de Excel», CA4419 (e-CF de consumo inferiores a 250 000), y los hilos «Facturas de Consumo mayores de
+  250,000», «Se pueden enviar los B02 por el formulario 607», «NOTA DE CREDITO EN 607», «Qué se reporta en el 608»,
+  «Envío 607 con facturación electrónica», «ELIMINACION ENVIO 606-607».
+- **Sin abrir y sin usar (BAJA):** guías de blogs (micromza.com, formularioshoy.com, blog.alegra.com, bolsillopractico.com).
+  El texto de la Norma General 07-2018 **no se leyó**.
+- **Validez:** 90 días salvo cambio de norma o paso a e-CF. Antes de construir, basta con que el contador conteste
+  P1–P7; el primer archivo real se pasa por la herramienta de pre-validación antes de subirlo.
