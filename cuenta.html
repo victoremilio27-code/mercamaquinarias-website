@@ -80,6 +80,7 @@
         </div>
         <button class="btn btn--ambar btn--bloque btn--grande" type="submit">Entrar</button>
         <p class="acceso__enlace"><button type="button" class="enlace-plano" id="irRecuperar">Olvidé mi contraseña</button></p>
+        <p class="acceso__enlace"><button type="button" class="enlace-plano" id="irRecuperacion">¿Ya no tiene acceso a su correo?</button></p>
       </form>
 
       <!-- Crear cuenta -->
@@ -269,8 +270,55 @@
           </label>
         </div>
         <button class="btn btn--ambar btn--bloque btn--grande" type="submit">Enviar código</button>
-        <p class="acceso__enlace"><button type="button" class="enlace-plano" id="btnCancelarRec">Volver</button></p>
+        <p class="acceso__enlace">
+          <button type="button" class="enlace-plano" id="irRecuperacion2">¿Ya no tiene acceso a su correo?</button>
+          <span aria-hidden="true">·</span>
+          <button type="button" class="enlace-plano" id="btnCancelarRec">Volver</button>
+        </p>
       </form>
+
+      <!-- Recuperación sin acceso al correo (10.1): la revisa una persona.
+           No hay atajo: la espera de 72 h y el aviso al correo actual son
+           lo que le da tiempo al titular verdadero de enterarse. -->
+      <form id="formRecuperacion" novalidate hidden>
+        <p class="codigo__intro">Revisamos cada solicitud a mano. Por seguridad no se resuelve antes de 72 horas y avisamos al correo actual de la cuenta: si su dueño entra, la solicitud se anula. Nunca le pediremos datos por teléfono.</p>
+        <div class="campos campos--uno">
+          <label class="campo-v"><span>Correo de la cuenta *</span>
+            <input type="email" id="rcp-cuenta" autocomplete="off" required>
+          </label>
+          <label class="campo-v"><span>Correo nuevo de contacto *</span>
+            <input type="email" id="rcp-contacto" autocomplete="email" required>
+            <small class="campo-v__ayuda">Un correo al que tenga acceso ahora.</small>
+          </label>
+          <label class="campo-v"><span>Nombre completo *</span>
+            <input type="text" id="rcp-nombre" autocomplete="name" required>
+          </label>
+          <label class="campo-v"><span>Teléfono</span>
+            <input type="tel" id="rcp-telefono" autocomplete="tel" placeholder="(809) 000-0000">
+          </label>
+          <label class="campo-v"><span>RNC</span>
+            <input type="text" id="rcp-rnc" inputmode="numeric" maxlength="11" placeholder="9 dígitos">
+            <small class="campo-v__ayuda">Si la cuenta es de una empresa.</small>
+          </label>
+          <label class="campo-v"><span>Datos que prueben que la cuenta es suya *</span>
+            <textarea id="rcp-detalle" rows="5" maxlength="2000" aria-describedby="rcp-detalle-ayuda"></textarea>
+            <small class="campo-v__ayuda" id="rcp-detalle-ayuda">Por ejemplo: qué equipos tiene publicados, la referencia de un pago o el NCF de un comprobante, desde cuándo tiene la cuenta.</small>
+          </label>
+        </div>
+        <button class="btn btn--ambar btn--bloque btn--grande" type="submit">Enviar solicitud</button>
+        <p class="acceso__enlace"><button type="button" class="enlace-plano" id="btnCancelarRecuperacion">Volver al acceso</button></p>
+      </form>
+
+      <!-- «No fui yo» (10.1): llega desde el enlace del aviso al correo
+           anterior. Solo se muestra; el cambio se aplica al pulsar el
+           botón, nunca al cargar, porque los antivirus de correo abren
+           los enlaces por su cuenta. -->
+      <div id="formRevertir" hidden>
+        <h2 class="panel__titulo panel__titulo--limpio">¿No cambió usted el correo de su cuenta?</h2>
+        <p class="codigo__intro">Si no fue usted, pulse el botón. La cuenta vuelve a este correo, se cierran todas las sesiones abiertas y se anula la contraseña actual; le enviaremos un código para crear otra. Si el cambio lo hizo usted, no pulse nada y cierre esta página.</p>
+        <button class="btn btn--ambar btn--bloque btn--grande" type="button" id="btnRevertir">Recuperar mi cuenta</button>
+        <p class="acceso__enlace" id="revertirVolver" hidden><a href="cuenta.html">Volver al acceso</a></p>
+      </div>
 
       <!-- Recuperar: código + contraseña nueva -->
       <form id="formNuevaClave" novalidate hidden>

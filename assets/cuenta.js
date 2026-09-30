@@ -9,7 +9,8 @@
    tampoco, ni siquiera cambiando el texto entre un caso y otro.
    ═══════════════════════════════════════════════════════════ */
 
-const VISTAS = ['formEntrar', 'formCrear', 'formCodigo', 'formRecuperar', 'formNuevaClave'];
+const VISTAS = ['formEntrar', 'formCrear', 'formCodigo', 'formRecuperar', 'formNuevaClave',
+  'formRecuperacion', 'formRevertir'];
 
 /* Correo y tipo de la verificación en curso. Vive en memoria: si se
    recarga la página hay que empezar de nuevo, que es lo correcto para
@@ -105,6 +106,9 @@ function montarCuenta() {
   el('irRecuperar').addEventListener('click', () => vista('formRecuperar'));
   el('btnCancelarRec').addEventListener('click', () => vista('formEntrar'));
   el('btnVolverAcceso').addEventListener('click', () => vista('formEntrar'));
+  el('irRecuperacion').addEventListener('click', () => vista('formRecuperacion'));
+  el('irRecuperacion2').addEventListener('click', () => vista('formRecuperacion'));
+  el('btnCancelarRecuperacion').addEventListener('click', () => vista('formEntrar'));
 
   if (new URLSearchParams(location.search).get('crear') === '1') vista('formCrear');
 
@@ -317,8 +321,76 @@ function montarCuenta() {
     mostrarAviso('Le enviamos un código nuevo. El anterior dejó de servir.', 'acceso__aviso--bien');
   });
 
-  // Quien ya entró no tiene nada que hacer aquí.
-  cargarSesion().then(() => { if (haySesion()) location.replace(destinoTrasEntrar()); });
+  // ── Recuperación sin acceso al correo (revisión humana) ──
+  el('rcp-rnc').addEventListener('input', () => {
+    el('rcp-rnc').value = el('rcp-rnc').value.replace(/\D/g, '').slice(0, 9);
+  });
+
+  el('formRecuperacion').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const detalle = el('rcp-detalle').value.trim();
+    if (!el('rcp-cuenta').value.trim()) return mostrarAviso('Escriba el correo de su cuenta.');
+    if (!el('rcp-contacto').value.trim()) return mostrarAviso('Escriba un correo de contacto al que tenga acceso ahora.');
+    if (!el('rcp-nombre').value.trim()) return mostrarAviso('Escriba su nombre completo.');
+    if (el('rcp-rnc').value && el('rcp-rnc').value.length !== 9) return mostrarAviso('El RNC tiene 9 dígitos.');
+    if (detalle.length < 20) {
+      el('rcp-detalle').focus();
+      return mostrarAviso('Cuéntenos qué puede probar de que la cuenta es suya (al menos 20 caracteres).');
+    }
+
+    enviar(el('formRecuperacion'), '/cuenta/recuperacion', {
+      correoCuenta: el('rcp-cuenta').value.trim(),
+      correoContacto: el('rcp-contacto').value.trim(),
+      nombre: el('rcp-nombre').value.trim(),
+      telefono: el('rcp-telefono').value.trim(),
+      rnc: el('rcp-rnc').value.trim(),
+      detalle,
+    }, (datos) => {
+      // El servidor responde lo mismo exista o no la cuenta; aquí se
+      // enseña tal cual, sin añadir nada que lo delate.
+      el('formRecuperacion').reset();
+      vista('formEntrar', { conservarAviso: true });
+      mostrarAviso(datos.mensaje, 'acceso__aviso--bien');
+    });
+  });
+
+  // ── «No fui yo»: revertir un cambio de correo ──
+  /* El testigo viaja en la URL, pero NADA se hace al cargar: solo el
+     botón llama al servidor. Los antivirus de correo abren los enlaces
+     por su cuenta y una reversión disparada por un GET anularía la
+     contraseña de alguien que no la pidió. */
+  const testigoRevertir = new URLSearchParams(location.search).get('revertir');
+  if (testigoRevertir !== null) {
+    vista('formRevertir');
+    el('btnRevertir').addEventListener('click', async () => {
+      const boton = el('btnRevertir');
+      const rotulo = boton.textContent;
+      boton.disabled = true;
+      boton.textContent = 'Un momento…';
+      mostrarAviso('');
+      try {
+        const datos = await api('/cuenta/correo/revertir', {
+          metodo: 'POST', cuerpo: { testigo: testigoRevertir },
+        });
+        if (!datos) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+        // El testigo ya se gastó: fuera de la URL y del historial.
+        history.replaceState(null, '', location.pathname);
+        seguir(datos);   // pasa a «contraseña nueva» con el correo y el texto del servidor
+      } catch (e) {
+        mostrarAviso(e.message);
+        el('revertirVolver').hidden = false;
+      } finally {
+        boton.disabled = false;
+        boton.textContent = rotulo;
+      }
+    });
+  }
+
+  // Quien ya entró no tiene nada que hacer aquí (salvo revertir: puede
+  // ser justo quien tomó la cuenta, o el dueño desde otro equipo).
+  cargarSesion().then(() => {
+    if (haySesion() && testigoRevertir === null) location.replace(destinoTrasEntrar());
+  });
 }
 
 document.addEventListener('DOMContentLoaded', montarCuenta);
