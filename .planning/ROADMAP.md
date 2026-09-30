@@ -236,7 +236,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 06-02-PLAN.md — (ola 1) Migración 2026-10-cardnet al final sin repetir las columnas de la 05.3 (proximo_cargo como próximo intento), pagos_eventos de solo añadir, tarjetas sin token hacia fuera, guarda intencionAplicable de la 05.4 y consentimiento con tarjeta
 - [x] 06-03-PLAN.md — (ola 1) CSP en tools/cabeceras.js: idéntica apagada, frame-src de CardNet solo encendida
 - [x] 06-04-PLAN.md — (ola 2) CardNet en la transición única: selector, PROCESADORES.cardnet con la guarda de la 05.4, resolver con aprobado-sin-aplicar, consentimiento al aprobar, captura, token del Customer, doble clic y activación de perfil
-- [ ] 06-05-PLAN.md — (ola 3) Rutas: tarjeta en publicar, plan, ampliar y renovar; pendiente sin cobro retomable; confirmar, estado del pago, tarjetas guardadas y renovación automática con tarjeta
+- [x] 06-05-PLAN.md — (ola 3) Rutas: tarjeta en publicar, plan, ampliar y renovar; pendiente sin cobro retomable; confirmar, estado del pago, tarjetas guardadas y renovación automática con tarjeta
 - [ ] 06-06-PLAN.md — (ola 4) Notificación autenticada e idempotente, conciliación cada 10 minutos con su temporizador y la «Pasarela de pago» en el informe a gerencia
 - [ ] 06-07-PLAN.md — (ola 4) Pantallas: iframe de CardNet y selector compartido en assets/cardnet.js; pagar la publicación y el plan con tarjeta; apagado, igual que hoy
 - [ ] 06-08-PLAN.md — (ola 5) Renovación automática por publicación y por capacidad: misma construcción que la manual, aviso a 7 días, tres intentos antes del fin, correos, tarjeta por vencer y marca en la consola
@@ -408,7 +408,7 @@ entrega valor sin esperar a la siguiente.
 | 3. El pago deja de darse por cobrado | 0/TBD | Not started | - |
 | 4. Bandeja de solicitudes y bitácora | 0/TBD | Not started | - |
 | 5. Cobro por transferencia bancaria | 5/5 | Complete   | 2026-09-25 |
-| 6. CardNet construido y apagado | 4/10 | In Progress|  |
+| 6. CardNet construido y apagado | 5/10 | In Progress|  |
 | 7. Verificación y soporte al dealer | 6/6 | Complete   | 2026-09-25 |
 | 8. Moneda y disponibilidad en el catálogo | 0/TBD | Not started | - |
 | 9. Contactos verificados y estafas | 0/TBD | Not started | - |
