@@ -562,6 +562,23 @@ async function confirmarConTarjeta(idPago, idOrg, { metodoPago } = {}) {
     if (actual.estado !== 'pendiente') {
       return { estado: actual.estado, pago: actual, membresia: null, comprobante: null, motivo: actual.motivo || null };
     }
+    /* Con un intento previo NO se enlaza ni se registra ninguna tarjeta
+       nueva, y se ignora la que llegue en la petición. Antes se permitía, y
+       el reenvío salía con el mismo `UniqueID` pero con OTRO token: CardNet
+       podía cobrar la segunda tarjeta, o devolver un error que
+       `normalizar()` leería como rechazo de un pago que sí entró (W-01 de
+       06-VERIFICATION.md). Se reenvía con la tarjeta ya enlazada, que es la
+       única que pudo cobrarse; si no hay ninguna, no hay nada que reenviar
+       y el pago sigue pendiente hasta que lo resuelva la conciliación. */
+    if (db.huboIntentoDeCobro(idPago)) {
+      if (!actual.metodo_pago_id) {
+        return {
+          estado: 'pendiente', pago: actual, membresia: null, comprobante: null,
+          motivo: 'Estamos confirmando el pago con su banco.',
+        };
+      }
+      return await cobrar(actual);
+    }
     let metodo;
     if (metodoPago) {
       const tarjeta = db.metodoPagoDe(metodoPago, idOrg);

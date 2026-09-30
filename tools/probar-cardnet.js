@@ -1157,8 +1157,30 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     const otraVez = await pagos.confirmarConTarjeta(ph.id, org, {});
     ok(otraVez.estado === 'aprobado', 'liberado el cerrojo, una tercera llamada responde con el estado');
 
+    // W-01: con intento previo no se enlaza otra tarjeta; se reenvía con la ya enlazada
+    const pw = pagoNuevo(org);
+    const primera = db.metodosPagoDe(org).find((m) => m.ultimos4 === '1111');
+    const segunda = db.metodosPagoDe(org).find((m) => m.ultimos4 === '2222');
+    db.enlazarMetodoPago(pw.id, primera.id);
+    db.anotarEventoPago({ pagoId: pw.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado', cuerpo: { referencia: pw.referencia } });
+    doble(respuestas);
+    const rw = await pagos.confirmarConTarjeta(pw.id, org, { metodoPago: segunda.id });
+    const compraW = llamadas.find((l) => l.url.includes('purchase'));
+    ok(db.pagoPorId(pw.id).metodo_pago_id === primera.id, 'con intento previo no se enlaza la tarjeta nueva');
+    ok(compraW && compraW.cuerpo.TrxToken === 'CT__16uno' && compraW.cuerpo.UniqueID === pw.referencia && rw.estado === 'aprobado',
+      `el reenvío lleva el token de la primera tarjeta (${compraW && compraW.cuerpo.TrxToken})`);
+    const px = pagoNuevo(org);
+    db.anotarEventoPago({ pagoId: px.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado', cuerpo: { referencia: px.referencia } });
+    doble(respuestas);
+    const rx = await pagos.confirmarConTarjeta(px.id, org, { metodoPago: segunda.id });
+    ok(rx.estado === 'pendiente' && rx.motivo === 'Estamos confirmando el pago con su banco.' && llamadas.length === 0 && !db.pagoPorId(px.id).metodo_pago_id,
+      'con intento previo y sin tarjeta enlazada: pendiente, sin llamar a CardNet ni enlazar');
+    doble(respuestas);
+    const ry = await pagos.confirmarConTarjeta(px.id, org, {});
+    ok(ry.estado === 'pendiente' && llamadas.length === 0, 'sin metodoPago tampoco registra tarjeta ni llama con intento previo');
+
     // activarTarjeta
-    const tj = db.metodosPagoDe(orgIn)[0];
+    const tj =db.metodosPagoDe(orgIn)[0];
     doble([]);
     for (const malo of ['', '   ', '1234567890123', null, 12345]) {
       e = null;
