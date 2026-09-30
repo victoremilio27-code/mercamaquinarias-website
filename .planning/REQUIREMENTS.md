@@ -74,6 +74,15 @@ Autorizado por Victor el 2026-09-25 (`research/modelo-comercial.md`); auditado e
 - **MET-03**: El panel del anunciante lista **qué anuncio y cuándo** para cada contacto de WhatsApp, no solo el total. Sin esto el dealer no puede atribuir una venta al sitio, que es lo primero que preguntará al renovar.
 - **MET-04**: **Duplicar un anuncio** desde el panel.
 
+### Cuenta (CTA)
+
+- **CTA-01**: Con sesión, el titular **cambia su correo** reautenticándose con la contraseña y confirmando un código enviado al correo nuevo; el correo anterior recibe un aviso.
+- **CTA-02**: El aviso al correo anterior trae un enlace **«No fui yo»** (7 días, un uso) que devuelve la cuenta a ese correo, cierra todas las sesiones y anula la contraseña.
+- **CTA-03**: Con sesión, el titular **cambia su contraseña** con la actual y **cierra las sesiones de los demás equipos**.
+- **CTA-04**: Quien **perdió el acceso a su correo** pide la recuperación desde la página de acceso sin que la respuesta revele si la cuenta existe; se avisa al correo actual y la solicitud se anula si el titular entra.
+- **CTA-05**: El personal **coteja y resuelve** cada solicitud desde la consola, no antes de 72 horas y con motivo obligatorio; aprobar cambia el correo y queda en la bitácora.
+- **CTA-06**: El asistente explica los tres caminos y nunca recupera una cuenta ni pide contraseñas o códigos por el chat.
+
 ### Interfaz (UI)
 
 - **UI-01**: Tema claro y oscuro coherentes en **todo** el sitio: ningún elemento se queda con un color fijo cuando el fondo cambia.
@@ -183,6 +192,12 @@ huérfanos y sin duplicados.
 | MET-02 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-02` (botón compartir y metadatos) verificado en `10-04` con un navegador real |
 | MET-03 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-03`: `panel.html` lista cada contacto con su anuncio y su hora, filtrable por equipo y canal |
 | MET-04 | Phase 10 — Alcance y métricas del vendedor | Hecho 2026-09-25 | `10-03`: «Duplicar» en el panel precarga `publicar.html` sin el número de serie |
+| CTA-01 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
+| CTA-02 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
+| CTA-03 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
+| CTA-04 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
+| CTA-05 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
+| CTA-06 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
 | UI-01 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-05` y `02-06`: los literales congelados pasan a sus tokens y la única pieza fija deliberada que quedaba, la cuenta de fotos sobre la imagen, entra en las excepciones con su razón. `check-contraste` en 0 en las 17 rutas y los dos temas |
 | UI-02 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-04`: los dieciséis controles de D-01 más seis que el inventario no tenía usan `--app-borde-control`. El comprobador pasa de 271 hallazgos de tipo `control` a **cero**, en las 17 rutas y en los dos temas |
 | UI-03 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `tools/check-contraste.js` recorre 17 rutas en los dos temas, mide texto, controles y dinamismo, y sale 1 con hallazgos; colgado del final de `npm run auditar`. Desde el `02-06` sale 0 y `npm run auditar` pasa entero con él dentro |

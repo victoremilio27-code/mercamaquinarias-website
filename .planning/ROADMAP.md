@@ -48,6 +48,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país (completed 2026-09-25)
 - [x] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana (completed 2026-09-25)
 - [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
+- [x] **Phase 10.1: Recuperar la cuenta y cambiar el correo** (INSERTED) - Cambio de correo y de contraseña con sesión, «No fui yo» y recuperación revisada para quien perdió el correo (completed 2026-09-30)
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
 
@@ -315,6 +316,16 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 10-04-PLAN.md — Recorrido de navegador de los cuatro criterios dentro de `npm run auditar`
 **UI hint**: yes
 **Notas**: La infraestructura ya está y nadie la usa: la columna y el tipo de evento `favorito` y `compartir` existen en `tools/db.js` sin emisor, y los metadatos de compartir están hechos en `tools/meta.js`. Los eventos de métrica tienen deduplicación cubierta por `tools/probar-seguridad.js`: no se rompe.
+
+### Phase 10.1: Recuperar la cuenta y cambiar el correo (INSERTED)
+**Goal:** Quien perdió el acceso a su correo recupera la cuenta por un trámite revisado y con constancia, y quien tiene sesión cambia su correo o su contraseña sin que un intruso pueda quedársela
+**Requirements**: CTA-01, CTA-02, CTA-03, CTA-04, CTA-05, CTA-06
+**Depends on:** Phase 10
+**Plans:** 3 plans
+Plans:
+- [x] 10.1-01-PLAN.md — Núcleo: migración, correos, rutas de cambio de correo, reversión, contraseña con sesión y recuperación revisada; arnés `cuenta:probar` en CI
+- [x] 10.1-02-PLAN.md — Panel «Seguridad de la cuenta» y acceso: «No fui yo» y «¿Ya no tiene acceso a su correo?»
+- [x] 10.1-03-PLAN.md — Consola «Recuperación de cuentas» con expediente para cotejar, y el asistente
 
 ### Phase 11: Transporte y financiamiento encendidos
 **Goal**: Que los dos servicios que están escritos y apagados entren en operación con contenido dominicano real.

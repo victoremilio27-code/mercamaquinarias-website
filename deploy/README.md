@@ -621,6 +621,37 @@ una escritura a medias:
 sqlite3 /var/lib/mercamaquinarias/mercamaquinarias.db ".backup '/tmp/respaldo.db'"
 ```
 
+### Respaldo verificado antes de fusionar una migración
+
+Un PR que añade una migración se aplica en el primer arranque tras
+fusionarlo. El respaldo se hace justo antes de fusionar, no horas antes:
+lo que entre al sitio entre el respaldo y la fusión no queda en él. Como
+`root` en el servidor, cambiando `<nombre>` por algo que diga qué cambio
+viene (`antes-cardnet`, `antes-recuperar-cuenta`):
+
+```bash
+sqlite3 /var/lib/mercamaquinarias/mercamaquinarias.db "VACUUM INTO '/var/backups/mercamaquinarias/<nombre>.db'"
+sqlite3 /var/backups/mercamaquinarias/<nombre>.db "PRAGMA integrity_check;"
+```
+
+La segunda orden tiene que responder exactamente `ok`; si no, no se
+fusiona. `VACUUM INTO` se niega a escribir encima de un archivo que ya
+existe: para repetirlo, primero se borra el de antes. El respaldo se
+guarda unos días.
+
+Para volver atrás con él si la migración rompiera algo: primero revertir
+el PR en `main` (la versión nueva volvería a migrar al arrancar) y, con
+el servicio y las tareas parados, apartar la base actual sin borrarla y
+poner el respaldo en su lugar:
+
+```bash
+systemctl stop mercamaquinarias mercamaquinarias-tareas.timer
+mv /var/lib/mercamaquinarias/mercamaquinarias.db /var/lib/mercamaquinarias/roto-$(date +%F).db
+cp /var/backups/mercamaquinarias/<nombre>.db /var/lib/mercamaquinarias/mercamaquinarias.db
+chown mercamaquinarias: /var/lib/mercamaquinarias/mercamaquinarias.db
+systemctl start mercamaquinarias mercamaquinarias-tareas.timer
+```
+
 ## Ver qué pasa
 
 ```bash

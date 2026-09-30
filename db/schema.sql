@@ -416,7 +416,7 @@ CREATE TABLE IF NOT EXISTS codigos (
   id          TEXT PRIMARY KEY,
   usuario_id  TEXT REFERENCES usuarios(id) ON DELETE CASCADE,
   correo      TEXT NOT NULL,
-  tipo        TEXT NOT NULL CHECK (tipo IN ('verificacion', 'acceso', 'restablecer')),
+  tipo        TEXT NOT NULL CHECK (tipo IN ('verificacion', 'acceso', 'restablecer', 'cambio_correo')),
   codigo_hash TEXT NOT NULL,
   intentos    INTEGER NOT NULL DEFAULT 0,
   consumido   INTEGER NOT NULL DEFAULT 0,
