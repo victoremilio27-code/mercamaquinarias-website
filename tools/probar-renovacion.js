@@ -1018,8 +1018,23 @@ db.cargarSecuencia({
     ok(rRen.codigo === 201 && filaSusc(sA).renovacion_automatica === 0,
       `renovar con la casilla y CardNet apagado: ${rRen.codigo} casilla=${filaSusc(sA).renovacion_automatica}`);
 
+    /* 06-05 (R-03): con CardNet la renovación automática ya no se activa
+       con la casilla sola: exige una tarjeta activa de la organización, y
+       `renovacionAutomaticaDisponible()` es `cardnet.activo()`, que pide
+       también las dos llaves (de ahí las falsas). Solo cambia esta
+       preparación; las aserciones de abajo son las de siempre. */
     process.env.MERCA_CARDNET = 'lab';
+    process.env.MERCA_CARDNET_LLAVE_PUB = 'llave-publica-de-prueba';
+    process.env.MERCA_CARDNET_LLAVE_PRIV = 'llave-privada-de-prueba';
     try {
+      const rSinTarjeta = await casilla(sA, dueno, { activar: true });
+      ok(rSinTarjeta.codigo === 409 && /tarjeta guardada/.test(errorDe(rSinTarjeta))
+        && filaSusc(sA).renovacion_automatica === 0 && filaSusc(sA).renovacion_aceptada === null,
+      `con lab y sin tarjeta, activar: ${rSinTarjeta.codigo} «${errorDe(rSinTarjeta)}» casilla=${filaSusc(sA).renovacion_automatica}`);
+      db.guardarMetodoPago({
+        idOrg: dueno.idOrg, procesador: 'cardnet', clienteId: `C-REN-${SELLO}`,
+        perfil: { perfilId: `PF-REN-${SELLO}`, token: `CT__REN-${SELLO}`, marca: 'Visa', ultimos4: '4242', venceMes: 12, venceAnio: 2030, activo: true },
+      });
       const rOn = await casilla(sA, dueno, { activar: true, texto: 'otro' });
       const fOn = filaSusc(sA);
       ok(rOn.codigo === 200 && (rOn.datos || {}).renovacionAutomatica === true && fOn.renovacion_automatica === 1
@@ -1056,6 +1071,8 @@ db.cargarSecuencia({
         `activar sin aceptar condiciones: ${rSL.codigo}`);
     } finally {
       delete process.env.MERCA_CARDNET;
+      delete process.env.MERCA_CARDNET_LLAVE_PUB;
+      delete process.env.MERCA_CARDNET_LLAVE_PRIV;
     }
 
     // Desactivar funciona siempre, también con CardNet apagado.

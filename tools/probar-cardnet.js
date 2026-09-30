@@ -1233,12 +1233,12 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
       });
     });
 
-    const cuenta = (etiqueta, { exenta = false } = {}) => {
+    const cuenta = (etiqueta, { exenta = false, sinLegales = false } = {}) => {
       const { idUsuario } = db.crearCuenta({
         correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
         telefono: '8095550000', tipo: 'particular',
       });
-      Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+      (sinLegales ? [] : Object.values(legales.DOCUMENTOS || {})).forEach((doc) => {
         db.registrarAceptacion({ usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba' });
       });
       const org = db.organizacionDe(idUsuario).id;
@@ -1519,6 +1519,222 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     r = await pedir({ url: '/api/membresias', cabeceras: pN.cabeceras });
     ok(r.datos.renovacionAutomatica.disponible === true, 'lab con llaves: disponible');
     ok(!/\bc\.(token|tarjeta)\b/.test(fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8')), 'api.js no lee token ni tarjeta del cuerpo (c.numero es del teléfono y del comprobante, de siempre)');
+
+    console.log('\n18. api.js: confirmar, estado del pago, tarjetas guardadas y renovación automática con tarjeta');
+    const perfilCN = (id, token, activo = true, ult = '4242') => ({
+      PaymentProfileId: id, Token: token, Brand: 'VISA', Last4: ult, Expiration: '12/30', Enabled: activo });
+    /* Un banco que, además de la compra, devuelve el cliente CON la tarjeta
+       recién capturada: es lo que ve el servidor tras el iframe. */
+    const bancoConTarjeta = (compra, perfiles) => doble((op) => {
+      if (/purchase/.test(op.url)) return typeof compra === 'function' ? compra(op) : compra;
+      if (/activate/.test(op.url)) return { estado: 200, cuerpo: {} };
+      if (op.metodo === 'POST') return { estado: 200, cuerpo: { CustomerId: 'C-17' } };
+      return { estado: 200, cuerpo: { ...clienteCN.cuerpo, PaymentProfiles: perfiles } };
+    });
+    const conf = (idPago, quien, cuerpo = {}) => post(`/api/pagos/${idPago}/confirmar`, quien, cuerpo);
+    encender('lab');
+
+    // Aprobado tras el iframe: 201, y repetido devuelve lo mismo sin cobrar otra vez
+    const pR = cuenta('r18');
+    const bR = borrador(pR.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bR}/pago`, pR, { metodo: 'cardnet' });
+    const idR = r.datos.pago.id;
+    bancoConTarjeta(aprobada('P18-R'), [perfilCN(`PF18-R-${SELLO}`, `CT__18R-${SELLO}`)]);
+    antes = b02();
+    r = await conf(idR, pR, { token: 'TOKEN-INVENTADO-18', numero: '4111111111111111' });
+    ok(r.codigo === 201 && r.datos.anuncio.estado === 'activo' && r.datos.comprobante && r.datos.comprobante.ncf && r.datos.sesion && r.datos.pago.estado === 'aprobado',
+      `confirmar aprobado: ${r.codigo} claves ${claves(r)}`);
+    ok(b02() === antes + 1 && compras() === 1 && !llamadas.some((l) => JSON.stringify(l.cuerpo || {}).includes('TOKEN-INVENTADO-18') || JSON.stringify(l.cuerpo || {}).includes('4111')),
+      'B02 +1, una compra y nada del cuerpo llegó al banco');
+    const ncfR = r.datos.comprobante.ncf;
+    bancoConTarjeta(aprobada('P18-R'), [perfilCN(`PF18-R-${SELLO}`, `CT__18R-${SELLO}`)]);
+    antes = b02();
+    r = await conf(idR, pR);
+    ok(r.codigo === 200 && r.datos.comprobante.ncf === ncfR && b02() === antes && compras() === 0, `confirmar otra vez: ${r.codigo}, el mismo NCF, B02 igual, ninguna compra`);
+    r = await pedir({ url: `/api/pagos/${idR}`, cabeceras: pR.cabeceras });
+    ok(r.codigo === 200 && claves(r) === 'comprobante,estado,id,motivo,procesador,referencia,total' && r.datos.estado === 'aprobado'
+      && r.datos.comprobante.ncf === ncfR && r.datos.procesador === 'cardnet' && r.datos.total > 0, `GET /api/pagos/:id: ${claves(r)}`);
+
+    // Rechazado: 402 con el motivo del banco
+    const pS = cuenta('s18');
+    const bS = borrador(pS.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bS}/pago`, pS, { metodo: 'cardnet' });
+    const idS = r.datos.pago.id;
+    bancoConTarjeta({ estado: 200, cuerpo: { ResponseCode: '51', Status: 'Rejected' } }, [perfilCN(`PF18-S-${SELLO}`, `CT__18S-${SELLO}`)]);
+    antes = b02();
+    r = await conf(idS, pS);
+    ok(r.codigo === 402 && r.datos.error === cardnet.mensajeDeRechazo('51') && estadoAnuncio(bS) === 'borrador' && b02() === antes && fila(idS).estado === 'rechazado',
+      `confirmar rechazado: ${r.codigo} «${(r.datos || {}).error}»`);
+    r = await pedir({ url: `/api/pagos/${idS}`, cabeceras: pS.cabeceras });
+    ok(r.datos.estado === 'rechazado' && r.datos.motivo === cardnet.mensajeDeRechazo('51') && r.datos.comprobante === null, 'GET del rechazado: motivo y sin comprobante');
+
+    // Tarjeta que pide activación: 409 con activacion:true; se activa y se confirma
+    const pT = cuenta('t18');
+    const bT = borrador(pT.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bT}/pago`, pT, { metodo: 'cardnet' });
+    const idT = r.datos.pago.id;
+    bancoConTarjeta(aprobada('P18-T'), [perfilCN(`PF18-T-${SELLO}`, `CT__18T-${SELLO}`, false)]);
+    r = await conf(idT, pT);
+    const idTarjetaT = (r.datos || {}).metodoPago && r.datos.metodoPago.id;
+    ok(r.codigo === 409 && r.datos.activacion === true && !!idTarjetaT && /código de activación/.test(r.datos.error) && compras() === 0 && fila(idT).estado === 'pendiente',
+      `tarjeta sin activar: ${r.codigo} activacion=${r.datos.activacion} «${r.datos.error}»`);
+    r = await post(`/api/metodos-pago/${idTarjetaT}/activar`, pT, { codigo: '000111' });
+    ok(r.codigo === 200 && r.datos.metodo && r.datos.metodo.activo === true && !JSON.stringify(r.datos).includes('CT__'), `activar la tarjeta: ${r.codigo}`);
+    r = await conf(idT, pT, { metodoPago: idTarjetaT });
+    ok(r.codigo === 201 && r.datos.anuncio.estado === 'activo', `confirmar con la tarjeta ya activa: ${r.codigo}`);
+    r = await post(`/api/metodos-pago/${idTarjetaT}/activar`, pT, {});
+    ok(r.codigo === 400, `activar sin código: ${r.codigo}`);
+
+    // En proceso (202) y el doble clic: una sola compra
+    const pU = cuenta('u18');
+    const bU = borrador(pU.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bU}/pago`, pU, { metodo: 'cardnet' });
+    const idU = r.datos.pago.id;
+    bancoConTarjeta({ estado: 0, cuerpo: null, fallo: 'ECONNRESET' }, [perfilCN(`PF18-U-${SELLO}`, `CT__18U-${SELLO}`)]);
+    r = await conf(idU, pU);
+    ok(r.codigo === 202 && r.datos.pago.estado === 'pendiente' && typeof r.datos.aviso === 'string' && !('redireccion' in r.datos), `en curso con el banco: ${r.codigo}`);
+    const pV = cuenta('v18');
+    const bV = borrador(pV.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bV}/pago`, pV, { metodo: 'cardnet' });
+    const idV = r.datos.pago.id;
+    bancoConTarjeta(aprobada('P18-V'), [perfilCN(`PF18-V-${SELLO}`, `CT__18V-${SELLO}`)]);
+    const dos = await Promise.all([conf(idV, pV), conf(idV, pV)]);
+    const codigos = dos.map((x) => x.codigo).sort();
+    ok(codigos.includes(201) && codigos.every((c) => c === 201 || c === 409 || c === 200) && compras() === 1, `doble clic: ${codigos} y ${compras()} compra`);
+
+    // Ajeno, inexistente, sin sesión
+    const pW = cuenta('w18');
+    r = await conf(idR, pW);
+    ok(r.codigo === 404, `confirmar el pago de otra organización: ${r.codigo}`);
+    r = await pedir({ url: `/api/pagos/${idR}`, cabeceras: pW.cabeceras });
+    ok(r.codigo === 404, `ver el pago de otra organización: ${r.codigo}`);
+    r = await conf('no-existe', pW);
+    ok(r.codigo === 404, `confirmar un pago inexistente: ${r.codigo}`);
+    r = await pedir({ metodo: 'POST', url: `/api/pagos/${idR}/confirmar`, cuerpo: {} });
+    ok(r.codigo === 401, `confirmar sin sesión: ${r.codigo}`);
+    r = await pedir({ url: `/api/pagos/${idR}` });
+    ok(r.codigo === 401, `ver un pago sin sesión: ${r.codigo}`);
+    r = await pedir({ url: '/api/metodos-pago' });
+    ok(r.codigo === 401, `tarjetas sin sesión: ${r.codigo}`);
+    const trans = cuenta('trans18');
+    Object.assign(process.env, VARS_TRANSF);
+    const bTr = borrador(trans.org);
+    r = await post(`/api/borradores/${bTr}/pago`, trans, { metodo: 'transferencia' });
+    const idTr = r.datos.pago.id;
+    for (const k of Object.keys(VARS_TRANSF)) delete process.env[k];
+    r = await conf(idTr, trans);
+    ok(r.codigo === 404, `confirmar con tarjeta un pago de transferencia: ${r.codigo}`);
+
+    // Tarjetas guardadas: listar sin token, borrar aunque el banco falle, ajena 404
+    const pX = cuenta('x18');
+    const tX = tarjeta(pX.org, '9999');
+    const tXajena = tarjeta(pW.org, '8888');
+    r = await pedir({ url: '/api/metodos-pago', cabeceras: pX.cabeceras });
+    ok(r.codigo === 200 && r.datos.tarjetas.length === 1 && r.datos.tarjetas[0].ultimos4 === '9999' && !JSON.stringify(r.datos).includes('CT__') && !JSON.stringify(r.datos).includes('PF17'),
+      `GET /api/metodos-pago: ${r.codigo}, sin token`);
+    r = await pedir({ metodo: 'DELETE', url: `/api/metodos-pago/${tXajena.id}`, cabeceras: pX.cabeceras });
+    ok(r.codigo === 404 && db.metodosPagoDe(pW.org).length === 1, `borrar la tarjeta de otra organización: ${r.codigo} y sigue ahí`);
+    r = await post(`/api/metodos-pago/${tXajena.id}/activar`, pX, { codigo: '123456' });
+    ok(r.codigo === 404, `activar la tarjeta de otra organización: ${r.codigo}`);
+
+    // Renovación automática con tarjeta (PUT), en el orden fijado
+    apagar();
+    const pY = cuenta('y18');
+    r = await post('/api/membresias', pY, { plan: 'destacado', cupo: 1, dias: 30 });
+    const suscY = r.datos.membresia.id;
+    const finY = r.datos.membresia.fin;
+    const pYL = cuenta('yl18', { sinLegales: true });
+    r = await post('/api/membresias', pYL, { plan: 'destacado', cupo: 1, dias: 30 });
+    ok(r.codigo === 409, 'una cuenta sin condiciones aceptadas no compra (prepara el caso de orden)');
+    const casilla = (idSusc, quien, cuerpo) => pedir({ metodo: 'PUT', url: `/api/membresias/${idSusc}/renovacion-automatica`, cuerpo, cabeceras: quien && quien.cabeceras });
+    const filaS = (id) => d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(id);
+    encender('lab');
+    r = await casilla(suscY, pY, { activar: true });
+    ok(r.codigo === 409 && r.datos.error === 'Para renovar automáticamente hace falta una tarjeta guardada. Se guarda la primera vez que paga con tarjeta.'
+      && filaS(suscY).renovacion_automatica === 0 && filaS(suscY).renovacion_aceptada === null, `sin tarjeta: ${r.codigo} «${(r.datos || {}).error}»`);
+    // El orden: las condiciones de pago (409 con faltan) van ANTES que la tarjeta
+    const sYL = `susc18-${SELLO}`;
+    d.prepare(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado, anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+               VALUES (?, ?, 'destacado', 'vigencia', NULL, 'activa', 3200, 1, 30, ?, ?, NULL, ?)`)
+      .run(sYL, pYL.org, new Date(Date.now() - 864e5).toISOString(), new Date(Date.now() + 9 * 864e5).toISOString(), new Date().toISOString());
+    r = await casilla(sYL, pYL, { activar: true });
+    ok(r.codigo === 409 && (r.datos.faltan || []).length > 0, `sin condiciones y sin tarjeta: primero las condiciones (${r.codigo}, faltan=${(r.datos.faltan || []).length})`);
+    apagar();
+    r = await casilla(suscY, pY, { activar: true });
+    ok(r.codigo === 409 && /todavía no está disponible/.test(r.datos.error), `apagado: disponible antes que la tarjeta (${r.codigo})`);
+    encender('lab');
+    const tY = tarjeta(pY.org, '4242');
+    const tYajena = tarjeta(pX.org, '7777');
+    r = await casilla(suscY, pY, { activar: true, metodoPago: tYajena.id });
+    ok(r.codigo === 400 && filaS(suscY).renovacion_automatica === 0, `con la tarjeta de otra organización: ${r.codigo}`);
+    r = await casilla(suscY, pY, { activar: true });
+    const sY = filaS(suscY);
+    ok(r.codigo === 200 && sY.renovacion_automatica === 1 && sY.metodo_pago_id === tY.id && /autorizas la renovación/.test(sY.renovacion_texto)
+      && r.datos.tarjeta.ultimos4 === '4242' && r.datos.tarjeta.marca === 'Visa' && !JSON.stringify(r.datos).includes('CT__'),
+    `activar con la única tarjeta activa: ${r.codigo} tarjeta=${JSON.stringify(r.datos.tarjeta)}`);
+    ok(sY.proximo_cargo.slice(0, 16) === new Date(new Date(finY).getTime() - 3 * 864e5).toISOString().slice(0, 16), 'proximo_cargo = fin − 3 días');
+    r = await pedir({ url: '/api/membresias', cabeceras: pY.cabeceras });
+    const rY = r.datos.renovables.find((x) => x.id === suscY);
+    ok(Array.isArray(r.datos.tarjetas) && r.datos.tarjetas.length === 1 && !JSON.stringify(r.datos).includes('CT__')
+      && rY.renovacionTarjeta.ultimos4 === '4242' && rY.renovacionIntentos === 0 && rY.proximoIntento === sY.proximo_cargo,
+    `GET /api/membresias activo: tarjetas, renovacionTarjeta y proximoIntento (${JSON.stringify(rY.renovacionTarjeta)})`);
+    // Borrar la tarjeta con la que se renueva: el banco falla, la tarjeta se va igual y la renovación se apaga
+    doble(() => ({ estado: 500, cuerpo: null, fallo: 'boom' }));
+    const errores = [];
+    const errorOriginal = console.error;
+    console.error = (...a) => errores.push(a.join(' '));
+    try {
+      r = await pedir({ metodo: 'DELETE', url: `/api/metodos-pago/${tY.id}`, cabeceras: pY.cabeceras });
+    } finally {
+      console.error = errorOriginal;
+    }
+    ok(r.codigo === 200 && db.metodosPagoDe(pY.org).length === 0 && filaS(suscY).renovacion_automatica === 0 && filaS(suscY).proximo_cargo === null,
+      `borrar la tarjeta aunque el banco falle: ${r.codigo}, la renovación quedó apagada`);
+    ok(errores.length === 1 && !errores.join('').includes('CT__'), `el fallo del banco quedó en el registro, sin token (${errores.length})`);
+    // Activar con metodoPago explícito y desactivar (también apagado)
+    const tY2 = tarjeta(pY.org, '5555');
+    tarjeta(pY.org, '6666');
+    r = await casilla(suscY, pY, { activar: true });
+    ok(r.codigo === 409 && /varias tarjetas/.test(r.datos.error), `con dos tarjetas activas y sin elegir: ${r.codigo}`);
+    r = await casilla(suscY, pY, { activar: true, metodoPago: tY2.id });
+    ok(r.codigo === 200 && filaS(suscY).metodo_pago_id === tY2.id && r.datos.tarjeta.ultimos4 === '5555', `activar con metodoPago explícito: ${r.codigo}`);
+    apagar();
+    r = await casilla(suscY, pY, { activar: false });
+    ok(r.codigo === 200 && filaS(suscY).renovacion_automatica === 0 && filaS(suscY).proximo_cargo === null && r.datos.renovacionAutomatica === false, `desactivar con CardNet apagado: ${r.codigo}, proximo_cargo NULL`);
+
+    // sinCobro en los pendientes del panel
+    encender('lab');
+    const pZ = cuenta('z18');
+    const bZ = borrador(pZ.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bZ}/pago`, pZ, { metodo: 'cardnet' });
+    const idZ = r.datos.pago.id;
+    r = await pedir({ url: '/api/membresias', cabeceras: pZ.cabeceras });
+    ok(r.datos.pagosPendientes.length === 1 && r.datos.pagosPendientes[0].sinCobro === true, 'pendiente de tarjeta sin intento: sinCobro = true');
+    db.anotarEventoPago({ pagoId: idZ, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado' });
+    r = await pedir({ url: '/api/membresias', cabeceras: pZ.cabeceras });
+    ok(r.datos.pagosPendientes[0].sinCobro === false, 'con cobro enviado: sinCobro = false');
+    const pZ2 = cuenta('z218');
+    Object.assign(process.env, VARS_TRANSF);
+    const bZ2 = borrador(pZ2.org);
+    await post(`/api/borradores/${bZ2}/pago`, pZ2, { metodo: 'transferencia' });
+    r = await pedir({ url: '/api/membresias', cabeceras: pZ2.cabeceras });
+    ok(r.datos.pagosPendientes.length === 1 && !('sinCobro' in r.datos.pagosPendientes[0]), 'un pendiente de transferencia no lleva sinCobro');
+    for (const k of Object.keys(VARS_TRANSF)) delete process.env[k];
+
+    // Tope: más de 10 confirmaciones en 10 minutos de la misma organización
+    const pTope = cuenta('tope18');
+    const codigosTope = [];
+    for (let i = 0; i < 12; i++) codigosTope.push((await conf(`no-existe-${i}`, pTope)).codigo);
+    ok(codigosTope.slice(0, 10).every((c) => c === 404) && codigosTope[10] === 429 && codigosTope[11] === 429, `tope de confirmaciones: ${codigosTope.join(',')}`);
+    r = await post(`/api/metodos-pago/no-existe/activar`, pTope, { codigo: '1' });
+    ok(r.codigo === 429, `y el de activar comparte el tope: ${r.codigo}`);
+    apagar();
   }
 
   apagar();
