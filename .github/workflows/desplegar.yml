@@ -104,6 +104,8 @@ jobs:
         run: npm run recordatorios:probar
       - name: Pruebas de capacidad del dealer
         run: npm run capacidad:probar
+      - name: CardNet
+        run: npm run cardnet:probar
       - name: Asistente
         run: npm run chat:probar
 
