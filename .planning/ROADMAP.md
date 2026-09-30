@@ -26,7 +26,6 @@ para que ni eso bloquee el lanzamiento.
 ## Phases
 
 **Numeración de fases:**
-
 - Fases enteras (1, 2, 3): trabajo planificado del hito.
 - Fases decimales (2.1, 2.2): inserciones urgentes (marcadas con INSERTED).
 
@@ -37,9 +36,8 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] **Phase 1: Barrera de pruebas en la fusión** - Ninguna fusión a `main` llega a producción sin que pasen las pruebas que ya existen
 - [x] **Phase 2: Tema claro y oscuro coherentes** - Los dos temas se comportan igual de bien en las 19 páginas, con un comprobador que lo impide romper
  (completed 2026-09-25)
-
-- [ ] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma
-- [ ] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada
+- [x] **Phase 3: El pago deja de darse por cobrado** - Un pago nace `pendiente` y solo otorga cupos y NCF cuando el cobro se confirma (completed 2026-09-30, verificada retroactivamente)
+- [x] **Phase 4: Bandeja de solicitudes y bitácora de la consola** - El personal atiende las solicitudes desde el sitio y toda escritura en nombre de otro queda registrada (completed 2026-09-30, verificada retroactivamente; falta la revisión visual)
 - [x] **Phase 5: Cobro por transferencia bancaria** - La empresa puede cobrar y publicar el 14 de octubre sin depender de CardNet (completed 2026-09-25)
 - [x] **Phase 05.1: Precio único con el 3 % dentro e ITBIS incluido** (INSERTED) - Una sola fórmula, base × 1,03 × 1,18, y el comprador solo ve el precio final
 - [x] **Phase 05.2: Publicar este equipo** (INSERTED) - El particular elige plan, rellena un borrador y el anuncio se activa al confirmarse el pago
@@ -47,8 +45,8 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 05.4: Dealer con capacidad de publicaciones activas** (INSERTED) - El inventario del dealer sin la palabra «cupos» y la consola del modelo nuevo (completed 2026-09-30)
 - [x] **Phase 6: CardNet construido, probado y apagado** - Tokenización y cobro recurrente completos tras un interruptor, sin que una tarjeta toque nuestro servidor (completed 2026-09-30)
 - [x] **Phase 7: Verificación y soporte en nombre del dealer** - Sello de verificada, revisión del número de serie y edición asistida de la página de un dealer (completed 2026-09-25)
-- [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
-- [ ] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana
+- [x] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país (completed 2026-09-25)
+- [x] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana (completed 2026-09-25)
 - [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
 - [x] **Phase 10.1: Recuperar la cuenta y cambiar el correo** (INSERTED) - Cambio de correo y de contraseña con sesión, «No fui yo» y recuperación revisada para quien perdió el correo (completed 2026-09-30)
 
@@ -64,199 +62,155 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 ## Phase Details
 
 ### Phase 1: Barrera de pruebas en la fusión
-
 **Goal**: Que ninguna fusión a `main` pueda desplegar a producción sin que las pruebas y auditorías que ya existen hayan pasado.
 **Depends on**: Nothing (first phase)
 **Requirements**: CI-01, CI-02
 **Success Criteria** (what must be TRUE):
-
   1. Un Pull Request con una prueba en rojo muestra la comprobación fallida en GitHub y no se puede fusionar.
   2. Fusionar a `main` con todo en verde despliega a producción igual que hoy, sin paso manual nuevo.
   3. Cualquiera de las dos personas ve, dentro del propio PR, qué script falló y con qué salida, sin entrar al VPS.
   4. `CLAUDE.md` está en la raíz del repositorio con las reglas fiscales, de dependencias y de despliegue que no se pueden olvidar.
-
 **Plans**: 3 plans
-
 - [x] 01-01-PLAN.md — Colgar las pruebas de un flujo de Actions y encadenar el despliegue detras de ellas
 - [ ] 01-02-PLAN.md — Proteger main con las comprobaciones obligatorias y demostrar que un PR en rojo no se fusiona
 - [ ] 01-03-PLAN.md — Poner al dia la seccion de despliegue de CLAUDE.md y fusionar en verde para ver el despliegue pasar por la barrera
-
 **Notas**: Los scripts ya existen (`npm run auditar`, `seguridad:probar`, `dealer:probar`, `facturas:probar`, `facturas:letras`, `chat:probar`); no hay que escribirlos, hay que colgarlos del workflow. Hoy `.github/workflows/desplegar.yml` tiene un único paso que entra por SSH y despliega. Los tres estilos de prueba conviven a propósito y no se unifican. CI-02 quedó hecho el 2026-09-25: la fase lo verifica, no lo reescribe.
 
 ### Phase 2: Tema claro y oscuro coherentes
-
 **Goal**: Que cualquier página del sitio se lea igual de bien en los dos temas, y que una comprobación automática impida que vuelva a romperse.
 **Depends on**: Phase 1
 **Requirements**: UI-01, UI-02, UI-03
 **Success Criteria** (what must be TRUE):
-
   1. Cambiar de claro a oscuro en cualquiera de las 19 páginas no deja ningún elemento con un color congelado sobre el fondo nuevo.
   2. En los dos temas, el borde de todo control interactivo se distingue de la superficie de atrás con al menos 3:1 medidos.
   3. Los enlaces ámbar y los metadatos del panel de administración se leen en modo claro con al menos 4.5:1 medidos.
   4. `npm run auditar` falla si alguien introduce un color literal que incumpla, y ese fallo bloquea la fusión gracias a la Fase 1.
-
 **Plans**: 6 planes en 4 olas
-
 - [x] 02-01-PLAN.md — La capa de tokens completa en los dos bloques y sin colores de reserva en linea
 - [x] 02-02-PLAN.md — La barra del navegador del movil sigue al tema en las 19 paginas
 - [x] 02-03-PLAN.md — tools/check-contraste.js y su enganche a la cadena npm run auditar
 - [x] 02-04-PLAN.md — El borde de control a 3:1 y el ambar separado en texto y superficie
 - [x] 02-05-PLAN.md — Los colores literales convertidos y la cabecera del dealer fijada oscura
 - [x] 02-06-PLAN.md — Cierre: residuos, bateria en verde, verificacion humana y Pull Request
-
 **UI hint**: yes
 **Notas**: Hay un plan aprobado y medido en `C:\Users\Victor\.claude\plans\majestic-dancing-firefly.md` — se ejecuta, no se vuelve a planificar. Incluye el comprobador `tools/check-contraste.js` colgado de `npm run auditar`. Va antes que las pantallas nuevas de las fases 4-10 a propósito: así el comprobador las vigila desde el primer día en vez de tener que retocarlas después. `styles.css` es LF aunque el repositorio sea CRLF.
 
 ### Phase 3: El pago deja de darse por cobrado
-
 **Goal**: Que un pago solo otorgue cupos y consuma un NCF cuando el dinero se confirma, con un único punto de transición compartido por todos los caminos de cobro.
 **Depends on**: Phase 1
 **Requirements**: PAGO-01, PAGO-02, PAGO-03
 **Success Criteria** (what must be TRUE):
-
   1. Un pago recién creado aparece como `pendiente`, y el comprador no gana cupos ni recibe comprobante hasta que se confirma.
   2. Al confirmarse, los cupos y el comprobante aparecen juntos, y lo hacen igual venga la confirmación de una pasarela o de una persona.
   3. Repetir la confirmación del mismo pago deja los mismos cupos y el mismo NCF: no hay cupo doble ni segundo comprobante.
   4. Un cobro rechazado deja el pago en `rechazado`, sin cupos otorgados y sin ningún NCF consumido.
   5. Una compra de importe cero sigue quedando aprobada al instante y sin emitir nada, como hoy.
-
 **Plans**: 3 planes en 3 olas
-
-- [ ] 03-01-PLAN.md — Migracion de pagos y transicion pendiente/aprobado/rechazado en la base, con su arnes de pruebas
-- [ ] 03-02-PLAN.md — tools/pagos.js: confirmarPago como unico punto que otorga cupos y emite comprobante
-- [ ] 03-03-PLAN.md — Compra y ampliacion pasan por la transicion, guardas de solo-cero y pagos:probar en la barrera de CI
-
+- [x] 03-01-PLAN.md — Migracion de pagos y transicion pendiente/aprobado/rechazado en la base, con su arnes de pruebas
+- [x] 03-02-PLAN.md — tools/pagos.js: confirmarPago como unico punto que otorga cupos y emite comprobante
+- [x] 03-03-PLAN.md — Compra y ampliacion pasan por la transicion, guardas de solo-cero y pagos:probar en la barrera de CI
 **Notas**: Es el prerrequisito de todo PAGO y vale por sí solo: hoy `anotarPago` escribe `'aprobado'` a mano en el SQL (`tools/db.js:2147`) y `comprarMembresia` compone el cobro con `procesador: 'demo'` (`tools/api.js:1983`), de modo que un rechazo otorgaría cupos y emitiría un NCF de dinero que nunca entró. El `CHECK` de `pagos.estado` ya admite `pendiente`. Columnas nuevas solo por migración añadida al final de `MIGRACIONES`. `facturas.emitirPorPago` ya es idempotente — no se reescribe.
 
 ### Phase 4: Bandeja de solicitudes y bitácora de la consola
-
 **Goal**: Que el personal pueda atender desde el sitio las solicitudes que hoy se capturan y nadie ve, y que quede cimentado el registro de toda escritura hecha en nombre de otra organización.
 **Depends on**: Phase 2 (el tema y su comprobador), Phase 3 (no estrictamente, pero la consola crece sobre el mismo armazón)
 **Requirements**: ADMIN-01, ADMIN-05
 **Success Criteria** (what must be TRUE):
-
   1. El personal ve en el sitio las solicitudes de alquiler, importación y contacto con su estado, y las marca atendidas sin abrir una terminal.
   2. Una solicitud marcada como atendida sale de la bandeja pendiente y conserva quién la atendió y cuándo.
   3. Toda escritura hecha en nombre de otra organización queda anotada con quién la hizo, cuándo y sobre qué organización.
   4. Esa bitácora se puede consultar desde la consola filtrando por organización, y un reclamo de un cliente empresa se puede contestar con ella delante.
-
 **Plans**: 4 planes en 3 olas
-
-- [ ] 04-01-PLAN.md — Bitacora de solo anadir en la base, enNombreDe como unica puerta transaccional, atendida_por y bitacora:probar en CI
-- [ ] 04-02-PLAN.md — Sello y alta de dealer pasan por la bitacora, GET /api/admin/bitacora y guarda sobre RUTAS
-- [ ] 04-03-PLAN.md — Bandeja de solicitudes de servicio en admin.html sin filtros de servicios apagados
-- [ ] 04-04-PLAN.md — La bitacora en la consola filtrable por organizacion, bateria completa y verificacion humana en los dos temas
-
+- [x] 04-01-PLAN.md — Bitacora de solo anadir en la base, enNombreDe como unica puerta transaccional, atendida_por y bitacora:probar en CI
+- [x] 04-02-PLAN.md — Sello y alta de dealer pasan por la bitacora, GET /api/admin/bitacora y guarda sobre RUTAS
+- [x] 04-03-PLAN.md — Bandeja de solicitudes de servicio en admin.html sin filtros de servicios apagados
+- [x] 04-04-PLAN.md — La bitacora en la consola filtrable por organizacion, bateria completa y verificacion humana en los dos temas
 **UI hint**: yes
 **Notas**: `listarSolicitudesServicio` y `marcarSolicitudServicio` ya existen en la API y ninguna pantalla las usa. La bitácora (ADMIN-05) va en esta fase, antes que cualquier acción en nombre de otro (fases 5 y 7), para no tener que retro-instrumentar escrituras que ya estarían sueltas. Toda ruta nueva bajo `/api/admin/*` se envuelve en `conAdmin` y se comprueba con `npm run auditar:permisos`; `conAdmin` responde 404, no 403, a propósito. No se publica ningún teléfono en las pantallas de soporte.
 
 ### Phase 5: Cobro por transferencia bancaria
-
 **Goal**: Que la empresa pueda cobrar y otorgar cupos el 14 de octubre sin que ningún proveedor externo tenga que haber encendido nada.
 **Depends on**: Phase 3, Phase 4
 **Requirements**: PAGO-09, ADMIN-06
 **Success Criteria** (what must be TRUE):
-
   1. Un comprador puede elegir pagar por transferencia y ve los datos de la cuenta y la referencia que tiene que poner.
   2. Su pago queda `pendiente` y él ve en su cuenta que está en espera de confirmación, sin cupos todavía.
   3. El personal marca el pago como recibido desde la consola y, en ese mismo momento, el comprador gana los cupos y recibe su comprobante con NCF.
   4. Ese marcado aparece en la bitácora de la Fase 4 con quién lo hizo y cuándo.
   5. Con CardNet apagado, este camino cubre de principio a fin comprar cupos y publicar un anuncio.
-
 **Plans**: 5 planes en 4 olas
-
 - [x] 05-01-PLAN.md — Núcleo: la cuenta configurada fuera del repo, el procesador transferencia, confirmarPago dentro de la bitácora y transferencia:probar en CI
 - [x] 05-02-PLAN.md — Rutas: compra y ampliación por transferencia con datos y referencia, correos, y /api/admin/pagos para marcar recibido o anular
 - [x] 05-03-PLAN.md — Planes y panel: elegir transferencia, ver datos y referencia, pagos en espera; un 202 deja de anunciarse como compra hecha
 - [x] 05-04-PLAN.md — Consola: sección de pagos por transferencia con marcado, anulación y la bitácora al día
 - [x] 05-05-PLAN.md — Criterio 5 de extremo a extremo en el arnés, batería completa y verificación humana en los dos temas
-
 **UI hint**: yes
 **Notas**: Es la contingencia de lanzamiento y es barata: quita la dependencia externa de la fecha firme, así que va bien antes de CardNet, no después. Usa exactamente la transición `pendiente → aprobado` de la Fase 3 — la misma función, no una copia. `planes.perfil_publico` se usa tal como está; no se proponen planes ni precios nuevos.
 
 ### Phase 05.1: Precio único: ajuste del 3 % dentro del subtotal e ITBIS incluido (INSERTED)
-
 **Goal**: Que todo precio del sitio salga de una sola fórmula —base × 1,03 × 1,18—, que el comprador vea siempre el precio final con «ITBIS incluido» y que el comprobante cuadre ante la DGII con el 3 % dentro del subtotal gravado.
 **Depends on**: Phase 5
 **Requirements**: MOD-01, MOD-02, MOD-03, MOD-04
 **Success Criteria** (what must be TRUE):
-
   1. `assets/precios.js` es la única fórmula: navegador y servidor dan el mismo importe para compra, ampliación y (en la 05.3) renovación, y la tasa del ajuste se cambia en un solo sitio.
   2. Las tarjetas de planes y el resumen de pago enseñan un único precio final «ITBIS incluido»; en ninguna pantalla del comprador aparece el 3 % ni un «cargo».
   3. Cada pago guarda base, tasa e importe del ajuste, subtotal gravado, tasa e importe de ITBIS y total; el comprobante con NCF cuadra (subtotal + ITBIS = total cobrado) y un pago rechazado no consume NCF.
   4. Estándar y Destacado pasan a RD$1.800 y RD$3.200 de base con una migración al final; lo ya vendido conserva su `precio_pactado`.
-
 **Plans**: 4 plans
-
 - [x] 05.1-01-PLAN.md — Fórmula única en `assets/precios.js:desglose` (AJUSTE 0.03), prueba node:test y paso de CI
 - [x] 05.1-02-PLAN.md — Migraciones del desglose en `pagos` y precios base 1.800/3.200; rutas que guardan el desglose; cuadre fiscal y rechazo sin NCF en el arnés
 - [x] 05.1-03-PLAN.md — Precio final «ITBIS incluido» en planes, panel, asistente y condiciones (v2.1); base y ajuste en la consola de pagos
 - [x] 05.1-04-PLAN.md — Precio único por transferencia de punta a punta, batería completa y lista para Victor
-
 **UI hint**: yes
 **Notas**: Pesos enteros, como hoy (P1 por defecto: no cambia columnas ni el cliente de CardNet). La promoción del Estándar a RD$0 hasta el 2026-11-30 sigue tal cual (P3 por defecto). Los precios base los confirmó Victor el 2026-09-26; `research/precios-mercado.md` es el estudio que pidió antes de operar.
 
 ### Phase 05.2: Publicar este equipo: borrador, pago y activación del particular (INSERTED)
-
 **Goal**: Que el particular compre «la publicación de este equipo» y no un cupo: elige plan, rellena el anuncio en un borrador guardado en el servidor, paga, y el anuncio se activa solo cuando el pago se confirma.
 **Depends on**: Phase 05.1
 **Requirements**: MOD-05, MOD-06, MOD-07, MOD-08
 **Success Criteria** (what must be TRUE):
-
   1. Publicar → elegir plan → formulario → resumen → pago: el anuncio existe como `borrador` desde que elige plan y pasa a `pendiente_pago` al pedir el pago; `pagos.confirmarPago` lo activa, y ningún otro camino lo hace.
   2. Un borrador abandonado se recupera desde el panel; un borrador o pendiente no sale en el catálogo ni en `GET /api/anuncios/:id` para nadie que no sea su dueño.
   3. En el flujo del particular no aparece la palabra «cupo»; al marcar vendido ve «Este equipo fue vendido. Ahora puedes publicar otro equipo…».
   4. El arnés prueba: precio manipulado desde el navegador, activar sin pago, doble pago y doble aviso, publicar dos veces con un pago y reactivar un vendido sin capacidad (este último ya cerrado en el PR #33).
-
 **Plans**: 5 plans
-
 - [x] 05.2-01-PLAN.md — Migración 2026-09-borradores, borrador en la base, pago con `anuncio_id` y activación dentro de `aprobarPago`; arnés `publicacion:probar`
 - [x] 05.2-02-PLAN.md — Rutas del borrador y guardas: un borrador no se ve ni se activa por otro camino
 - [x] 05.2-03-PLAN.md — Pedir el pago de un borrador y activarlo solo al confirmarse
 - [x] 05.2-04-PLAN.md — Panel del particular: borradores recuperables y pagos en espera, sin «cupo»
 - [x] 05.2-05-PLAN.md — Asistente de publicación en el orden nuevo: plan → borrador → resumen → pago
 - [x] 05.2-06-PLAN.md — Cierre del hueco D-08: limpieza diaria de borradores sin pago a los 30 días
-
 **UI hint**: yes
 **Notas**: Por dentro sigue la cadena Plan → Suscripción → Anuncio: cada publicación del particular es una suscripción de un cupo nacida con el pago (P6/P7 por defecto: el particular puede tener varias publicaciones pagadas, cada una con su pago; los cupos ya comprados se conservan hasta que venzan). El dealer no cambia en esta fase.
 
 ### Phase 05.3: Renovación manual, vencimientos y alertas de 7, 3 y 1 día (INSERTED)
-
 **Goal**: Que un anuncio se renueve sin rehacerlo, que lo vencido venza de verdad y que el anunciante reciba a tiempo, una sola vez, cada aviso de vencimiento.
 **Depends on**: Phase 05.2
 **Requirements**: MOD-09, MOD-10, MOD-11, MOD-12, MOD-15
 **Success Criteria** (what must be TRUE):
-
   1. «Renovar anuncio» existe antes y después de vencer: mismo anuncio, fotos e historial, transacción nueva por `confirmarPago` al precio vigente, y el periodo nuevo se suma al final del actual.
   2. Una suscripción cuya fecha pasó queda `vencida`: deja de sostener anuncios y la página pública del dealer se apaga.
   3. Los avisos de 7 días, 3 días y 24 horas salen una sola vez por anuncio y ciclo aunque la tarea corra dos veces, y no salen si el anuncio se vendió, venció o se renovó.
   4. La casilla «Activar renovación automática» se guarda (nunca marcada por defecto) y se desactiva desde el panel; el cobro automático queda para la Fase 6, apagado. El panel enseña «Vence el…» y el aviso visual a 7, 3 y 1 día.
   5. Si cambian las condiciones de pago o renovación de `legal.html`, su versión sube por el mecanismo que ya existe.
-
 **Plans**: 5 planes (verificada 2026-09-29, human_needed solo por revisión visual)
-
 - [x] 05.3-01-PLAN.md — Migración 2026-09-renovacion, vencer de verdad, renovación como intención de `aprobarPago`, registro de recordatorios
 - [x] 05.3-02-PLAN.md — Rutas de renovar (anuncio y plan), consola y casilla de renovación automática apagada
 - [x] 05.3-03-PLAN.md — Tarea diaria: vencer suscripciones y avisos de 7, 3 y 1 día una sola vez
 - [x] 05.3-04-PLAN.md — Panel: «Vence el…», aviso visual y sección de renovar
 - [x] 05.3-05-PLAN.md — Condiciones de contratación 2.2 y batería final
-
 **UI hint**: yes
 **Notas**: Usa `tools/tareas.js` y sus temporizadores; nada de infraestructura nueva. Renovar cuesta lo mismo que publicar ese plan hoy (P8 por defecto).
 
 ### Phase 05.4: Dealer con capacidad de publicaciones activas y la consola del modelo nuevo (INSERTED)
-
 **Goal**: Que el dealer siga comprando inventario, pero lo vea como «publicaciones activas permitidas» y no como cupos, y que la consola enseñe publicaciones, pagos, renovaciones y dealers del modelo nuevo.
 **Depends on**: Phase 05.3
 **Requirements**: MOD-13, MOD-14
 **Success Criteria** (what must be TRUE):
-
   1. El panel del dealer resume publicaciones activas, vendidas y vencidas, capacidad disponible, plan y fecha de vencimiento; ninguna pantalla del dealer dice «cupos».
   2. «Agregar publicaciones activas» cobra el prorrateo con la fórmula de la 05.1, sin doble cobro, y la regla de uno gratis por cada cinco se conserva.
   3. La consola lista publicaciones por estado, pagos con base, ajuste (solo ahí), ITBIS y total, renovaciones y dealers con su capacidad; toda escritura en nombre de otro pasa por la bitácora.
-
 **Plans**: 8 planes en 4 olas
-
 - [x] 05.4-01-PLAN.md — Guardas del servidor y prorrateo: días reales (P13), una operación de capacidad pendiente por membresía, `aprobarPago` que no amplía lo vencido, `PARA_PAGAR` al ampliar y `capacidad:probar` en CI
 - [x] 05.4-02-PLAN.md — Panel: sección «Agregar publicaciones activas» con prorrateo y regla, sin `prompt()`, y `?ampliar=` validado
 - [x] 05.4-03-PLAN.md — Panel del dealer: resumen, inventario por estado, aviso de vendido y textos sin «cupo»
@@ -265,25 +219,20 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 05.4-06-PLAN.md — Asistente con los dos caminos y contratación 2.3
 - [x] 05.4-07-PLAN.md — Consola de solo lectura: publicaciones por estado, pagos de todos los métodos con desglose, renovaciones y dealers con capacidad
 - [x] 05.4-08-PLAN.md — Recorrido de la sección 39, auditorías de navegador y batería completa
-
 **UI hint**: yes
 **Notas**: Queda por decidir (P9) si ampliar se cobra al precio pactado o al vigente; por defecto al precio de lista del plan, que es lo que ya hace hoy.
 
 ### Phase 6: CardNet construido, probado y apagado
-
 **Goal**: Que la integración de cobro con CardNet esté escrita, probada y lista para certificar, entregada apagada tras un interruptor, para que el día de la afiliación sea encender y no construir.
 **Depends on**: Phase 3, Phase 5
 **Requirements**: PAGO-04, PAGO-05, PAGO-06, PAGO-07, PAGO-08
 **Success Criteria** (what must be TRUE):
-
   1. Un comprador guarda una tarjeta y paga sin que el número, la fecha de vencimiento ni el CVV pasen nunca por nuestro servidor; buscar `cvv` en el repositorio no devuelve nada.
   2. Con el interruptor en `apagado`, todo el sitio se comporta exactamente como antes de esta fase, con el camino de transferencia intacto.
   3. Con el interruptor en el ambiente de pruebas, un cobro aprobado otorga cupos y emite comprobante, y uno rechazado no deja ni cupos ni NCF consumido.
   4. La misma notificación de la pasarela entregada dos veces emite un solo comprobante y consume un solo NCF; y RD$2.000 llega a CardNet como `200000`.
   5. Un aviso perdido se recupera solo: la reconciliación encuentra el pago aprobado en la pasarela sin fila aprobada nuestra, completa la transición y el descuadre sale en el informe a gerencia.
-
 **Plans**: 10 planes en 6 olas (06-01 hecho; 06-02 a 06-10 replanificados el 2026-09-30 contra el modelo comercial)
-
 - [x] 06-01-PLAN.md — Cliente de CardNet apagado tras MERCA_CARDNET: centavos en un solo punto, normalizar sin aprobar por duda, limpiar registros, las ocho llamadas con costura de pruebas, barrera de PCI y cardnet:probar en CI
 - [x] 06-02-PLAN.md — (ola 1) Migración 2026-10-cardnet al final sin repetir las columnas de la 05.3 (proximo_cargo como próximo intento), pagos_eventos de solo añadir, tarjetas sin token hacia fuera, guarda intencionAplicable de la 05.4 y consentimiento con tarjeta
 - [x] 06-03-PLAN.md — (ola 1) CSP en tools/cabeceras.js: idéntica apagada, frame-src de CardNet solo encendida
@@ -294,203 +243,161 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] 06-08-PLAN.md — (ola 5) Renovación automática por publicación y por capacidad: misma construcción que la manual, aviso a 7 días, tres intentos antes del fin, correos, tarjeta por vencer y marca en la consola
 - [x] 06-09-PLAN.md — (ola 5) Panel: renovar y ampliar con tarjeta, tarjetas guardadas e interruptor de renovación automática con su tarjeta
 - [x] 06-10-PLAN.md — (ola 6) Los cinco criterios de extremo a extremo sobre el modelo nuevo, auditorías con navegador y procedimiento de encendido en deploy/README.md
-
 **UI hint**: yes
 **Notas**: PCI es frontera dura — la tokenización ocurre en el navegador; ninguna ruta nuestra puede recibir datos de tarjeta. Diseño completo en `.planning/research/cardnet.md`: módulo `tools/cardnet.js` con `https.request` a mano y cero dependencias, `POST /v1/api/purchase` para el primer cobro y las renovaciones, ruta de notificación antes de cualquier patrón genérico `/api/pagos/...`, autenticada con `crypto.timingSafeEqual` y sin limitador por IP. Las claves de QA publicadas por CardNet no entran al repositorio ni a `.env.example`. Pruebas con arnés propio (`tools/probar-pagos.js`) y doble de `tools/cardnet.js`: la red no se toca; las variables de entorno se fijan **antes** del `require` de `tools/db.js`. Queda una pregunta abierta de mayor impacto para CardNet: confirmar que `DataDo.Invoice` es un número de orden del comercio y no el NCF de la DGII.
 **Replanificado desde el 06-02 el 2026-09-30 (antes: «Replanificar desde el 06-02», 2026-09-26):** el modelo comercial (fases 05.1-05.4) cambia a quién se cobra: la renovación automática es por publicación del particular (una suscripción de un cupo por publicación) y por capacidad del dealer, con la casilla de consentimiento que ya guarda la 05.3, y el importe sale de la fórmula única de la 05.1. La migración del 06-02 a medias (`claude/fase-06-cardnet`, commit «wip») se rehace contra ese modelo.
 
 ### Phase 7: Verificación y soporte en nombre del dealer
-
 **Goal**: Que el personal pueda hacer desde el sitio todo lo que hoy exige una terminal o es imposible: verificar una organización, revisar un número de serie y arreglar la página de un dealer por él.
 **Depends on**: Phase 4
 **Requirements**: ADMIN-02, ADMIN-03, ADMIN-04, CONF-01
 **Success Criteria** (what must be TRUE):
-
   1. El personal concede y retira el sello de verificada a una organización registrada por la web, desde el sitio, sin línea de comandos.
   2. El personal ve el número de serie de un anuncio, deja constancia del resultado de su revisión, y ese resultado es visible donde corresponda.
   3. Lo que un vendedor lee en `publicar.html` sobre la verificación del número de serie se corresponde con la diligencia que el personal hace de verdad — o el texto ya no lo promete.
   4. El personal abre la página de un dealer, la edita en su nombre, y el dealer ve el cambio en su propia pantalla con su estado borrador/publicada respetado.
   5. Cada una de esas escrituras aparece en la bitácora con quién la hizo, cuándo y sobre qué organización.
-
 **Plans**: 6 plans
-
 - [x] 07-01-PLAN.md — Directorio de empresas y sello con motivo al retirarlo (ADMIN-02)
 - [x] 07-02-PLAN.md — Revisión del número de serie por la bitácora y la serie deja de ser pública (ADMIN-03, CONF-01)
 - [x] 07-03-PLAN.md — API para editar la página de un dealer en su nombre, sin publicar ni despublicar (ADMIN-04)
 - [x] 07-04-PLAN.md — Consola: secciones «Empresas» y «Números de serie»
 - [x] 07-05-PLAN.md — Editor de página en modo soporte y aviso al dealer
 - [x] 07-06-PLAN.md — Texto de publicar, estado de la serie en el panel y en la ficha (CONF-01)
-
 **UI hint**: yes
 **Notas**: CONF-01 se cierra aquí porque ADMIN-03 es lo que la cumple; si la revisión no va a hacerse, el criterio 3 se satisface retirando el texto de `publicar.html:149`. La edición en nombre de otro (ADMIN-04) respeta las seis reglas visibles de la página del dealer ya existentes. Cuidado con los reductores de imagen: pintan fondo blanco y exportan JPEG, así que un logotipo PNG con transparencia pierde el alfa.
 
 ### Phase 8: Moneda y disponibilidad en el catálogo
-
 **Goal**: Que el buscador deje de mentir: que el precio se compare en la misma moneda y que la ficha diga si la máquina está en el país o viene bajo pedido.
 **Depends on**: Phase 2
 **Requirements**: CAT-01, CAT-02, CAT-03
 **Success Criteria** (what must be TRUE):
-
   1. Filtrar «desde RD$1.000.000» devuelve una máquina de US$120.000 en lugar de dejarla fuera.
   2. Ordenar por precio coloca esa máquina de US$120.000 por encima de una de RD$500.000.
   3. La ficha dice si el equipo está ya en el país o es bajo pedido, y el catálogo se puede filtrar por eso.
   4. Permuta e ITBIS incluido se pueden usar como filtro, no solo leer como etiqueta.
-
 **Plans**: 3 plans
-
 - [x] 08-01-PLAN.md — Comparar y ordenar el precio en pesos con una tasa de referencia configurable, y el arnés del catálogo
 - [x] 08-02-PLAN.md — Disponibilidad «en el país / bajo pedido»: migración, publicar, ficha, tarjeta y panel
 - [x] 08-03-PLAN.md — Permuta, ITBIS y disponibilidad como filtros del catálogo, con auditoría del navegador
-
 **UI hint**: yes
 **Notas**: Es un defecto funcional, no una mejora: hoy `tools/db.js` compara `a.precio` en crudo (líneas ~2414 y ~2460) aunque `MONEDAS` admite DOP y USD. Es lo único de la lista que puede hacer que un dealer diga «su buscador no funciona» el primer día. Las reglas de precio viven en `assets/precios.js`, cargado por el navegador y por Node: cualquier cambio tiene que seguir funcionando en los dos lados y conservar el `module.exports` del final.
 
 ### Phase 9: Contactos verificados y señales de estafa
-
 **Goal**: Que todo contacto que un comprador vea esté verificado, y que quien sospeche tenga una guía dominicana a un clic del aviso que ya existe.
 **Depends on**: Phase 2
 **Requirements**: CONF-02, CONF-03
 **Success Criteria** (what must be TRUE):
-
   1. Un anuncio no muestra ningún contacto que no esté verificado.
   2. Un vendedor verifica su contacto por correo y ese contacto aparece en su anuncio; con los créditos SMS apagados, el correo basta.
   3. El día que se enciendan los SMS, la verificación por teléfono funciona sin volver a tocar el flujo.
   4. El aviso de la ficha lleva a una página de señales de estafa escrita para el mercado dominicano.
-
 **Plans**: 4 plans
-
 - [x] 09-01-PLAN.md — Tabla de contactos verificados, código por número y SMS apagado tras el interruptor
 - [x] 09-02-PLAN.md — Rutas de verificación y filtro público de la ficha; la semilla sale verificada
 - [x] 09-03-PLAN.md — El vendedor verifica sus números desde el panel y desde el paso 4 de publicar (auditorías del navegador pendientes)
 - [x] 09-04-PLAN.md — Ficha con teléfonos verificados y página de señales de estafa enlazada desde el aviso
-
 **UI hint**: yes
 **Notas**: Los créditos SMS de Brevo están pendientes de pago: la vía SMS se entrega construida y apagada tras el interruptor, igual que el resto. `tools/correo.js` es el único punto de envío y ya tiene transporte de archivo para desarrollo. La página de estafas es texto, no código, y no publica ningún teléfono.
 
 ### Phase 10: Alcance y métricas del vendedor
-
 **Goal**: Que el vendedor pueda atribuir al sitio lo que vende y que el comprador tenga las dos acciones que un dominicano espera de un portal: guardar y compartir.
 **Depends on**: Phase 2
 **Requirements**: MET-01, MET-02, MET-03, MET-04
 **Success Criteria** (what must be TRUE):
-
   1. Un visitante guarda un anuncio como favorito, lo vuelve a encontrar, y el panel del anunciante deja de decir «Guardados: 0» para siempre.
   2. Un visitante comparte la ficha y el enlace llega a WhatsApp con foto, título y precio.
   3. El anunciante ve, por cada contacto de WhatsApp, qué anuncio fue y cuándo, no solo el total.
   4. El anunciante duplica un anuncio desde el panel y solo edita lo que cambia.
-
 **Plans**: 4 plans
-
 - [x] 10-01-PLAN.md — Servidor: contactos atribuibles permanentes, guardados por ids, vista previa con miniatura, copia de un anuncio y borrado que respeta archivos compartidos (con `metricas:probar`)
 - [x] 10-02-PLAN.md — Ficha: guardar y compartir, y la página `guardados.html`
 - [x] 10-03-PLAN.md — Panel: contactos recibidos, compartidos en la tarjeta y duplicar hacia el asistente de publicar
 - [x] 10-04-PLAN.md — Recorrido de navegador de los cuatro criterios dentro de `npm run auditar`
-
 **UI hint**: yes
 **Notas**: La infraestructura ya está y nadie la usa: la columna y el tipo de evento `favorito` y `compartir` existen en `tools/db.js` sin emisor, y los metadatos de compartir están hechos en `tools/meta.js`. Los eventos de métrica tienen deduplicación cubierta por `tools/probar-seguridad.js`: no se rompe.
 
 ### Phase 10.1: Recuperar la cuenta y cambiar el correo (INSERTED)
-
 **Goal:** Quien perdió el acceso a su correo recupera la cuenta por un trámite revisado y con constancia, y quien tiene sesión cambia su correo o su contraseña sin que un intruso pueda quedársela
 **Requirements**: CTA-01, CTA-02, CTA-03, CTA-04, CTA-05, CTA-06
 **Depends on:** Phase 10
 **Plans:** 3 plans
-
 Plans:
-
 - [x] 10.1-01-PLAN.md — Núcleo: migración, correos, rutas de cambio de correo, reversión, contraseña con sesión y recuperación revisada; arnés `cuenta:probar` en CI
 - [x] 10.1-02-PLAN.md — Panel «Seguridad de la cuenta» y acceso: «No fui yo» y «¿Ya no tiene acceso a su correo?»
 - [x] 10.1-03-PLAN.md — Consola «Recuperación de cuentas» con expediente para cotejar, y el asistente
 
 ### Phase 11: Transporte y financiamiento encendidos
-
 **Goal**: Que los dos servicios que están escritos y apagados entren en operación con contenido dominicano real.
 **Depends on**: Phase 10 (cierre de v1)
 **Requirements**: SERV-01, SERV-02
 **Success Criteria** (what must be TRUE):
-
   1. Un visitante entra a transporte, usa el mapa provincia a provincia y obtiene una estimación de traslado.
   2. Un visitante entra a financiamiento, ve instituciones dominicanas reales y calcula una cuota.
   3. Ninguna de las dos páginas redirige ya a la de servicio apagado, y el resto del sitio las ofrece donde corresponde.
-
 **Plans**: TBD
 **UI hint**: yes
 **Notas**: Encender es cambiar `activo` a `true` en `assets/servicios.js`; hasta esta fase se quedan apagados y el código **no se borra** — es una bandera, no código muerto. `assets/mapa.js` ya está escrito, comentado con cuidado y ninguna página lo carga.
 
 ### Phase 12: Lote mensual de comprobantes
-
 **Goal**: Que Victor cierre el mes fiscal descargando un solo paquete, sin armarlo a mano y sin que nada salga por correo automáticamente.
 **Depends on**: Phase 11
 **Requirements**: CONTAB-01
 **Success Criteria** (what must be TRUE):
-
   1. Victor descarga, en un solo archivo, todos los comprobantes de un mes con su resumen.
   2. El paquete cuadra con lo emitido: los mismos NCF, los mismos importes y el mismo ITBIS que tiene la base.
   3. No existe ningún camino por el que el sistema envíe eso a un contador: la descarga manual es el único.
-
 **Plans**: TBD
 **Notas**: El envío automático al contador está **prohibido** por decisión de Victor; si algún día parece que «falta», no falta. Un comprobante emitido nunca se borra ni se reescribe, así que el paquete solo lee. El PDF se genera con `tools/pdf.js`, sin dependencias nuevas.
 
 ### Phase 13: Deuda técnica de seguridad y mantenibilidad
-
 **Goal**: Que una copia filtrada de la base no sea una sesión secuestrada, que el acceso no bloquee el sitio, y que dos personas puedan trabajar en paralelo sin chocar.
 **Depends on**: Phase 12
 **Requirements**: DEUDA-01, DEUDA-02, DEUDA-03, DEUDA-04, DEUDA-05
 **Success Criteria** (what must be TRUE):
-
   1. Quien lea una copia de la base no puede entrar con ningún testigo de sesión o de dispositivo que vea allí.
   2. Iniciar sesión no deja al resto de los visitantes esperando mientras se comprueba la contraseña.
   3. El tiempo de respuesta del acceso no revela si un correo está registrado o no.
   4. Las dos personas pueden editar el acceso a datos y la API en la misma semana sin encontrarse en el mismo archivo.
   5. Existe una copia de la base fuera del VPS y se ha restaurado al menos una vez para comprobar que sirve.
-
 **Plans**: TBD
 **Notas**: `codigos.codigo_hash` ya guarda un HMAC en vez del código crudo, con el comentario que explica por qué — DEUDA-01 aplica el mismo criterio a `sesiones.testigo` y `dispositivos.testigo`. Al partir `tools/db.js` (3.353 líneas) y `tools/api.js` (2.677) se conservan las secciones `── Nombre ──` ya existentes, el array plano `RUTAS` con la ruta específica antes de la genérica, y el `MIGRACIONES` append-only. Antes de tocar la base de producción, respaldo verificado (`VACUUM INTO` + `integrity_check`).
 
 ### Phase 14: Inspección propia con informe publicado
-
 **Goal**: Que un comprador pueda confiar en la máquina de un desconocido porque alguien de la casa la vio y escribió lo que vio.
 **Depends on**: Phase 13
 **Requirements**: FICHA-01, FICHA-02
 **Success Criteria** (what must be TRUE):
-
   1. Un vendedor adjunta documentos a su anuncio, no solo fotos y video, y el comprador los puede abrir desde la ficha.
   2. Un anuncio inspeccionado muestra en la ficha el informe de lo observado, con su fecha y quién lo hizo.
   3. El informe describe lo observado y no certifica porcentajes ni promete pruebas de carga: quien lo lee entiende exactamente qué alcance tiene.
   4. Un anuncio sin inspección no aparenta tenerla en ningún sitio.
-
 **Plans**: TBD
 **UI hint**: yes
 **Notas**: FICHA-01 es prerrequisito de FICHA-02: hoy un anuncio solo admite fotos y video, así que sin documentos no hay dónde colgar un informe. Requiere además personas y un protocolo escrito, que es decisión de Victor y no código. El techo de disco del droplet (512 MB, 60 % ocupado) manda sobre el tamaño de lo que se adjunta.
 
 ### Phase 15: Especificaciones e implementos filtrables
-
 **Goal**: Que los números que deciden una compra de maquinaria —cucharón, izaje, ejes, potencia, peso— y los implementos se puedan filtrar como datos y no leer como adjetivos.
 **Depends on**: Phase 8, Phase 14
 **Requirements**: FICHA-03, FICHA-04
 **Success Criteria** (what must be TRUE):
-
   1. Un comprador filtra por capacidad, potencia o peso dentro de un tipo de máquina y obtiene solo los que cumplen.
   2. Las especificaciones que se piden al publicar dependen del tipo de máquina, no son una lista única para todo.
   3. Un comprador filtra por implemento y un martillo hidráulico deja de ser indistinguible de un adjetivo.
   4. Los anuncios que ya existen siguen visibles y buscables aunque no tengan los datos nuevos.
-
 **Plans**: TBD
 **UI hint**: yes
 **Notas**: `assets/taxonomia.js` ya tiene la jerarquía donde colgar esto, y ya declara qué marcas fabrican cada subcategoría: es su extensión natural. Es un módulo compartido navegador/servidor, así que conserva el `module.exports` del final y nada de sintaxis de módulo ES ni de `window`. Hoy los implementos son la línea de texto de `publicar.html:164`.
 
 ### Phase 16: Búsquedas guardadas y alertas
-
 **Goal**: Que una visita se convierta en alguien que vuelve durante los meses que dura la búsqueda de una máquina.
 **Depends on**: Phase 9, Phase 15
 **Requirements**: ALERT-01
 **Success Criteria** (what must be TRUE):
-
   1. Un visitante guarda una búsqueda con sus filtros y la vuelve a encontrar en su cuenta.
   2. Cuando entra un anuncio que encaja, recibe el aviso por correo con el enlace a ese anuncio.
   3. Puede dejar de recibir una alerta desde el propio correo, sin escribir a soporte.
   4. Con los créditos SMS apagados, las alertas por correo funcionan igual y nada queda a medias.
-
 **Plans**: TBD
 **UI hint**: yes
 **Notas**: Depende de los créditos SMS de Brevo y del correo, así que encaja después del lanzamiento. `tools/correo.js` sigue siendo el único punto de envío y `tools/tareas.js` el sitio de lo que corre fuera de una petición HTTP, con la idempotencia que esas tareas ya tienen por norma. Va después de la Fase 15 para que una búsqueda guardada pueda incluir los filtros numéricos nuevos y no haya que rehacerla.
