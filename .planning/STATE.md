@@ -70,14 +70,17 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
    mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni `lotes_contador`,
    restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista la e-CF, el lote
    incluye también el XML y la representación impresa.
-3. **Antes de encender CardNet (no bloquea el lanzamiento, que va con transferencia):** que los cobros
+3. **Antes de encender CardNet (no bloquea el lanzamiento, que va con transferencia):** **que dos procesos no puedan consumir dos NCF para el mismo pago**
+   (hallazgo de `03-VERIFICATION.md`: `facturas` no tiene índice único sobre `pago_id` y la comprobación de
+   `pagos.js:126` y el `INSERT` de `crearFactura` no van en la misma transacción, con `tomarNcf` en medio; hoy no
+   ocurre porque con CardNet apagado `reconciliar` y `renovarAutomaticas` no hacen nada); que los cobros
    `aprobado-sin-aplicar` se puedan marcar como devueltos (hoy «Pasarela de pago» los repite en cada informe);
    certificar en lab lo marcado «POR CONFIRMAR EN LAB» (forma del `message` del iframe, que admita ser
    embebido, alto para 3-D Secure, orden de perfiles nuevos, W-01 con otra tarjeta y mismo `UniqueID`, si el
    cobro recurrente exige un indicador) e instalar el temporizador `mercamaquinarias-pagos`.
-4. **Papeleo del ROADMAP.** Las fases 1, 3 y 4 sin VERIFICATION ni casilla (la 1 además espera la protección
-   de rama, paso manual de Victor); la 8 y la 9 tienen VERIFICATION pero sin casilla. Verificar lo que falte y
-   marcar.
+4. **Papeleo del ROADMAP (hecho el 2026-09-30 salvo la fase 1).** La 3 (`passed`), la 4 (`human_needed`: revisión
+   visual de bandeja y bitácora), la 8 y la 9 ya tienen VERIFICATION y casilla. Queda la **fase 1**, que espera la
+   protección de rama de `main` (paso manual de Victor, plan 01-02) antes de verificarla.
 5. **Facturación electrónica (e-CF) — en espera.** Victor la solicita en **octubre de 2026**. Cuando diga que
    está presentada: insertar la fase «6.1 e-CF» con `gsd-phase` (propuesta en §7 de la investigación: FE-01 a
    FE-13, construida y apagada tras `MERCA_ECF`, ejecutada con Sonnet 5.5) y planificarla. Recomendación:
