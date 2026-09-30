@@ -204,6 +204,24 @@ async function entrar(correo, clave) {
   comprobar('anular una transferencia bloqueado sin permiso',
     rAnu.estado === 404, `devolvió ${rAnu.estado}`);
 
+  /* Los pagos con tarjeta (06-10). El id ajeno sale de los pagos de la
+     otra cuenta; si la semilla no tiene ninguno se usa uno inventado y
+     se comprueba el mismo 404: una cuenta no distingue «no es mío» de
+     «no existe». En CI CardNet está apagado. */
+  const memCaribe = await pedir('/membresias', { cookie: caribe });
+  const pagoAjeno = ((memCaribe.json && memCaribe.json.pagosPendientes) || [])[0];
+  const idPagoAjeno = pagoAjeno ? pagoAjeno.id : 'pago-que-no-existe';
+  const rPagoVer = await pedir(`/pagos/${idPagoAjeno}`, { cookie: cibao });
+  comprobar('ver el pago de otra cuenta oculto', rPagoVer.estado === 404, `devolvió ${rPagoVer.estado}`);
+  const rPagoConf = await pedir(`/pagos/${idPagoAjeno}/confirmar`, { metodo: 'POST', cuerpo: {}, cookie: cibao });
+  comprobar('confirmar el pago de otra cuenta bloqueado', rPagoConf.estado === 404, `devolvió ${rPagoConf.estado}`);
+  const rTarjetas = await pedir('/metodos-pago');
+  comprobar('las tarjetas guardadas sin sesión rechazadas', rTarjetas.estado === 401, `devolvió ${rTarjetas.estado}`);
+  const rTarjetaBorrar = await pedir('/metodos-pago/inexistente', { metodo: 'DELETE', cookie: cibao });
+  comprobar('borrar una tarjeta inexistente o ajena da 404', rTarjetaBorrar.estado === 404, `devolvió ${rTarjetaBorrar.estado}`);
+  const rAviso = await pedir('/pagos/cardnet/notificacion', { metodo: 'POST', cuerpo: { Notification: { ResourceType: 'purchase' } } });
+  comprobar('la notificación de CardNet no existe con CardNet apagado', rAviso.estado === 404, `devolvió ${rAviso.estado}`);
+
   // 5. Sin sesión ninguna
   // Las tres de contactos verificados (fase 9): sin sesión, 401.
   for (const [ruta, metodo] of [['/mis-anuncios', 'GET'], ['/sucursales', 'GET'], ['/admin/solicitudes', 'GET'], ['/admin/bitacora', 'GET'],
