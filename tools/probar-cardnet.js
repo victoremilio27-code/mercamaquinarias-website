@@ -1021,6 +1021,180 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     apagar();
   }
 
+  console.log('\n16. pagos.js: preparar la captura, registrar la tarjeta, confirmar y liberar');
+  {
+    const db = require('./db');
+    const pagos = require('./pagos');
+    const precios = require('../assets/precios.js');
+    db.secuenciasNcf();
+    db.cargarSecuencia({ tipo: 'B02', nombre: 'Consumidor final', desde: 1, hasta: 500, vence: '2027-12-31', usaSitio: true });
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    let n = 0;
+    const cuenta = (etiqueta) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      return db.organizacionDe(idUsuario).id;
+    };
+    const CLIENTE = { razonSocial: 'Cliente de prueba', correo: 'cliente@prueba.invalid' };
+    const COMPRA = { tipo: 'compra', idPlan: 'estandar', cupo: 1, dias: 30, concepto: 'Estándar · 1 cupo', cliente: CLIENTE, correoCliente: CLIENTE.correo };
+    const pagoNuevo = (idOrg, procesador = 'cardnet') => db.registrarCobro({
+      idOrg, cobro: { ...precios.desglose(1800), referencia: `R16-${SELLO}-${++n}`, procesador }, intencion: COMPRA });
+    const perfilCN = (id, token, activo = true, ult = '1111') => ({
+      PaymentProfileId: id, Token: token, Brand: 'VISA', Last4: ult, Expiration: '12/30', Enabled: activo });
+    const clienteCN = (perfiles) => ({
+      estado: 200, cuerpo: { CustomerId: 'C-16', CaptureURL: 'https://labservicios.cardnet.com.do/captura/x', UniqueID: 'S16', PaymentProfiles: perfiles } });
+    const conteo = (fragmento, metodo) => llamadas.filter((l) => l.url.includes(fragmento) && (!metodo || l.metodo === metodo)).length;
+
+    // prepararCaptura
+    const org = cuenta('a16');
+    const p0 = pagoNuevo(org);
+    apagar();
+    let e = null;
+    try { await pagos.prepararCaptura(p0, { correo: 'x@prueba.invalid', nombre: 'X' }); } catch (x) { e = x; }
+    ok(e && e.codigo === 409 && e.message === 'El pago con tarjeta no está disponible.', 'apagado: prepararCaptura lanza 409');
+    encender('lab');
+    doble((op) => (op.metodo === 'POST' ? { estado: 200, cuerpo: { CustomerId: 'C-16' } } : clienteCN([])));
+    const c1 = await pagos.prepararCaptura(p0, { correo: 'x@prueba.invalid', nombre: 'X' });
+    const c2 = await pagos.prepararCaptura(p0, { correo: 'x@prueba.invalid', nombre: 'X' });
+    ok(conteo('v1/api/customer', 'POST') === 1, `el Customer se crea una sola vez (${conteo('v1/api/customer', 'POST')} POST)`);
+    ok(db.clienteProcesador(org, 'cardnet') === 'C-16', 'el id del cliente queda guardado');
+    ok(c1.urlCaptura === c2.urlCaptura && c1.urlCaptura.includes('key=llave-publica-de-prueba') && c1.urlCaptura.includes('session_id=S16'), 'la URL lleva la llave pública y la sesión');
+    ok(c1.origen === 'https://labservicios.cardnet.com.do' && !JSON.stringify(c1).includes('llave-privada'), 'devuelve el origen y nunca la llave privada');
+    const orgCaida = cuenta('caida16');
+    const pCaida = pagoNuevo(orgCaida);
+    doble([{ estado: 0, cuerpo: null, fallo: 'ECONNRESET' }]);
+    e = null;
+    try { await pagos.prepararCaptura(pCaida, { correo: 'x@prueba.invalid', nombre: 'X' }); } catch (x) { e = x; }
+    ok(e && e.codigo === 502 && e.message === 'No pudimos abrir el formulario de la tarjeta. No se le cobró nada.', 'CardNet caído: 502 con el texto que dice que no se cobró');
+
+    // registrarTarjeta
+    const orgSin = cuenta('sin16');
+    e = null;
+    try { await pagos.registrarTarjeta(pagoNuevo(orgSin)); } catch (x) { e = x; }
+    ok(e && e.codigo === 409 && e.message === 'No encontramos la tarjeta. Vuelva a ingresarla.', 'sin cliente en CardNet: 409');
+    db.guardarClienteProcesador(orgSin, 'cardnet', 'C-16');
+    doble([clienteCN([])]);
+    e = null;
+    try { await pagos.registrarTarjeta(pagoNuevo(orgSin)); } catch (x) { e = x; }
+    ok(e && e.codigo === 409, 'sin perfiles: 409 «No encontramos la tarjeta»');
+
+    const pa = pagoNuevo(org);
+    doble([clienteCN([perfilCN(161, 'CT__16uno')])]);
+    const ra = await pagos.registrarTarjeta(pa);
+    ok(ra.metodo && ra.activacion === false && ra.metodo.ultimos4 === '1111' && !('token' in ra.metodo), 'registrarTarjeta devuelve la tarjeta sin token, activa');
+    ok(db.pagoPorId(pa.id).metodo_pago_id === ra.metodo.id, 'la tarjeta queda enlazada al pago');
+    const pb = pagoNuevo(org);
+    doble([clienteCN([perfilCN(161, 'CT__16uno'), perfilCN(162, 'CT__16dos', true, '2222')])]);
+    const rb = await pagos.registrarTarjeta(pb);
+    ok(rb.metodo.ultimos4 === '2222' && rb.metodo.id !== ra.metodo.id, 'elige el perfil que aún no estaba guardado');
+    const pc = pagoNuevo(org);
+    doble([clienteCN([perfilCN(161, 'CT__16uno'), perfilCN(162, 'CT__16dos', true, '2222')])]);
+    const rc = await pagos.registrarTarjeta(pc);
+    ok(rc.metodo.ultimos4 === '2222' && d.prepare('SELECT COUNT(*) AS n FROM metodos_pago WHERE organizacion_id = ?').get(org).n === 2, 'con todos guardados usa el más reciente y no duplica');
+    const orgIn = cuenta('inact16');
+    db.guardarClienteProcesador(orgIn, 'cardnet', 'C-16');
+    doble([clienteCN([perfilCN(163, 'CT__16tres', false)])]);
+    const ri = await pagos.registrarTarjeta(pagoNuevo(orgIn));
+    ok(ri.activacion === true && ri.metodo.activo === false, 'un perfil sin activar pide activación');
+
+    // confirmarConTarjeta
+    const purchase = { estado: 200, cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: 'P16-1', AuthorizationCode: 'AU16' } };
+    const respuestas = (op) => (op.metodo === 'GET' ? clienteCN([perfilCN(161, 'CT__16uno'), perfilCN(162, 'CT__16dos', true, '2222')]) : purchase);
+    const pd = pagoNuevo(org);
+    e = null;
+    try { await pagos.confirmarConTarjeta(pd.id, cuenta('ajena16'), {}); } catch (x) { e = x; }
+    ok(e && e.codigo === 404, 'un pago de otra organización: 404');
+    const pTr = pagoNuevo(org, 'transferencia');
+    e = null;
+    try { await pagos.confirmarConTarjeta(pTr.id, org, {}); } catch (x) { e = x; }
+    ok(e && e.codigo === 404, 'un pago que no es cardnet: 404');
+
+    // token inventado por quien llama: se ignora
+    doble(respuestas);
+    const r1 = await pagos.confirmarConTarjeta(pd.id, org, { token: 'CT__inventado', TrxToken: 'CT__inventado' });
+    const compra = llamadas.find((l) => l.url.includes('purchase'));
+    ok(r1.estado === 'aprobado' && compra && compra.cuerpo.TrxToken === 'CT__16dos' && !JSON.stringify(llamadas).includes('inventado'),
+      `el cobro usa el token del perfil leído de CardNet, no el del llamador (${compra && compra.cuerpo.TrxToken})`);
+
+    // ya no pendiente: devuelve su estado sin llamar
+    doble(respuestas);
+    const r2 = await pagos.confirmarConTarjeta(pd.id, org, {});
+    ok(r2.estado === 'aprobado' && llamadas.length === 0, 'un pago ya resuelto devuelve su estado sin llamar a CardNet');
+
+    // tarjeta guardada elegida por id
+    const pe = pagoNuevo(org);
+    const guardada = db.metodosPagoDe(org)[0];
+    doble(respuestas);
+    const r3 = await pagos.confirmarConTarjeta(pe.id, org, { metodoPago: guardada.id });
+    ok(r3.estado === 'aprobado' && conteo('customer') === 0 && conteo('purchase') === 1, 'con una tarjeta guardada no toca el Customer');
+    const pf = pagoNuevo(org);
+    e = null;
+    try { await pagos.confirmarConTarjeta(pf.id, org, { metodoPago: db.metodosPagoDe(orgIn)[0].id }); } catch (x) { e = x; }
+    ok(e && e.codigo === 400, 'la tarjeta de otra organización: 400');
+    d.prepare('UPDATE metodos_pago SET activo = 0 WHERE id = ?').run(guardada.id);
+    e = null;
+    try { await pagos.confirmarConTarjeta(pf.id, org, { metodoPago: guardada.id }); } catch (x) { e = x; }
+    ok(e && e.codigo === 400, 'una tarjeta inactiva: 400');
+    d.prepare('UPDATE metodos_pago SET activo = 1 WHERE id = ?').run(guardada.id);
+
+    // tarjeta nueva sin activar
+    const pg = pagoNuevo(orgIn);
+    doble((op) => (op.metodo === 'GET' ? clienteCN([perfilCN(163, 'CT__16tres', false)]) : purchase));
+    const r4 = await pagos.confirmarConTarjeta(pg.id, orgIn, {});
+    ok(r4.estado === 'activacion' && r4.metodoPago && conteo('purchase') === 0, 'tarjeta sin activar: estado activacion y no se cobra');
+
+    // doble confirmación simultánea
+    const ph = pagoNuevo(org);
+    doble(respuestas);
+    const dos = await Promise.allSettled([pagos.confirmarConTarjeta(ph.id, org, {}), pagos.confirmarConTarjeta(ph.id, org, {})]);
+    const rechazadas = dos.filter((x) => x.status === 'rejected');
+    ok(rechazadas.length === 1 && rechazadas[0].reason.codigo === 409 && rechazadas[0].reason.message === 'Ese pago ya se está procesando.', 'la segunda llamada simultánea lanza 409');
+    ok(conteo('purchase') === 1 && d.prepare("SELECT COUNT(*) AS n FROM facturas WHERE pago_id = ?").get(ph.id).n === 1, 'el doble ve UNA llamada a purchase y hay una factura');
+    doble(respuestas);
+    const otraVez = await pagos.confirmarConTarjeta(ph.id, org, {});
+    ok(otraVez.estado === 'aprobado', 'liberado el cerrojo, una tercera llamada responde con el estado');
+
+    // activarTarjeta
+    const tj = db.metodosPagoDe(orgIn)[0];
+    doble([]);
+    for (const malo of ['', '   ', '1234567890123', null, 12345]) {
+      e = null;
+      try { await pagos.activarTarjeta(tj.id, orgIn, malo); } catch (x) { e = x; }
+      ok(e && e.codigo === 400, `código «${malo}»: 400`);
+    }
+    ok(llamadas.length === 0, 'un código inválido no llama a CardNet');
+    doble([{ estado: 400, cuerpo: { Errors: [{ Code: 'X', Message: 'mal' }] } }]);
+    e = null;
+    try { await pagos.activarTarjeta(tj.id, orgIn, '000111'); } catch (x) { e = x; }
+    ok(e && e.codigo === 409 && db.metodosPagoDe(orgIn)[0].activo === false, 'si CardNet no confirma, la tarjeta sigue inactiva');
+    doble([{ estado: 200, cuerpo: {} }]);
+    const act = await pagos.activarTarjeta(tj.id, orgIn, '000111');
+    ok(act.metodo && act.metodo.activo === true && db.metodosPagoDe(orgIn)[0].activo === true, 'con la confirmación de CardNet queda activa');
+    ok(llamadas[0].url.endsWith('/activate') && llamadas[0].cuerpo.Token === 'CT__16tres', 'activó el perfil de la tarjeta guardada');
+    e = null;
+    try { await pagos.activarTarjeta(tj.id, org, '000111'); } catch (x) { e = x; }
+    ok(e && e.codigo === 404, 'la tarjeta de otra organización: 404');
+
+    // pendienteSinCobro / anularPendienteSinCobro
+    const pi = pagoNuevo(org);
+    ok(pagos.pendienteSinCobro(db.pagoPorId(pi.id)) === true, 'pendiente cardnet sin intento: pendienteSinCobro');
+    ok(pagos.pendienteSinCobro(db.pagoPorId(pTr.id)) === false, 'una transferencia no lo es');
+    ok(pagos.pendienteSinCobro(db.pagoPorId(pd.id)) === false, 'un aprobado no lo es');
+    const an = pagos.anularPendienteSinCobro(pi.id);
+    const fi = db.pagoPorId(pi.id);
+    ok(an.cambiado === true && fi.estado === 'rechazado' && fi.codigo_respuesta === 'reemplazado', 'anularPendienteSinCobro lo deja rechazado con codigo reemplazado');
+    const pj = pagoNuevo(org);
+    db.anotarEventoPago({ pagoId: pj.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado' });
+    ok(pagos.pendienteSinCobro(db.pagoPorId(pj.id)) === false, 'con cobro-enviado ya no es pendienteSinCobro');
+    e = null;
+    try { pagos.anularPendienteSinCobro(pj.id); } catch (x) { e = x; }
+    ok(e && e.codigo === 409 && db.pagoPorId(pj.id).estado === 'pendiente', 'con intento de cobro: 409 y sigue pendiente');
+    apagar();
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);

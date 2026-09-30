@@ -433,7 +433,144 @@ async function cobrar(pago) {
   return resolver(pago, respuesta);
 }
 
+/* ── El primer cobro con tarjeta: captura, registro, confirmación ───
+ *
+ * Ninguna de estas funciones acepta ni reenvía datos de tarjeta: solo
+ * ids, referencias y lo que devuelve CardNet ya limpio. */
+
+const error = (codigo, mensaje) => Object.assign(new Error(mensaje), { codigo });
+
+/* Prepara el formulario de captura de la tarjeta (D-17): crea el
+   `Customer` de la organización la primera vez y lo reutiliza después
+   (dos clientes dejarían tarjetas repartidas y ninguna renovación sabría
+   cuál usar). Cada consulta del cliente da una sesión de captura nueva,
+   así que se pide siempre. Devuelve la URL y el origen que el navegador
+   puede cargar. */
+async function prepararCaptura(pago, { correo, nombre, rnc } = {}) {
+  if (!cardnet.activo()) throw error(409, 'El pago con tarjeta no está disponible.');
+  const NO_ABRE = 'No pudimos abrir el formulario de la tarjeta. No se le cobró nada.';
+  let clienteId = db.clienteProcesador(pago.organizacion_id, 'cardnet');
+  if (!clienteId) {
+    const c = await cardnet.crearCliente({ correo, nombre, rnc });
+    if (!c.ok) {
+      console.error(`pagos: CardNet no creó el cliente de la organización ${pago.organizacion_id} · ${JSON.stringify(cardnet.limpiar(c))}`);
+      throw error(502, NO_ABRE);
+    }
+    clienteId = db.guardarClienteProcesador(pago.organizacion_id, 'cardnet', c.clienteId);
+  }
+  const v = await cardnet.verCliente(clienteId);
+  if (!v.ok) {
+    console.error(`pagos: CardNet no abrió la captura del cliente ${clienteId} · ${JSON.stringify(cardnet.limpiar(v))}`);
+    throw error(502, NO_ABRE);
+  }
+  return { urlCaptura: v.urlCaptura, origen: cardnet.origenCaptura() };
+}
+
+/* Registra la tarjeta que el cliente acaba de capturar (D-10, D-17).
+   El navegador solo avisa de que terminó: el token se toma del
+   `Customer` en CardNet, porque aceptar uno del navegador permitiría
+   cobrar a una tarjeta ajena. Elige el perfil que aún no está en
+   `metodos_pago` de la organización (el último, si hay varios), o el más
+   reciente si todos ya están. Devuelve la tarjeta SIN token. */
+async function registrarTarjeta(pago) {
+  const clienteId = db.clienteProcesador(pago.organizacion_id, 'cardnet');
+  if (!clienteId) throw error(409, 'No encontramos la tarjeta. Vuelva a ingresarla.');
+  const v = await cardnet.verCliente(clienteId);
+  if (!v.ok) {
+    console.error(`pagos: CardNet no devolvió el cliente ${clienteId} · ${JSON.stringify(cardnet.limpiar(v))}`);
+    throw error(502, 'No pudimos leer la tarjeta. No se le cobró nada.');
+  }
+  const perfiles = v.perfiles || [];
+  if (!perfiles.length) throw error(409, 'No encontramos la tarjeta. Vuelva a ingresarla.');
+
+  const guardados = new Set(db.metodosPagoDe(pago.organizacion_id)
+    .map((m) => db.metodoPagoDe(m.id, pago.organizacion_id))
+    .filter(Boolean).map((f) => f.procesador_perfil_id));
+  const nuevos = perfiles.filter((p) => !guardados.has(String(p.perfilId)));
+  const perfil = (nuevos.length ? nuevos : perfiles).slice(-1)[0];
+
+  const fila = db.guardarMetodoPago({ idOrg: pago.organizacion_id, procesador: 'cardnet', clienteId, perfil });
+  db.enlazarMetodoPago(pago.id, fila.id);
+  const metodo = db.metodosPagoDe(pago.organizacion_id).find((m) => m.id === fila.id);
+  return { metodo, activacion: !metodo.activo };
+}
+
+/* Los pagos que se están confirmando ahora mismo en ESTE proceso. Frena
+   el doble clic: la segunda llamada sobre el mismo pago no llega a
+   CardNet. Entre procesos protegen el `UniqueID` (que es la referencia
+   del pago) y la idempotencia de `confirmarPago`. */
+const EN_CURSO = new Set();
+
+/* Confirma el pago con tarjeta: la guardada que el cliente eligió
+   (`metodoPago`, un id que se valida contra su organización) o la que
+   acaba de capturar. El token nunca viene de quien llama: sale de la
+   fila de `metodos_pago`, que salió del `Customer` de CardNet. Una
+   tarjeta sin activar no se cobra: devuelve `{ estado: 'activacion' }`. */
+async function confirmarConTarjeta(idPago, idOrg, { metodoPago } = {}) {
+  const pago = db.pagoPorId(idPago);
+  if (!pago || pago.organizacion_id !== idOrg || pago.procesador !== 'cardnet') {
+    throw error(404, 'Ese pago no existe.');
+  }
+  if (EN_CURSO.has(idPago)) throw error(409, 'Ese pago ya se está procesando.');
+  EN_CURSO.add(idPago);
+  try {
+    const actual = db.pagoPorId(idPago);
+    if (actual.estado !== 'pendiente') {
+      return { estado: actual.estado, pago: actual, membresia: null, comprobante: null, motivo: actual.motivo || null };
+    }
+    let metodo;
+    if (metodoPago) {
+      const tarjeta = db.metodoPagoDe(metodoPago, idOrg);
+      if (!tarjeta || tarjeta.activo !== 1) throw error(400, 'Esa tarjeta no está disponible.');
+      db.enlazarMetodoPago(idPago, tarjeta.id);
+      metodo = { id: tarjeta.id, activo: true };
+    } else {
+      metodo = (await registrarTarjeta(actual)).metodo;
+    }
+    if (!metodo.activo) return { estado: 'activacion', metodoPago: metodo };
+    return await cobrar(db.pagoPorId(idPago));
+  } finally {
+    EN_CURSO.delete(idPago);
+  }
+}
+
+/* Activa una tarjeta con el código que CardNet le pide al cliente (D-20).
+   Solo se marca activa si CardNet confirma. */
+async function activarTarjeta(idMetodo, idOrg, codigo) {
+  const c = typeof codigo === 'string' ? codigo.trim() : '';
+  if (!c || c.length > 12) throw error(400, 'Escriba el código de activación que le envió el banco.');
+  const metodo = db.metodoPagoDe(idMetodo, idOrg);
+  if (!metodo) throw error(404, 'Esa tarjeta no existe.');
+  const r = await cardnet.activarPerfil({ clienteId: metodo.procesador_cliente_id, token: metodo.token, codigo: c });
+  if (!r.ok) throw error(409, 'No pudimos activar la tarjeta. Revise el código e intente de nuevo.');
+  db.activarMetodoPago(idMetodo, idOrg);
+  return { metodo: db.metodosPagoDe(idOrg).find((m) => m.id === idMetodo) || null };
+}
+
+/* Un pendiente de tarjeta que nunca llegó a CardNet no puede bloquear
+   24 horas un borrador o una membresía: los índices únicos de la 05.2 y
+   la 05.3 solo admiten un pendiente, y quien cambió de idea o abandonó
+   la captura tendría que esperar. Uno CON intento de cobro NO se anula
+   aquí: pudo cobrarse, y lo resuelve la conciliación. */
+function pendienteSinCobro(pago) {
+  return !!pago && pago.procesador === 'cardnet' && pago.estado === 'pendiente' && !db.huboIntentoDeCobro(pago.id);
+}
+
+function anularPendienteSinCobro(idPago) {
+  const pago = db.pagoPorId(idPago);
+  if (!pago) throw error(404, 'Ese pago no existe.');
+  if (pago.procesador === 'cardnet' && pago.estado === 'pendiente' && db.huboIntentoDeCobro(idPago)) {
+    throw error(409, 'Ese pago ya se envió al banco: lo resuelve la conciliación.');
+  }
+  if (!pendienteSinCobro(pago)) return { pago, cambiado: false, motivo: null };
+  return rechazarPago(idPago, {
+    codigo: 'reemplazado', motivo: 'Se abrió otro pago para lo mismo. No se le cobró nada.',
+  });
+}
+
 module.exports = {
   confirmarPago, rechazarPago, cobrar, resolver, PROCESADORES, lineaDeCupos,
   metodosDeCobro, procesadorDeCobro, avisarAnuncioPublicado, nombreDeEquipo,
+  prepararCaptura, registrarTarjeta, confirmarConTarjeta, activarTarjeta,
+  pendienteSinCobro, anularPendienteSinCobro,
 };
