@@ -31,8 +31,14 @@ CardNet publica en su documentación.
 - [ ] **Registrar la URL de notificación** en CardNet (la configuran ellos a mano):
   `https://mercamaquinarias.com/api/pagos/cardnet/notificacion`
 - [ ] **Preguntas abiertas a CardNet** (06-CONTEXT.md): `DataDo.Invoice` = número de orden y
-  no NCF; activación del perfil (¿siempre?, ¿quién manda el código?); campos obligatorios de
-  `POST /v1/api/customer`.
+  no NCF (**si es el NCF, no se enciende**); activación del perfil (¿siempre?, ¿quién manda el
+  código?); campos obligatorios de `POST /v1/api/customer`.
+- [ ] **¿El cobro recurrente exige algún indicador en `purchase`?** Si lo exige se añade solo
+  en `cardnet.cuerpoCompra` (`tools/cardnet.js`); nada más del sitio cambia.
+- [ ] **Lo que solo se ve en el laboratorio de CardNet**: la forma del `message` que manda el
+  formulario al terminar, que admita ser embebido en un iframe, el alto que necesita para el
+  reto 3-D Secure y el orden en que devuelve los perfiles nuevos. Cada uno se corrige en su
+  función aislada (lista en la sección 10c, punto 6).
 
 ## Verification
 
@@ -40,8 +46,11 @@ CardNet publica en su documentación.
 npm run cardnet:probar      # sin red, con CardNet apagado en el entorno
 ```
 
-Con las credenciales de QA puestas en el VPS en modo `lab`, la prueba manual está en
-`deploy/README.md`, sección CardNet (la escribe 06-08).
+El procedimiento completo de encendido está en `deploy/README.md`, **sección 10c «Cobro con
+tarjeta (CardNet)»**: qué pedir a CardNet, el respaldo verificado de la base antes de la
+migración, encender en `lab`, la URL de notificación, la instalación del temporizador
+`mercamaquinarias-pagos`, la lista de comprobación en lab, el paso a `produccion` y cómo
+apagar. La lista de comprobaciones manuales por criterio está en `06-VALIDATION.md`.
 
 ---
 

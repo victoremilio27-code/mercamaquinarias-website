@@ -80,6 +80,16 @@ const ok = (t) => console.log(`    ✓ ${t}`);
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* 06-10: con CardNet apagado (el CI no enciende MERCA_CARDNET) ninguna
+   pantalla enseña el selector de tarjeta, el modal de captura ni la
+   lista de tarjetas guardadas. Si aparecen, el interruptor no manda. */
+const SELECTOR_TARJETA = '.captura, .metodo-pago, .tarjetas, .tarjetas-guardadas, [data-metodo-pago]';
+const sinTarjeta = async (pagina, donde) => {
+  const n = await pagina.$$eval(SELECTOR_TARJETA, (x) => x.length).catch(() => -1);
+  if (n === 0) ok(`${donde}: sin selector de tarjeta ni tarjetas guardadas con CardNet apagado`);
+  else anota(donde, 'flujo', `${donde} enseña elementos de tarjeta con CardNet apagado (${n})`);
+};
+
 function codigoDe(fragmento) {
   // Solo .txt: el buzón guarda también la versión .html de cada correo
   // para poder revisarla en el navegador, y ahí el código no está en
@@ -241,6 +251,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
 
   if (idBorrador) {
     ok('al elegir plan la URL pasa a publicar.html?borrador=<id>');
+    await sinTarjeta(p, 'publicar.html');
 
     const mios = await p.evaluate(async () => {
       const r = await fetch('/api/mis-anuncios', { credentials: 'same-origin' });
@@ -323,6 +334,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   const nEnlacesPlan = await p.$$eval('a[href^="publicar.html?plan="]', (n) => n.length).catch(() => 0);
   if (nEnlacesPlan) ok(`planes.html lleva a publicar.html con el plan elegido (${nEnlacesPlan} enlaces)`);
   else anota('planes', 'flujo', 'planes.html no tiene enlaces a publicar.html?plan=<id> para el particular');
+  await sinTarjeta(p, 'planes.html (particular)');
   await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
   await esperar(500);
 
@@ -415,6 +427,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     const auto = await p.$eval('#renovarAutomatica', (el) => ({ oculto: el.hidden, vacio: el.innerHTML.trim() === '' })).catch(() => null);
     if (auto && auto.oculto && auto.vacio) ok('la casilla de renovación automática no aparece con CardNet apagado');
     else anota('renovar', 'flujo', 'la casilla de renovación automática aparece con CardNet apagado');
+    await sinTarjeta(p, 'panel.html (renovar)');
 
     // «Cancelar» la oculta. No se paga nada.
     await p.click('#btnCancelarRenovacion').catch(() => {});
@@ -529,6 +542,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
       const t = await p.$eval('main', (m) => m.innerText).catch(() => '');
       if (/cupo/i.test(t)) anota('dealer', 'ux', `${etiqueta} dice «cupo» al dealer: …${contexto(t, /cupo/i)}…`);
       else ok(`${etiqueta} no dice «cupo» al dealer`);
+      await sinTarjeta(p, `${etiqueta} (dealer)`);
     };
     await sinCupo('panel.html', 'panel.html');
     if (await p.$('.resumen-dealer')) {
