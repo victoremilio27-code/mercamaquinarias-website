@@ -2263,6 +2263,16 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     const real = db.informe({ desde: '2026-01-01', hasta: '2026-12-31' });
     ok(real.pasarela && Array.isArray(real.pasarela.recuperados) && typeof real.pasarela.atascados === 'number' && Array.isArray(real.pasarela.sinAplicar),
       'db.informe() trae pasarela { recuperados, atascados, sinAplicar }');
+    /* Lo que dejó la sección 20: un aprobado sobre un pago «reemplazado»
+       (rechazado en nuestra base) y un descuadre recuperado. Tienen que
+       salir en el texto real que recibe gerencia. */
+    const hoyD = new Date().toISOString().slice(0, 10);
+    const hoyInf = db.informe({ desde: hoyD, hasta: hoyD });
+    const textoReal = tareas.componerInforme(hoyInf, 'semanal');
+    const reemplazado = hoyInf.pasarela.sinAplicar.find((x) => x.estado === 'rechazado');
+    ok(reemplazado && textoReal.includes('Pasarela de pago') && textoReal.includes(reemplazado.referencia)
+      && hoyInf.pasarela.recuperados.length >= 1 && /Cobrados sin aplicar \(devolver\) \.+ [1-9]/.test(textoReal),
+      'un aprobado sobre un pago reemplazado y un descuadre salen en «Pasarela de pago» del informe real');
 
     // La tarea, en su propio proceso, con una base vacía
     const env = { ...process.env, MERCA_DB: path.join(BANCO, 'tareas-seco.db'), MERCA_FACTURAS: path.join(BANCO, 'facturas-seco') };
