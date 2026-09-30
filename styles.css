@@ -5091,4 +5091,54 @@ main > .envoltura > section.panel {
   color: var(--gris-acero);
 }
 
+/* ── Pago con tarjeta (assets/cardnet.js) ───────────────────
+   Ventana con el formulario seguro de CardNet dentro de un iframe, y el
+   grupo de método de pago que comparten publicar, planes y panel. Solo
+   tokens del tema: sirven igual en claro y en oscuro. Con CardNet
+   apagado nada de esto se pinta. */
+.captura {
+  position: fixed; inset: 0; z-index: 90;
+  display: grid; place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--app-text) 55%, transparent);
+  overflow-y: auto;
+}
+.captura__panel {
+  width: 100%; max-width: 520px;
+  display: grid; gap: 12px;
+  padding: 18px;
+  background: var(--app-card);
+  color: var(--app-text);
+  border: 1px solid var(--app-line);
+  border-radius: var(--r-tarjeta);
+  box-shadow: var(--app-sombra);
+}
+.captura__titulo { margin: 0; font-family: var(--display); font-weight: 700; font-size: 17px; }
+.captura__nota { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--texto-2); }
+.captura__marco {
+  display: block; width: 100%; min-height: 420px;
+  border: 0; border-radius: var(--r);
+  background: var(--app-card);
+}
+.captura__estado { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--texto-2); }
+.captura__estado--error { color: var(--texto-error); font-weight: 600; }
+.captura__acciones { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.metodo-pago { border: 0; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; min-width: 0; }
+.metodo-pago__titulo { padding: 0; font-family: var(--display); font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+.metodo-pago__op { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); }
+.metodo-pago__op input { accent-color: var(--ambar-hondo); }
+.metodo-pago__tarjeta { display: grid; gap: 8px; }
+/* Con la transferencia elegida no hay tarjeta que escoger ni casilla. */
+.metodo-pago:has(input[value="cardnet"]:not(:checked)) .metodo-pago__tarjeta { display: none; }
+.tarjetas { display: grid; gap: 5px; font-size: 12.5px; color: var(--texto-2); }
+.tarjetas select { max-width: 100%; }
+.metodo-pago__renovar { align-items: flex-start; line-height: 1.5; }
+
+@media (max-width: 480px) {
+  .captura { padding: 8px; }
+  .captura__panel { padding: 14px; }
+  .captura__marco { min-height: 380px; }
+}
+
 
