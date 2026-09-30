@@ -119,16 +119,22 @@ const estadoPago = (idPago) => consulta('SELECT estado FROM pagos WHERE id = ?',
 /* Cuenta de dealer con sesión. Por omisión acepta todas las
    condiciones vigentes (las versiones salen de `legales`, nunca
    escritas a mano: la fase sube la contratación). */
-function cuenta(etiqueta, { sinLegales = false } = {}) {
+function cuenta(etiqueta, { sinLegales = false, contratacionVieja = false, tipo = 'dealer' } = {}) {
   const correo = `${etiqueta}-${SELLO}@prueba.invalid`;
   const { idUsuario } = db.crearCuenta({
     correo, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
-    telefono: '8095550000', tipo: 'dealer', empresa: `Empresa ${etiqueta} ${SELLO}`,
+    telefono: '8095550000', tipo, ...(tipo === 'dealer' ? { empresa: `Empresa ${etiqueta} ${SELLO}` } : {}),
   });
   if (!sinLegales) {
     Object.values(legales.DOCUMENTOS || {}).forEach((doc) => {
+      /* `contratacionVieja`: quien aceptó la contratación en una versión
+         anterior a la vigente. La versión vieja se anota como literal a
+         propósito ('2.2', la de antes de la 2.3), igual que en
+         probar-renovacion.js: si se calculara desde `legales`, subiría
+         con la vigente y la prueba dejaría de probar nada. */
+      const version = contratacionVieja && doc.id === 'contratacion' ? '2.2' : legales.versionDe(doc.id);
       db.registrarAceptacion({
-        usuarioId: idUsuario, documento: doc.id, version: legales.versionDe(doc.id), ip: '127.0.0.1', userAgent: 'prueba',
+        usuarioId: idUsuario, documento: doc.id, version, ip: '127.0.0.1', userAgent: 'prueba',
       });
     });
   }
@@ -688,6 +694,190 @@ db.cargarSecuencia({
 
     // Ninguna escritura: la bitácora no se movió.
     ok(consulta('SELECT COUNT(*) AS n FROM bitacora_admin').n === bitacoraAntes, 'la bitácora no cambia tras leer la consola');
+  }
+
+  console.log('\n7 · de punta a punta (modelo §39): dealer, seguridad, fiscal y consola');
+  {
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+      + 'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const subirFoto = async (cabeceras) => {
+      const r = await pedir({ metodo: 'POST', url: '/api/fotos', cuerpo: { completa: PNG }, cabeceras });
+      return (r.datos || {}).completa;
+    };
+    const idDe = (r) => ((r.datos || {}).anuncio || {}).id;
+    const publicarEquipo = async (quien, fotosUrl, membresiaId) => pedir({
+      metodo: 'POST', url: '/api/anuncios', cabeceras: quien.cabeceras,
+      cuerpo: {
+        ...(membresiaId ? { membresia: membresiaId } : {}),
+        categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
+        precio: 2500000, provincia: 'Santo Domingo',
+        fotos: fotosUrl.map((url) => ({ url, miniatura: null })),
+        telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+      },
+    });
+    const { idUsuario: idPersonal } = db.crearCuenta({
+      correo: `personal-e2e-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9',
+      nombre: 'Personal de punta a punta', telefono: '8095550000', tipo: 'particular',
+    });
+    db.marcarAdmin(`personal-e2e-${SELLO}@prueba.invalid`, true);
+    const personal = { cookie: `te_sesion=${db.abrirSesion(idPersonal)}`, 'cf-connecting-ip': '190.1.2.5' };
+    const recibido = (idPago) =>
+      pedir({ metodo: 'POST', url: `/api/admin/pagos/${idPago}/recibido`, cuerpo: {}, cabeceras: personal });
+    const idPagoDe = (r) => consulta('SELECT id FROM pagos WHERE referencia = ?', ((r.datos || {}).cobro || {}).referencia).id;
+    const CLAVES_INTERNAS = /"(base|ajuste|ajusteTasa)"\s*:/;
+
+    /* ── DEALER ─────────────────────────────────────────────── */
+    console.log('  DEALER');
+    const dueno = cuenta('e2e-dealer');
+    const s3 = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+    const fotosUrl = [await subirFoto(dueno.cabeceras), await subirFoto(dueno.cabeceras), await subirFoto(dueno.cabeceras)];
+    const ids = [];
+    for (let i = 1; i <= 3; i++) {
+      const r = await publicarEquipo(dueno, fotosUrl);
+      ok(r.codigo === 201 && !!idDe(r), `publica el equipo ${i} de 3 (${r.codigo}: ${errorDe(r)})`);
+      ids.push(idDe(r));
+    }
+    const r4 = await publicarEquipo(dueno, fotosUrl);
+    ok(r4.codigo === 402 && !/cupo/i.test(errorDe(r4)) && /capacidad|publicaciones activas/i.test(errorDe(r4)),
+      `el cuarto se rechaza (402) sin decir «cupo» (${r4.codigo}: ${errorDe(r4)})`);
+
+    const rVende = await pedir({
+      metodo: 'PATCH', url: `/api/anuncios/${ids[0]}`, cuerpo: { estado: 'vendido' }, cabeceras: dueno.cabeceras,
+    });
+    ok(rVende.codigo === 200 && (rVende.datos || {}).capacidadLibre === true,
+      `marcar vendido libera capacidad (${rVende.codigo}, capacidadLibre=${(rVende.datos || {}).capacidadLibre})`);
+    const rOtro = await publicarEquipo(dueno, fotosUrl);
+    ok(rOtro.codigo === 201, `con el hueco, publica otro (${rOtro.codigo}: ${errorDe(rOtro)})`);
+
+    // Ampliar de 3 a 7, con importes falsos en el cuerpo que el servidor ignora.
+    const esperado = precios.precioAmpliacion({
+      precioUnitario: PRECIO_LISTA, cupoActual: 3, cupoNuevo: 7, dias: 30, diasRestantes: 20,
+    });
+    const rAmp = await ampliar(s3, { cupo: 7, total: 1, subtotal: 1, base: 1 }, dueno);
+    const cobro = (rAmp.datos || {}).cobro || {};
+    ok(rAmp.codigo === 202 && cobro.total === esperado.total && esperado.total > 0,
+      `3 a 7: 202 con el total del servidor (${cobro.total} / ${esperado.total})`);
+    ok(esperado.cobrados === 3 && esperado.gratis === 1, `cobra 3 y regala 1 (${esperado.cobrados}/${esperado.gratis})`);
+    ok(cupoDe(s3) === 3, 'la capacidad no cambia hasta que la consola confirma');
+
+    // La consola confirma: capacidad 7 y comprobante que cuadra.
+    const idPagoAmp = idPagoDe(rAmp);
+    const pagoAmp = consulta('SELECT * FROM pagos WHERE id = ?', idPagoAmp);
+    const antesB02 = siguienteB02();
+    const antesB01 = siguienteB01();
+    const rConf = await recibido(idPagoAmp);
+    ok(rConf.codigo === 200, `la consola marca recibida la ampliación (${rConf.codigo}: ${errorDe(rConf)})`);
+    ok(cupoDe(s3) === 7, `la capacidad pasa a 7 (${cupoDe(s3)})`);
+    const fAmp = consulta("SELECT * FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'", idPagoAmp);
+    ok(!!fAmp && fAmp.subtotal + fAmp.itbis === fAmp.total && fAmp.total === pagoAmp.total,
+      `el comprobante cuadra con el pago: ${fAmp && `${fAmp.subtotal} + ${fAmp.itbis} = ${fAmp.total}`} / ${pagoAmp.total}`);
+    ok(!!fAmp && fAmp.concepto === 'Ampliación de Destacado · 4 publicaciones activas más · hasta 7',
+      `concepto «${fAmp && fAmp.concepto}»`);
+    ok(!!fAmp && /^B0[12]/.test(fAmp.ncf || '') && (siguienteB02() - antesB02) + (siguienteB01() - antesB01) === 1,
+      `NCF ${fAmp && fAmp.ncf} y la secuencia avanzó una vez`);
+
+    // La regla del quinto en los dos extremos.
+    const p78 = precios.precioAmpliacion({
+      precioUnitario: PRECIO_LISTA, cupoActual: 7, cupoNuevo: 8, dias: 30, diasRestantes: 20,
+    });
+    const r78 = await ampliar(s3, { cupo: 8 }, dueno);
+    ok(p78.total > 0 && r78.codigo === 202 && ((r78.datos || {}).cobro || {}).total === p78.total,
+      `7 a 8 no es gratis: 202 con ${((r78.datos || {}).cobro || {}).total} (se esperaba ${p78.total})`);
+    db.rechazarPago(idPagoDe(r78));
+    const s9 = membresia(dueno.idOrg, { cupo: 9, finEnDias: 20 });
+    const p910 = precios.precioAmpliacion({
+      precioUnitario: PRECIO_LISTA, cupoActual: 9, cupoNuevo: 10, dias: 30, diasRestantes: 20,
+    });
+    const r910 = await ampliar(s9, { cupo: 10 }, dueno);
+    ok(p910.total === 0 && r910.codigo === 200 && ((r910.datos || {}).cobro || {}).total === 0 && cupoDe(s9) === 10,
+      `9 a 10: la décima es gratis, sin importe (${r910.codigo}, cupo ${cupoDe(s9)})`);
+
+    /* ── SEGURIDAD ──────────────────────────────────────────── */
+    console.log('  SEGURIDAD');
+    // Reactivar un vendido con la capacidad llena: 409.
+    const llena = cuenta('e2e-llena');
+    const sL = membresia(llena.idOrg, { cupo: 1, finEnDias: 20 });
+    const fotosL = [await subirFoto(llena.cabeceras), await subirFoto(llena.cabeceras), await subirFoto(llena.cabeceras)];
+    const rL1 = await publicarEquipo(llena, fotosL);
+    await pedir({ metodo: 'PATCH', url: `/api/anuncios/${idDe(rL1)}`, cuerpo: { estado: 'vendido' }, cabeceras: llena.cabeceras });
+    const rL2 = await publicarEquipo(llena, fotosL);
+    ok(rL1.codigo === 201 && rL2.codigo === 201, 'publica, vende y publica otro sobre la misma capacidad de 1');
+    const rReact = await pedir({
+      metodo: 'PATCH', url: `/api/anuncios/${idDe(rL1)}`, cuerpo: { estado: 'activo' }, cabeceras: llena.cabeceras,
+    });
+    ok(rReact.codigo === 409, `reactivar el vendido con la capacidad llena: 409 (${rReact.codigo}: ${errorDe(rReact)})`);
+    ok(cupoDe(sL) === 1, 'y superar la capacidad por la API no cambia lo contratado');
+
+    // Dos ampliaciones pendientes, y ampliar con una renovación pendiente.
+    const sD = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+    const a1 = await ampliar(sD, { cupo: 6, total: 1 }, dueno);
+    const antesDos = pagosTotales();
+    const a2 = await ampliar(sD, { cupo: 8 }, dueno);
+    ok(a1.codigo === 202 && a2.codigo === 409 && pagosTotales() === antesDos, `dos ampliaciones pendientes: la segunda 409 (${a2.codigo})`);
+    const sE = membresia(dueno.idOrg, { cupo: 2, finEnDias: 20 });
+    const rRen = await renovar(sE, dueno);
+    const antesRen = pagosTotales();
+    const aRen = await ampliar(sE, { cupo: 3 }, dueno);
+    ok(rRen.codigo === 202 && aRen.codigo === 409 && pagosTotales() === antesRen && cupoDe(sE) === 2,
+      `ampliar con renovación pendiente: 409, sin pago y sin cambio (${aRen.codigo})`);
+
+    // Ampliación pendiente cuya membresía vence antes de confirmarla.
+    const sH = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+    const pH = ampliacionPendiente({ idOrg: dueno.idOrg, idSusc: sH, cupoActual: 3, cupoNuevo: 5 });
+    ejecuta('UPDATE suscripciones SET fin = ? WHERE id = ?', enDias(-1), sH);
+    const facturasAntes = facturasTotales();
+    const b02H = siguienteB02();
+    const b01H = siguienteB01();
+    const rH = await recibido(pH.id);
+    ok(rH.codigo === 409 && errorDe(rH).includes('Anule el pago'), `confirmar una ampliación vencida: 409 (${rH.codigo}: ${errorDe(rH)})`);
+    ok(cupoDe(sH) === 3 && estadoPago(pH.id) === 'pendiente' && facturasTotales() === facturasAntes
+      && siguienteB02() === b02H && siguienteB01() === b01H, 'sin capacidad nueva, con el pago pendiente, sin factura y sin NCF');
+
+    // Contratación anterior a la vigente: se pide aceptar de nuevo en los cuatro caminos de pago.
+    const vieja = cuenta('e2e-vieja', { contratacionVieja: true });
+    const sV = membresia(vieja.idOrg, { cupo: 3, finEnDias: 20 });
+    const pagosAntesV = pagosTotales();
+    const pide = (r) => r.codigo === 409 && Array.isArray((r.datos || {}).faltan) && r.datos.faltan.includes('contratacion');
+    const rCompra = await pedir({
+      metodo: 'POST', url: '/api/membresias', cuerpo: { plan: 'destacado', cupo: 2, dias: 30 }, cabeceras: vieja.cabeceras,
+    });
+    ok(pide(rCompra), `comprar con la contratación anterior: 409 y faltan contratacion (${rCompra.codigo})`);
+    const rAmpV = await ampliar(sV, { cupo: 7 }, vieja);
+    ok(pide(rAmpV), `ampliar con la contratación anterior: 409 y faltan contratacion (${rAmpV.codigo})`);
+    const rRenV = await renovar(sV, vieja);
+    ok(pide(rRenV), `renovar con la contratación anterior: 409 y faltan contratacion (${rRenV.codigo})`);
+    const particularViejo = cuenta('e2e-particular-vieja', { contratacionVieja: true, tipo: 'particular' });
+    const idBorr = db.crearBorrador({ idOrg: particularViejo.idOrg, idUsuario: particularViejo.idUsuario, idPlan: 'estandar', dias: 30 });
+    const rPub = await pedir({
+      metodo: 'POST', url: `/api/borradores/${idBorr}/pago`, cuerpo: {}, cabeceras: particularViejo.cabeceras,
+    });
+    ok(pide(rPub), `pagar la publicación de un borrador con la contratación anterior: 409 y faltan contratacion (${rPub.codigo})`);
+    ok(pagosTotales() === pagosAntesV && cupoDe(sV) === 3, 'ningún pago nuevo y la capacidad no cambia');
+
+    /* ── FISCAL ─────────────────────────────────────────────── */
+    console.log('  FISCAL');
+    const sF = membresia(dueno.idOrg, { cupo: 3, finEnDias: 20 });
+    const rF = await ampliar(sF, { cupo: 6 }, dueno);
+    const facturasF = facturasTotales();
+    const b02F = siguienteB02();
+    const b01F = siguienteB01();
+    db.rechazarPago(idPagoDe(rF));
+    ok(rF.codigo === 202 && facturasTotales() === facturasF && siguienteB02() === b02F && siguienteB01() === b01F && cupoDe(sF) === 3,
+      'anular una ampliación pendiente no crea factura, no mueve el NCF y no cambia la capacidad');
+
+    /* ── CONSOLA ────────────────────────────────────────────── */
+    console.log('  CONSOLA');
+    const rMem = await pedir({ url: '/api/membresias', cabeceras: dueno.cabeceras });
+    const rMis = await pedir({ url: '/api/mis-anuncios', cabeceras: dueno.cabeceras });
+    ok(rMem.codigo === 200 && rMis.codigo === 200, `el dealer lee sus membresías y sus anuncios (${rMem.codigo}/${rMis.codigo})`);
+    ok(!CLAVES_INTERNAS.test(JSON.stringify(rMem.datos)), '/api/membresias del dealer: ningún pago ni cobro trae base ni ajuste');
+    ok(!CLAVES_INTERNAS.test(JSON.stringify(rMis.datos)), '/api/mis-anuncios del dealer: ningún pago ni cobro trae base ni ajuste');
+    const rCob = await pedir({ url: '/api/admin/cobros?limite=500', cabeceras: personal });
+    const filaAmp = ((rCob.datos || {}).cobros || []).find((f) => f.referencia === pagoAmp.referencia);
+    ok(rCob.codigo === 200 && !!filaAmp && typeof filaAmp.ajuste === 'number' && filaAmp.base === pagoAmp.base,
+      `la consola sí ve base y ajuste del mismo pago (${filaAmp && filaAmp.base}/${filaAmp && filaAmp.ajuste})`);
+    const rCobDealer = await pedir({ url: '/api/admin/cobros', cabeceras: dueno.cabeceras });
+    ok(rCobDealer.codigo === 404, `el dealer no entra a la consola de cobros (${rCobDealer.codigo})`);
   }
 
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);

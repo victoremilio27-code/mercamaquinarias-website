@@ -9,6 +9,16 @@ const { execFileSync } = require('child_process');
 const BASE = 'http://127.0.0.1:8080';
 const CLAVE = 'Retroexcavadora77RD';
 const BUZON = '.tmp/correos';
+/* La cuenta de dealer de demostración de tools/seed.js (`caribe`, con
+   membresía y anuncios sembrados). En CI se siembra con `npm run db:demo`
+   antes de esta auditoría; sin siembra, el bloque lo avisa y sigue. */
+const CORREO_DEMO = 'caribe@demo.mercamaquinarias.do';
+const CLAVE_DEMO = 'demostracion2026';
+const TEXTO_VENDIDO_D07 = 'Este equipo fue vendido. Ahora puede publicar otro equipo con la capacidad disponible de su plan.';
+const contexto = (texto, patron) => {
+  const i = texto.search(patron);
+  return texto.slice(Math.max(0, i - 40), i + 40).replace(/\s+/g, ' ');
+};
 
 /* Cada pasada estrena correos y RNC.
    Antes eran fijos, y la segunda vez que se corría la auditoría el
@@ -432,6 +442,27 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     await esperar(500);
   }
 
+  /* D-06: el particular conserva sus filtros de siempre. «Pausados» y
+     «Vencidos» son del dealer; si aparecieran aquí, el particular leería
+     estados que no maneja. Un particular recién registrado no tiene
+     inventario y el panel puede no pintar filtros: entonces no hay nada
+     que comparar y se dice. */
+  await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+  await esperar(700);
+  const filtrosParticular = await p.$$eval('#filtrosPanel .filtro-panel', (n) => n.map((b) => b.textContent.trim())).catch(() => []);
+  if (!filtrosParticular.length) {
+    ok('el particular nuevo no tiene inventario: sin filtros que comparar');
+  } else if (filtrosParticular.some((t) => /Pausados|Vencidos|Vendidos|Retirados/.test(t))) {
+    anota('particular', 'ux', `el particular ve filtros del dealer: ${filtrosParticular.join(' / ')}`);
+  } else if (!/^Todos/.test(filtrosParticular[0]) || !filtrosParticular.some((t) => /^Activos/.test(t)) || !filtrosParticular.some((t) => /^Inactivos/.test(t))) {
+    anota('particular', 'ux', `los filtros del particular no son Todos / Activos / Inactivos: ${filtrosParticular.join(' / ')}`);
+  } else {
+    ok(`el particular conserva sus filtros (${filtrosParticular.join(' / ')}) y no ve «Pausados» ni «Vencidos»`);
+  }
+  const panelJs = await p.evaluate(() => fetch('/assets/panel.js').then((r) => r.text())).catch(() => '');
+  if (panelJs.includes(TEXTO_VENDIDO_D07)) ok('assets/panel.js trae el aviso de vendido de D-07 para el dealer');
+  else anota('dealer', 'ux', 'assets/panel.js no trae el texto exacto de D-07 al marcar vendido');
+
   // El particular no debe ver el panel de administración
   await p.goto(`${BASE}/admin.html`, { waitUntil: 'networkidle0' });
   await esperar(800);
@@ -471,6 +502,81 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   if (dir.includes(EMPRESA_DEALER)) anota('dealer', 'LÓGICA', 'un dealer pendiente aparece en el directorio');
   else ok('el dealer pendiente no sale en el directorio');
 
+  /* ═══ DEALER CON CAPACIDAD (DEMOSTRACIÓN) ═══
+     Un dealer con membresía y anuncios de verdad, el de tools/seed.js.
+     No se confirma ninguna ampliación: la auditoría no cobra ni altera
+     el inventario sembrado. */
+  console.log('\n═══ Dealer con capacidad (demostración) ═══');
+  await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
+  await esperar(400);
+  vigilar(p, 'dealer-demo');
+  await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
+  await escribir(p, '#ent-correo', CORREO_DEMO);
+  await escribir(p, '#ent-clave', CLAVE_DEMO);
+  await p.click('#formEntrar button[type="submit"]');
+  await esperar(1500);
+  if (await p.$eval('#formCodigo', (el) => !el.hidden).catch(() => false)) {
+    const c = codigoDe(CORREO_DEMO.split('@')[0]);
+    if (c) { await p.type('#cod-codigo', c); await esperar(1800); }
+  }
+  if (!p.url().includes('panel')) {
+    console.log('  (la cuenta de demostración no existe: ¿se corrió db:demo?)');
+    anota('dealer-demo', 'aviso', 'no se pudo entrar con el dealer de demostración; sin siembra no hay recorrido');
+  } else {
+    const sinCupo = async (pagina, etiqueta) => {
+      await p.goto(`${BASE}/${pagina}`, { waitUntil: 'networkidle0' });
+      await esperar(1000);
+      const t = await p.$eval('main', (m) => m.innerText).catch(() => '');
+      if (/cupo/i.test(t)) anota('dealer', 'ux', `${etiqueta} dice «cupo» al dealer: …${contexto(t, /cupo/i)}…`);
+      else ok(`${etiqueta} no dice «cupo» al dealer`);
+    };
+    await sinCupo('panel.html', 'panel.html');
+    if (await p.$('.resumen-dealer')) {
+      /* textContent y sin distinguir mayúsculas: el CSS pone los rótulos
+         en versales y innerText devuelve lo que se pinta, no lo escrito. */
+      const t = await p.$eval('.resumen-dealer', (e) => e.textContent);
+      if (/Capacidad disponible/i.test(t) && /Vence el/i.test(t)) ok('el resumen del dealer se ve con «Capacidad disponible» y «Vence el»');
+      else anota('dealer', 'ux', 'el resumen del dealer no trae «Capacidad disponible» y «Vence el»');
+    } else {
+      anota('dealer', 'ux', 'el panel del dealer no muestra .resumen-dealer');
+    }
+    const filtros = await p.$$eval('#filtrosPanel .filtro-panel', (n) => n.map((b) => b.textContent.trim())).catch(() => []);
+    if (filtros.some((t) => /^Vendidos/.test(t)) && filtros.some((t) => /^Vencidos/.test(t))) ok(`los filtros del dealer incluyen Vendidos y Vencidos (${filtros.join(' / ')})`);
+    else anota('dealer', 'ux', `los filtros del dealer no incluyen Vendidos y Vencidos: ${filtros.join(' / ')}`);
+
+    if (await p.$('[data-ampliar]')) {
+      await p.click('[data-ampliar]');
+      await esperar(800);
+      const abierta = await p.$eval('#panelAmpliar', (el) => !el.hidden).catch(() => false);
+      const precio = await p.$eval('#ampliarPrecio', (el) => el.textContent).catch(() => '');
+      if (abierta && /ITBIS incluido|Sin costo/.test(precio)) ok(`ampliar abre la sección con el precio: «${precio.trim().slice(0, 70)}»`);
+      else anota('dealer', 'flujo', `ampliar no abre la sección con precio (abierta=${abierta}, precio=«${precio.trim().slice(0, 60)}»)`);
+    } else {
+      anota('dealer', 'flujo', 'el dealer de demostración no tiene botón de ampliar en su membresía');
+    }
+    await p.goto(`${BASE}/panel.html?ampliar=no-existe`, { waitUntil: 'networkidle0' });
+    await esperar(900);
+    const abreAjeno = await p.$eval('#panelAmpliar', (el) => !el.hidden).catch(() => false);
+    if (!abreAjeno) ok('una ampliación con id inexistente no abre nada');
+    else anota('dealer', 'SEGURIDAD', 'panel.html?ampliar= con un id ajeno abre la sección de ampliar');
+
+    await sinCupo('planes.html', 'planes.html');
+    await sinCupo('publicar.html', 'publicar.html');
+  }
+
+  /* Visitante sin sesión: ni el cuerpo ni el pie dicen «cupo». */
+  console.log('\n═══ Visitante ═══');
+  await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
+  await esperar(400);
+  vigilar(p, 'visitante');
+  for (const pagina of ['index.html', 'dealers.html', 'planes.html']) {
+    await p.goto(`${BASE}/${pagina}`, { waitUntil: 'networkidle0' });
+    await esperar(800);
+    const t = await p.$$eval('main, footer', (n) => n.map((e) => e.innerText).join('\n')).catch(() => '');
+    if (/cupo/i.test(t)) anota('visitante', 'ux', `${pagina} dice «cupo» al visitante: …${contexto(t, /cupo/i)}…`);
+    else ok(`${pagina} no dice «cupo» al visitante (cuerpo y pie)`);
+  }
+
   /* ═══ ADMINISTRADOR ═══ */
   console.log('\n═══ Administrador ═══');
   await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
@@ -496,6 +602,17 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   const verCola = await p.$eval('#adminContenido', (el) => !el.hidden).catch(() => false);
   console.log(`  ve la cola de revisión: ${verCola ? 'sí ✓' : 'NO ⚠'}`);
   if (!verCola) anota('admin', 'flujo', 'el administrador no ve la cola');
+
+  // Consola nueva (05.4): Publicaciones, Pagos de todos los métodos y Renovaciones.
+  const hayPublicaciones = await p.$('#filtrosPublicaciones');
+  const hayCobros = await p.$('#filtrosCobros');
+  if (hayPublicaciones && hayCobros) ok('la consola enseña Publicaciones y Pagos con sus filtros');
+  else anota('admin', 'flujo', `a la consola le faltan secciones (#filtrosPublicaciones=${!!hayPublicaciones}, #filtrosCobros=${!!hayCobros})`);
+  const textoAdmin = await p.$eval('body', (b) => b.innerText).catch(() => '');
+  if (/Renovaciones/.test(textoAdmin)) ok('la consola enseña Renovaciones');
+  else anota('admin', 'flujo', 'la consola no enseña «Renovaciones»');
+  if (/se otorgan los cupos/i.test(textoAdmin)) anota('admin', 'ux', 'admin.html todavía dice «se otorgan los cupos»');
+  else ok('admin.html no dice «se otorgan los cupos»');
 
   /* Acotado a #listaSolicitudes. La clase `.sol` la usan DOS listas de
      esta página: la cola de revisión y la flota propia. Sin acotar, se
