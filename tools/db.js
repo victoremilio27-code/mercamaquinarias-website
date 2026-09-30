@@ -1130,6 +1130,82 @@ const MIGRACIONES = [
     `CREATE INDEX IF NOT EXISTS ix_suscripciones_fin ON suscripciones (fin)
        WHERE estado = 'activa' AND fin IS NOT NULL`,
   ]],
+
+  /* Fase 6: lo que CardNet devuelve necesita dónde vivir.
+
+     - El pago de pasarela guarda el id de la compra en CardNet, la
+       autorización, el código y el motivo del rechazo y cuántos
+       intentos de cobro lleva: sin eso la conciliación no tiene a qué
+       agarrarse cuando el aviso no llega.
+     - `pagos_eventos` es el rastro de solo añadir de todo lo que se
+       envió y se recibió (avisos, consultas, cobros). Como la bitácora
+       de administración, los disparadores abortan un UPDATE o un DELETE
+       aunque alguien escriba SQL a mano.
+     - `ux_pagos_cardnet_referencia` es la clave de idempotencia: la
+       referencia viaja en `UniqueID` y dos cobros de pasarela con la
+       misma serían dos cargos a la tarjeta por una compra. Es PARCIAL
+       porque las referencias antiguas (demo, transferencia) nunca se
+       garantizaron únicas: un índice total podría tumbar el arranque en
+       producción con datos que ya existen.
+     - `metodos_pago` gana los identificadores de CardNet, el borrado
+       lógico (un pago cobrado con la tarjeta tiene que seguir
+       apuntándole) y los contadores de fallos y de aviso de vencimiento.
+       Sigue sin admitir nada más que el token y lo mínimo para
+       reconocer la tarjeta.
+     - `suscripciones` solo gana tarjeta, intentos y el ciclo ya avisado.
+       El consentimiento (aceptación y texto) NO se vuelve a crear: lo
+       creó `2026-09-renovacion`. La fecha del próximo intento reutiliza
+       `proximo_cargo`, que existe desde el esquema original y nadie
+       escribía.
+
+     Los índices sobre columnas nuevas de tablas existentes van solo
+     aquí, no en db/schema.sql: abrir() ejecuta el esquema antes de
+     migrar(). */
+  ['2026-10-cardnet', [
+    'ALTER TABLE pagos ADD COLUMN procesador_id TEXT',
+    'ALTER TABLE pagos ADD COLUMN autorizacion TEXT',
+    'ALTER TABLE pagos ADD COLUMN codigo_respuesta TEXT',
+    'ALTER TABLE pagos ADD COLUMN motivo TEXT',
+    'ALTER TABLE pagos ADD COLUMN intentos INTEGER NOT NULL DEFAULT 0',
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_pagos_cardnet_referencia ON pagos (referencia) WHERE procesador = 'cardnet'",
+    'CREATE INDEX IF NOT EXISTS ix_pagos_procesador_id ON pagos (procesador, procesador_id)',
+    'ALTER TABLE metodos_pago ADD COLUMN procesador_cliente_id TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN procesador_perfil_id TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN activo INTEGER NOT NULL DEFAULT 1',
+    'ALTER TABLE metodos_pago ADD COLUMN fallos_seguidos INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE metodos_pago ADD COLUMN borrado TEXT',
+    'ALTER TABLE metodos_pago ADD COLUMN aviso_vencimiento TEXT',
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_metodos_perfil ON metodos_pago (organizacion_id, procesador, procesador_perfil_id)
+       WHERE procesador_perfil_id IS NOT NULL`,
+    'ALTER TABLE suscripciones ADD COLUMN metodo_pago_id TEXT',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_intentos INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE suscripciones ADD COLUMN renovacion_avisada TEXT',
+    `CREATE TABLE IF NOT EXISTS clientes_procesador (
+       organizacion_id TEXT NOT NULL,
+       procesador      TEXT NOT NULL,
+       cliente_id      TEXT NOT NULL,
+       creado          TEXT NOT NULL,
+       PRIMARY KEY (organizacion_id, procesador))`,
+    `CREATE TABLE IF NOT EXISTS pagos_eventos (
+       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+       pago_id    TEXT,
+       procesador TEXT NOT NULL,
+       origen     TEXT NOT NULL,
+       tipo       TEXT NOT NULL,
+       cuerpo     TEXT,
+       creado     TEXT NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS ix_pagos_eventos_pago ON pagos_eventos (pago_id, id)',
+    `CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_cambios
+       BEFORE UPDATE ON pagos_eventos
+     BEGIN
+       SELECT RAISE(ABORT, 'Los eventos de pago no se modifican');
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_borrado
+       BEFORE DELETE ON pagos_eventos
+     BEGIN
+       SELECT RAISE(ABORT, 'Los eventos de pago no se borran');
+     END`,
+  ]],
 ];
 
 function migrar() {
@@ -3199,6 +3275,12 @@ function renovarSinCosto({ idOrg, idSusc, idAnuncio = null, dias, cobro }) {
     d.prepare('ROLLBACK').run();
     throw e;
   }
+  /* Con la promoción toda renovación es de importe cero y no pasa por
+     `confirmarPago`, que es quien reprograma la renovación automática
+     (06-04). Sin esto el `proximo_cargo` seguía siendo el del fin ANTERIOR
+     y la tarea diaria cobraba a una suscripción recién renovada. No hace
+     nada si la suscripción no tiene renovación automática. */
+  reprogramarRenovacion(idSusc);
   return {
     membresia: suscripcion(idSusc, idOrg),
     anuncio: idAnuncio ? anuncio(idAnuncio) : null,
@@ -3593,7 +3675,9 @@ function filasDeCobros(donde, args, limite) {
      ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(...args, topeConsola(limite))
     .map(({ intencion, ...p }) => {
       const i = intencionDe({ intencion });
-      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null };
+      /* `automatica`: la renovación que cobró sola la tarea diaria (06-08), para que la consola de
+         solo lectura la distinga de la que pagó el cliente a mano. */
+      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null, automatica: !!i.automatica };
     });
 }
 
@@ -3633,11 +3717,424 @@ function renovacionesParaConsola({ limite = 200 } = {}) {
 }
 
 /* Solo un pendiente se rechaza. Un aprobado no: si el dinero entró, lo
-   que procede es una devolución con su nota de crédito, que ya existe. */
-function rechazarPago(idPago) {
-  const r = abrir().prepare(`UPDATE pagos SET estado = 'rechazado', actualizado = ?
-                              WHERE id = ? AND estado = 'pendiente'`).run(ahora(), idPago);
+   que procede es una devolución con su nota de crédito, que ya existe.
+
+   Con CardNet el rechazo trae código y motivo (fase 6): se guardan en
+   el pago para que el comprador y la consola vean por qué, sin tocar
+   suscripciones, anuncios ni facturas. Sin segundo argumento se
+   comporta como siempre. */
+function rechazarPago(idPago, { codigo = null, motivo = null } = {}) {
+  const r = abrir().prepare(`UPDATE pagos SET estado = 'rechazado', actualizado = ?,
+                                    codigo_respuesta = COALESCE(?, codigo_respuesta),
+                                    motivo = COALESCE(?, motivo)
+                              WHERE id = ? AND estado = 'pendiente'`)
+    .run(ahora(), codigo == null ? null : String(codigo), motivo == null ? null : String(motivo), idPago);
   return { pago: pagoPorId(idPago), cambiado: r.changes === 1 };
+}
+
+/* ── CardNet (fase 6): clientes, tarjetas, respuestas y rastro ───
+   Todo el SQL de la pasarela vive aquí (D-13): tools/pagos.js, las rutas
+   y la conciliación llaman a estas funciones y no tocan tablas. */
+
+/* El cliente de una organización en un procesador. Se crea una vez: un
+   segundo cliente para la misma organización dejaría tarjetas repartidas
+   entre dos y ninguna renovación sabría cuál usar. */
+const clienteProcesador = (idOrg, procesador) => {
+  const f = abrir().prepare('SELECT cliente_id FROM clientes_procesador WHERE organizacion_id = ? AND procesador = ?')
+    .get(idOrg, procesador);
+  return f ? f.cliente_id : null;
+};
+
+function guardarClienteProcesador(idOrg, procesador, clienteId) {
+  abrir().prepare(`INSERT OR IGNORE INTO clientes_procesador (organizacion_id, procesador, cliente_id, creado)
+                   VALUES (?, ?, ?, ?)`).run(idOrg, procesador, clienteId, ahora());
+  return clienteProcesador(idOrg, procesador);
+}
+
+/* Lo que sale de esta tabla hacia el navegador: sin token. */
+const METODO_PUBLICO = (f) => ({
+  id: f.id, marca: f.marca, ultimos4: f.ultimos4, venceMes: f.vence_mes, venceAnio: f.vence_anio,
+  activo: f.activo === 1, predeterminado: f.predeterminado === 1,
+});
+
+/* Guarda una tarjeta tokenizada. Copia SOLO los campos conocidos del
+   perfil (PCI: la tabla no admite nada más, ni por descuido de quien
+   llame con un objeto de más). El mismo perfil dos veces es la misma
+   fila: CardNet puede repetir el aviso y el cliente puede repetir el
+   retorno. La primera tarjeta de la organización queda predeterminada. */
+function guardarMetodoPago({ idOrg, procesador, clienteId = null, perfil }) {
+  if (!perfil || !perfil.perfilId || !perfil.token) {
+    throw Object.assign(new Error('La tarjeta no trae perfil ni token'), { codigo: 400 });
+  }
+  const d = abrir();
+  const activo = perfil.activo === false ? 0 : 1;
+  const venceMes = Number.isInteger(perfil.venceMes) ? perfil.venceMes : null;
+  const venceAnio = Number.isInteger(perfil.venceAnio) ? perfil.venceAnio : null;
+  const ya = d.prepare(`SELECT id FROM metodos_pago
+                         WHERE organizacion_id = ? AND procesador = ? AND procesador_perfil_id = ?`)
+    .get(idOrg, procesador, String(perfil.perfilId));
+  if (ya) {
+    d.prepare(`UPDATE metodos_pago SET token = ?, marca = ?, ultimos4 = ?, vence_mes = ?, vence_anio = ?,
+                      procesador_cliente_id = COALESCE(?, procesador_cliente_id), activo = ?, borrado = NULL
+                WHERE id = ?`)
+      .run(String(perfil.token), perfil.marca || null, perfil.ultimos4 || null, venceMes, venceAnio,
+        clienteId, activo, ya.id);
+    return d.prepare('SELECT * FROM metodos_pago WHERE id = ?').get(ya.id);
+  }
+  const hay = d.prepare('SELECT 1 FROM metodos_pago WHERE organizacion_id = ? AND borrado IS NULL').get(idOrg);
+  const idMetodo = id();
+  d.prepare(`INSERT INTO metodos_pago
+    (id, organizacion_id, procesador, token, marca, ultimos4, vence_mes, vence_anio, predeterminado, creado,
+     procesador_cliente_id, procesador_perfil_id, activo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(idMetodo, idOrg, procesador, String(perfil.token), perfil.marca || null, perfil.ultimos4 || null,
+      venceMes, venceAnio, hay ? 0 : 1, ahora(), clienteId, String(perfil.perfilId), activo);
+  return d.prepare('SELECT * FROM metodos_pago WHERE id = ?').get(idMetodo);
+}
+
+/* Las tarjetas que se enseñan al dueño: sin token y sin las borradas. */
+const metodosPagoDe = (idOrg) =>
+  abrir().prepare(`SELECT * FROM metodos_pago WHERE organizacion_id = ? AND borrado IS NULL
+                    ORDER BY predeterminado DESC, creado, id`).all(idOrg).map(METODO_PUBLICO);
+
+/* La fila entera, CON token: uso interno del servidor para cobrar. Filtra
+   por organización, así que la tarjeta de otra no se alcanza ni
+   conociendo su id. */
+const metodoPagoDe = (idMetodo, idOrg) =>
+  abrir().prepare('SELECT * FROM metodos_pago WHERE id = ? AND organizacion_id = ? AND borrado IS NULL')
+    .get(idMetodo, idOrg) || null;
+
+const activarMetodoPago = (idMetodo, idOrg) =>
+  abrir().prepare(`UPDATE metodos_pago SET activo = 1, fallos_seguidos = 0
+                    WHERE id = ? AND organizacion_id = ? AND borrado IS NULL`)
+    .run(idMetodo, idOrg).changes > 0;
+
+/* Borrado lógico: `pagos.metodo_pago_id` tiene que seguir apuntando a la
+   tarjeta con la que se cobró. Una suscripción que la usaba deja de
+   renovarse sola: no se cobra con una tarjeta que el dueño quitó. */
+function borrarMetodoPago(idMetodo, idOrg) {
+  const d = abrir();
+  const r = d.prepare(`UPDATE metodos_pago SET borrado = ?, activo = 0, predeterminado = 0
+                        WHERE id = ? AND organizacion_id = ? AND borrado IS NULL`).run(ahora(), idMetodo, idOrg);
+  if (r.changes === 0) return false;
+  d.prepare(`UPDATE suscripciones SET renovacion_automatica = 0, proximo_cargo = NULL
+              WHERE metodo_pago_id = ? AND organizacion_id = ? AND renovacion_automatica = 1`).run(idMetodo, idOrg);
+  return true;
+}
+
+/* Con qué tarjeta se está cobrando este pago. Solo mientras espera: un
+   pago ya resuelto no cambia de tarjeta. */
+const enlazarMetodoPago = (idPago, idMetodo) =>
+  abrir().prepare("UPDATE pagos SET metodo_pago_id = ? WHERE id = ? AND estado = 'pendiente'")
+    .run(idMetodo, idPago).changes > 0;
+
+/* Los fallos seguidos de una tarjeta: uno aprobado los pone a cero. */
+const anotarResultadoTarjeta = (idMetodo, aprobado) =>
+  abrir().prepare(aprobado
+    ? 'UPDATE metodos_pago SET fallos_seguidos = 0 WHERE id = ?'
+    : 'UPDATE metodos_pago SET fallos_seguidos = fallos_seguidos + 1 WHERE id = ?').run(idMetodo).changes > 0;
+
+/* Lo que CardNet contestó, en el pago. El id de la compra no se
+   sobrescribe con otro distinto: sería la respuesta de un cobro ajeno
+   pegada a este pago. `intento` cuenta los envíos de cobro. */
+function anotarRespuestaProcesador(idPago, { procesadorId = null, autorizacion = null, codigo = null, intento = false } = {}) {
+  const pago = pagoPorId(idPago);
+  if (!pago) throw Object.assign(new Error('Ese pago no existe'), { codigo: 404 });
+  if (pago.procesador_id && procesadorId && String(procesadorId) !== pago.procesador_id) {
+    throw Object.assign(new Error('El pago ya tiene otro id de compra en la pasarela'), { codigo: 409 });
+  }
+  abrir().prepare(`UPDATE pagos SET procesador_id = COALESCE(procesador_id, ?),
+                          autorizacion = COALESCE(?, autorizacion),
+                          codigo_respuesta = COALESCE(?, codigo_respuesta),
+                          intentos = intentos + ?, actualizado = ?
+                    WHERE id = ?`)
+    .run(procesadorId == null ? null : String(procesadorId), autorizacion == null ? null : String(autorizacion),
+      codigo == null ? null : String(codigo), intento ? 1 : 0, ahora(), idPago);
+  return pagoPorId(idPago);
+}
+
+/* El rastro de solo añadir. El llamador ya limpió el cuerpo (cardnet.limpiar):
+   aquí se guarda tal cual, como JSON. */
+function anotarEventoPago({ pagoId = null, procesador, origen, tipo, cuerpo = null }) {
+  abrir().prepare(`INSERT INTO pagos_eventos (pago_id, procesador, origen, tipo, cuerpo, creado)
+                   VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(pagoId, procesador, origen, tipo,
+      cuerpo == null ? null : (typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo)), ahora());
+}
+
+function eventosDePago(idPago) {
+  return abrir().prepare('SELECT * FROM pagos_eventos WHERE pago_id = ? ORDER BY id').all(idPago).map((e) => {
+    let cuerpo = e.cuerpo;
+    try { cuerpo = JSON.parse(e.cuerpo); } catch (_) { /* queda el texto */ }
+    return { ...e, cuerpo };
+  });
+}
+
+/* Si ya se envió un cobro a la pasarela para este pago. Con intento
+   enviado no se anula sin cobrar ni se abre otro: el dinero pudo salir. */
+const huboIntentoDeCobro = (idPago) =>
+  !!abrir().prepare("SELECT 1 FROM pagos_eventos WHERE pago_id = ? AND tipo = 'cobro-enviado' LIMIT 1").get(idPago);
+
+/* La guarda de la 05.4 que se mira ANTES de cobrar con tarjeta: no se
+   cobra algo que `aprobarPago` va a rechazar (R-05). Usa las mismas
+   condiciones que cada rama de aprobarPago (que no se toca): membresía
+   viva, borrador de la misma organización, suscripción renovable. */
+function intencionAplicable(pago) {
+  const d = abrir();
+  let i = null;
+  try { i = JSON.parse(pago.intencion); } catch (_) { /* se trata abajo */ }
+  if (!i || typeof i !== 'object') return { ok: false, codigo: 'intencion-invalida' };
+
+  if (i.tipo === 'compra') {
+    const plan = planPorId(i.idPlan);
+    return plan && plan.activo !== 0 ? { ok: true } : { ok: false, codigo: 'plan-inexistente' };
+  }
+  if (i.tipo === 'ampliacion') {
+    const viva = d.prepare(`SELECT 1 FROM suscripciones
+                             WHERE id = ? AND organizacion_id = ? AND estado = 'activa'
+                               AND (fin IS NULL OR fin > ?)`).get(i.idSusc, pago.organizacion_id, ahora());
+    return viva ? { ok: true } : { ok: false, codigo: 'membresia-vencida' };
+  }
+  if (i.tipo === 'publicacion') {
+    const a = d.prepare('SELECT estado, organizacion_id FROM anuncios WHERE id = ?').get(i.idAnuncio);
+    return a && a.organizacion_id === pago.organizacion_id && a.estado === 'borrador'
+      ? { ok: true } : { ok: false, codigo: 'publicacion-huerfana' };
+  }
+  if (i.tipo === 'renovacion') {
+    return i.idSusc && pago.suscripcion_id === i.idSusc && suscripcionRenovable(i.idSusc, pago.organizacion_id)
+      ? { ok: true } : { ok: false, codigo: 'renovacion-huerfana' };
+  }
+  return { ok: false, codigo: 'intencion-invalida' };
+}
+
+/* Renovación automática con tarjeta. Convive con
+   `guardarRenovacionAutomatica` de la 05.3, que no se toca (la sigue
+   usando api.js hasta el 06-05): el consentimiento es el mismo texto de
+   la 05.3; la tarjeta es con qué se cobra. `proximo_cargo` es la fecha
+   del PRÓXIMO INTENTO (fin − 3 días), no del vencimiento. Solo con una
+   tarjeta activa de la misma organización: si no, no cambia nada. */
+function activarRenovacionConTarjeta({ idSusc, idOrg, idMetodo, texto, aceptada = null }) {
+  const d = abrir();
+  const s = d.prepare('SELECT fin FROM suscripciones WHERE id = ? AND organizacion_id = ?').get(idSusc, idOrg);
+  if (!s || !s.fin) return false;
+  const tarjeta = d.prepare(`SELECT 1 FROM metodos_pago
+                              WHERE id = ? AND organizacion_id = ? AND activo = 1 AND borrado IS NULL`).get(idMetodo, idOrg);
+  if (!tarjeta) return false;
+  return d.prepare(`UPDATE suscripciones SET renovacion_automatica = 1, renovacion_aceptada = ?, renovacion_texto = ?,
+                           metodo_pago_id = ?, renovacion_intentos = 0, proximo_cargo = ?
+                     WHERE id = ? AND organizacion_id = ?`)
+    .run(aceptada || ahora(), texto || null, idMetodo, sumarDias(-3, s.fin), idSusc, idOrg).changes > 0;
+}
+
+/* Desactivar: siempre se puede. La fecha y el texto aceptados se
+   conservan como historial, igual que en la 05.3. */
+const desactivarRenovacion = (idSusc, idOrg) =>
+  abrir().prepare(`UPDATE suscripciones SET renovacion_automatica = 0, proximo_cargo = NULL
+                    WHERE id = ? AND organizacion_id = ?`).run(idSusc, idOrg).changes > 0;
+
+/* Tras renovar (a mano o sola) el ciclo es otro: los intentos vuelven a
+   cero y el próximo intento cae 3 días antes del NUEVO fin. Idempotente:
+   repetirla da lo mismo. Sin renovación automática no toca nada. */
+function reprogramarRenovacion(idSusc) {
+  const d = abrir();
+  const s = d.prepare('SELECT fin, renovacion_automatica AS auto FROM suscripciones WHERE id = ?').get(idSusc);
+  if (!s || s.auto !== 1 || !s.fin) return false;
+  d.prepare('UPDATE suscripciones SET renovacion_intentos = 0, proximo_cargo = ? WHERE id = ?')
+    .run(sumarDias(-3, s.fin), idSusc);
+  return true;
+}
+
+/* ── La renovación automática (06-08) ──────────────────────────
+   Todo el calendario va por DÍAS, no por horas. El temporizador de la
+   tanda diaria tiene `RandomizedDelaySec=300` y puede haberse retrasado;
+   un reintento a «ahora + 24 h» exactas se saltaría un día cuando la
+   tarea corre unos minutos antes que la víspera. Por eso `proximo_cargo`
+   se compara por su día (AAAA-MM-DD, en UTC) con el día de `ahora`: la
+   tarea de cualquier hora de ese día lo recoge, y los tres intentos caen
+   en fin − 3, fin − 2 y fin − 1. Los `proximo_cargo` que fijan
+   `activarRenovacionConTarjeta` y `reprogramarRenovacion` (fin − 3 días
+   con su hora) valen igual: solo importa su día. */
+const diaDe = (t) => new Date(t).toISOString().slice(0, 10);
+const comienzoDelDiaSiguiente = (t) => new Date(Date.parse(`${diaDe(t)}T00:00:00.000Z`) + 86400000).toISOString();
+const MAX_INTENTOS_RENOVACION = 3;
+
+/* Propietario de la organización: a quien se avisa y se factura. */
+const SQL_PROPIETARIO = `(SELECT usuario_id FROM miembros WHERE organizacion_id = s.organizacion_id AND rol = 'propietario' LIMIT 1)`;
+
+/* Las suscripciones que hoy toca cobrar solas: casilla puesta, activas,
+   con un intento pendiente cuyo día ya llegó y todavía sin vencer. */
+function suscripcionesPorRenovar(momento = new Date()) {
+  const t = new Date(momento).toISOString();
+  return abrir().prepare(`
+    SELECT s.*, p.nombre AS plan_nombre, p.activo AS plan_activo,
+           u.correo AS correo, u.nombre AS nombre
+      FROM suscripciones s
+      JOIN planes p ON p.id = s.plan_id
+      LEFT JOIN usuarios u ON u.id = ${SQL_PROPIETARIO}
+     WHERE s.estado = 'activa' AND s.renovacion_automatica = 1
+       AND s.fin IS NOT NULL AND s.anuncios_incluidos IS NOT NULL AND s.fin > ?
+       AND s.proximo_cargo IS NOT NULL AND substr(s.proximo_cargo, 1, 10) <= ?
+       AND s.renovacion_intentos < ${MAX_INTENTOS_RENOVACION}
+     ORDER BY s.fin`).all(t, diaDe(t))
+    .map((s) => ({ ...s, precio_vigente: conPrecioVigente(planPorId(s.plan_id)).precio_vigente }));
+}
+
+/* Anota un intento ANTES de cobrar: si el proceso muere a mitad, la
+   tarea no repite el intento el mismo día. El siguiente cae al comienzo
+   del día que sigue, mientras sea anterior al día de `fin` y queden
+   intentos; si no, NULL y la suscripción vence por el camino de siempre. */
+function anotarIntentoRenovacion(idSusc, momento = new Date()) {
+  const d = abrir();
+  const s = d.prepare('SELECT fin, renovacion_intentos AS n FROM suscripciones WHERE id = ?').get(idSusc);
+  if (!s) return null;
+  const intentos = (s.n || 0) + 1;
+  const sig = comienzoDelDiaSiguiente(momento);
+  const proximo = intentos < MAX_INTENTOS_RENOVACION && s.fin && sig.slice(0, 10) < s.fin.slice(0, 10) ? sig : null;
+  d.prepare('UPDATE suscripciones SET renovacion_intentos = ?, proximo_cargo = ? WHERE id = ?')
+    .run(intentos, proximo, idSusc);
+  return { intentos, proximo, quedan: proximo ? MAX_INTENTOS_RENOVACION - intentos : 0 };
+}
+
+/* Con qué nombre sale el comprobante de una renovación sola: el cliente
+   del último pago aprobado de la suscripción (con su RNC si lo tenía);
+   si no hay, los últimos datos fiscales de la organización; si tampoco,
+   el propietario. */
+function clienteDeRenovacion(idSusc) {
+  const d = abrir();
+  const s = d.prepare(`SELECT s.organizacion_id AS org, u.correo, u.nombre
+                         FROM suscripciones s LEFT JOIN usuarios u ON u.id = ${SQL_PROPIETARIO}
+                        WHERE s.id = ?`).get(idSusc);
+  if (!s) return {};
+  const ultimo = d.prepare(`SELECT intencion FROM pagos
+                             WHERE suscripcion_id = ? AND estado = 'aprobado' AND total > 0
+                             ORDER BY confirmado DESC, creado DESC, rowid DESC LIMIT 1`).get(idSusc);
+  if (ultimo) {
+    const c = intencionDe({ intencion: ultimo.intencion }).cliente;
+    if (c && typeof c === 'object' && Object.keys(c).length) return c;
+  }
+  return ultimosDatosFiscales(s.org) || { razonSocial: s.nombre || null, correo: s.correo || null };
+}
+
+/* El único anuncio de una suscripción (la del particular por publicación),
+   o null si tiene varios (capacidad del dealer) o ninguno. */
+function anuncioUnicoDeSuscripcion(idSusc) {
+  const filas = abrir().prepare(`SELECT id FROM anuncios WHERE suscripcion_id = ? AND estado <> 'borrador' LIMIT 2`).all(idSusc);
+  return filas.length === 1 ? filas[0].id : null;
+}
+
+/* Quien cobra solo necesita saber si la tarjeta se puede usar. */
+const tarjetaUsable = (m) => !!m && m.activo === 1 && !m.borrado && (m.fallos_seguidos || 0) < 3;
+
+/* Los avisos de 7 días: casilla puesta, activa, fin dentro de la semana y
+   aún sin aviso de ESTE ciclo (`renovacion_avisada` guarda el `fin`
+   avisado; al renovarse el fin cambia y el ciclo siguiente avisa otra
+   vez). Trae la tarjeta y la fecha del primer intento. */
+function suscripcionesPorAvisar(momento = new Date()) {
+  const t = new Date(momento).toISOString();
+  const d = abrir();
+  return d.prepare(`
+    SELECT s.*, p.nombre AS plan_nombre, p.activo AS plan_activo,
+           u.correo AS correo, u.nombre AS nombre
+      FROM suscripciones s
+      JOIN planes p ON p.id = s.plan_id
+      LEFT JOIN usuarios u ON u.id = ${SQL_PROPIETARIO}
+     WHERE s.estado = 'activa' AND s.renovacion_automatica = 1 AND s.metodo_pago_id IS NOT NULL
+       AND s.fin IS NOT NULL AND s.anuncios_incluidos IS NOT NULL
+       AND s.fin > ? AND s.fin <= ?
+       AND COALESCE(s.renovacion_avisada, '') <> s.fin
+     ORDER BY s.fin`).all(t, sumarDias(7, t))
+    .map((s) => {
+      const m = d.prepare('SELECT * FROM metodos_pago WHERE id = ? AND organizacion_id = ? AND borrado IS NULL')
+        .get(s.metodo_pago_id, s.organizacion_id) || null;
+      const primero = s.proximo_cargo && diaDe(s.proximo_cargo) > diaDe(t) ? diaDe(s.proximo_cargo) : diaDe(t);
+      return {
+        ...s, precio_vigente: conPrecioVigente(planPorId(s.plan_id)).precio_vigente,
+        marca: m ? m.marca : null, ultimos4: m ? m.ultimos4 : null,
+        usable: tarjetaUsable(m) && s.plan_activo === 1, primerIntento: primero,
+      };
+    });
+}
+
+const anotarAvisoRenovacion = (idSusc, fin) =>
+  abrir().prepare('UPDATE suscripciones SET renovacion_avisada = ? WHERE id = ?').run(fin, idSusc).changes > 0;
+
+/* Las tarjetas que vencen en 15 días o menos (o ya vencidas) y sostienen
+   alguna renovación automática viva. Vencen el último día del mes que
+   dice el perfil. Un aviso por tarjeta y vencimiento (`AAAA-MM`). */
+function tarjetasPorVencer(momento = new Date()) {
+  const t = new Date(momento).getTime();
+  const filas = abrir().prepare(`
+    SELECT m.*, u.correo AS correo, u.nombre AS nombre
+      FROM metodos_pago m
+      LEFT JOIN usuarios u ON u.id = (SELECT usuario_id FROM miembros WHERE organizacion_id = m.organizacion_id AND rol = 'propietario' LIMIT 1)
+     WHERE m.borrado IS NULL AND m.vence_mes IS NOT NULL AND m.vence_anio IS NOT NULL
+       AND EXISTS (SELECT 1 FROM suscripciones s WHERE s.metodo_pago_id = m.id AND s.estado = 'activa' AND s.renovacion_automatica = 1)`).all();
+  return filas
+    .map((m) => {
+      const mes = `${m.vence_anio}-${String(m.vence_mes).padStart(2, '0')}`;
+      const ultimoDia = Date.UTC(m.vence_anio, m.vence_mes, 0);
+      return { ...m, mes, faltan: (ultimoDia - t) / 86400000 };
+    })
+    .filter((m) => m.faltan <= 15 && m.aviso_vencimiento !== m.mes);
+}
+
+const anotarAvisoVencimiento = (idMetodo, mes) =>
+  abrir().prepare('UPDATE metodos_pago SET aviso_vencimiento = ? WHERE id = ?').run(mes, idMetodo).changes > 0;
+
+/* Los cobros de CardNet que llevan más de `minutos` esperando: la red de
+   seguridad de la conciliación. Los que ya tienen el evento
+   `aprobado-sin-aplicar` se excluyen: el dinero entró, no hay nada que
+   reintentar y solo falta devolverlo a mano. */
+function pagosCardnetPorReconciliar({ minutos = 10, ahora: hasta = new Date() } = {}) {
+  const limite = new Date(new Date(hasta).getTime() - minutos * 60000).toISOString();
+  const d = abrir();
+  return d.prepare(`SELECT * FROM pagos WHERE procesador = 'cardnet' AND estado = 'pendiente' AND creado < ?
+                    ORDER BY creado`).all(limite)
+    .map((p) => ({
+      ...p,
+      huboIntento: huboIntentoDeCobro(p.id),
+      sinAplicar: !!d.prepare("SELECT 1 FROM pagos_eventos WHERE pago_id = ? AND tipo = 'aprobado-sin-aplicar' LIMIT 1").get(p.id),
+    }))
+    .filter((p) => !p.sinAplicar);
+}
+
+/* Lo que sale en la sección «Pasarela de pago» del informe a gerencia
+   (06-06). Tres consultas, todas de lectura.
+
+   `descuadresEntre`: los pagos que la conciliación tuvo que completar
+   porque ni el navegador ni el aviso de CardNet lo hicieron. `hasta` es
+   un día (como en `informe`) y cuenta entero. */
+function descuadresEntre(desde, hasta) {
+  const tope = /^\d{4}-\d{2}-\d{2}$/.test(String(hasta)) ? `${hasta}T23:59:59Z` : hasta;
+  return abrir().prepare(`SELECT p.id, p.referencia, p.total, e.creado
+                            FROM pagos_eventos e JOIN pagos p ON p.id = e.pago_id
+                           WHERE e.tipo = 'descuadre' AND e.creado >= ? AND e.creado <= ?
+                           ORDER BY e.id`).all(desde, tope);
+}
+
+/* Pendientes de tarjeta que llevan más de `minutos` esperando. Los que ya
+   tienen `aprobado-sin-aplicar` no se cuentan aquí: salen en
+   `cobrosSinAplicar`, y contarlos dos veces daría una cifra que no cuadra. */
+function pagosCardnetAtascados({ minutos = 60, ahora: hasta = new Date() } = {}) {
+  const limite = new Date(new Date(hasta).getTime() - minutos * 60000).toISOString();
+  return abrir().prepare(`SELECT p.id, p.referencia, p.total, p.creado FROM pagos p
+                           WHERE p.procesador = 'cardnet' AND p.estado = 'pendiente' AND p.creado < ?
+                             AND NOT EXISTS (SELECT 1 FROM pagos_eventos e
+                                              WHERE e.pago_id = p.id AND e.tipo = 'aprobado-sin-aplicar')
+                           ORDER BY p.creado`).all(limite);
+}
+
+/* Cobros que el banco aprobó y que no se pudieron aplicar: hay que
+   devolver el dinero a mano. Se busca por el EVENTO y no por el estado
+   del pago: un aprobado de CardNet que llega sobre un pago ya rechazado
+   (`reemplazado`, `abandonado`) queda `rechazado` en nuestra base, y
+   buscar «pendientes» lo dejaría invisible. Un pago sale una sola vez. */
+function cobrosSinAplicar() {
+  return abrir().prepare(`SELECT p.id, p.referencia, p.total, p.estado, p.organizacion_id,
+                                 MIN(e.creado) AS fecha
+                            FROM pagos_eventos e JOIN pagos p ON p.id = e.pago_id
+                           WHERE e.tipo = 'aprobado-sin-aplicar'
+                           GROUP BY p.id ORDER BY MIN(e.id)`).all();
 }
 
 /* ── Membresía de las cuentas internas ──────────────────────
@@ -4533,8 +5030,15 @@ const tipoRecordatorio = (vence, momento) => {
 
    No hay en la base una preferencia de «no quiero avisos» (D-10); si
    algún día existe, se filtra aquí. */
-function recordatoriosPendientes(momento = ahora()) {
+function recordatoriosPendientes(momento = ahora(), { omitirAutomaticas = false } = {}) {
   const d = abrir();
+  /* Con CardNet activo, una suscripción que se va a renovar sola (casilla
+     puesta y tarjeta usable) no recibe los avisos 7/3/1: dirían «vence»
+     de algo que no vencerá. Sin la opción, todo sale como antes. */
+  const seRenuevaSola = d.prepare(`SELECT 1 FROM suscripciones s
+                                    JOIN metodos_pago m ON m.id = s.metodo_pago_id
+                                   WHERE s.id = ? AND s.renovacion_automatica = 1
+                                     AND m.activo = 1 AND m.borrado IS NULL AND m.fallos_seguidos < 3`);
   const yaEsta = d.prepare(`SELECT 1 FROM recordatorios
                              WHERE anuncio_id = ? AND tipo = ? AND vence = ?
                                AND (resultado IS NULL OR resultado <> 'fallido')`);
@@ -4554,7 +5058,8 @@ function recordatoriosPendientes(momento = ahora()) {
       AND a.vence <= ?
     ORDER BY a.vence`).all(momento, sumarDias(7, momento))
     .map((a) => ({ ...conNombres(a), tipo: tipoRecordatorio(a.vence, momento) }))
-    .filter((a) => a.tipo && !yaEsta.get(a.id, a.tipo, a.vence));
+    .filter((a) => a.tipo && !yaEsta.get(a.id, a.tipo, a.vence)
+      && !(omitirAutomaticas && a.suscripcion_id && seRenuevaSola.get(a.suscripcion_id)));
 }
 
 /* Aparta un recordatorio ANTES de enviarlo. Es lo que impide dos
@@ -4882,6 +5387,13 @@ function informe({ desde, hasta }) {
                       FROM metricas_diarias WHERE dia >= ? AND dia <= ?`, desde, hasta),
 
     trafico: trafico({ desde, hasta }),
+
+    // Pasarela de pago: solo ruidosa cuando algo no cuadra (ver tareas.js).
+    pasarela: {
+      recuperados: descuadresEntre(desde, hasta),
+      atascados: pagosCardnetAtascados({ minutos: 60 }).length,
+      sinAplicar: cobrosSinAplicar(),
+    },
   };
 }
 
@@ -5271,6 +5783,12 @@ module.exports = {
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
   tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
+  clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,
+  borrarMetodoPago, enlazarMetodoPago, anotarResultadoTarjeta, anotarRespuestaProcesador, anotarEventoPago,
+  eventosDePago, huboIntentoDeCobro, intencionAplicable, activarRenovacionConTarjeta, desactivarRenovacion,
+  reprogramarRenovacion, suscripcionesPorRenovar, anotarIntentoRenovacion, clienteDeRenovacion,
+  anuncioUnicoDeSuscripcion, suscripcionesPorAvisar, anotarAvisoRenovacion, tarjetasPorVencer,
+  anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
   facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
   cifrarClave, claveCorrecta, cambiarClave,

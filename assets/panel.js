@@ -87,6 +87,10 @@ function accionRenovar(a) {
 let RENOVABLES = [];
 let METODOS_PAGO = [];
 let RENOVACION_AUTO = { disponible: false };
+/* Tarjetas guardadas de la cuenta (solo marca, últimos cuatro y
+   vencimiento). null = CardNet apagado: el servidor no manda `tarjetas`
+   y el panel no pinta nada de tarjetas. */
+let TARJETAS = null;
 let RENOVAR_OBJETIVO = null;  // { idAnuncio, r } de la renovación abierta
 
 /* ── Membresías ─────────────────────────────────────────────
@@ -135,6 +139,7 @@ function guardarPagos(r) {
   RENOVABLES = r.renovables || [];
   METODOS_PAGO = Array.isArray(r.metodosPago) ? r.metodosPago : [];
   RENOVACION_AUTO = r.renovacionAutomatica || { disponible: false };
+  TARJETAS = Array.isArray(r.tarjetas) ? r.tarjetas : null;
 }
 
 const membresiaDe = (a) => MEMBRESIAS.find((m) => m.id === a.suscripcion_id) || null;
@@ -216,8 +221,24 @@ function pieRenovarPlan(m) {
     : `<button type="button" class="btn btn--linea btn--chico" data-renovar-plan="${esc(r.id)}">Renovar</button>`;
   const auto = RENOVACION_AUTO.disponible
     ? `<label class="renovar-auto"><input type="checkbox" data-renovacion-auto="${esc(r.id)}"${r.renovacion_automatica ? ' checked' : ''}> Renovación automática</label>`
+      + `<span class="celda-nota" data-renovacion-estado="${esc(r.id)}">${esc(estadoRenovacionAuto(r))}</span>`
     : '';
   return `<span class="membresia__renovar">${accion}${auto}</span>`;
+}
+
+/* Lo que dice el interruptor de la renovación automática: con qué
+   tarjeta se renovará y cuándo es el próximo intento; si el último cobro
+   no se aprobó, cuándo se reintenta. Desactivada, el texto del modelo
+   comercial (§30). Todo sale del servidor y se escapa al pintarlo. */
+function estadoRenovacionAuto(r) {
+  if (!r.renovacion_automatica) return r.fin ? `Tu anuncio vence el ${fechaCorta(r.fin)}.` : '';
+  const t = r.renovacionTarjeta;
+  const proximo = r.proximoIntento ? fechaCorta(String(r.proximoIntento).slice(0, 10)) : '';
+  const base = t ? `Se renovará automáticamente con ${t.marca} terminada en ${t.ultimos4}` : 'Se renovará automáticamente';
+  if (r.renovacionIntentos > 0) {
+    return `${base}. El último cobro de la renovación no se aprobó; lo intentaremos otra vez${proximo ? ` el ${proximo}` : ' pronto'}.`;
+  }
+  return `${base}${proximo ? ` el ${proximo}` : ''}.`;
 }
 
 /* Planes que ya vencieron y se pueden volver a contratar sin rehacer
@@ -237,6 +258,31 @@ function planesVencidosHTML() {
     ? `<span class="celda-nota">Renovación en espera · ref. ${esc(r.renovacion_pendiente)}</span>`
     : `<button type="button" class="btn btn--linea btn--chico" data-renovar-plan="${esc(r.id)}">Renovar plan</button>`}
     </li>`).join('')}</ul>
+  </section>`;
+}
+
+/* «Tarjetas guardadas»: solo con CardNet activo (el servidor manda
+   `tarjetas`; apagado es null y no se pinta nada). Solo marca, últimos
+   cuatro y vencimiento: la API nunca manda el token. */
+function tarjetasGuardadasHTML() {
+  if (!Array.isArray(TARJETAS)) return '';
+  const fila = (t) => {
+    const mes = String(t.venceMes == null ? '' : t.venceMes).padStart(2, '0');
+    const anio = String(t.venceAnio == null ? '' : t.venceAnio).slice(-2);
+    return `<li class="membresia" data-tarjeta="${esc(t.id)}">
+      <span class="membresia__cabeza">
+        <b class="membresia__nivel">${esc(t.marca)} terminada en ${esc(t.ultimos4)}</b>
+        <span class="membresia__vigencia">vence ${esc(mes)}/${esc(anio)}</span>
+      </span>
+      ${t.activo ? '' : '<span class="celda-nota">pendiente de activar</span>'}
+      <button type="button" class="btn btn--linea btn--chico" data-borrar-tarjeta="${esc(t.id)}">Borrar</button>
+    </li>`;
+  };
+  return `<section class="tarjetas-guardadas" aria-labelledby="t-tarjetas">
+    <h3 class="transferencia__titulo" id="t-tarjetas">Tarjetas guardadas</h3>
+    ${TARJETAS.length
+    ? `<ul class="membresias">${TARJETAS.map(fila).join('')}</ul>`
+    : '<p class="panel__texto">No tiene tarjetas guardadas. Se guardan al pagar con tarjeta.</p>'}
   </section>`;
 }
 
@@ -293,7 +339,16 @@ function tarjetaPagoEnEspera(p) {
 
   /* Por transferencia y sin cuenta que enseñar (se apagó después de
      pedirlo): a quién escribir, nunca una cuenta inventada. */
-  const como = !porTransferencia
+  const porTarjeta = p.procesador === 'cardnet';
+  /* Con tarjeta no hay cuenta ni datos bancarios que enseñar. `sinCobro`
+     (06-05) dice si llegó a mandarse el cobro: sin intento se anula solo
+     y no se cobra nada; con intento, prometer «sin cobrarle nada» sería
+     falso, así que se pide no pagar otra vez. */
+  const como = porTarjeta
+    ? `<p class="transferencia__nota">${p.sinCobro
+      ? 'Pago con tarjeta sin completar. Si no se completa, se anula solo en 24 horas sin cobrarle nada.'
+      : 'Estamos confirmando el pago con su banco; no lo pague otra vez.'}</p>`
+    : !porTransferencia
     ? '<p class="transferencia__nota">El pago está en proceso con la pasarela.</p>'
     : t
       ? `<ul class="transferencia__pasos">
@@ -423,6 +478,7 @@ function pintarPlanParticular(caja, org) {
       <p class="panel__texto">Cada equipo se publica con su propio plan: elija Estándar, Destacada o Premium al publicarlo y pague solo esa publicación.</p>
       ${pagosEnEsperaHTML()}
       ${planesVencidosHTML()}
+      ${tarjetasGuardadasHTML()}
       <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
       <a class="btn btn--ambar" href="publicar.html">Publicar un equipo</a>`;
     return;
@@ -438,6 +494,7 @@ function pintarPlanParticular(caja, org) {
 
     <ul class="membresias">${MEMBRESIAS.map(tarjetaPlanParticular).join('')}</ul>
     ${planesVencidosHTML()}
+    ${tarjetasGuardadasHTML()}
 
     <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
 
@@ -473,6 +530,7 @@ function pintarPlan() {
       <p class="panel__texto">Una publicación activa es cada equipo que tiene a la vista en el catálogo. Elija el nivel y cuántas publicaciones activas quiere tener a la vez; cuando venda un equipo, esa capacidad queda libre para publicar otro.</p>
       ${pagosEnEsperaHTML()}
       ${planesVencidosHTML()}
+      ${tarjetasGuardadasHTML()}
       <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
       <a class="btn btn--ambar" href="planes.html">Ver los planes</a>`;
     return;
@@ -501,6 +559,7 @@ function pintarPlan() {
 
     <ul class="membresias">${MEMBRESIAS.map(tarjetaMembresia).join('')}</ul>
     ${planesVencidosHTML()}
+    ${tarjetasGuardadasHTML()}
 
     <p class="acceso__aviso" id="avisoPlan" role="alert" hidden></p>
 
@@ -1445,6 +1504,7 @@ async function montarPanel() {
   const ROTULO_METODO = {
     transferencia: 'Transferencia bancaria',
     tarjeta: 'Tarjeta de crédito o débito',
+    cardnet: 'Tarjeta de crédito o débito',
     demo: 'Pago inmediato',
   };
 
@@ -1493,6 +1553,11 @@ async function montarPanel() {
     return fechaCorta(`${base.getFullYear()}-${p(base.getMonth() + 1)}-${p(base.getDate())}`);
   }
 
+  /* Con CardNet ofrecido, el método de pago lo pinta y lo lee
+     assets/cardnet.js (`selectorDeMetodo` / `leerMetodo`). Apagado, nada
+     de esto existe y las secciones son las de siempre. */
+  const conCardnet = () => !!window.CardnetCaptura && METODOS_PAGO.includes('cardnet');
+
   function abrirRenovacion({ idAnuncio, idSusc }) {
     const a = idAnuncio ? ANUNCIOS.find((x) => x.id === idAnuncio) : null;
     if (idAnuncio && !a) return;
@@ -1525,8 +1590,13 @@ async function montarPanel() {
     // Con importe cero no hay nada que pagar ni facturar.
     const cobra = total > 0;
     const metodos = $('#renovarMetodos');
+    const conTarjeta = cobra && conCardnet();
     metodos.hidden = !cobra || !METODOS_PAGO.length;
-    metodos.innerHTML = cobra && METODOS_PAGO.length
+    metodos.innerHTML = conTarjeta
+      ? window.CardnetCaptura.selectorDeMetodo({
+        metodos: METODOS_PAGO, tarjetas: TARJETAS, renovacion: RENOVACION_AUTO, prefijo: 'ren',
+      })
+      : cobra && METODOS_PAGO.length
       ? '<legend class="comprobante__titulo">Forma de pago</legend>' + METODOS_PAGO.map((m, i) => `
         <label class="opcion opcion--chica">
           <input type="radio" name="metodoRen" value="${esc(m)}"${i === 0 ? ' checked' : ''}>
@@ -1537,7 +1607,8 @@ async function montarPanel() {
 
     // Casilla (D-12): solo existe si el servidor la ofrece, y nunca marcada.
     const caja = $('#renovarAutomatica');
-    if (RENOVACION_AUTO.disponible) {
+    // Con el selector de tarjeta la casilla ya va dentro de él.
+    if (RENOVACION_AUTO.disponible && !conTarjeta) {
       caja.innerHTML = `<label class="renovar-auto"><input type="checkbox" id="chkRenovacionAuto"> ${esc(RENOVACION_AUTO.texto || 'Renovar automáticamente')}</label>`;
       caja.hidden = false;
     } else {
@@ -1557,6 +1628,23 @@ async function montarPanel() {
     $('#btnPagarRenovacion').classList.remove('btn--ocupado');
     sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
     $('#t-renovar').focus({ preventScroll: true });
+  }
+
+  /* Lo que se hace al quedar cobrada (o en espera) una renovación: igual
+     para el 201 directo, para el pago con tarjeta guardada y para el que
+     aprueba la confirmación de CardNet. */
+  async function terminarRenovacion(obj, r) {
+    cerrarRenovacion();
+    await recargarTodo();
+
+    if (r.pago && r.pago.estado === 'pendiente' || !r.membresia) {
+      avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+      return;
+    }
+    const fin = fechaCorta(r.membresia.fin);
+    avisoPlan(obj.vencido
+      ? `Listo: ${obj.nombre} vuelve a estar publicado hasta el ${fin}.`
+      : `Listo: ${obj.nombre} sigue publicado hasta el ${fin}.`, false);
   }
 
   /* Solo método, datos fiscales y la casilla: nunca importe, plan, cupo
@@ -1579,6 +1667,8 @@ async function montarPanel() {
     }
     const chk = $('#chkRenovacionAuto');
     if (chk && chk.checked) cuerpo.renovacionAutomatica = true;
+    // Con CardNet: método, tarjeta guardada y casilla salen del selector.
+    if (conCardnet() && obj.r.precio.total > 0) Object.assign(cuerpo, window.CardnetCaptura.leerMetodo($('#renovarMetodos')));
 
     const ruta = obj.idAnuncio
       ? `/anuncios/${encodeURIComponent(obj.idAnuncio)}/renovar`
@@ -1590,17 +1680,25 @@ async function montarPanel() {
     try {
       const r = await api(ruta, { metodo: 'POST', cuerpo });
       if (!r) throw new Error('No hay conexión con el servidor.');
-      cerrarRenovacion();
-      await recargarTodo();
 
-      if (r.pago && r.pago.estado === 'pendiente' || !r.membresia) {
-        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+      // 202 con tarjeta: el formulario seguro de CardNet (o la redirección
+      // del banco). La confirmación es solo de assets/cardnet.js.
+      if (r.cardnet || r.redireccion) {
+        const liberar = (texto) => {
+          btn.disabled = false;
+          btn.classList.remove('btn--ocupado');
+          avisoRen(texto || 'No se pudo completar el pago con tarjeta. No se le cobró nada.');
+        };
+        const manejadores = {
+          alAprobar: (d) => { terminarRenovacion(obj, d).catch((e) => liberar(e.message)); },
+          alRechazar: liberar,
+          alEsperar: (aviso) => { terminarRenovacion(obj, { aviso, pago: { estado: 'pendiente' } }).catch((e) => liberar(e.message)); },
+        };
+        if (r.cardnet) window.CardnetCaptura.abrir({ pago: r.pago, captura: r.cardnet, ...manejadores });
+        else window.CardnetCaptura.tratar({ estado: 202, datos: r }, manejadores);
         return;
       }
-      const fin = fechaCorta(r.membresia.fin);
-      avisoPlan(obj.vencido
-        ? `Listo: ${obj.nombre} vuelve a estar publicado hasta el ${fin}.`
-        : `Listo: ${obj.nombre} sigue publicado hasta el ${fin}.`, false);
+      await terminarRenovacion(obj, r);
     } catch (e) {
       btn.disabled = false;
       btn.classList.remove('btn--ocupado');
@@ -1695,8 +1793,14 @@ async function montarPanel() {
     campo.value = '1';
 
     const metodos = $('#ampliarMetodos');
-    metodos.hidden = METODOS_PAGO.length < 2;
-    metodos.innerHTML = METODOS_PAGO.length > 1
+    const conTarjeta = conCardnet();
+    metodos.hidden = !conTarjeta && METODOS_PAGO.length < 2;
+    // Ampliar no lleva casilla de renovación automática.
+    metodos.innerHTML = conTarjeta
+      ? window.CardnetCaptura.selectorDeMetodo({
+        metodos: METODOS_PAGO, tarjetas: TARJETAS, renovacion: { disponible: false }, prefijo: 'amp',
+      })
+      : METODOS_PAGO.length > 1
       ? '<legend class="comprobante__titulo">Forma de pago</legend>' + METODOS_PAGO.map((mt, i) => `
         <label class="opcion opcion--chica">
           <input type="radio" name="metodoAmp" value="${esc(mt)}"${i === 0 ? ' checked' : ''}>
@@ -1748,25 +1852,90 @@ async function montarPanel() {
 
   /* Interruptor de la renovación automática de un plan. Solo existe si
      el servidor la ofrece; si el PUT falla, la casilla vuelve a como
-     estaba y se dice por qué. */
-  $('#panelPlan').addEventListener('change', async (ev) => {
-    const chk = ev.target.closest('[data-renovacion-auto]');
-    if (!chk || !RENOVACION_AUTO.disponible) return;
-    const activar = chk.checked;
+     estaba y se dice por qué. Con CardNet, activar exige una tarjeta
+     guardada: con varias y sin tarjeta ya elegida para ese plan se pide
+     elegir con un <select> en línea (sin prompt()); con una sola se manda
+     esa; sin ninguna no se llama al servidor. */
+  async function ponerRenovacionAuto(chk, id, activar, metodoPago) {
     chk.disabled = true;
     try {
-      const r = await api(`/membresias/${encodeURIComponent(chk.dataset.renovacionAuto)}/renovacion-automatica`, {
-        metodo: 'PUT', cuerpo: { activar },
+      const r = await api(`/membresias/${encodeURIComponent(id)}/renovacion-automatica`, {
+        metodo: 'PUT', cuerpo: { activar, ...(metodoPago ? { metodoPago } : {}) },
       });
       if (!r) throw new Error('No hay conexión con el servidor.');
-      const ren = renovableDe(chk.dataset.renovacionAuto);
+      const ren = renovableDe(id);
       if (ren) ren.renovacion_automatica = activar;
+      // Recarga para que el estado diga la tarjeta y la fecha reales.
+      await recargarTodo();
       avisoPlan(activar ? 'Renovación automática activada.' : 'Renovación automática desactivada.', false);
     } catch (e) {
       chk.checked = !activar;
       avisoPlan(e.message);
     } finally {
       chk.disabled = false;
+    }
+  }
+
+  $('#panelPlan').addEventListener('change', async (ev) => {
+    const chk = ev.target.closest('[data-renovacion-auto]');
+    if (!chk || !RENOVACION_AUTO.disponible) return;
+    const id = chk.dataset.renovacionAuto;
+    const activar = chk.checked;
+    if (activar && Array.isArray(TARJETAS)) {
+      const activas = TARJETAS.filter((t) => t.activo);
+      const ren = renovableDe(id);
+      if (!activas.length) {
+        chk.checked = false;
+        avisoPlan('Para renovar automáticamente hace falta una tarjeta guardada. Se guarda la primera vez que paga con tarjeta.');
+        return;
+      }
+      if (activas.length > 1 && !(ren && ren.renovacionTarjeta)) {
+        chk.checked = false;
+        const pie = chk.closest('.membresia__renovar');
+        if (pie && !pie.querySelector('[data-renovacion-elegir]')) {
+          const opciones = activas.map((t) => `<option value="${esc(t.id)}">${esc(t.marca)} terminada en ${esc(t.ultimos4)}</option>`).join('');
+          pie.insertAdjacentHTML('beforeend', `<span class="renovar-auto" data-renovacion-elegir="${esc(id)}">
+            <label>Renovar con <select data-renovacion-tarjeta>${opciones}</select></label>
+            <button type="button" class="btn btn--linea btn--chico" data-renovacion-confirmar="${esc(id)}">Activar</button>
+          </span>`);
+        }
+        avisoPlan('Elija con qué tarjeta se renovará este plan.', false);
+        return;
+      }
+      await ponerRenovacionAuto(chk, id, true, activas.length === 1 ? activas[0].id : '');
+      return;
+    }
+    await ponerRenovacionAuto(chk, id, activar, '');
+  });
+
+  // «Activar» tras elegir la tarjeta entre varias.
+  $('#panelPlan').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-renovacion-confirmar]');
+    if (!b) return;
+    const caja = b.closest('[data-renovacion-elegir]');
+    const lista = caja && caja.querySelector('[data-renovacion-tarjeta]');
+    const chk = caja && caja.parentNode.querySelector('[data-renovacion-auto]');
+    if (!lista || !chk || !lista.value) return;
+    chk.checked = true;
+    b.disabled = true;
+    await ponerRenovacionAuto(chk, b.dataset.renovacionConfirmar, true, lista.value);
+    b.disabled = false;
+  });
+
+  // «Borrar» una tarjeta guardada, con confirmación. api() lanza.
+  $('#panelPlan').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-borrar-tarjeta]');
+    if (!b) return;
+    if (!window.confirm('Se borrará esta tarjeta. Las compras ya hechas no cambian y, si renovaba algún plan, su renovación automática se apagará.')) return;
+    b.disabled = true;
+    try {
+      const r = await api(`/metodos-pago/${encodeURIComponent(b.dataset.borrarTarjeta)}`, { metodo: 'DELETE' });
+      if (!r) throw new Error('No hay conexión con el servidor.');
+      await recargarTodo();
+      avisoPlan('Tarjeta borrada.', false);
+    } catch (e) {
+      b.disabled = false;
+      avisoPlan(e.message);
     }
   });
 
@@ -1775,6 +1944,20 @@ async function montarPanel() {
      anuncio de esta cuenta y nunca se pinta (T-05.3-17). */
   const idRenovar = new URLSearchParams(location.search).get('renovar');
   if (idRenovar && ANUNCIOS.some((x) => x.id === idRenovar)) abrirRenovacion({ idAnuncio: idRenovar });
+
+  /* Lo que se hace al quedar cobrada (o en espera) una ampliación: igual
+     para el 200 directo y para el pago con tarjeta que aprueba la
+     confirmación de CardNet. */
+  async function terminarAmpliacion(m, cupo, r) {
+    await refrescarCupos();
+    cerrarAmpliacion();
+
+    if (r.pago && r.pago.estado === 'pendiente') {
+      avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+      return;
+    }
+    avisoPlan(`Su plan ${m.plan_nombre} pasó a ${cupo} publicaciones activas permitidas.`, false);
+  }
 
   /* Solo `cupo` y `metodo`: nunca importe (T-05.4-09). `api()` lanza, así
      que va con su try/catch. Un 202 no es una ampliación hecha: la
@@ -1790,23 +1973,34 @@ async function montarPanel() {
 
     const metodo = document.querySelector('input[name="metodoAmp"]:checked');
     const cupo = m.anuncios_incluidos + cantidad;
+    const deTarjeta = conCardnet() ? window.CardnetCaptura.leerMetodo($('#ampliarMetodos')) : {};
 
     btn.disabled = true;
     btn.classList.add('btn--ocupado');
     avisoAmp('');
     try {
       const r = await api(`/membresias/${encodeURIComponent(m.id)}/ampliar`, {
-        metodo: 'POST', cuerpo: { cupo, ...(metodo ? { metodo: metodo.value } : {}) },
+        metodo: 'POST', cuerpo: { cupo, ...(metodo ? { metodo: metodo.value } : {}), ...deTarjeta },
       });
       if (!r) throw new Error('No hay conexión con el servidor.');
-      await refrescarCupos();
-      cerrarAmpliacion();
 
-      if (r.pago && r.pago.estado === 'pendiente') {
-        avisoPlan(r.aviso || 'Su pago quedó en espera de confirmación.', false);
+      // 202 con tarjeta: formulario seguro de CardNet o redirección del banco.
+      if (r.cardnet || r.redireccion) {
+        const liberar = (texto) => {
+          btn.disabled = false;
+          btn.classList.remove('btn--ocupado');
+          avisoAmp(texto || 'No se pudo completar el pago con tarjeta. No se le cobró nada.');
+        };
+        const manejadores = {
+          alAprobar: (d) => { terminarAmpliacion(m, cupo, d).catch((e) => liberar(e.message)); },
+          alRechazar: liberar,
+          alEsperar: (aviso) => { terminarAmpliacion(m, cupo, { aviso, pago: { estado: 'pendiente' } }).catch((e) => liberar(e.message)); },
+        };
+        if (r.cardnet) window.CardnetCaptura.abrir({ pago: r.pago, captura: r.cardnet, ...manejadores });
+        else window.CardnetCaptura.tratar({ estado: 202, datos: r }, manejadores);
         return;
       }
-      avisoPlan(`Su plan ${m.plan_nombre} pasó a ${cupo} publicaciones activas permitidas.`, false);
+      await terminarAmpliacion(m, cupo, r);
     } catch (e) {
       btn.disabled = false;
       btn.classList.remove('btn--ocupado');

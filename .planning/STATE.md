@@ -31,10 +31,14 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 - **En producción:** fases 05.1 (precio único), 05.2 (publicar este equipo) y 05.3 (renovación,
   vencimientos y avisos 7/3/1; PR #39, «Sitio arriba: 069fcee»). La casilla de renovación automática está
   construida y **apagada** (`MERCA_CARDNET`).
-- **05.4 (dealer con capacidad y consola de solo lectura):** planes 01-07 en producción (PR #44, «Sitio
-  arriba: a67f249»); el 08 (recorrido de punta a punta y auditorías) y la verificación (`human_needed`: solo
-  faltan dos revisiones visuales de Victor, ver «Preguntas») van en el PR de cierre. Contratación en la
-  **2.3**: quien aceptó la 2.2 vuelve a aceptar antes de su próximo pago.
+- **05.4 (dealer con capacidad y consola de solo lectura):** entera en producción (PR #44 y #45, «Sitio
+  arriba: 7edc796»); verificación `human_needed` (dos revisiones visuales de Victor, ver «Preguntas»).
+  Contratación en la **2.3**: quien aceptó la 2.2 vuelve a aceptar antes de su próximo pago.
+- **Fase 6 (CardNet) construida, probada y apagada** en la rama `claude/fervent-keller-fwbp80` (PR de
+  cierre abierto, **sin fusionar**): 10 planes, verificación 5/5 `human_needed`, W-01 arreglado. **No se
+  fusiona hasta que Victor confirme el respaldo verificado de la base de producción** (la migración
+  `2026-10-cardnet` se aplica sola al reiniciar tras el despliegue; `deploy/desplegar-mercamaquinarias` no
+  respalda) o diga que se fusione sin él. Encender: `deploy/README.md` §10c y `06-USER-SETUP.md`.
 - **Preparado sin planificar todavía:** la 12 tiene `CONTEXT.md` y `RESEARCH.md`; la facturación
   electrónica tiene `research/facturacion-electronica.md`.
 - **En la nube:** puppeteer como root necesita un envoltorio de Chrome en el scratchpad con `--no-sandbox` y
@@ -42,10 +46,9 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 ### Lo que falta, en orden
 
-1. **Fase 6 — CardNet.** Replanificar desde el 06-02 contra el modelo nuevo: la migración `2026-10-cardnet`
-   no vuelve a crear las columnas `renovacion_*` de la 05.3, y el cobro recurrente respeta las guardas de la
-   05.4 (una operación de capacidad pendiente por membresía; `aprobarPago` no suma a una membresía vencida).
-   Ejecutar y entregar apagada.
+1. **Fase 6 — fusionar y desplegar** en cuanto Victor confirme el respaldo (ver «Dónde estamos»). Antes de
+   encender CardNet: que `cobrosSinAplicar` se pueda marcar como devuelto (hoy el informe los repite para
+   siempre) y certificar en lab lo marcado «POR CONFIRMAR EN LAB» (W-01 incluido).
 2. **Fase 12 — lote mensual de comprobantes.** Planificar ya con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP
    escrito a mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni
    `lotes_contador`, restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista

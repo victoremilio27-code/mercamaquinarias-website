@@ -512,6 +512,7 @@ CREATE TABLE IF NOT EXISTS suscripciones (
   dias_ciclo      INTEGER,
   inicio          TEXT NOT NULL,
   fin             TEXT,                    -- NULL en membresía viva
+  -- Fecha del próximo intento de la renovación automática (fase 6).
   proximo_cargo   TEXT,
   cancelada       TEXT,
   creada          TEXT NOT NULL,
@@ -519,8 +520,11 @@ CREATE TABLE IF NOT EXISTS suscripciones (
   -- nunca marcada por defecto; el cobro llega con CardNet (fase 6).
   -- Al desactivarla se conservan fecha y texto como historial.
   renovacion_automatica INTEGER NOT NULL DEFAULT 0,
-  renovacion_aceptada   TEXT,             -- cuándo aceptó el texto
-  renovacion_texto      TEXT              -- el texto aceptado, tal cual
+  renovacion_aceptada   TEXT,             -- cuándo aceptó el texto (y renovacion_texto guarda el texto tal cual)
+  renovacion_texto      TEXT,
+  metodo_pago_id      TEXT,                 -- fase 6 (2026-10-cardnet): con qué tarjeta se renueva
+  renovacion_intentos INTEGER NOT NULL DEFAULT 0, -- intentos del ciclo
+  renovacion_avisada  TEXT                  -- el `fin` del ciclo ya avisado
 );
 
 CREATE INDEX IF NOT EXISTS ix_susc_org ON suscripciones (organizacion_id, estado);
@@ -538,7 +542,13 @@ CREATE TABLE IF NOT EXISTS metodos_pago (
   vence_mes       INTEGER,
   vence_anio      INTEGER,
   predeterminado  INTEGER NOT NULL DEFAULT 0,
-  creado          TEXT NOT NULL
+  creado          TEXT NOT NULL,
+  procesador_cliente_id TEXT,              -- fase 6 (2026-10-cardnet): cliente en CardNet
+  procesador_perfil_id  TEXT,              -- perfil de pago en CardNet
+  activo                INTEGER NOT NULL DEFAULT 1,
+  fallos_seguidos       INTEGER NOT NULL DEFAULT 0,
+  borrado               TEXT,              -- borrado lógico: los pagos siguen apuntándole
+  aviso_vencimiento     TEXT               -- mes AAAA-MM del último aviso de tarjeta por vencer
 );
 
 CREATE INDEX IF NOT EXISTS ix_metodos_org ON metodos_pago (organizacion_id);
@@ -567,8 +577,48 @@ CREATE TABLE IF NOT EXISTS pagos (
   ajuste_tasa     REAL,
   itbis_tasa      REAL,
   -- Anuncio que paga este cobro (migración 2026-09-borradores); sin clave foránea: borrar el anuncio no toca el rastro del pago.
-  anuncio_id      TEXT
+  anuncio_id      TEXT,
+  procesador_id    TEXT,               -- fase 6 (2026-10-cardnet): id de la compra en CardNet
+  autorizacion     TEXT,
+  codigo_respuesta TEXT,
+  motivo           TEXT,
+  intentos         INTEGER NOT NULL DEFAULT 0
 );
+
+-- El cliente de cada organización en cada procesador (fase 6).
+CREATE TABLE IF NOT EXISTS clientes_procesador (
+  organizacion_id TEXT NOT NULL,
+  procesador      TEXT NOT NULL,
+  cliente_id      TEXT NOT NULL,
+  creado          TEXT NOT NULL,
+  PRIMARY KEY (organizacion_id, procesador)
+);
+
+-- Rastro de solo añadir de lo enviado y recibido de la pasarela (fase 6):
+-- los disparadores abortan un UPDATE o un DELETE.
+CREATE TABLE IF NOT EXISTS pagos_eventos (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  pago_id    TEXT,
+  procesador TEXT NOT NULL,
+  origen     TEXT NOT NULL,
+  tipo       TEXT NOT NULL,
+  cuerpo     TEXT,
+  creado     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_pagos_eventos_pago ON pagos_eventos (pago_id, id);
+
+CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_cambios
+  BEFORE UPDATE ON pagos_eventos
+BEGIN
+  SELECT RAISE(ABORT, 'Los eventos de pago no se modifican');
+END;
+
+CREATE TRIGGER IF NOT EXISTS tr_pagos_eventos_sin_borrado
+  BEFORE DELETE ON pagos_eventos
+BEGIN
+  SELECT RAISE(ABORT, 'Los eventos de pago no se borran');
+END;
 
 CREATE INDEX IF NOT EXISTS ix_pagos_org ON pagos (organizacion_id, creado);
 CREATE INDEX IF NOT EXISTS ix_pagos_suscripcion ON pagos (suscripcion_id);

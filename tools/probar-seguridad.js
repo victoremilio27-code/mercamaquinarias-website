@@ -687,6 +687,88 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     cuerpo: { estado: 'vendido' }, cabeceras: { cookie: `te_sesion=${db.abrirSesion(idCurioso)}` } });
   comprobar(ajenaPatch.codigo === 404, `otra cuenta no puede cambiarle el estado (fue ${ajenaPatch.codigo})`);
 
+  /* ── CSP: el iframe de CardNet solo con CardNet encendido ──
+     La referencia es la CSP de antes de la fase 06, copiada LITERAL de
+     tools/serve.js. Si alguien la "mejora" sin querer con CardNet
+     apagado, esta sección lo dice: apagado debe ser byte a byte lo de
+     siempre. Esta sección borra las MERCA_CARDNET* y las restaura al
+     acabar, porque el resto del arnés no las toca. */
+  console.log('\nCSP y CardNet');
+  const cabeceras = require('./cabeceras.js');
+  const CSP_DE_ANTES = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "connect-src 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "object-src 'none'",
+  ].join('; ');
+  const entornoCardnet = {};
+  Object.keys(process.env).filter((k) => k.startsWith('MERCA_CARDNET')).forEach((k) => {
+    entornoCardnet[k] = process.env[k];
+    delete process.env[k];
+  });
+  const limpiarCardnet = () => Object.keys(process.env)
+    .filter((k) => k.startsWith('MERCA_CARDNET')).forEach((k) => { delete process.env[k]; });
+
+  comprobar(cabeceras.politicaDeContenido() === CSP_DE_ANTES,
+    'CSP apagada idéntica: sin variables, la cadena es la de antes de la fase');
+  comprobar(cabeceras.CABECERAS_SEGURIDAD['Content-Security-Policy'] === CSP_DE_ANTES,
+    'la constante CABECERAS_SEGURIDAD conserva la CSP apagada');
+  process.env.MERCA_CARDNET = 'apagado';
+  process.env.MERCA_CARDNET_LLAVE_PUB = 'pub-falsa';
+  process.env.MERCA_CARDNET_LLAVE_PRIV = 'priv-falsa';
+  comprobar(cabeceras.politicaDeContenido() === CSP_DE_ANTES,
+    'MERCA_CARDNET=apagado, aun con llaves, deja la CSP de antes');
+  limpiarCardnet();
+  process.env.MERCA_CARDNET = 'lab';
+  comprobar(cabeceras.politicaDeContenido() === CSP_DE_ANTES,
+    'lab sin llaves sigue apagado: la CSP no cambia');
+
+  process.env.MERCA_CARDNET_LLAVE_PUB = 'pub-falsa';
+  process.env.MERCA_CARDNET_LLAVE_PRIV = 'priv-falsa';
+  const cspLab = cabeceras.politicaDeContenido();
+  comprobar(cspLab === CSP_DE_ANTES.replace("media-src 'self' blob:",
+    "media-src 'self' blob:; frame-src https://labservicios.cardnet.com.do"),
+  'lab con las dos llaves: solo se inserta frame-src del origen de lab tras media-src');
+  comprobar(cspLab.includes("script-src 'self';") && !/script-src[^;]*cardnet/.test(cspLab),
+    "encendido, script-src sigue siendo 'self' (el script de CardNet no entra en nuestro origen)");
+  comprobar(cspLab.includes("frame-ancestors 'none'"), "encendido, frame-ancestors 'none' sigue igual");
+  comprobar(cabeceras.cabecerasDe({}, { produccion: false })['Content-Security-Policy'] === cspLab,
+    'cabecerasDe recalcula la política en cada llamada: encender cambia la cabecera sin recargar');
+
+  limpiarCardnet();
+  process.env.MERCA_CARDNET = 'produccion';
+  process.env.MERCA_CARDNET_LLAVE_PUB = 'pub-falsa';
+  process.env.MERCA_CARDNET_LLAVE_PRIV = 'priv-falsa';
+  comprobar(cabeceras.politicaDeContenido().includes('frame-src https://servicios.cardnet.com.do;'),
+    'produccion con las dos llaves: frame-src del origen de produccion');
+
+  limpiarCardnet();
+  comprobar(cabeceras.cabecerasDe({}, { produccion: false })['Content-Security-Policy'] === CSP_DE_ANTES,
+    'apagar de nuevo devuelve la CSP de antes sin recargar el módulo');
+
+  const sinHsts = cabeceras.cabecerasDe({}, { produccion: false });
+  comprobar(sinHsts['X-Content-Type-Options'] === 'nosniff' && sinHsts['X-Frame-Options'] === 'DENY'
+    && sinHsts['Referrer-Policy'] === 'strict-origin-when-cross-origin'
+    && sinHsts['Permissions-Policy'] === 'camera=(), microphone=(), geolocation=(), payment=()'
+    && Object.keys(sinHsts).length === 5,
+  'las otras cabeceras de seguridad son las de siempre y no hay HSTS fuera de producción');
+  const httpsAntes = process.env.MERCA_HTTPS;
+  process.env.MERCA_HTTPS = '1';
+  comprobar(cabeceras.cabecerasDe({}, { produccion: true })['Strict-Transport-Security']
+    === 'max-age=31536000; includeSubDomains', 'con produccion y MERCA_HTTPS=1 sigue el HSTS');
+  comprobar(!('Strict-Transport-Security' in cabeceras.cabecerasDe({}, { produccion: false })),
+    'sin produccion no hay HSTS aunque MERCA_HTTPS=1');
+  if (httpsAntes === undefined) delete process.env.MERCA_HTTPS; else process.env.MERCA_HTTPS = httpsAntes;
+  comprobar(cabeceras.cabecerasDe({ 'X-Otra': 'a' })['X-Otra'] === 'a', 'las cabeceras extra se conservan');
+  Object.assign(process.env, entornoCardnet);
+
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
 })();

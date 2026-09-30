@@ -38,6 +38,13 @@ process.env.MERCA_VIDEOS = path.join(BANCO, 'videos');
 process.env.MERCA_CORREO = 'archivo';
 process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 
+/* Un .env local con CardNet encendido cambiaría metodosDeCobro() (pondría
+   `cardnet` de primero y quitaría `demo`) y, con él, el resultado de esta
+   prueba. Se borra todo lo que venga de fuera (D-32). */
+for (const k of Object.keys(process.env)) {
+  if (k.startsWith('MERCA_CARDNET')) delete process.env[k];
+}
+
 /* Un .env local o el entorno de quien corre la prueba no puede decidir
    el resultado: la transferencia se apaga del todo, como en
    probar-transferencia.js. */

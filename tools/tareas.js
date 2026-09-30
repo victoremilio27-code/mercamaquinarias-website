@@ -81,7 +81,11 @@ function vencerMembresias() {
  * No hay preferencia de «no quiero avisos» en la base y no se inventa
  * (D-10). */
 async function avisarRecordatorios() {
-  const pendientes = db.recordatoriosPendientes();
+  /* Con CardNet activo, la suscripción que se va a renovar sola no recibe
+     los avisos 7/3/1: dirían «vence» de algo que no vencerá. Los sustituye
+     el aviso de renovación y, si el cobro falla, el correo de rechazo
+     (R-06). Apagado, la opción es false y todo sale exactamente como antes. */
+  const pendientes = db.recordatoriosPendientes(undefined, { omitirAutomaticas: require('./cardnet').activo() });
   if (!pendientes.length) return anotar('por-vencer', 'sin anuncios próximos a vencer');
 
   let enviados = 0;
@@ -323,6 +327,24 @@ function componerInforme(i, periodo) {
     l.push(fila('Devoluciones', `${i.dinero.devueltos.n} · ${pesos(i.dinero.devueltos.total)}`));
   }
 
+  /* Un cobro aprobado en la pasarela sin fila aprobada nuestra, o cobrado
+     y sin poder aplicar, tiene que ser ruidoso: es dinero de un cliente.
+     Este informe ya lo leen gerencia y facturación (nunca un contador:
+     sale solo por `mandarInforme`). Con CardNet apagado y sin nada que
+     contar, la sección no existe y el informe sale como siempre. */
+  const p = i.pasarela || {};
+  const recuperados = p.recuperados || [];
+  const sinAplicar = p.sinAplicar || [];
+  const atascados = p.atascados || 0;
+  if (require('./cardnet').activo() || recuperados.length || sinAplicar.length || atascados) {
+    l.push(titulo('Pasarela de pago'));
+    l.push(fila('Pagos recuperados por la conciliación', recuperados.length));
+    recuperados.forEach((r) => l.push(`    ${r.referencia} · ${pesos(r.total)}`));
+    l.push(fila('Pagos con tarjeta atascados', atascados));
+    l.push(fila('Cobrados sin aplicar (devolver)', sinAplicar.length));
+    sinAplicar.forEach((r) => l.push(`    ${r.referencia} · ${pesos(r.total)}`));
+  }
+
   l.push(titulo('Comprobantes emitidos'));
   if (!i.comprobantes.porTipo.length) {
     l.push('  Ninguno en el periodo.');
@@ -552,12 +574,110 @@ function limpiarBorradores() {
   anotar('borradores', `${borrados} borrador(es) abandonado(s) borrado(s)`);
 }
 
+/* La conciliación de pagos con tarjeta: el proceso de `mercamaquinarias-pagos`
+   la corre cada 10 minutos y la tanda diaria la repite por si el
+   temporizador no estuviera instalado. Es idempotente y barata. Con CardNet
+   apagado no llama a nada. */
+async function reconciliarPagos() {
+  const cardnet = require('./cardnet');
+  if (!cardnet.activo()) return anotar('reconciliar', 'CardNet apagado: nada que conciliar');
+  const pagos = require('./pagos');
+  if (SECO) {
+    const n = db.pagosCardnetPorReconciliar({ minutos: 10 }).length;
+    return anotar('reconciliar', `revisaría ${n} pago(s) con tarjeta pendientes`);
+  }
+  const r = await pagos.reconciliar();
+  anotar('reconciliar', `${r.revisados} pago(s) revisados · ${r.recuperados.length} recuperados · ${r.rechazados} rechazados · ${r.fallidos} fallidos`);
+}
+
+/* La renovación automática con tarjeta (06-08), en este orden: primero
+ * los avisos de 7 días (una vez por ciclo), luego los cobros de hoy y un
+ * correo por cada rechazo. Va antes de los avisos de vencimiento: el
+ * cobro de hoy se intenta antes de avisar de nada.
+ *
+ * El aviso solo se anota si el correo se entregó: uno que falla se
+ * reintenta en la pasada siguiente, y uno entregado no se repite aunque
+ * la tarea corra dos veces. Con CardNet apagado no hace nada. Todos los
+ * correos van al propietario de la cuenta y a nadie más. */
+async function renovarSuscripciones() {
+  const cardnet = require('./cardnet');
+  if (!cardnet.activo()) return anotar('renovar', 'CardNet apagado: no se renueva nada');
+  const pagos = require('./pagos');
+
+  const porAvisar = db.suscripcionesPorAvisar();
+  if (SECO) {
+    return anotar('renovar', `avisaría ${porAvisar.length} renovación(es) próximas y cobraría ${db.suscripcionesPorRenovar().length}`);
+  }
+
+  let avisos = 0;
+  for (const s of porAvisar) {
+    if (!s.correo) continue;
+    try {
+      // El mismo anuncio que nombrará el cobro (ver pagos.renovarAutomaticas).
+      const idAnuncio = s.anuncios_incluidos === 1 ? db.anuncioUnicoDeSuscripcion(s.id) : null;
+      const { cobro, intencion } = pagos.cobroDeRenovacion(s, { idAnuncio });
+      const r = await correo.enviarRenovacionProxima({
+        para: s.correo, nombre: s.nombre, concepto: intencion.concepto, total: cobro.total,
+        // Si no se podrá renovar sola, lo que importa es cuándo vence.
+        fecha: s.usable ? s.primerIntento : s.fin,
+        marca: s.marca, ultimos4: s.ultimos4, noSeRenovara: !s.usable,
+        idAnuncio,
+      });
+      if (r && r.entregado) { db.anotarAvisoRenovacion(s.id, s.fin); avisos++; }
+    } catch (e) {
+      console.error(`  ✗ aviso de renovación de ${s.id}: ${e.message}`);
+    }
+  }
+
+  const r = await pagos.renovarAutomaticas();
+  let correos = 0;
+  for (const x of r.rechazadas) {
+    if (!x.correo) continue;
+    try {
+      const enviado = await correo.enviarRenovacionRechazada({
+        para: x.correo, nombre: x.nombre, concepto: x.concepto, motivo: x.motivo,
+        intento: x.intento, quedan: x.quedan, fin: x.fin, idAnuncio: x.idAnuncio,
+      });
+      if (enviado && enviado.entregado) correos++;
+    } catch (e) {
+      console.error(`  ✗ correo de rechazo de ${x.idSusc}: ${e.message}`);
+    }
+  }
+  anotar('renovar', `${avisos} aviso(s) de 7 días · ${r.cobradas.length} cobrada(s) · ${r.gratuitas.length} sin costo · `
+    + `${r.rechazadas.length} rechazada(s) (${correos} correo(s)) · ${r.pendientes.length} pendiente(s) · ${r.omitidas.length} omitida(s)`);
+}
+
+/* Un aviso por tarjeta que vence este mes o ya venció y sostiene alguna
+   renovación automática; `aviso_vencimiento` guarda el mes avisado y
+   repetir la tarea no reenvía. Apagado, no hace nada. */
+async function avisarTarjetas() {
+  const cardnet = require('./cardnet');
+  if (!cardnet.activo()) return anotar('avisar-tarjetas', 'CardNet apagado: nada que avisar');
+  const lista = db.tarjetasPorVencer();
+  if (SECO) return anotar('avisar-tarjetas', `avisaría de ${lista.length} tarjeta(s) por vencer`);
+  let enviados = 0;
+  for (const m of lista) {
+    if (!m.correo) continue;
+    try {
+      const r = await correo.enviarTarjetaPorVencer({
+        para: m.correo, nombre: m.nombre, marca: m.marca, ultimos4: m.ultimos4, venceMes: m.vence_mes, venceAnio: m.vence_anio,
+      });
+      if (r && r.entregado) { db.anotarAvisoVencimiento(m.id, m.mes); enviados++; }
+    } catch (e) {
+      console.error(`  ✗ aviso de tarjeta ${m.id}: ${e.message}`);
+    }
+  }
+  anotar('avisar-tarjetas', `${enviados} de ${lista.length} aviso(s) de tarjeta por vencer`);
+}
+
 const TAREAS = {
   suscripciones: vencerMembresias,
   caducar,
   perfiles: apagarPerfiles,
   'informe-semanal': informeSemanal,
   'informe-mensual': informeMensual,
+  renovar: renovarSuscripciones,
+  'avisar-tarjetas': avisarTarjetas,
   'por-vencer': avisarRecordatorios,
   vencidos: avisarVencidos,
   comprobantes: reenviarComprobantes,
@@ -567,6 +687,7 @@ const TAREAS = {
   huerfanos: recogerHuerfanos,
   respaldo: respaldar,
   optimizar,
+  reconciliar: reconciliarPagos,
 };
 
 async function principal() {
@@ -613,4 +734,4 @@ async function principal() {
    tanda ni terminar el proceso. */
 if (require.main === module) principal();
 
-module.exports = { TAREAS, vencerMembresias, avisarRecordatorios };
+module.exports = { TAREAS, vencerMembresias, avisarRecordatorios, componerInforme };
