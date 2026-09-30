@@ -326,6 +326,21 @@ function emitirCodigo({ correo: destino, tipo, idUsuario, nombre }) {
   return { limitado: false, minutos };
 }
 
+/* Qué se le dice a quien falla un código. Lo comparten `verificar` y la
+   confirmación del cambio de correo: los mismos motivos, las mismas frases. */
+function mensajeDeCodigo(r) {
+  const mensajes = {
+    inexistente: 'No hay ningún código pendiente. Solicite uno nuevo.',
+    vencido: 'El código venció. Solicite uno nuevo.',
+    agotado: 'Demasiados intentos con ese código. Solicite uno nuevo.',
+    usado: 'Ese código ya se utilizó.',
+    incorrecto: r.restantes > 0
+      ? `Código incorrecto. Le quedan ${r.restantes} ${r.restantes === 1 ? 'intento' : 'intentos'}.`
+      : 'Código incorrecto. Solicite uno nuevo.',
+  };
+  return mensajes[r.motivo] || 'Código incorrecto';
+}
+
 async function registro(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
@@ -474,6 +489,7 @@ async function entrar(req, res) {
 
   // Equipo ya conocido: la contraseña basta. En uno nuevo, código.
   if (db.dispositivoDeConfianza(leerCookies(req)[COOKIE_EQUIPO], u.id)) {
+    db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
     const testigo = db.abrirSesion(u.id);
     return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
   }
@@ -498,21 +514,12 @@ async function verificar(req, res) {
   }
 
   const r = db.verificarCodigo({ correo: destino, tipo, codigo: c.codigo });
-  if (!r.ok) {
-    const mensajes = {
-      inexistente: 'No hay ningún código pendiente. Solicite uno nuevo.',
-      vencido: 'El código venció. Solicite uno nuevo.',
-      agotado: 'Demasiados intentos con ese código. Solicite uno nuevo.',
-      usado: 'Ese código ya se utilizó.',
-      incorrecto: r.restantes > 0
-        ? `Código incorrecto. Le quedan ${r.restantes} ${r.restantes === 1 ? 'intento' : 'intentos'}.`
-        : 'Código incorrecto. Solicite uno nuevo.',
-    };
-    return fallo(res, 400, mensajes[r.motivo] || 'Código incorrecto');
-  }
+  if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
 
   const u = db.usuarioPorId(r.usuario_id);
   if (!u) return fallo(res, 400, 'La cuenta ya no existe');
+  // Entrar el titular anula lo que alguien pidió a sus espaldas (10.1).
+  db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
 
   if (tipo === 'verificacion') {
     db.marcarCorreoVerificado(u.id);
@@ -607,6 +614,7 @@ async function restablecer(req, res) {
   // hubiera entrado sin permiso. Es el sentido de recuperarla.
   db.cerrarTodoDe(u.id);
   db.marcarCorreoVerificado(u.id);
+  db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
   correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre });
 
   const testigo = db.abrirSesion(u.id);
@@ -617,6 +625,263 @@ function salir(req, res, ctx) {
   if (ctx) db.cerrarSesion(ctx.testigo);
   return responder(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Max-Age=0` });
 }
+
+/* ── Cuenta con sesión: correo, contraseña y otras sesiones (10.1) ─── */
+
+/* Cambiar el correo pide la contraseña actual (quien encuentra una
+   sesión abierta no debe poder llevarse la cuenta) y un código enviado
+   al correo NUEVO (prueba que la dirección existe y es de quien la
+   escribe). Hasta confirmarlo, nada cambia. */
+const pedirCambioCorreo = conSesion(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`cambio-correo:${ctx.usuario.id}`, 5, 60)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere un rato antes de volver a pedirlo.');
+  }
+
+  const u = db.usuarioPorId(ctx.usuario.id);
+  if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
+    return fallo(res, 401, 'La contraseña no es correcta');
+  }
+  if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
+  const nuevo = String(c.correo).trim().toLowerCase();
+  if (nuevo === u.correo) return fallo(res, 400, 'Ese ya es el correo de su cuenta');
+  if (db.usuarioPorCorreo(nuevo)) return fallo(res, 409, 'Ese correo ya tiene una cuenta');
+
+  const e = emitirCodigo({ correo: nuevo, tipo: 'cambio_correo', idUsuario: u.id, nombre: u.nombre });
+  if (e.limitado) return fallo(res, 429, 'Ya pidió varios códigos para ese correo. Espere unos minutos.');
+
+  return responder(res, 202, {
+    correo: nuevo,
+    minutos: e.minutos,
+    mensaje: `Le enviamos un código de 6 dígitos a ${nuevo}. Escríbalo para confirmar el cambio.`,
+  });
+});
+
+const confirmarCambioCorreo = conSesion(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`confirmar-correo:${ctx.usuario.id}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
+  }
+
+  const destino = String(c.correo || '').trim().toLowerCase();
+  const r = db.verificarCodigo({ correo: destino, tipo: 'cambio_correo', codigo: c.codigo });
+  if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
+  // El código se pidió desde OTRA cuenta: no vale para esta.
+  if (r.usuario_id !== ctx.usuario.id) return fallo(res, 400, 'Código incorrecto');
+
+  const u = db.usuarioPorId(ctx.usuario.id);
+  const cambio = db.cambiarCorreo({
+    idUsuario: u.id, nuevo: destino, via: 'usuario', ip: origen(req),
+    verificado: true, conReversion: true,
+  });
+  db.cerrarOtrasDe(u.id, ctx.testigo);
+  db.anularRecuperacionesDe(u.id, 'El titular cambió su correo');
+
+  correo.enviarAvisoCambioCorreo({
+    para: cambio.anterior, nombre: u.nombre, nuevo: cambio.nuevo,
+    enlaceRevertir: `${correo.SITIO}/cuenta.html?revertir=${cambio.testigoRevertir}`,
+  });
+  correo.enviarCorreoCambiado({ para: cambio.nuevo, nombre: u.nombre });
+
+  return responder(res, 200, sesionPublica(u.id));
+});
+
+/* «No fui yo». Sin sesión: quien lo usa es el dueño al que ya le quitaron
+   la cuenta. El testigo es de 32 bytes al azar y solo sirve una vez; el
+   efecto se aplica con POST, nunca con el GET del enlace, porque los
+   antivirus de correo abren los enlaces por su cuenta. */
+async function revertirCorreo(req, res) {
+  const c = await leerCuerpo(req);
+  const ip = origen(req);
+  if (!db.permitir(`revertir:${ip}`, 10, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
+  }
+
+  const testigo = String(c.testigo || '');
+  if (!/^[0-9a-f]{64}$/.test(testigo)) return fallo(res, 400, 'El enlace no es válido o ya se usó');
+
+  const r = db.revertirCambioCorreo(testigo, ip);
+  if (!r.ok) {
+    if (r.motivo === 'vencido') return fallo(res, 400, 'El enlace venció. Escríbanos a soporte para recuperar su cuenta.');
+    if (r.motivo === 'ocupado') return fallo(res, 409, 'Ese correo ya lo usa otra cuenta. Escríbanos a soporte');
+    return fallo(res, 400, 'El enlace no es válido o ya se usó');
+  }
+
+  const u = db.usuarioPorId(r.idUsuario);
+  // Quien tomó la cuenta pudo haber puesto su contraseña y abierto
+  // sesiones: se cierra todo y se deja una contraseña que nadie conoce.
+  db.cerrarTodoDe(u.id);
+  db.anularClave(u.id);
+  db.anularRecuperacionesDe(u.id, 'El titular revirtió el cambio de correo');
+  emitirCodigo({ correo: u.correo, tipo: 'restablecer', idUsuario: u.id, nombre: u.nombre });
+
+  return responder(res, 200, {
+    verificacion: 'restablecer',
+    correo: u.correo,
+    mensaje: 'Su cuenta volvió a este correo. Le enviamos un código para crear una contraseña nueva.',
+  });
+}
+
+const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`clave:${ctx.usuario.id}`, 5, 60)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere un rato.');
+  }
+
+  const u = db.usuarioPorId(ctx.usuario.id);
+  if (!u || !db.claveCorrecta(String(c.actual || ''), u.clave_hash, u.clave_sal)) {
+    return fallo(res, 401, 'La contraseña actual no es correcta');
+  }
+  const debil = claveDebil(c.nueva, u.correo);
+  if (debil) return fallo(res, 400, debil);
+
+  db.cambiarClave(u.id, c.nueva);
+  db.cerrarOtrasDe(u.id, ctx.testigo);
+  correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre });
+
+  return responder(res, 200, { ok: true, mensaje: 'Su contraseña cambió y se cerraron las demás sesiones.' });
+});
+
+const cerrarOtrasSesiones = conSesion((req, res, ctx) =>
+  responder(res, 200, { ok: true, cerradas: db.cerrarOtrasDe(ctx.usuario.id, ctx.testigo) }));
+
+/* ── Recuperación sin acceso al correo (10.1) ─────────────── */
+
+const MENSAJE_RECUPERACION = 'Recibimos su solicitud. Si los datos corresponden a una cuenta, '
+  + 'la revisaremos y le escribiremos al correo de contacto que nos dio.';
+
+/* La respuesta es idéntica exista o no la cuenta, y también cuando ya
+   había una solicitud pendiente: si no, este formulario serviría para
+   averiguar qué correos están registrados. El tope por IP responde 429
+   sin decir nada de la cuenta. */
+async function pedirRecuperacion(req, res) {
+  const c = await leerCuerpo(req);
+  const ip = origen(req);
+  if (!db.permitir(`recuperacion:${ip}`, 3, 60)) {
+    return fallo(res, 429, 'Demasiadas solicitudes desde esta conexión. Inténtelo más tarde.');
+  }
+
+  if (!correoValido(c.correoCuenta)) return fallo(res, 400, 'Escriba el correo de su cuenta');
+  if (!correoValido(c.correoContacto)) return fallo(res, 400, 'Escriba un correo de contacto válido');
+  const correoCuenta = String(c.correoCuenta).trim().toLowerCase();
+  const correoContacto = String(c.correoContacto).trim().toLowerCase();
+  if (correoCuenta === correoContacto) {
+    return fallo(res, 400, 'El correo de contacto tiene que ser distinto al de la cuenta');
+  }
+  const nombre = texto(c.nombre, 120);
+  if (!nombre) return fallo(res, 400, 'Escriba su nombre');
+  const detalle = String(c.detalle || '').trim();
+  if (detalle.length < 20) return fallo(res, 400, 'Cuéntenos qué puede probar de que la cuenta es suya (al menos 20 caracteres)');
+  if (detalle.length > 2000) return fallo(res, 400, 'El detalle es demasiado largo (máximo 2000 caracteres)');
+
+  let rnc = null;
+  if (texto(c.rnc, 20)) {
+    rnc = rncValido(c.rnc);
+    if (!rnc) return fallo(res, 400, 'El RNC tiene 9 dígitos');
+  }
+  let telefono = null;
+  if (texto(c.telefono, 30)) {
+    if (!telefonoValido(c.telefono)) return fallo(res, 400, 'El teléfono debe tener 10 dígitos');
+    telefono = texto(c.telefono, 30);
+  }
+
+  const s = db.crearSolicitudRecuperacion({ correoCuenta, correoContacto, nombre, telefono, rnc, detalle, ip });
+  if (s) {
+    correo.enviarRecuperacionRecibida({
+      para: correoContacto, nombre, referencia: s.referencia, desde: s.resolver_desde,
+    });
+    if (s.usuario_id) {
+      const u = db.usuarioPorId(s.usuario_id);
+      correo.enviarAvisoRecuperacionAlTitular({
+        para: u.correo, nombre: u.nombre, contactoEnmascarado: correo.enmascararCorreo(correoContacto),
+        desde: s.resolver_desde,
+      });
+    }
+    correo.avisarRecuperacionInterna(s);
+  }
+
+  return responder(res, 202, { mensaje: MENSAJE_RECUPERACION });
+}
+
+/* ── Consola: solicitudes de recuperación (10.1) ──────────── */
+
+const listarRecuperaciones = conAdmin((req, res, ctx, consulta) => {
+  const pedido = consulta && consulta.get('estado');
+  const estado = pedido === 'todas' ? undefined : (pedido || 'pendiente');
+  if (estado && !['pendiente', 'aprobada', 'rechazada', 'anulada'].includes(estado)) {
+    return fallo(res, 400, 'Estado no válido');
+  }
+  return responder(res, 200, { solicitudes: db.solicitudesRecuperacion({ estado }) });
+});
+
+const verRecuperacion = conAdmin((req, res, ctx, idSol) => {
+  const exp = db.expedienteRecuperacion(idSol);
+  if (!exp) return fallo(res, 404, 'Esa solicitud no existe');
+  return responder(res, 200, exp);
+});
+
+/* Aprobar cambia el correo de una cuenta ajena: por la bitácora, con el
+   motivo (cómo se comprobó la identidad) obligatorio. Solo desde
+   `resolver_desde`: la espera de 72 h es lo que le da tiempo al titular
+   verdadero de enterarse y entrar. Los correos van FUERA de la
+   transacción, después. */
+const aprobarRecuperacion = conAdminEnNombreDe('cuenta.recuperar', async (req, res, ctx, idSol) => {
+  const c = await leerCuerpo(req);
+  const s = db.solicitudRecuperacion(idSol);
+  if (!s) return fallo(res, 404, 'Esa solicitud no existe');
+  if (s.estado !== 'pendiente') return fallo(res, 409, 'Esa solicitud ya no está pendiente');
+  if (!s.usuario_id) return fallo(res, 409, 'Sin cuenta detrás solo se puede rechazar');
+  if (db.ahora() < s.resolver_desde) {
+    const cuando = new Date(s.resolver_desde).toLocaleString('es-DO', {
+      timeZone: 'America/Santo_Domingo', day: 'numeric', month: 'long', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+    return fallo(res, 409, `Podrá resolverse a partir de ${cuando}`, { resolverDesde: s.resolver_desde });
+  }
+  const motivo = texto(c.motivo, 500);
+  if (!motivo || motivo.length < 15) {
+    return fallo(res, 400, 'Explique cómo se comprobó la identidad (al menos 15 caracteres)');
+  }
+
+  const u = db.usuarioPorId(s.usuario_id);
+  const org = u && db.organizacionDe(u.id);
+  if (!org) return fallo(res, 409, 'La cuenta ya no tiene organización: no se puede aprobar');
+
+  const hecho = ctx.enNombreDe(org.id, { objetoTipo: 'solicitud_recuperacion', objetoId: idSol, motivo }, () => {
+    const cambio = db.cambiarCorreo({
+      idUsuario: u.id, nuevo: s.correo_contacto, via: 'recuperacion', ip: origen(req),
+      verificado: false, conReversion: false, solicitudId: idSol,
+    });
+    const resuelta = db.resolverRecuperacion({ id: idSol, estado: 'aprobada', idAdmin: ctx.usuario.id, motivo });
+    return {
+      antes: { correo: cambio.anterior },
+      despues: { correo: cambio.nuevo, solicitud: 'aprobada' },
+      resultado: { cambio, resuelta },
+    };
+  });
+
+  db.cerrarTodoDe(u.id);
+  correo.enviarRecuperacionAprobada({ para: hecho.cambio.nuevo, nombre: u.nombre });
+  correo.enviarAvisoCambioCorreo({
+    para: hecho.cambio.anterior, nombre: u.nombre, nuevo: hecho.cambio.nuevo, enlaceRevertir: null,
+  });
+
+  return responder(res, 200, { ok: true, solicitud: hecho.resuelta });
+});
+
+const rechazarRecuperacion = conAdmin(async (req, res, ctx, idSol) => {
+  const c = await leerCuerpo(req);
+  const s = db.solicitudRecuperacion(idSol);
+  if (!s) return fallo(res, 404, 'Esa solicitud no existe');
+  const motivo = texto(c.motivo, 500);
+  if (!motivo || motivo.length < 15) {
+    return fallo(res, 400, 'Escriba el motivo del rechazo (al menos 15 caracteres)');
+  }
+
+  const resuelta = db.resolverRecuperacion({ id: idSol, estado: 'rechazada', idAdmin: ctx.usuario.id, motivo });
+  correo.enviarRecuperacionRechazada({ para: s.correo_contacto, referencia: s.referencia });
+  return responder(res, 200, { ok: true, solicitud: resuelta });
+});
 
 /* Retrato de la sesión que consume el navegador: quién es, en qué
    organización trabaja y qué tiene contratado. */
@@ -4771,6 +5036,7 @@ const ESCRITURAS_ADMIN_PROPIAS = new Set([
   anularFactura,
   marcarSolicitudServicio, // la manda un visitante, no una organización; guarda atendida_por
   editarTasaCambio,       // la tasa de referencia del catálogo es de la plataforma
+  rechazarRecuperacion,   // la manda un visitante, no una organización; guarda resuelta_por
 ]);
 
 const RUTAS = [
@@ -4781,6 +5047,19 @@ const RUTAS = [
   ['POST', /^\/api\/cuenta\/recuperar$/,    recuperar],
   ['POST', /^\/api\/cuenta\/restablecer$/,  restablecer],
   ['POST', /^\/api\/cuenta\/salir$/,        salir],
+
+  /* Cambio de correo, contraseña y recuperación (10.1). Las regex van
+     ancladas con `$`, así que `/correo` no se traga a `/correo/confirmar`. */
+  ['POST', /^\/api\/cuenta\/correo\/confirmar$/, confirmarCambioCorreo],
+  ['POST', /^\/api\/cuenta\/correo\/revertir$/,  revertirCorreo],
+  ['POST', /^\/api\/cuenta\/correo$/,            pedirCambioCorreo],
+  ['POST', /^\/api\/cuenta\/clave$/,             cambiarClaveConSesion],
+  ['POST', /^\/api\/cuenta\/cerrar-otras$/,      cerrarOtrasSesiones],
+  ['POST', /^\/api\/cuenta\/recuperacion$/,      pedirRecuperacion],
+  ['GET',  /^\/api\/admin\/recuperaciones$/,                   listarRecuperaciones],
+  ['POST', /^\/api\/admin\/recuperaciones\/([\w-]+)\/aprobar$/,  aprobarRecuperacion],
+  ['POST', /^\/api\/admin\/recuperaciones\/([\w-]+)\/rechazar$/, rechazarRecuperacion],
+  ['GET',  /^\/api\/admin\/recuperaciones\/([\w-]+)$/,           verRecuperacion],
   ['GET',  /^\/api\/sesion$/,               verSesion],
   ['POST', /^\/api\/legales\/aceptar$/,     aceptarLegales],
   ['GET',  /^\/api\/facturas$/,             misFacturas],
