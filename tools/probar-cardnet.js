@@ -1195,6 +1195,548 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     apagar();
   }
 
+  console.log('\n17. api.js: el cobro con tarjeta en las cinco rutas de cobro');
+  {
+    const db = require('./db');
+    const api = require('./api');
+    const legales = require('../assets/legales.js');
+    const { EventEmitter } = require('events');
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    let n = 0;
+    db.secuenciasNcf();
+
+    /* Una petición de verdad contra el enrutador, con req y res fingidos
+       (como probar-publicacion.js): lo que importa es lo que ve quien llama. */
+    const pedir = ({ metodo = 'GET', url, cuerpo, cabeceras = {} }) => new Promise((resolver) => {
+      const req = new EventEmitter();
+      req.method = metodo;
+      req.url = url;
+      req.headers = { 'user-agent': 'prueba-cardnet', ...cabeceras };
+      req.socket = { remoteAddress: '127.0.0.1' };
+      req.destroy = () => {};
+      const res = {
+        codigo: 0,
+        setHeader() {},
+        writeHead(c) { res.codigo = c; return res; },
+        destroy() {},
+        end(dato) {
+          let datos = null;
+          try { datos = dato ? JSON.parse(dato) : null; } catch { datos = null; }
+          resolver({ codigo: res.codigo, datos });
+        },
+      };
+      api.manejar(req, res, new URL(url, 'http://localhost').pathname);
+      setImmediate(() => {
+        if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+        req.emit('end');
+      });
+    });
+
+    const cuenta = (etiqueta, { exenta = false, sinLegales = false } = {}) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      (sinLegales ? [] : Object.values(legales.DOCUMENTOS || {})).forEach((doc) => {
+        db.registrarAceptacion({ usuarioId: idUsuario, documento: doc.id, version: doc.version, ip: '127.0.0.1', userAgent: 'prueba' });
+      });
+      const org = db.organizacionDe(idUsuario).id;
+      if (exenta) d.prepare('UPDATE organizaciones SET exenta_pago = 1 WHERE id = ?').run(org);
+      return { idUsuario, org, cabeceras: { cookie: `te_sesion=${db.abrirSesion(idUsuario)}`, 'cf-connecting-ip': '201.8.8.8' } };
+    };
+    const tarjeta = (idOrg, ult = '1111') => db.guardarMetodoPago({
+      idOrg, procesador: 'cardnet', clienteId: 'C-17',
+      perfil: { perfilId: `PF17-${SELLO}-${++n}`, token: `CT__17-${SELLO}-${n}`, marca: 'Visa', ultimos4: ult, venceMes: 12, venceAnio: 2030, activo: true },
+    });
+    const borrador = (idOrg) => {
+      const id = db.crearBorrador({ idOrg, idPlan: 'destacado', dias: 30 });
+      db.guardarBorrador(id, idOrg, {
+        categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
+        precio: 2500000, provincia: 'Santo Domingo',
+        fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+        telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
+      });
+      return id;
+    };
+    const post = (url, quien, cuerpo = {}) => pedir({ metodo: 'POST', url, cuerpo, cabeceras: quien.cabeceras });
+    const b02 = () => d.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B02' AND activa = 1").get().siguiente;
+    const pagosDe = (idOrg) => d.prepare('SELECT COUNT(*) AS n FROM pagos WHERE organizacion_id = ?').get(idOrg).n;
+    const fila = (id) => d.prepare('SELECT * FROM pagos WHERE id = ?').get(id);
+    const estadoAnuncio = (id) => d.prepare('SELECT estado FROM anuncios WHERE id = ?').get(id).estado;
+    const claves = (r) => Object.keys((r && r.datos) || {}).sort().join(',');
+    const compras = () => llamadas.filter((l) => /purchase/.test(l.url)).length;
+    const clientes = () => llamadas.filter((l) => /customer/.test(l.url)).length;
+    const aprobada = (id) => ({ estado: 200, cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: id, AuthorizationCode: 'AU17' } });
+    const CAPTURA = 'https://labservicios.cardnet.com.do/captura/x17';
+    const clienteCN = { estado: 200, cuerpo: { CustomerId: 'C-17', CaptureURL: CAPTURA, UniqueID: 'S17', PaymentProfiles: [] } };
+    /* El banco de esta sección: crear y leer el cliente responden, y la
+       compra (`purchase`) contesta lo que se le programe. */
+    const banco = (compra) => doble((op) => {
+      if (/purchase/.test(op.url)) return typeof compra === 'function' ? compra(op) : compra;
+      return op.metodo === 'POST' ? { estado: 200, cuerpo: { CustomerId: 'C-17' } } : clienteCN;
+    });
+    const VARS_TRANSF = {
+      MERCA_TRANSFERENCIA_BANCO: 'Banco de Prueba', MERCA_TRANSFERENCIA_TITULAR: 'Titular de Prueba, S.R.L.',
+      MERCA_TRANSFERENCIA_RNC: '000000000', MERCA_TRANSFERENCIA_TIPO: 'corriente', MERCA_TRANSFERENCIA_CUENTA: '000-000000-0',
+    };
+    const CLAVES_ANTES = 'anuncio,cobro,comprobante,membresia,pago';
+
+    // Apagado: las cinco rutas y GET /api/membresias responden como en la fase 5
+    apagar();
+    const pA = cuenta('a17');
+    const bA = borrador(pA.org);
+    let r = await post(`/api/borradores/${bA}/pago`, pA);
+    ok(r.codigo === 201 && claves(r) === CLAVES_ANTES, `apagado, publicar: ${r.codigo} claves ${claves(r)}`);
+    const anuncioA = r.datos.anuncio.id;
+    r = await post(`/api/anuncios/${anuncioA}/renovar`, pA, { metodo: 'cardnet', metodoPago: 'x', renovacionAutomatica: true });
+    ok(r.codigo === 400 && /no está disponible/.test((r.datos || {}).error || ''), `apagado: pedir cardnet es 400 «${(r.datos || {}).error}»`);
+    r = await post(`/api/anuncios/${anuncioA}/renovar`, pA, { renovacionAutomatica: true });
+    ok(r.codigo === 201 && claves(r) === CLAVES_ANTES, `apagado, renovar anuncio: ${r.codigo} claves ${claves(r)}`);
+    ok(d.prepare('SELECT renovacion_automatica AS r FROM suscripciones WHERE organizacion_id = ?').get(pA.org).r === 0, 'apagado: la casilla no se guarda');
+    const pB = cuenta('b17');
+    r = await post('/api/membresias', pB, { plan: 'destacado', cupo: 1, dias: 30 });
+    ok(r.codigo === 201 && claves(r) === 'cobro,comprobante,membresia,pago,sesion', `apagado, comprar: ${r.codigo} claves ${claves(r)}`);
+    const suscB = r.datos.membresia.id;
+    r = await post(`/api/membresias/${suscB}/ampliar`, pB, { cupo: 2 });
+    ok(r.codigo === 200 && claves(r) === 'cobro,comprobante,membresia,pago', `apagado, ampliar: ${r.codigo} claves ${claves(r)}`);
+    r = await post(`/api/membresias/${suscB}/renovar`, pB, {});
+    ok(r.codigo === 201 && claves(r) === CLAVES_ANTES, `apagado, renovar plan: ${r.codigo} claves ${claves(r)}`);
+    r = await pedir({ url: '/api/membresias', cabeceras: pB.cabeceras });
+    ok(r.codigo === 200 && claves(r) === 'exenta,membresias,metodosPago,pagosPendientes,renovables,renovacionAutomatica',
+      `apagado, GET /api/membresias: claves ${claves(r)}`);
+    ok(!('tarjetas' in r.datos) && r.datos.renovables.every((x) => !('renovacionTarjeta' in x) && !('proximoIntento' in x)),
+      'apagado: sin tarjetas ni campos de renovación con tarjeta');
+
+    // Activo, sin tarjeta: 202 con la URL de captura en las cinco rutas
+    encender('lab');
+    const pC = cuenta('c17');
+    const bC = borrador(pC.org);
+    banco(aprobada('P17-NO'));
+    let antes = b02();
+    r = await post(`/api/borradores/${bC}/pago`, pC, { metodo: 'cardnet' });
+    const idPagoC = (r.datos.pago || {}).id;
+    ok(r.codigo === 202 && r.datos.pago.estado === 'pendiente' && r.datos.cardnet && r.datos.cardnet.urlCaptura.startsWith(CAPTURA)
+      && r.datos.cardnet.origen === cardnet.origenCaptura() && typeof r.datos.aviso === 'string',
+      `publicar sin tarjeta: ${r.codigo} cardnet=${JSON.stringify(r.datos.cardnet)}`);
+    ok(estadoAnuncio(bC) === 'borrador' && b02() === antes && compras() === 0 && fila(idPagoC).estado === 'pendiente',
+      'el borrador sigue borrador, B02 igual, ninguna llamada a purchase');
+    ok(!('redireccion' in r.datos) && !JSON.stringify(r.datos).includes('CT__'), 'sin redireccion y sin tokens en la respuesta');
+    const pD = cuenta('d17');
+    banco(aprobada('P17-NO'));
+    r = await post('/api/membresias', pD, { plan: 'destacado', cupo: 1, dias: 30, metodo: 'cardnet' });
+    ok(r.codigo === 202 && r.datos.cardnet && r.datos.cardnet.urlCaptura.startsWith(CAPTURA) && r.datos.membresia === null, `comprar sin tarjeta: ${r.codigo}`);
+    ok(d.prepare('SELECT COUNT(*) AS n FROM suscripciones WHERE organizacion_id = ?').get(pD.org).n === 0, 'la compra no activa nada');
+    // Una membresía y un anuncio publicado (con demo, apagado) para ampliar y renovar con tarjeta
+    apagar();
+    const pE = cuenta('e17');
+    const bE = borrador(pE.org);
+    r = await post(`/api/borradores/${bE}/pago`, pE);
+    const anuncioE = r.datos.anuncio.id;
+    const suscE = r.datos.membresia.id;
+    const finE = r.datos.membresia.fin;
+    const pF = cuenta('f17');
+    r = await post('/api/membresias', pF, { plan: 'destacado', cupo: 1, dias: 30 });
+    const suscF = r.datos.membresia.id;
+    const finF = r.datos.membresia.fin;
+    encender('lab');
+    banco(aprobada('P17-NO'));
+    r = await post(`/api/membresias/${suscF}/ampliar`, pF, { cupo: 2, metodo: 'cardnet' });
+    ok(r.codigo === 202 && r.datos.cardnet && r.datos.cardnet.urlCaptura.startsWith(CAPTURA), `ampliar sin tarjeta: ${r.codigo}`);
+    ok(d.prepare('SELECT anuncios_incluidos AS a FROM suscripciones WHERE id = ?').get(suscF).a === 1, 'la ampliación no suma capacidad todavía');
+    r = await post(`/api/anuncios/${anuncioE}/renovar`, pE, { metodo: 'cardnet' });
+    ok(r.codigo === 202 && r.datos.cardnet && r.datos.cardnet.urlCaptura.startsWith(CAPTURA), `renovar anuncio sin tarjeta: ${r.codigo}`);
+    ok(d.prepare('SELECT fin FROM suscripciones WHERE id = ?').get(suscE).fin === finE, 'la renovación del anuncio no alarga nada todavía');
+    const pG = cuenta('g17');
+    apagar();
+    r = await post('/api/membresias', pG, { plan: 'destacado', cupo: 1, dias: 30 });
+    const suscG = r.datos.membresia.id;
+    const finG = r.datos.membresia.fin;
+    encender('lab');
+    banco(aprobada('P17-NO'));
+    r = await post(`/api/membresias/${suscG}/renovar`, pG, { metodo: 'cardnet' });
+    ok(r.codigo === 202 && r.datos.cardnet && r.datos.cardnet.urlCaptura.startsWith(CAPTURA), `renovar plan sin tarjeta: ${r.codigo}`);
+    ok(compras() === 0, 'ninguna de las cinco llamó a purchase sin tarjeta');
+
+    // Con tarjeta guardada: el cobro sale en la misma petición
+    const tC = tarjeta(pC.org);
+    const tE = tarjeta(pE.org);
+    const tF = tarjeta(pF.org);
+    const tG = tarjeta(pG.org);
+    const tD = tarjeta(pD.org);
+    banco(aprobada('P17-PUB'));
+    antes = b02();
+    r = await post(`/api/borradores/${bC}/pago`, pC, {
+      metodo: 'cardnet', metodoPago: tC.id, token: 'TOKEN-INVENTADO-17', numero: '4111111111111111', tarjeta: { numero: '4111111111111111' },
+    });
+    ok(r.codigo === 201 && r.datos.anuncio.estado === 'activo' && r.datos.comprobante && r.datos.comprobante.ncf,
+      `publicar con tarjeta retomando el pendiente sin cobro: ${r.codigo}`);
+    ok(fila(idPagoC).estado === 'aprobado' && fila(idPagoC).metodo_pago_id === tC.id && b02() === antes + 1 && compras() === 1,
+      'es el MISMO pago (id), aprobado, con la tarjeta enlazada, B02 +1 y una sola compra');
+    ok(!JSON.stringify(fila(idPagoC)).includes('TOKEN-INVENTADO-17') && !JSON.stringify(fila(idPagoC)).includes('4111')
+      && llamadas.every((l) => !JSON.stringify(l.cuerpo || {}).includes('4111') && !JSON.stringify(l.cuerpo || {}).includes('TOKEN-INVENTADO-17')),
+      'lo que el cuerpo traía de tarjeta ni se guardó ni llegó al banco');
+    ok(llamadas.find((l) => /purchase/.test(l.url)).cuerpo.TrxToken === tC.token, 'el cobro usó el token de la tarjeta guardada, no uno del cuerpo');
+
+    banco(aprobada('P17-COMPRA'));
+    r = await post('/api/membresias', pD, { plan: 'destacado', cupo: 1, dias: 30, metodo: 'cardnet', metodoPago: tD.id });
+    ok(r.codigo === 201 && r.datos.membresia && r.datos.comprobante && r.datos.comprobante.ncf, `comprar con tarjeta: ${r.codigo}`);
+    banco(aprobada('P17-AMP'));
+    r = await post(`/api/membresias/${suscF}/ampliar`, pF, { cupo: 2, metodo: 'cardnet', metodoPago: tF.id });
+    ok(r.codigo === 200 && r.datos.membresia.anuncios_incluidos === 2 && r.datos.comprobante, `ampliar con tarjeta retomando lo pendiente (no 409): ${r.codigo}`);
+    banco(aprobada('P17-AMP2'));
+    r = await post(`/api/membresias/${suscF}/ampliar`, pF, { cupo: 3, metodo: 'cardnet', metodoPago: tF.id });
+    ok(r.codigo === 200 && r.datos.membresia.anuncios_incluidos === 3, `ampliar de nuevo con tarjeta: ${r.codigo} capacidad ${r.datos.membresia && r.datos.membresia.anuncios_incluidos}`);
+    banco(aprobada('P17-REN1'));
+    r = await post(`/api/anuncios/${anuncioE}/renovar`, pE, { metodo: 'cardnet', metodoPago: tE.id });
+    const finE2 = d.prepare('SELECT fin FROM suscripciones WHERE id = ?').get(suscE).fin;
+    ok(r.codigo === 201 && r.datos.comprobante && finE2 > finE, `renovar anuncio con tarjeta retomando lo pendiente: ${r.codigo}, fin alargado=${finE2 > finE}`);
+    banco(aprobada('P17-REN2'));
+    r = await post(`/api/membresias/${suscG}/renovar`, pG, { metodo: 'cardnet', metodoPago: tG.id });
+    const finG2 = d.prepare('SELECT fin FROM suscripciones WHERE id = ?').get(suscG).fin;
+    ok(r.codigo === 201 && finG2 > finG, `renovar plan con tarjeta retomando lo pendiente: ${r.codigo}, fin alargado=${finG2 > finG}`);
+
+    // Rechazo del banco: 402 con su motivo, nada activado, sin factura ni NCF
+    const pH = cuenta('h17');
+    const bH = borrador(pH.org);
+    const tH = tarjeta(pH.org);
+    banco({ estado: 200, cuerpo: { ResponseCode: '51', Status: 'Rejected' } });
+    antes = b02();
+    const facturasAntes = d.prepare('SELECT COUNT(*) AS n FROM facturas').get().n;
+    r = await post(`/api/borradores/${bH}/pago`, pH, { metodo: 'cardnet', metodoPago: tH.id });
+    ok(r.codigo === 402 && r.datos.error === cardnet.mensajeDeRechazo('51'), `rechazo 51: ${r.codigo} «${(r.datos || {}).error}»`);
+    ok(estadoAnuncio(bH) === 'borrador' && b02() === antes && d.prepare('SELECT COUNT(*) AS n FROM facturas').get().n === facturasAntes
+      && fila(r.datos.pago.id).estado === 'rechazado', 'rechazado: el borrador sigue borrador, sin factura ni NCF');
+
+    // Tarjeta ajena, borrada o inactiva: 400 y ningún pago anotado
+    const bH2 = borrador(pH.org);
+    const tBorrada = tarjeta(pH.org);
+    db.borrarMetodoPago(tBorrada.id, pH.org);
+    const tInactiva = tarjeta(pH.org);
+    d.prepare('UPDATE metodos_pago SET activo = 0 WHERE id = ?').run(tInactiva.id);
+    const totalAntes = d.prepare('SELECT COUNT(*) AS n FROM pagos').get().n;
+    banco(aprobada('P17-NO2'));
+    for (const [etiqueta, id] of [['de otra organización', tC.id], ['borrada', tBorrada.id], ['inactiva', tInactiva.id], ['inventada', 'no-existe']]) {
+      r = await post(`/api/borradores/${bH2}/pago`, pH, { metodo: 'cardnet', metodoPago: id });
+      ok(r.codigo === 400 && r.datos.error === 'Esa tarjeta no es suya o no existe.', `tarjeta ${etiqueta}: ${r.codigo} «${(r.datos || {}).error}»`);
+    }
+    r = await post('/api/membresias', pH, { plan: 'destacado', cupo: 1, dias: 30, metodo: 'cardnet', metodoPago: tC.id });
+    ok(r.codigo === 400, `comprar con la tarjeta de otra organización: ${r.codigo}`);
+    ok(d.prepare('SELECT COUNT(*) AS n FROM pagos').get().n === totalAntes && compras() === 0, 'ningún pago anotado ni llamada a purchase');
+
+    // Redirección del banco (3DS): 202 con redireccion y origen; sin ella, sin esas claves
+    const pK = cuenta('k17');
+    const bK = borrador(pK.org);
+    const tK = tarjeta(pK.org);
+    banco({ estado: 200, cuerpo: { CommerceAction: { ActionType: 1, Url: 'https://labservicios.cardnet.com.do/3ds17' } } });
+    r = await post(`/api/borradores/${bK}/pago`, pK, { metodo: 'cardnet', metodoPago: tK.id });
+    ok(r.codigo === 202 && /^https:\/\/labservicios/.test(r.datos.redireccion || '') && r.datos.origen === cardnet.origenCaptura(),
+      `con redirección: ${r.codigo} ${r.datos.redireccion} origen=${r.datos.origen}`);
+    ok(!('cardnet' in r.datos) && estadoAnuncio(bK) === 'borrador', 'la tarjeta ya estaba: no se abre otra captura y el borrador sigue borrador');
+    const pK2 = cuenta('k217');
+    const bK2 = borrador(pK2.org);
+    const tK2 = tarjeta(pK2.org);
+    banco({ estado: 0, cuerpo: null, fallo: 'ECONNRESET' });
+    r = await post(`/api/borradores/${bK2}/pago`, pK2, { metodo: 'cardnet', metodoPago: tK2.id });
+    ok(r.codigo === 202 && !('redireccion' in r.datos) && !('origen' in r.datos) && !('cardnet' in r.datos), `sin redirección: 202 sin esas claves (${claves(r)})`);
+
+    // CardNet no abre la captura: 502, el pago recién anotado se anula y no bloquea
+    const pL = cuenta('l17');
+    const bL = borrador(pL.org);
+    doble(() => ({ estado: 0, cuerpo: null, fallo: 'ECONNRESET' }));
+    r = await post(`/api/borradores/${bL}/pago`, pL, { metodo: 'cardnet' });
+    ok(r.codigo === 502 && r.datos.error === 'No pudimos abrir el formulario de la tarjeta. No se le cobró nada.', `captura caída: ${r.codigo} «${(r.datos || {}).error}»`);
+    const pagosL = d.prepare('SELECT * FROM pagos WHERE organizacion_id = ?').all(pL.org);
+    ok(pagosL.length === 1 && pagosL[0].estado === 'rechazado' && pagosL[0].codigo_respuesta === 'reemplazado', 'el pago quedó rechazado con codigo reemplazado');
+    banco(aprobada('P17-NO3'));
+    r = await post(`/api/borradores/${bL}/pago`, pL, { metodo: 'cardnet' });
+    ok(r.codigo === 202 && r.datos.cardnet && r.datos.cardnet.urlCaptura.startsWith(CAPTURA), 'el borrador no quedó bloqueado: se puede pedir otra vez');
+
+    // Pendiente de tarjeta sin cobro: se retoma con URL nueva y el mismo pago
+    banco(aprobada('P17-NO4'));
+    const idL = r.datos.pago.id;
+    r = await post(`/api/borradores/${bL}/pago`, pL, { metodo: 'cardnet' });
+    ok(r.codigo === 202 && r.datos.pago.id === idL && r.datos.cardnet && clientes() >= 1, `pagar otra vez con tarjeta: mismo pago ${r.datos.pago.id === idL}, captura nueva`);
+    // ...o se anula si pide otro método
+    Object.assign(process.env, VARS_TRANSF);
+    r = await post(`/api/borradores/${bL}/pago`, pL, { metodo: 'transferencia' });
+    ok(r.codigo === 202 && r.datos.pago.id !== idL && r.datos.transferencia, `pagar con transferencia: pago nuevo ${r.codigo}`);
+    ok(fila(idL).estado === 'rechazado' && fila(idL).codigo_respuesta === 'reemplazado'
+      && fila(r.datos.pago.id).procesador === 'transferencia' && fila(r.datos.pago.id).estado === 'pendiente', 'el de tarjeta se anuló (reemplazado) y nació el de transferencia');
+    // Con intento de cobro no se anula ni se retoma: responde en espera como hoy
+    const pM = cuenta('m17');
+    const bM = borrador(pM.org);
+    banco(aprobada('P17-NO5'));
+    r = await post(`/api/borradores/${bM}/pago`, pM, { metodo: 'cardnet' });
+    const idM = r.datos.pago.id;
+    db.anotarEventoPago({ pagoId: idM, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado' });
+    banco(aprobada('P17-NO6'));
+    r = await post(`/api/borradores/${bM}/pago`, pM, { metodo: 'transferencia' });
+    ok(r.codigo === 202 && r.datos.pago.id === idM && fila(idM).estado === 'pendiente' && !('cardnet' in r.datos) && clientes() === 0,
+      `con intento de cobro: en espera, sin anular y sin captura nueva (${r.codigo})`);
+    for (const k of Object.keys(VARS_TRANSF)) delete process.env[k];
+
+    // La casilla de renovación automática viaja en la intención solo con tarjeta y propietario
+    const pN = cuenta('n17');
+    const tN = tarjeta(pN.org);
+    banco(aprobada('P17-CAS'));
+    r = await post('/api/membresias', pN, { plan: 'destacado', cupo: 1, dias: 30, metodo: 'cardnet', metodoPago: tN.id, renovacionAutomatica: true });
+    const sN = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(r.datos.membresia.id);
+    ok(r.codigo === 201 && sN.renovacion_automatica === 1 && sN.metodo_pago_id === tN.id && /autorizas la renovación/.test(sN.renovacion_texto || ''),
+      'compra con tarjeta y casilla: al aprobarse queda la renovación automática con esa tarjeta y el texto del servidor');
+    const pO = cuenta('o17');
+    apagar();
+    r = await post('/api/membresias', pO, { plan: 'destacado', cupo: 1, dias: 30 });
+    const suscO = r.datos.membresia.id;
+    encender('lab');
+    banco(aprobada('P17-NO7'));
+    r = await post(`/api/membresias/${suscO}/renovar`, pO, { metodo: 'cardnet', renovacionAutomatica: true });
+    const intO = JSON.parse(fila(r.datos.pago.id).intencion);
+    ok(r.codigo === 202 && intO.renovacionAutomatica && /autorizas la renovación/.test(intO.renovacionAutomatica.texto) && !!intO.renovacionAutomatica.aceptada,
+      'renovar con tarjeta y casilla: la intención del pago lleva el consentimiento');
+    ok(d.prepare('SELECT renovacion_automatica AS r FROM suscripciones WHERE id = ?').get(suscO).r === 0, 'pedirRenovacion ya no escribe la casilla antes de cobrar');
+    const pP = cuenta('p17');
+    apagar();
+    r = await post('/api/membresias', pP, { plan: 'destacado', cupo: 1, dias: 30 });
+    const suscP = r.datos.membresia.id;
+    encender('lab');
+    Object.assign(process.env, VARS_TRANSF);
+    r = await post(`/api/membresias/${suscP}/renovar`, pP, { metodo: 'transferencia', renovacionAutomatica: true });
+    ok(r.codigo === 202 && !('renovacionAutomatica' in JSON.parse(fila(r.datos.pago.id).intencion)), 'con transferencia la intención no lleva la casilla');
+    for (const k of Object.keys(VARS_TRANSF)) delete process.env[k];
+
+    // Exenta: sin ninguna llamada al banco
+    const pQ = cuenta('q17', { exenta: true });
+    doble(() => { throw new Error('no debería llamar al banco'); });
+    r = await post('/api/membresias', pQ, { plan: 'destacado', cupo: 1, dias: 30, metodo: 'cardnet' });
+    ok(r.codigo === 201 && r.datos.comprobante === null && llamadas.length === 0, `cuenta exenta con CardNet activo: ${r.codigo}, sin llamadas`);
+
+    // El interruptor: con lab y sin llaves, la renovación automática no está disponible
+    encender('lab', { MERCA_CARDNET_LLAVE_PUB: undefined });
+    r = await pedir({ url: '/api/membresias', cabeceras: pN.cabeceras });
+    ok(r.datos.renovacionAutomatica.disponible === false && JSON.stringify(r.datos.metodosPago) === '["demo"]', `lab sin llaves: apagado (${JSON.stringify(r.datos.renovacionAutomatica)})`);
+    encender('lab');
+    r = await pedir({ url: '/api/membresias', cabeceras: pN.cabeceras });
+    ok(r.datos.renovacionAutomatica.disponible === true, 'lab con llaves: disponible');
+    ok(!/\bc\.(token|tarjeta)\b/.test(fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8')), 'api.js no lee token ni tarjeta del cuerpo (c.numero es del teléfono y del comprobante, de siempre)');
+
+    console.log('\n18. api.js: confirmar, estado del pago, tarjetas guardadas y renovación automática con tarjeta');
+    const perfilCN = (id, token, activo = true, ult = '4242') => ({
+      PaymentProfileId: id, Token: token, Brand: 'VISA', Last4: ult, Expiration: '12/30', Enabled: activo });
+    /* Un banco que, además de la compra, devuelve el cliente CON la tarjeta
+       recién capturada: es lo que ve el servidor tras el iframe. */
+    const bancoConTarjeta = (compra, perfiles) => doble((op) => {
+      if (/purchase/.test(op.url)) return typeof compra === 'function' ? compra(op) : compra;
+      if (/activate/.test(op.url)) return { estado: 200, cuerpo: {} };
+      if (op.metodo === 'POST') return { estado: 200, cuerpo: { CustomerId: 'C-17' } };
+      return { estado: 200, cuerpo: { ...clienteCN.cuerpo, PaymentProfiles: perfiles } };
+    });
+    const conf = (idPago, quien, cuerpo = {}) => post(`/api/pagos/${idPago}/confirmar`, quien, cuerpo);
+    encender('lab');
+
+    // Aprobado tras el iframe: 201, y repetido devuelve lo mismo sin cobrar otra vez
+    const pR = cuenta('r18');
+    const bR = borrador(pR.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bR}/pago`, pR, { metodo: 'cardnet' });
+    const idR = r.datos.pago.id;
+    bancoConTarjeta(aprobada('P18-R'), [perfilCN(`PF18-R-${SELLO}`, `CT__18R-${SELLO}`)]);
+    antes = b02();
+    r = await conf(idR, pR, { token: 'TOKEN-INVENTADO-18', numero: '4111111111111111' });
+    ok(r.codigo === 201 && r.datos.anuncio.estado === 'activo' && r.datos.comprobante && r.datos.comprobante.ncf && r.datos.sesion && r.datos.pago.estado === 'aprobado',
+      `confirmar aprobado: ${r.codigo} claves ${claves(r)}`);
+    ok(b02() === antes + 1 && compras() === 1 && !llamadas.some((l) => JSON.stringify(l.cuerpo || {}).includes('TOKEN-INVENTADO-18') || JSON.stringify(l.cuerpo || {}).includes('4111')),
+      'B02 +1, una compra y nada del cuerpo llegó al banco');
+    const ncfR = r.datos.comprobante.ncf;
+    bancoConTarjeta(aprobada('P18-R'), [perfilCN(`PF18-R-${SELLO}`, `CT__18R-${SELLO}`)]);
+    antes = b02();
+    r = await conf(idR, pR);
+    ok(r.codigo === 200 && r.datos.comprobante.ncf === ncfR && b02() === antes && compras() === 0, `confirmar otra vez: ${r.codigo}, el mismo NCF, B02 igual, ninguna compra`);
+    r = await pedir({ url: `/api/pagos/${idR}`, cabeceras: pR.cabeceras });
+    ok(r.codigo === 200 && claves(r) === 'comprobante,estado,id,motivo,procesador,referencia,total' && r.datos.estado === 'aprobado'
+      && r.datos.comprobante.ncf === ncfR && r.datos.procesador === 'cardnet' && r.datos.total > 0, `GET /api/pagos/:id: ${claves(r)}`);
+
+    // Rechazado: 402 con el motivo del banco
+    const pS = cuenta('s18');
+    const bS = borrador(pS.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bS}/pago`, pS, { metodo: 'cardnet' });
+    const idS = r.datos.pago.id;
+    bancoConTarjeta({ estado: 200, cuerpo: { ResponseCode: '51', Status: 'Rejected' } }, [perfilCN(`PF18-S-${SELLO}`, `CT__18S-${SELLO}`)]);
+    antes = b02();
+    r = await conf(idS, pS);
+    ok(r.codigo === 402 && r.datos.error === cardnet.mensajeDeRechazo('51') && estadoAnuncio(bS) === 'borrador' && b02() === antes && fila(idS).estado === 'rechazado',
+      `confirmar rechazado: ${r.codigo} «${(r.datos || {}).error}»`);
+    r = await pedir({ url: `/api/pagos/${idS}`, cabeceras: pS.cabeceras });
+    ok(r.datos.estado === 'rechazado' && r.datos.motivo === cardnet.mensajeDeRechazo('51') && r.datos.comprobante === null, 'GET del rechazado: motivo y sin comprobante');
+
+    // Tarjeta que pide activación: 409 con activacion:true; se activa y se confirma
+    const pT = cuenta('t18');
+    const bT = borrador(pT.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bT}/pago`, pT, { metodo: 'cardnet' });
+    const idT = r.datos.pago.id;
+    bancoConTarjeta(aprobada('P18-T'), [perfilCN(`PF18-T-${SELLO}`, `CT__18T-${SELLO}`, false)]);
+    r = await conf(idT, pT);
+    const idTarjetaT = (r.datos || {}).metodoPago && r.datos.metodoPago.id;
+    ok(r.codigo === 409 && r.datos.activacion === true && !!idTarjetaT && /código de activación/.test(r.datos.error) && compras() === 0 && fila(idT).estado === 'pendiente',
+      `tarjeta sin activar: ${r.codigo} activacion=${r.datos.activacion} «${r.datos.error}»`);
+    r = await post(`/api/metodos-pago/${idTarjetaT}/activar`, pT, { codigo: '000111' });
+    ok(r.codigo === 200 && r.datos.metodo && r.datos.metodo.activo === true && !JSON.stringify(r.datos).includes('CT__'), `activar la tarjeta: ${r.codigo}`);
+    r = await conf(idT, pT, { metodoPago: idTarjetaT });
+    ok(r.codigo === 201 && r.datos.anuncio.estado === 'activo', `confirmar con la tarjeta ya activa: ${r.codigo}`);
+    r = await post(`/api/metodos-pago/${idTarjetaT}/activar`, pT, {});
+    ok(r.codigo === 400, `activar sin código: ${r.codigo}`);
+
+    // En proceso (202) y el doble clic: una sola compra
+    const pU = cuenta('u18');
+    const bU = borrador(pU.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bU}/pago`, pU, { metodo: 'cardnet' });
+    const idU = r.datos.pago.id;
+    bancoConTarjeta({ estado: 0, cuerpo: null, fallo: 'ECONNRESET' }, [perfilCN(`PF18-U-${SELLO}`, `CT__18U-${SELLO}`)]);
+    r = await conf(idU, pU);
+    ok(r.codigo === 202 && r.datos.pago.estado === 'pendiente' && typeof r.datos.aviso === 'string' && !('redireccion' in r.datos), `en curso con el banco: ${r.codigo}`);
+    const pV = cuenta('v18');
+    const bV = borrador(pV.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bV}/pago`, pV, { metodo: 'cardnet' });
+    const idV = r.datos.pago.id;
+    bancoConTarjeta(aprobada('P18-V'), [perfilCN(`PF18-V-${SELLO}`, `CT__18V-${SELLO}`)]);
+    const dos = await Promise.all([conf(idV, pV), conf(idV, pV)]);
+    const codigos = dos.map((x) => x.codigo).sort();
+    ok(codigos.includes(201) && codigos.every((c) => c === 201 || c === 409 || c === 200) && compras() === 1, `doble clic: ${codigos} y ${compras()} compra`);
+
+    // Ajeno, inexistente, sin sesión
+    const pW = cuenta('w18');
+    r = await conf(idR, pW);
+    ok(r.codigo === 404, `confirmar el pago de otra organización: ${r.codigo}`);
+    r = await pedir({ url: `/api/pagos/${idR}`, cabeceras: pW.cabeceras });
+    ok(r.codigo === 404, `ver el pago de otra organización: ${r.codigo}`);
+    r = await conf('no-existe', pW);
+    ok(r.codigo === 404, `confirmar un pago inexistente: ${r.codigo}`);
+    r = await pedir({ metodo: 'POST', url: `/api/pagos/${idR}/confirmar`, cuerpo: {} });
+    ok(r.codigo === 401, `confirmar sin sesión: ${r.codigo}`);
+    r = await pedir({ url: `/api/pagos/${idR}` });
+    ok(r.codigo === 401, `ver un pago sin sesión: ${r.codigo}`);
+    r = await pedir({ url: '/api/metodos-pago' });
+    ok(r.codigo === 401, `tarjetas sin sesión: ${r.codigo}`);
+    const trans = cuenta('trans18');
+    Object.assign(process.env, VARS_TRANSF);
+    const bTr = borrador(trans.org);
+    r = await post(`/api/borradores/${bTr}/pago`, trans, { metodo: 'transferencia' });
+    const idTr = r.datos.pago.id;
+    for (const k of Object.keys(VARS_TRANSF)) delete process.env[k];
+    r = await conf(idTr, trans);
+    ok(r.codigo === 404, `confirmar con tarjeta un pago de transferencia: ${r.codigo}`);
+
+    // Tarjetas guardadas: listar sin token, borrar aunque el banco falle, ajena 404
+    const pX = cuenta('x18');
+    const tX = tarjeta(pX.org, '9999');
+    const tXajena = tarjeta(pW.org, '8888');
+    r = await pedir({ url: '/api/metodos-pago', cabeceras: pX.cabeceras });
+    ok(r.codigo === 200 && r.datos.tarjetas.length === 1 && r.datos.tarjetas[0].ultimos4 === '9999' && !JSON.stringify(r.datos).includes('CT__') && !JSON.stringify(r.datos).includes('PF17'),
+      `GET /api/metodos-pago: ${r.codigo}, sin token`);
+    r = await pedir({ metodo: 'DELETE', url: `/api/metodos-pago/${tXajena.id}`, cabeceras: pX.cabeceras });
+    ok(r.codigo === 404 && db.metodosPagoDe(pW.org).length === 1, `borrar la tarjeta de otra organización: ${r.codigo} y sigue ahí`);
+    r = await post(`/api/metodos-pago/${tXajena.id}/activar`, pX, { codigo: '123456' });
+    ok(r.codigo === 404, `activar la tarjeta de otra organización: ${r.codigo}`);
+
+    // Renovación automática con tarjeta (PUT), en el orden fijado
+    apagar();
+    const pY = cuenta('y18');
+    r = await post('/api/membresias', pY, { plan: 'destacado', cupo: 1, dias: 30 });
+    const suscY = r.datos.membresia.id;
+    const finY = r.datos.membresia.fin;
+    const pYL = cuenta('yl18', { sinLegales: true });
+    r = await post('/api/membresias', pYL, { plan: 'destacado', cupo: 1, dias: 30 });
+    ok(r.codigo === 409, 'una cuenta sin condiciones aceptadas no compra (prepara el caso de orden)');
+    const casilla = (idSusc, quien, cuerpo) => pedir({ metodo: 'PUT', url: `/api/membresias/${idSusc}/renovacion-automatica`, cuerpo, cabeceras: quien && quien.cabeceras });
+    const filaS = (id) => d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(id);
+    encender('lab');
+    r = await casilla(suscY, pY, { activar: true });
+    ok(r.codigo === 409 && r.datos.error === 'Para renovar automáticamente hace falta una tarjeta guardada. Se guarda la primera vez que paga con tarjeta.'
+      && filaS(suscY).renovacion_automatica === 0 && filaS(suscY).renovacion_aceptada === null, `sin tarjeta: ${r.codigo} «${(r.datos || {}).error}»`);
+    // El orden: las condiciones de pago (409 con faltan) van ANTES que la tarjeta
+    const sYL = `susc18-${SELLO}`;
+    d.prepare(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado, anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+               VALUES (?, ?, 'destacado', 'vigencia', NULL, 'activa', 3200, 1, 30, ?, ?, NULL, ?)`)
+      .run(sYL, pYL.org, new Date(Date.now() - 864e5).toISOString(), new Date(Date.now() + 9 * 864e5).toISOString(), new Date().toISOString());
+    r = await casilla(sYL, pYL, { activar: true });
+    ok(r.codigo === 409 && (r.datos.faltan || []).length > 0, `sin condiciones y sin tarjeta: primero las condiciones (${r.codigo}, faltan=${(r.datos.faltan || []).length})`);
+    apagar();
+    r = await casilla(suscY, pY, { activar: true });
+    ok(r.codigo === 409 && /todavía no está disponible/.test(r.datos.error), `apagado: disponible antes que la tarjeta (${r.codigo})`);
+    encender('lab');
+    const tY = tarjeta(pY.org, '4242');
+    const tYajena = tarjeta(pX.org, '7777');
+    r = await casilla(suscY, pY, { activar: true, metodoPago: tYajena.id });
+    ok(r.codigo === 400 && filaS(suscY).renovacion_automatica === 0, `con la tarjeta de otra organización: ${r.codigo}`);
+    r = await casilla(suscY, pY, { activar: true });
+    const sY = filaS(suscY);
+    ok(r.codigo === 200 && sY.renovacion_automatica === 1 && sY.metodo_pago_id === tY.id && /autorizas la renovación/.test(sY.renovacion_texto)
+      && r.datos.tarjeta.ultimos4 === '4242' && r.datos.tarjeta.marca === 'Visa' && !JSON.stringify(r.datos).includes('CT__'),
+    `activar con la única tarjeta activa: ${r.codigo} tarjeta=${JSON.stringify(r.datos.tarjeta)}`);
+    ok(sY.proximo_cargo.slice(0, 16) === new Date(new Date(finY).getTime() - 3 * 864e5).toISOString().slice(0, 16), 'proximo_cargo = fin − 3 días');
+    r = await pedir({ url: '/api/membresias', cabeceras: pY.cabeceras });
+    const rY = r.datos.renovables.find((x) => x.id === suscY);
+    ok(Array.isArray(r.datos.tarjetas) && r.datos.tarjetas.length === 1 && !JSON.stringify(r.datos).includes('CT__')
+      && rY.renovacionTarjeta.ultimos4 === '4242' && rY.renovacionIntentos === 0 && rY.proximoIntento === sY.proximo_cargo,
+    `GET /api/membresias activo: tarjetas, renovacionTarjeta y proximoIntento (${JSON.stringify(rY.renovacionTarjeta)})`);
+    // Borrar la tarjeta con la que se renueva: el banco falla, la tarjeta se va igual y la renovación se apaga
+    doble(() => ({ estado: 500, cuerpo: null, fallo: 'boom' }));
+    const errores = [];
+    const errorOriginal = console.error;
+    console.error = (...a) => errores.push(a.join(' '));
+    try {
+      r = await pedir({ metodo: 'DELETE', url: `/api/metodos-pago/${tY.id}`, cabeceras: pY.cabeceras });
+    } finally {
+      console.error = errorOriginal;
+    }
+    ok(r.codigo === 200 && db.metodosPagoDe(pY.org).length === 0 && filaS(suscY).renovacion_automatica === 0 && filaS(suscY).proximo_cargo === null,
+      `borrar la tarjeta aunque el banco falle: ${r.codigo}, la renovación quedó apagada`);
+    ok(errores.length === 1 && !errores.join('').includes('CT__'), `el fallo del banco quedó en el registro, sin token (${errores.length})`);
+    // Activar con metodoPago explícito y desactivar (también apagado)
+    const tY2 = tarjeta(pY.org, '5555');
+    tarjeta(pY.org, '6666');
+    r = await casilla(suscY, pY, { activar: true });
+    ok(r.codigo === 409 && /varias tarjetas/.test(r.datos.error), `con dos tarjetas activas y sin elegir: ${r.codigo}`);
+    r = await casilla(suscY, pY, { activar: true, metodoPago: tY2.id });
+    ok(r.codigo === 200 && filaS(suscY).metodo_pago_id === tY2.id && r.datos.tarjeta.ultimos4 === '5555', `activar con metodoPago explícito: ${r.codigo}`);
+    apagar();
+    r = await casilla(suscY, pY, { activar: false });
+    ok(r.codigo === 200 && filaS(suscY).renovacion_automatica === 0 && filaS(suscY).proximo_cargo === null && r.datos.renovacionAutomatica === false, `desactivar con CardNet apagado: ${r.codigo}, proximo_cargo NULL`);
+
+    // sinCobro en los pendientes del panel
+    encender('lab');
+    const pZ = cuenta('z18');
+    const bZ = borrador(pZ.org);
+    banco(aprobada('P18-NO'));
+    r = await post(`/api/borradores/${bZ}/pago`, pZ, { metodo: 'cardnet' });
+    const idZ = r.datos.pago.id;
+    r = await pedir({ url: '/api/membresias', cabeceras: pZ.cabeceras });
+    ok(r.datos.pagosPendientes.length === 1 && r.datos.pagosPendientes[0].sinCobro === true, 'pendiente de tarjeta sin intento: sinCobro = true');
+    db.anotarEventoPago({ pagoId: idZ, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado' });
+    r = await pedir({ url: '/api/membresias', cabeceras: pZ.cabeceras });
+    ok(r.datos.pagosPendientes[0].sinCobro === false, 'con cobro enviado: sinCobro = false');
+    const pZ2 = cuenta('z218');
+    Object.assign(process.env, VARS_TRANSF);
+    const bZ2 = borrador(pZ2.org);
+    await post(`/api/borradores/${bZ2}/pago`, pZ2, { metodo: 'transferencia' });
+    r = await pedir({ url: '/api/membresias', cabeceras: pZ2.cabeceras });
+    ok(r.datos.pagosPendientes.length === 1 && !('sinCobro' in r.datos.pagosPendientes[0]), 'un pendiente de transferencia no lleva sinCobro');
+    for (const k of Object.keys(VARS_TRANSF)) delete process.env[k];
+
+    // Tope: más de 10 confirmaciones en 10 minutos de la misma organización
+    const pTope = cuenta('tope18');
+    const codigosTope = [];
+    for (let i = 0; i < 12; i++) codigosTope.push((await conf(`no-existe-${i}`, pTope)).codigo);
+    ok(codigosTope.slice(0, 10).every((c) => c === 404) && codigosTope[10] === 429 && codigosTope[11] === 429, `tope de confirmaciones: ${codigosTope.join(',')}`);
+    r = await post(`/api/metodos-pago/no-existe/activar`, pTope, { codigo: '1' });
+    ok(r.codigo === 429, `y el de activar comparte el tope: ${r.codigo}`);
+    apagar();
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
