@@ -225,7 +225,7 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
       ok(typeof m === 'string' && m.length > 20 && m !== cardnet.mensajeDeRechazo('XX'), `${c}: ${m}`);
     }
     const generico = cardnet.mensajeDeRechazo('ZZ');
-    ok(/no se le cobró nada/i.test(generico) && /cupo/i.test(generico) && /comprobante/i.test(generico),
+    ok(/no se le cobró nada/i.test(generico) && /no se activó nada/i.test(generico) && !/cupo/i.test(generico) && /comprobante/i.test(generico),
       `código desconocido: ${generico}`);
     ok(cardnet.mensajeDeRechazo(null) === generico, 'sin código: el genérico');
   }
@@ -765,6 +765,260 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     ok(!idsCola.includes(sinApl.id), 'excluye los aprobado-sin-aplicar');
     const fv = cola.find((p) => p.id === viejo.id);
     ok(fv.procesador_id === 'P-V' && fv.metodo_pago_id === m2.id && fv.huboIntento === true && fv.sinAplicar === false, 'trae procesador_id, metodo_pago_id, huboIntento y sinAplicar');
+  }
+
+  console.log('\n15. pagos.js: selector, guarda de la 05.4, resolver y consentimiento al aprobar');
+  {
+    const db = require('./db');
+    const pagos = require('./pagos');
+    const precios = require('../assets/precios.js');
+    db.secuenciasNcf();
+    db.cargarSecuencia({ tipo: 'B02', nombre: 'Consumidor final', desde: 1, hasta: 500, vence: '2027-12-31', usaSitio: true });
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    const DIA = 86400000;
+    let n = 0;
+    const enDias = (x) => new Date(Date.now() + x * DIA).toISOString();
+    const b02 = () => d.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B02' AND activa = 1").get().siguiente;
+    const facturasDe = (idPago) => d.prepare("SELECT COUNT(*) AS n FROM facturas WHERE pago_id = ? AND tipo <> 'nota_credito'").get(idPago).n;
+    const tiposDeEventos = (idPago) => db.eventosDePago(idPago).map((e) => e.tipo);
+    const cuenta = (etiqueta) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      return db.organizacionDe(idUsuario).id;
+    };
+    const susc = (idOrg, { fin = enDias(20) } = {}) => {
+      const idSusc = `susc15-${SELLO}-${++n}`;
+      d.prepare(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
+                   anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+                 VALUES (?, ?, 'estandar', 'vigencia', NULL, 'activa', 1800, 1, 30, ?, ?, NULL, ?)`)
+        .run(idSusc, idOrg, enDias(-10), fin, new Date().toISOString());
+      return idSusc;
+    };
+    const tarjeta = (idOrg, cliente = 'C-15') => db.guardarMetodoPago({
+      idOrg, procesador: 'cardnet', clienteId: cliente,
+      perfil: { perfilId: `PF15-${SELLO}-${++n}`, token: `CT__15-${SELLO}-${n}`, marca: 'Visa', ultimos4: '1111', venceMes: 12, venceAnio: 2030, activo: true },
+    });
+    const CLIENTE = { razonSocial: 'Cliente de prueba', correo: 'cliente@prueba.invalid' };
+    const COMPRA = { tipo: 'compra', idPlan: 'estandar', cupo: 1, dias: 30, concepto: 'Estándar · 1 cupo', cliente: CLIENTE, correoCliente: CLIENTE.correo };
+    const pagoNuevo = (idOrg, { intencion = COMPRA, idSusc = null, metodo = null, procesador = 'cardnet' } = {}) => {
+      const p = db.registrarCobro({
+        idOrg, idSusc, cobro: { ...precios.desglose(1800), referencia: `R15-${SELLO}-${++n}`, procesador }, intencion });
+      if (metodo) db.enlazarMetodoPago(p.id, metodo.id);
+      return db.pagoPorId(p.id);
+    };
+    const aprobada = (id = `P15-${SELLO}`) => ({ estado: 200, cuerpo: { Status: 'Approved', ResponseCode: '00', PurchaseId: id, AuthorizationCode: 'AU15' } });
+    const compras = () => llamadas.filter((l) => /purchase/.test(l.url)).length;
+    const org = cuenta('a15');
+    const otra = cuenta('b15');
+
+    // Selector
+    apagar();
+    delete process.env.MERCA_TRANSFERENCIA;
+    ok(JSON.stringify(pagos.metodosDeCobro()) === '["demo"]', `apagado, sin transferencia: ${JSON.stringify(pagos.metodosDeCobro())}`);
+    ok((lanza(() => pagos.procesadorDeCobro('cardnet')) || {}).codigo === 400, 'apagado: procesadorDeCobro(cardnet) lanza 400');
+    encender('lab');
+    ok(JSON.stringify(pagos.metodosDeCobro()) === '["cardnet"]' && pagos.procesadorDeCobro() === 'cardnet', 'activo sin transferencia: ["cardnet"] y es el de por defecto');
+    ok((lanza(() => pagos.procesadorDeCobro('demo')) || {}).codigo === 400, 'activo: demo lanza 400');
+    const VARS_TRANSF = {
+      MERCA_TRANSFERENCIA_BANCO: 'Banco de Prueba', MERCA_TRANSFERENCIA_TITULAR: 'Titular de Prueba, S.R.L.',
+      MERCA_TRANSFERENCIA_RNC: '000000000', MERCA_TRANSFERENCIA_TIPO: 'corriente', MERCA_TRANSFERENCIA_CUENTA: '000-000000-0',
+    };
+    Object.assign(process.env, VARS_TRANSF);
+    ok(JSON.stringify(pagos.metodosDeCobro()) === '["cardnet","transferencia"]', `activo con transferencia: ${JSON.stringify(pagos.metodosDeCobro())}`);
+    ok(pagos.procesadorDeCobro('transferencia') === 'transferencia', 'activo: transferencia sigue siendo válida');
+    apagar();
+    ok(JSON.stringify(pagos.metodosDeCobro()) === '["transferencia"]', 'apagado con transferencia: ["transferencia"], como en la fase 5');
+    for (const k of Object.keys(VARS_TRANSF)) delete process.env[k];
+    ok(pagos.PROCESADORES.transferencia && typeof pagos.PROCESADORES.cardnet === 'function', 'PROCESADORES tiene cardnet y transferencia');
+
+    // Sin tarjeta enlazada
+    encender('lab');
+    doble(() => ({ estado: 200, cuerpo: aprobada().cuerpo }));
+    const antesB02 = b02();
+    const sinTarjeta = pagoNuevo(org);
+    let r = await pagos.cobrar(sinTarjeta);
+    ok(r.estado === 'pendiente' && llamadas.length === 0 && b02() === antesB02, 'sin tarjeta enlazada: pendiente, el doble no recibe llamadas, B02 igual');
+
+    // Tarjeta de otra organización, borrada o inactiva
+    const ajena = tarjeta(otra);
+    const pAjena = pagoNuevo(org);
+    d.prepare('UPDATE pagos SET metodo_pago_id = ? WHERE id = ?').run(ajena.id, pAjena.id);
+    r = await pagos.cobrar(db.pagoPorId(pAjena.id));
+    ok(r.estado === 'pendiente' && llamadas.length === 0, 'tarjeta de otra organización: pendiente sin llamar');
+    const borrada = tarjeta(org);
+    db.borrarMetodoPago(borrada.id, org);
+    const pBorr = pagoNuevo(org);
+    d.prepare('UPDATE pagos SET metodo_pago_id = ? WHERE id = ?').run(borrada.id, pBorr.id);
+    r = await pagos.cobrar(db.pagoPorId(pBorr.id));
+    ok(r.estado === 'pendiente' && llamadas.length === 0, 'tarjeta borrada: pendiente sin llamar');
+    const inactiva = tarjeta(org);
+    d.prepare('UPDATE metodos_pago SET activo = 0 WHERE id = ?').run(inactiva.id);
+    const pInact = pagoNuevo(org, { metodo: inactiva });
+    r = await pagos.cobrar(db.pagoPorId(pInact.id));
+    ok(r.estado === 'pendiente' && llamadas.length === 0, 'tarjeta inactiva: pendiente sin llamar');
+
+    // Aprobado: compra
+    const t1 = tarjeta(org);
+    const p1 = pagoNuevo(org, { metodo: t1 });
+    const viejo = pagoNuevo(org, { procesador: 'cardnet' }); // objeto sin la tarjeta, se enlaza después
+    db.enlazarMetodoPago(viejo.id, t1.id);
+    doble([aprobada('P15-A')]);
+    let b = b02();
+    r = await pagos.cobrar(p1);
+    const f1 = db.pagoPorId(p1.id);
+    ok(r.estado === 'aprobado' && f1.estado === 'aprobado' && r.comprobante && facturasDe(p1.id) === 1 && b02() === b + 1, `compra aprobada: ${r.estado}, una factura, B02 +1`);
+    ok(f1.procesador_id === 'P15-A' && f1.autorizacion === 'AU15' && f1.intentos === 1, 'procesador_id, autorizacion e intentos guardados');
+    const ev = db.eventosDePago(p1.id);
+    ok(JSON.stringify(ev.map((e) => e.tipo)) === '["cobro-enviado","respuesta"]', `eventos: ${ev.map((e) => e.tipo)}`);
+    ok(!JSON.stringify(ev).includes('CT__'), 'los eventos no llevan token');
+    ok(compras() === 1 && llamadas[0].cuerpo.TrxToken === t1.token, 'el cobro usó el token de la tarjeta enlazada');
+
+    // resolver dos veces
+    b = b02();
+    const rr = pagos.resolver(db.pagoPorId(p1.id), { resultado: 'aprobado', procesadorId: 'P15-A' });
+    ok(rr.estado === 'aprobado' && facturasDe(p1.id) === 1 && b02() === b, 'resolver aprobado dos veces: una factura y B02 igual');
+
+    // cobrar con el objeto viejo en memoria (tarjeta enlazada después)
+    doble([aprobada('P15-V')]);
+    r = await pagos.cobrar(viejo);
+    ok(r.estado === 'aprobado' && compras() === 1, 'cobrar con el objeto viejo: relee la fila y cobra');
+
+    // Rechazo
+    const t2 = tarjeta(org);
+    const p2 = pagoNuevo(org, { metodo: t2 });
+    doble([{ estado: 200, cuerpo: { ResponseCode: '51', Status: 'Rejected' } }]);
+    b = b02();
+    r = await pagos.cobrar(p2);
+    const f2 = db.pagoPorId(p2.id);
+    ok(r.estado === 'rechazado' && f2.estado === 'rechazado' && f2.codigo_respuesta === '51' && f2.motivo === cardnet.mensajeDeRechazo('51'),
+      `rechazo 51: ${f2.estado}, ${f2.codigo_respuesta}`);
+    ok(b02() === b && facturasDe(p2.id) === 0, 'el rechazo no consume NCF ni emite factura');
+    ok(d.prepare('SELECT fallos_seguidos AS f FROM metodos_pago WHERE id = ?').get(t2.id).f === 1, 'fallos_seguidos de la tarjeta = 1');
+    const p2b = pagoNuevo(org, { metodo: t2 });
+    doble([aprobada('P15-B')]);
+    await pagos.cobrar(p2b);
+    ok(d.prepare('SELECT fallos_seguidos AS f FROM metodos_pago WHERE id = ?').get(t2.id).f === 0, 'una aprobación posterior lo pone a 0');
+
+    // Borrador que sigue borrador tras un rechazo
+    const borr = db.crearBorrador({ idOrg: org, idPlan: 'estandar', dias: 30 });
+    const INT_PUB = { tipo: 'publicacion', idPlan: 'estandar', idAnuncio: borr, dias: 30, concepto: 'Publicación', cliente: CLIENTE, correoCliente: CLIENTE.correo };
+    const t3 = tarjeta(org);
+    const pPub = pagoNuevo(org, { intencion: INT_PUB, metodo: t3 });
+    doble([{ estado: 200, cuerpo: { ResponseCode: '51' } }]);
+    await pagos.cobrar(pPub);
+    ok(d.prepare('SELECT estado FROM anuncios WHERE id = ?').get(borr).estado === 'borrador', 'rechazado: el borrador sigue siendo borrador');
+    const pPub2 = pagoNuevo(org, { intencion: INT_PUB, metodo: t3 });
+    doble([aprobada('P15-PUB')]);
+    r = await pagos.cobrar(pPub2);
+    ok(r.estado === 'aprobado' && d.prepare('SELECT estado FROM anuncios WHERE id = ?').get(borr).estado === 'activo', 'aprobado: el anuncio queda activo');
+
+    // Estado 0: pendiente con un intento
+    const p0 = pagoNuevo(org, { metodo: t3 });
+    doble([{ estado: 0, cuerpo: null, fallo: 'ECONNRESET' }]);
+    b = b02();
+    r = await pagos.cobrar(p0);
+    ok(r.estado === 'pendiente' && db.pagoPorId(p0.id).intentos === 1 && tiposDeEventos(p0.id).filter((t) => t === 'cobro-enviado').length === 1 && b02() === b,
+      'estado 0: pendiente, intentos = 1, un cobro-enviado');
+
+    // Redirección
+    const pR = pagoNuevo(org, { metodo: t3 });
+    doble([{ estado: 200, cuerpo: { CommerceAction: { ActionType: 1, Url: 'https://labservicios.cardnet.com.do/3ds' } } }]);
+    r = await pagos.cobrar(pR);
+    ok(r.estado === 'pendiente' && db.pagoPorId(pR.id).estado === 'pendiente' && /^https:\/\/labservicios/.test(r.redireccion || ''), 'redirección: pendiente y el retorno lleva la URL');
+
+    // Guarda de la 05.4: primer intento, sin llamar a CardNet
+    const sVenc = susc(org, { fin: enDias(-1) });
+    const INT_AMP = (idSusc) => ({ tipo: 'ampliacion', idSusc, anadidos: 1, concepto: 'Ampliación', cliente: CLIENTE, correoCliente: CLIENTE.correo });
+    const pV = pagoNuevo(org, { idSusc: sVenc, intencion: INT_AMP(sVenc), metodo: t3 });
+    doble([aprobada('P15-NO')]);
+    b = b02();
+    const incl = d.prepare('SELECT anuncios_incluidos AS a FROM suscripciones WHERE id = ?').get(sVenc).a;
+    r = await pagos.cobrar(pV);
+    const fV = db.pagoPorId(pV.id);
+    ok(r.estado === 'rechazado' && fV.estado === 'rechazado' && fV.codigo_respuesta === 'membresia-vencida' && llamadas.length === 0,
+      `ampliación de una membresía vencida: rechazado sin llamar (${fV.codigo_respuesta})`);
+    ok(d.prepare('SELECT anuncios_incluidos AS a FROM suscripciones WHERE id = ?').get(sVenc).a === incl && facturasDe(pV.id) === 0 && b02() === b, 'no suma capacidad, sin factura, B02 igual');
+    ok(!/cupo/i.test(fV.motivo) && /No se le cobró nada/.test(fV.motivo), `el motivo no dice «cupo»: ${fV.motivo}`);
+
+    // La membresía se vence ENTRE la guarda y la aprobación
+    const sMitad = susc(org, { fin: enDias(-1) });
+    const pM = pagoNuevo(org, { idSusc: sMitad, intencion: INT_AMP(sMitad), metodo: t3 });
+    const guardaReal = db.intencionAplicable;
+    db.intencionAplicable = () => ({ ok: true });
+    doble([aprobada('P15-M')]);
+    b = b02();
+    try { r = await pagos.cobrar(pM); } finally { db.intencionAplicable = guardaReal; }
+    ok(r.estado === 'pendiente' && r.sinAplicar === true && db.pagoPorId(pM.id).estado === 'pendiente', 'aprobado sin aplicar: pendiente con sinAplicar');
+    ok(tiposDeEventos(pM.id).filter((t) => t === 'aprobado-sin-aplicar').length === 1 && b02() === b && facturasDe(pM.id) === 0, 'un evento aprobado-sin-aplicar, sin factura y B02 igual');
+    ok(/no se emitió comprobante/.test(r.motivo) && /no pudimos activar/.test(r.motivo) && !/\d{3}[- ]?\d{3}[- ]?\d{4}/.test(r.motivo), 'el texto dice que entró, que no se activó nada, sin comprobante y sin teléfono');
+    const otraVez = pagos.resolver(db.pagoPorId(pM.id), { resultado: 'aprobado', procesadorId: 'P15-M' });
+    ok(otraVez.sinAplicar === true && tiposDeEventos(pM.id).filter((t) => t === 'aprobado-sin-aplicar').length === 1, 'resolver otra vez: no añade otro evento');
+
+    // Intento previo + membresía vencida: no se aplica la guarda, se reenvía y NUNCA se rechaza
+    const sPrev = susc(org, { fin: enDias(-1) });
+    const pP = pagoNuevo(org, { idSusc: sPrev, intencion: INT_AMP(sPrev), metodo: t3 });
+    db.anotarEventoPago({ pagoId: pP.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado' });
+    doble([aprobada('P15-PREV')]);
+    b = b02();
+    r = await pagos.cobrar(pP);
+    ok(compras() === 1 && llamadas[0].cuerpo.UniqueID === pP.referencia, 'con intento previo: se reenvía con el mismo UniqueID');
+    ok(r.sinAplicar === true && db.pagoPorId(pP.id).estado === 'pendiente' && tiposDeEventos(pP.id).filter((t) => t === 'aprobado-sin-aplicar').length === 1
+      && b02() === b && facturasDe(pP.id) === 0, 'con intento previo: aprobado-sin-aplicar y el pago nunca pasa a rechazado');
+
+    // Aviso tardío sobre un pago ya rechazado
+    const pT = pagoNuevo(org, { metodo: t3 });
+    db.rechazarPago(pT.id, { codigo: 'reemplazado', motivo: 'Reemplazado' });
+    b = b02();
+    let tarde = pagos.resolver(db.pagoPorId(pT.id), { resultado: 'aprobado', procesadorId: 'P15-T', origen: 'notificacion' });
+    ok(tarde.sinAplicar === true && tiposDeEventos(pT.id).filter((t) => t === 'aprobado-sin-aplicar').length === 1 && facturasDe(pT.id) === 0 && b02() === b,
+      'aviso tardío sobre un rechazado: un evento aprobado-sin-aplicar, sin factura');
+    tarde = pagos.resolver(db.pagoPorId(pT.id), { resultado: 'aprobado', procesadorId: 'P15-T', origen: 'notificacion' });
+    ok(tiposDeEventos(pT.id).filter((t) => t === 'aprobado-sin-aplicar').length === 1 && db.pagoPorId(pT.id).estado === 'rechazado', 'repetido: no añade otro y el pago sigue rechazado');
+
+    // Pago que ya no está pendiente al llegar al procesador
+    const pX = pagoNuevo(org, { metodo: t3 });
+    db.rechazarPago(pX.id, { codigo: 'abandonado' });
+    doble([aprobada('P15-X')]);
+    r = await pagos.PROCESADORES.cardnet(pX);
+    ok(r.resultado === 'pendiente' && llamadas.length === 0 && !tiposDeEventos(pX.id).includes('cobro-enviado'), 'pago ya no pendiente: ninguna llamada ni cobro-enviado');
+
+    // Consentimiento de renovación al aprobarse
+    const REN = { texto: 'Texto de la 05.3', aceptada: '2026-10-01T10:00:00.000Z' };
+    const t4 = tarjeta(org);
+    const pC = pagoNuevo(org, { intencion: { ...COMPRA, renovacionAutomatica: REN }, metodo: t4 });
+    doble([aprobada('P15-C')]);
+    r = await pagos.cobrar(pC);
+    const sC = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(r.membresia.id);
+    ok(sC.renovacion_automatica === 1 && sC.renovacion_texto === REN.texto && sC.renovacion_aceptada === REN.aceptada && sC.metodo_pago_id === t4.id,
+      'compra con tarjeta y casilla: consentimiento, texto, fecha y tarjeta');
+    ok(sC.proximo_cargo && sC.proximo_cargo.slice(0, 16) === new Date(new Date(sC.fin).getTime() - 3 * DIA).toISOString().slice(0, 16), 'proximo_cargo = fin − 3 días');
+    const pTr = pagoNuevo(org, { intencion: { ...COMPRA, renovacionAutomatica: REN }, metodo: t4, procesador: 'transferencia' });
+    const rt = pagos.confirmarPago(pTr.id);
+    ok(d.prepare('SELECT renovacion_automatica AS r FROM suscripciones WHERE id = ?').get(rt.membresia.id).r === 0, 'la misma compra por transferencia: sin renovación automática');
+    const pSin = pagoNuevo(org, { metodo: t4 });
+    doble([aprobada('P15-S')]);
+    r = await pagos.cobrar(pSin);
+    ok(d.prepare('SELECT renovacion_automatica AS r FROM suscripciones WHERE id = ?').get(r.membresia.id).r === 0, 'con tarjeta pero sin casilla: nada cambia');
+
+    // Renovación aprobada: reprograma
+    const sRen = susc(org, { fin: enDias(10) });
+    db.activarRenovacionConTarjeta({ idSusc: sRen, idOrg: org, idMetodo: t4.id, texto: 'T' });
+    d.prepare('UPDATE suscripciones SET renovacion_intentos = 2 WHERE id = ?').run(sRen);
+    const INT_REN = { tipo: 'renovacion', idSusc: sRen, dias: 30, idPlan: 'estandar', cupo: 1, concepto: 'Renovación', cliente: CLIENTE, correoCliente: CLIENTE.correo };
+    const pRen = pagoNuevo(org, { idSusc: sRen, intencion: INT_REN, metodo: t4 });
+    doble([aprobada('P15-R')]);
+    r = await pagos.cobrar(pRen);
+    const sR = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(sRen);
+    ok(r.estado === 'aprobado' && sR.renovacion_intentos === 0 && sR.proximo_cargo.slice(0, 16) === new Date(new Date(sR.fin).getTime() - 3 * DIA).toISOString().slice(0, 16),
+      'renovación aprobada: intentos a 0 y próximo intento = nuevo fin − 3 días');
+
+    // Texto genérico de rechazo
+    const gen = cardnet.mensajeDeRechazo('9999');
+    ok(!/cupo/i.test(gen) && /no se activó nada/.test(gen) && /comprobante/.test(gen), `texto genérico: ${gen}`);
+    apagar();
   }
 
   apagar();

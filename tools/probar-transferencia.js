@@ -53,6 +53,13 @@ for (const k of Object.keys(process.env)) {
   if (k.startsWith('MERCA_TRANSFERENCIA')) delete process.env[k];
 }
 
+/* Un .env local con CardNet encendido cambiaría metodosDeCobro() (pondría
+   `cardnet` de primero y quitaría `demo`) y, con él, el resultado de esta
+   prueba. Se borra todo lo que venga de fuera (D-32). */
+for (const k of Object.keys(process.env)) {
+  if (k.startsWith('MERCA_CARDNET')) delete process.env[k];
+}
+
 const db = require('./db');
 const pagos = require('./pagos');
 const transferencia = require('./transferencia');
