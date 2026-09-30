@@ -574,6 +574,199 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     ok(f.intentos === 0, 'intentos de un pago sin cobrar vale 0');
   }
 
+  console.log('\n14. Funciones de base: clientes, tarjetas, respuestas, eventos y consentimiento');
+  {
+    const db = require('./db');
+    const precios = require('../assets/precios.js');
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    const DIA = 86400000;
+    let n = 0;
+    const enDias = (x) => new Date(Date.now() + x * DIA).toISOString();
+    const cuenta = (etiqueta) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      return db.organizacionDe(idUsuario).id;
+    };
+    const susc = (idOrg, { fin = enDias(20), estado = 'activa' } = {}) => {
+      const idSusc = `susc14-${SELLO}-${++n}`;
+      d.prepare(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
+                   anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+                 VALUES (?, ?, 'estandar', 'vigencia', NULL, ?, 1800, 1, 30, ?, ?, NULL, ?)`)
+        .run(idSusc, idOrg, estado, enDias(-10), fin, new Date().toISOString());
+      return idSusc;
+    };
+    const perfil = (extra = {}) => ({ perfilId: `PF-${SELLO}-${++n}`, token: `tok-${SELLO}-${n}`, marca: 'Visa', ultimos4: '1111',
+      venceMes: 12, venceAnio: 2030, activo: true, ...extra });
+    const pagoCon = (idOrg, { idSusc = null, intencion, procesador = 'cardnet', creado = null }) => {
+      const p = db.registrarCobro({
+        idOrg, idSusc, cobro: { ...precios.desglose(1800), referencia: `R14-${SELLO}-${++n}`, procesador }, intencion });
+      if (creado) d.prepare('UPDATE pagos SET creado = ? WHERE id = ?').run(creado, p.id);
+      return p;
+    };
+    const COMPRA = { tipo: 'compra', idPlan: 'estandar', cupo: 1, dias: 30 };
+
+    const org = cuenta('a14');
+    const otra = cuenta('b14');
+
+    // Cliente en el procesador
+    ok(db.clienteProcesador(org, 'cardnet') === null, 'sin cliente guardado: null');
+    ok(db.guardarClienteProcesador(org, 'cardnet', 'C1') === 'C1', 'guardarClienteProcesador devuelve el id');
+    ok(db.guardarClienteProcesador(org, 'cardnet', 'C2') === 'C1', 'guardar otra vez no lo cambia');
+    ok(d.prepare('SELECT COUNT(*) AS n FROM clientes_procesador WHERE organizacion_id = ?').get(org).n === 1, 'y no lo duplica');
+
+    // Tarjetas
+    const p1 = perfil({ numero: '4111111111111111', codigoSeguridad: '123' });
+    const m1 = db.guardarMetodoPago({ idOrg: org, procesador: 'cardnet', clienteId: 'C1', perfil: p1 });
+    const m1b = db.guardarMetodoPago({ idOrg: org, procesador: 'cardnet', clienteId: 'C1', perfil: p1 });
+    ok(m1.id === m1b.id && d.prepare('SELECT COUNT(*) AS n FROM metodos_pago WHERE organizacion_id = ?').get(org).n === 1,
+      'el mismo perfil dos veces es una sola fila');
+    const filaEntera = JSON.stringify(d.prepare('SELECT * FROM metodos_pago WHERE id = ?').get(m1.id));
+    ok(!filaEntera.includes('4111111111111111') && !filaEntera.includes('123"'), 'una propiedad extra del perfil no llega a la base');
+    ok(m1.predeterminado === 1 && m1.procesador_perfil_id === p1.perfilId && m1.procesador_cliente_id === 'C1', 'la primera queda predeterminada, con sus identificadores');
+    const m2 = db.guardarMetodoPago({ idOrg: org, procesador: 'cardnet', clienteId: 'C1', perfil: perfil({ ultimos4: '2222' }) });
+    ok(m2.predeterminado === 0, 'la segunda no lo es');
+    const lista = db.metodosPagoDe(org);
+    ok(lista.length === 2 && lista.every((m) => !('token' in m) && !JSON.stringify(m).includes('tok-')), 'metodosPagoDe no devuelve token');
+    ok(lista[0].id === m1.id && lista[0].ultimos4 === '1111' && lista[0].venceMes === 12 && lista[0].venceAnio === 2030 && lista[0].activo === true,
+      'metodosPagoDe: marca, últimos cuatro, vencimiento, activo');
+    ok(db.metodoPagoDe(m1.id, otra) === null, 'metodoPagoDe de otra organización: null');
+    ok(db.metodoPagoDe(m1.id, org).token === p1.token, 'metodoPagoDe con la suya trae el token (uso del servidor)');
+    ok(lanza(() => db.guardarMetodoPago({ idOrg: org, procesador: 'cardnet', perfil: { perfilId: 'x' } })) !== null, 'sin token no se guarda');
+
+    // Resultado de cobros con la tarjeta
+    db.anotarResultadoTarjeta(m2.id, false); db.anotarResultadoTarjeta(m2.id, false);
+    ok(d.prepare('SELECT fallos_seguidos AS f FROM metodos_pago WHERE id = ?').get(m2.id).f === 2, 'dos rechazos: fallos_seguidos = 2');
+    db.anotarResultadoTarjeta(m2.id, true);
+    ok(d.prepare('SELECT fallos_seguidos AS f FROM metodos_pago WHERE id = ?').get(m2.id).f === 0, 'un aprobado los pone a 0');
+    d.prepare('UPDATE metodos_pago SET activo = 0, fallos_seguidos = 3 WHERE id = ?').run(m2.id);
+    ok(db.activarMetodoPago(m2.id, otra) === false && db.activarMetodoPago(m2.id, org) === true, 'activarMetodoPago solo la del dueño');
+    ok(d.prepare('SELECT activo, fallos_seguidos AS f FROM metodos_pago WHERE id = ?').get(m2.id).f === 0, 'y limpia los fallos');
+
+    // Enlazar tarjeta y anotar respuesta
+    const cn = pagoCon(org, { intencion: COMPRA });
+    ok(db.enlazarMetodoPago(cn.id, m1.id) === true && db.pagoPorId(cn.id).metodo_pago_id === m1.id, 'enlazarMetodoPago en un pendiente');
+    let r = db.anotarRespuestaProcesador(cn.id, { procesadorId: 'P-1', autorizacion: 'A1', codigo: '00', intento: true });
+    ok(r.procesador_id === 'P-1' && r.autorizacion === 'A1' && r.codigo_respuesta === '00' && r.intentos === 1, 'anotarRespuestaProcesador rellena y cuenta el intento');
+    r = db.anotarRespuestaProcesador(cn.id, { procesadorId: 'P-1', codigo: '00' });
+    ok(r.intentos === 1 && r.autorizacion === 'A1', 'sin intento no suma y no borra lo anotado');
+    const e409 = lanza(() => db.anotarRespuestaProcesador(cn.id, { procesadorId: 'P-OTRO' }));
+    ok(e409 && e409.codigo === 409 && db.pagoPorId(cn.id).procesador_id === 'P-1', 'otro id de compra: 409 y no se sobrescribe');
+    ok((lanza(() => db.anotarRespuestaProcesador('no-existe', {})) || {}).codigo === 404, 'un pago que no existe: 404');
+
+    // Rechazo con código y motivo
+    const suscAntes = d.prepare('SELECT COUNT(*) AS n FROM suscripciones').get().n;
+    const facturasAntes = d.prepare('SELECT COUNT(*) AS n FROM facturas').get().n;
+    const rz = db.rechazarPago(cn.id, { codigo: '51', motivo: 'Fondos insuficientes' });
+    ok(rz.cambiado && rz.pago.estado === 'rechazado' && rz.pago.codigo_respuesta === '51' && rz.pago.motivo === 'Fondos insuficientes', 'rechazarPago guarda código y motivo');
+    ok(d.prepare('SELECT COUNT(*) AS n FROM suscripciones').get().n === suscAntes && d.prepare('SELECT COUNT(*) AS n FROM facturas').get().n === facturasAntes,
+      'sin tocar suscripciones ni facturas');
+    ok(db.enlazarMetodoPago(cn.id, m2.id) === false && db.pagoPorId(cn.id).metodo_pago_id === m1.id, 'enlazarMetodoPago no toca un pago ya resuelto');
+    const sinArg = pagoCon(org, { intencion: COMPRA });
+    const rz2 = db.rechazarPago(sinArg.id);
+    ok(rz2.cambiado && rz2.pago.estado === 'rechazado' && rz2.pago.codigo_respuesta === null, 'sin segundo argumento se comporta como antes');
+    ok(db.rechazarPago(sinArg.id).cambiado === false, 'un rechazado no vuelve a cambiar');
+
+    // Eventos
+    const ev = pagoCon(org, { intencion: COMPRA });
+    ok(db.huboIntentoDeCobro(ev.id) === false, 'sin evento cobro-enviado: no hubo intento');
+    db.anotarEventoPago({ pagoId: ev.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado', cuerpo: { uniqueId: 'U1' } });
+    db.anotarEventoPago({ pagoId: ev.id, procesador: 'cardnet', origen: 'notificacion', tipo: 'recibido', cuerpo: { estado: 'x' } });
+    const evs = db.eventosDePago(ev.id);
+    ok(evs.length === 2 && evs[0].tipo === 'cobro-enviado' && evs[1].tipo === 'recibido' && evs[0].cuerpo.uniqueId === 'U1', 'eventosDePago en orden de id, con el cuerpo como JSON');
+    ok(db.huboIntentoDeCobro(ev.id) === true, 'con cobro-enviado: hubo intento');
+
+    // intencionAplicable
+    const compra = pagoCon(org, { intencion: COMPRA });
+    ok(db.intencionAplicable(compra).ok === true, 'compra con plan activo: aplicable');
+    const sViva = susc(org);
+    const amp = pagoCon(org, { idSusc: sViva, intencion: { tipo: 'ampliacion', idSusc: sViva, anadidos: 1 } });
+    ok(db.intencionAplicable(amp).ok === true, 'ampliación sobre membresía viva: aplicable');
+    const sVencida = susc(org, { fin: enDias(-1) });
+    const ampV = pagoCon(org, { idSusc: sVencida, intencion: { tipo: 'ampliacion', idSusc: sVencida, anadidos: 1 } });
+    ok(db.intencionAplicable(ampV).ok === false && db.intencionAplicable(ampV).codigo === 'membresia-vencida', 'ampliación sobre una vencida: membresia-vencida');
+    const borr = db.crearBorrador({ idOrg: org, idPlan: 'estandar', dias: 30 });
+    const pub = pagoCon(org, { intencion: { tipo: 'publicacion', idPlan: 'estandar', idAnuncio: borr, dias: 30 } });
+    ok(db.intencionAplicable(pub).ok === true, 'publicación sobre un borrador: aplicable');
+    d.prepare("UPDATE anuncios SET estado = 'activo' WHERE id = ?").run(borr);
+    ok(db.intencionAplicable(pub).codigo === 'publicacion-huerfana', 'publicación cuyo anuncio ya no es borrador: publicacion-huerfana');
+    const pubX = pagoCon(org, { intencion: { tipo: 'publicacion', idPlan: 'estandar', idAnuncio: 'no-existe', dias: 30 } });
+    ok(db.intencionAplicable(pubX).codigo === 'publicacion-huerfana', 'publicación cuyo anuncio no existe: publicacion-huerfana');
+    const ren = pagoCon(org, { idSusc: sViva, intencion: { tipo: 'renovacion', idSusc: sViva, dias: 30, idPlan: 'estandar', cupo: 1 } });
+    ok(db.intencionAplicable(ren).ok === true, 'renovación de una suscripción renovable: aplicable');
+    d.prepare("UPDATE suscripciones SET estado = 'cancelada' WHERE id = ?").run(sViva);
+    ok(db.intencionAplicable(ren).codigo === 'renovacion-huerfana', 'renovación de una cancelada: renovacion-huerfana');
+    d.prepare("UPDATE suscripciones SET estado = 'activa' WHERE id = ?").run(sViva);
+    ok(db.intencionAplicable({ organizacion_id: org, intencion: 'no es json' }).codigo === 'intencion-invalida', 'intención rota: intencion-invalida');
+
+    // Consentimiento con tarjeta
+    const sRen = susc(org, { fin: enDias(30) });
+    const antes = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(sRen);
+    const ajena = db.guardarMetodoPago({ idOrg: otra, procesador: 'cardnet', perfil: perfil() });
+    ok(db.activarRenovacionConTarjeta({ idSusc: sRen, idOrg: org, idMetodo: ajena.id, texto: 'T' }) === false, 'con tarjeta ajena: false');
+    d.prepare('UPDATE metodos_pago SET activo = 0 WHERE id = ?').run(m1.id);
+    ok(db.activarRenovacionConTarjeta({ idSusc: sRen, idOrg: org, idMetodo: m1.id, texto: 'T' }) === false, 'con tarjeta inactiva: false');
+    d.prepare('UPDATE metodos_pago SET activo = 1 WHERE id = ?').run(m1.id);
+    ok(JSON.stringify(d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(sRen)) === JSON.stringify(antes), 'sin tarjeta válida no cambió nada');
+    ok(db.activarRenovacionConTarjeta({ idSusc: sRen, idOrg: otra, idMetodo: ajena.id, texto: 'T' }) === false, 'con una suscripción de otra organización: false');
+    ok(db.activarRenovacionConTarjeta({ idSusc: sRen, idOrg: org, idMetodo: m1.id, texto: 'Texto de la 05.3', aceptada: '2026-10-01T10:00:00.000Z' }) === true, 'con su tarjeta activa: true');
+    const s1 = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(sRen);
+    ok(s1.renovacion_automatica === 1 && s1.renovacion_aceptada === '2026-10-01T10:00:00.000Z' && s1.renovacion_texto === 'Texto de la 05.3'
+      && s1.metodo_pago_id === m1.id && s1.renovacion_intentos === 0, 'consentimiento, texto, tarjeta e intentos a 0');
+    const esperado = new Date(new Date(s1.fin).getTime() - 3 * DIA).toISOString().slice(0, 16);
+    ok(s1.proximo_cargo && s1.proximo_cargo.slice(0, 16) === esperado, 'proximo_cargo = fin − 3 días (fecha del próximo intento)');
+
+    // Reprogramar tras renovar
+    const finNuevo = enDias(60);
+    d.prepare('UPDATE suscripciones SET fin = ?, renovacion_intentos = 2 WHERE id = ?').run(finNuevo, sRen);
+    ok(db.reprogramarRenovacion(sRen) === true, 'reprogramarRenovacion con automática activa');
+    const s2 = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(sRen);
+    ok(s2.renovacion_intentos === 0 && s2.proximo_cargo.slice(0, 16) === new Date(new Date(finNuevo).getTime() - 3 * DIA).toISOString().slice(0, 16),
+      'intentos a 0 y próximo intento 3 días antes del nuevo fin');
+    db.reprogramarRenovacion(sRen);
+    ok(d.prepare('SELECT proximo_cargo AS p FROM suscripciones WHERE id = ?').get(sRen).p === s2.proximo_cargo, 'idempotente');
+    const sSin = susc(org);
+    ok(db.reprogramarRenovacion(sSin) === false && d.prepare('SELECT proximo_cargo AS p FROM suscripciones WHERE id = ?').get(sSin).p === null,
+      'sin automática no cambia nada');
+
+    // Desactivar conserva el historial
+    ok(db.desactivarRenovacion(sRen, otra) === false, 'desactivar ajena: false');
+    ok(db.desactivarRenovacion(sRen, org) === true, 'desactivar la propia');
+    const s3 = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(sRen);
+    ok(s3.renovacion_automatica === 0 && s3.proximo_cargo === null && s3.renovacion_aceptada === '2026-10-01T10:00:00.000Z' && s3.renovacion_texto === 'Texto de la 05.3',
+      'apagada, sin próximo intento, con el historial del consentimiento');
+
+    // Borrar una tarjeta apaga las renovaciones que la usaban
+    db.activarRenovacionConTarjeta({ idSusc: sRen, idOrg: org, idMetodo: m1.id, texto: 'T' });
+    ok(db.borrarMetodoPago(m1.id, otra) === false, 'borrar la tarjeta de otra: false');
+    ok(db.borrarMetodoPago(m1.id, org) === true, 'borrar la propia');
+    ok(db.metodosPagoDe(org).every((m) => m.id !== m1.id) && db.metodoPagoDe(m1.id, org) === null, 'ya no se lista ni se puede usar');
+    ok(d.prepare('SELECT metodo_pago_id AS m FROM pagos WHERE id = ?').get(cn.id).m === m1.id, 'el pago cobrado con ella sigue apuntándole');
+    const s4 = d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(sRen);
+    ok(s4.renovacion_automatica === 0 && s4.proximo_cargo === null && s4.metodo_pago_id === m1.id, 'la suscripción deja de renovarse sola y conserva la cita');
+    ok(db.guardarMetodoPago({ idOrg: org, procesador: 'cardnet', perfil: p1 }).id === m1.id && db.metodosPagoDe(org).some((m) => m.id === m1.id),
+      'volver a guardar el mismo perfil la recupera');
+
+    // Conciliación
+    const base = Date.now();
+    const viejo = pagoCon(org, { intencion: COMPRA, creado: new Date(base - 30 * 60000).toISOString() });
+    const reciente = pagoCon(org, { intencion: COMPRA, creado: new Date(base - 2 * 60000).toISOString() });
+    const sinApl = pagoCon(org, { intencion: COMPRA, creado: new Date(base - 40 * 60000).toISOString() });
+    const demo = pagoCon(org, { intencion: COMPRA, procesador: 'demo', creado: new Date(base - 50 * 60000).toISOString() });
+    db.anotarRespuestaProcesador(viejo.id, { procesadorId: 'P-V' });
+    db.enlazarMetodoPago(viejo.id, m2.id);
+    db.anotarEventoPago({ pagoId: viejo.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado' });
+    db.anotarEventoPago({ pagoId: sinApl.id, procesador: 'cardnet', origen: 'reconciliacion', tipo: 'aprobado-sin-aplicar' });
+    const cola = db.pagosCardnetPorReconciliar({ minutos: 10, ahora: new Date(base) });
+    const idsCola = cola.map((p) => p.id);
+    ok(idsCola.includes(viejo.id) && !idsCola.includes(reciente.id) && !idsCola.includes(demo.id), 'solo cardnet pendientes con más de N minutos');
+    ok(!idsCola.includes(sinApl.id), 'excluye los aprobado-sin-aplicar');
+    const fv = cola.find((p) => p.id === viejo.id);
+    ok(fv.procesador_id === 'P-V' && fv.metodo_pago_id === m2.id && fv.huboIntento === true && fv.sinAplicar === false, 'trae procesador_id, metodo_pago_id, huboIntento y sinAplicar');
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
