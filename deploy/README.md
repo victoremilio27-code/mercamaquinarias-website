@@ -355,6 +355,147 @@ siempre, deja de estar al alcance del comprador. Desde ese momento toda
 compra con importe queda **pendiente** hasta que el personal la marque
 como recibida en la consola; hasta entonces no hay cupos ni comprobante.
 
+## 10c. Cobro con tarjeta (CardNet)
+
+Está construido, probado contra un doble de CardNet y **apagado**: sin las
+tres variables de abajo el sitio se comporta como antes y la transferencia
+sigue intacta. El diseño y lo que se sabe de la API están en
+`.planning/research/cardnet.md`. La tarjeta se teclea en un formulario
+servido por CardNet, dentro de un iframe: número, vencimiento y código de
+seguridad nunca pasan por nuestro servidor.
+
+### 1. Lo que hay que tener de CardNet antes de encender
+
+- **`DataDo.Invoice`: ¿lleva el número de orden del comercio o el NCF de la
+  DGII? Es la primera pregunta y la que decide todo. El diseño manda el
+  número de orden (la referencia `TE-AAAA-XXXXXX` del pago). Si CardNet
+  responde que ahí va el NCF, NO se enciende: el comprobante se emite
+  después de cobrar y el diseño hay que rehacerlo.**
+- La **afiliación de comercio** con la plataforma de Tokenización (Card on
+  File), pidiendo por escrito los casos de uso `Ecommerce_COF` y
+  `MOTO_Recurring`. Sin ellos las renovaciones automáticas se rechazan.
+- Si el cobro recurrente exige algún indicador en `purchase`. Si lo exige,
+  va solo en `cardnet.cuerpoCompra` (`tools/cardnet.js`).
+- Las credenciales de certificación (QA) de Tokenización: `PublicAccountKey`
+  y `PrivateAccountKey`. **No son las del Botón de Pago.**
+- Campos obligatorios de `POST /v1/api/customer`, si el perfil nuevo queda
+  siempre por activar, quién manda el código de activación y por dónde, y
+  el orden en que devuelve los perfiles.
+- Que el formulario de captura admita ser embebido en un iframe, qué manda
+  al terminar (forma del `message`) y qué alto necesita para el reto 3-D
+  Secure.
+
+### 2. Respaldo verificado de la base antes de la migración
+
+El primer arranque con esta versión aplica la migración `2026-10-cardnet`
+(columnas y tablas nuevas; solo se añade). Antes de desplegarla, respaldo
+y comprobación, como con cualquier cambio de la base de producción:
+
+```bash
+sqlite3 /var/lib/mercamaquinarias/mercamaquinarias.db "VACUUM INTO '/var/backups/mercamaquinarias/antes-cardnet.db'"
+sqlite3 /var/backups/mercamaquinarias/antes-cardnet.db "PRAGMA integrity_check;"
+```
+
+La segunda orden tiene que responder exactamente `ok`. Si no, no se
+despliega.
+
+### 3. Encender en `lab`
+
+Añade las tres líneas al archivo de secretos, cambiando cada marcador
+entre ángulos por el dato real (ninguna llave va en el repositorio, ni en
+`.env.example`, ni las de certificación que CardNet publica):
+
+```bash
+cat >> /etc/mercamaquinarias.env <<'FIN'
+MERCA_CARDNET=lab
+MERCA_CARDNET_LLAVE_PUB=<PublicAccountKey de Tokenización>
+MERCA_CARDNET_LLAVE_PRIV=<PrivateAccountKey de Tokenización>
+FIN
+chmod 600 /etc/mercamaquinarias.env
+systemctl restart mercamaquinarias
+```
+
+Cualquier otro valor de `MERCA_CARDNET` (incluido `Lab` o `1`) es apagado.
+Comprueba que quedó encendido:
+
+- el registro del servicio (`journalctl -u mercamaquinarias -n 50`) ya **no**
+  muestra el aviso de arranque que nombra las variables de CardNet que
+  faltan (nunca su valor);
+- publicar, planes y el panel ofrecen «Tarjeta de crédito o débito»;
+- la política de seguridad de contenido lleva `frame-src` con el origen de
+  lab de CardNet (`curl -sI https://<dominio>/ | grep -i content-security`).
+
+### 4. La URL de notificación
+
+Pide a CardNet que registre, en sus sistemas:
+
+`https://mercamaquinarias.com/api/pagos/cardnet/notificacion`
+
+La configuran ellos a mano. El aviso llega autenticado con la llave privada
+y se relee en CardNet antes de creerlo; con CardNet apagado la ruta
+responde 404.
+
+### 5. El temporizador de conciliación
+
+Cada 10 minutos, `mercamaquinarias-pagos` completa los pagos cuyo aviso o
+cuya confirmación del navegador se perdieron, y el descuadre sale en el
+informe a gerencia. Es inocuo con CardNet apagado: la tarea responde
+«CardNet apagado» y no llama a nadie.
+
+```bash
+cp /var/www/mercamaquinarias/deploy/mercamaquinarias-pagos.service /etc/systemd/system/
+cp /var/www/mercamaquinarias/deploy/mercamaquinarias-pagos.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now mercamaquinarias-pagos.timer
+systemctl list-timers | grep pagos
+```
+
+La renovación automática y los avisos de renovación y de tarjetas por vencer
+van en la tanda diaria (sección 11), sin instalar nada más.
+
+### 6. Lista de comprobación en lab (tarjetas de prueba de CardNet)
+
+1. Publicación aprobada: el anuncio queda activo y se emite el comprobante
+   con su NCF.
+2. Publicación rechazada: mensaje con el motivo, el borrador sigue
+   borrador, ningún NCF consumido.
+3. Capacidad del dealer comprada y luego ampliada: la capacidad suma y hay
+   comprobante en cada una.
+4. Activación de perfil, si CardNet la pide: el panel pide el código y la
+   tarjeta queda usable.
+5. La notificación llega: aparece un evento `recibida` en `pagos_eventos` y
+   el mismo aviso repetido no emite un segundo comprobante.
+6. Conciliación: para el servicio a mitad de un pago, y comprueba que el
+   temporizador lo recupera y que el informe lo lista en «Pasarela de pago».
+7. Renovación automática: activa la casilla en una suscripción de prueba,
+   fuerza su `proximo_cargo` a una fecha pasada y corre
+   `node tools/tareas.js renovar`: un cobro, un comprobante, el fin alargado.
+
+Lo que no cuadre con lo supuesto se corrige en su función aislada, no en
+el resto: `normalizar`, `perfilesDe`, `cuerpoCliente`, `cuerpoCompra` y
+`compraDeNotificacion` en `tools/cardnet.js`, y la escucha del fin de la
+captura en `assets/cardnet.js`. La prueba `npm run cardnet:probar` sigue
+sin red y protege el resto.
+
+### 7. Pasar a `produccion`
+
+Solo con la certificación de CardNet hecha y la respuesta a la pregunta de
+`DataDo.Invoice` por escrito. Otro respaldo verificado de la base (sección
+2), cambia `MERCA_CARDNET=produccion` y las dos llaves por las de
+producción, y reinicia. Repite la comprobación de la sección 3 y haz un
+cobro real pequeño, con una tarjeta propia, de punta a punta.
+
+### 8. Apagar
+
+`MERCA_CARDNET=apagado` (o borrar la línea) y reiniciar. Los pagos con
+tarjeta pendientes se quedan como están; la conciliación y la renovación
+automática no hacen nada mientras esté apagado y se reanudan al encender.
+**Las renovaciones automáticas ya activadas no cobran mientras esté
+apagado**: si va a estar apagado más de unos días, avisa a esos clientes
+para que renueven a mano desde su panel.
+
+Soporte de cobros: solo por correo o por el asistente del sitio.
+
 ## 11. Mantenimiento automático
 
 Caducar anuncios, avisar de vencimientos, purgar y respaldar la base:
