@@ -91,6 +91,33 @@
       <p class="revision__vacio" id="colaVacia" hidden></p>
     </section>
 
+    <!-- Recuperación de cuentas (fase 10.1, CTA-05). Alguien que perdió el
+         acceso a su correo pide pasar la cuenta a otro; aquí se coteja lo que
+         dice contra lo que la cuenta sabe y se aprueba o se rechaza, siempre
+         con motivo (queda en la bitácora). Atributos `data-recu-*`: `data-estado`
+         lo engancha la cola de arriba. -->
+    <section class="panel" aria-labelledby="t-recuperaciones">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-recuperaciones"><em>Recuperación</em> de cuentas</h2>
+        <p class="panel__meta" id="metaRecu"></p>
+      </div>
+
+      <p class="sol__meta">Aprobar solo si los datos coinciden con la cuenta. Nunca por teléfono: si hace falta más, se le pide por correo al contacto. El motivo queda en la bitácora.</p>
+
+      <div class="revision__filtros" id="filtrosRecu" role="tablist" aria-label="Estado de las solicitudes de recuperación">
+        <button type="button" class="btn btn--ambar btn--chico" data-recu-estado="pendiente" role="tab" aria-selected="true">Pendientes</button>
+        <button type="button" class="btn btn--linea btn--chico" data-recu-estado="aprobada" role="tab" aria-selected="false">Aprobadas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-recu-estado="rechazada" role="tab" aria-selected="false">Rechazadas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-recu-estado="anulada" role="tab" aria-selected="false">Anuladas</button>
+        <button type="button" class="btn btn--linea btn--chico" data-recu-estado="todas" role="tab" aria-selected="false">Todas</button>
+      </div>
+
+      <p class="acceso__aviso" id="avisoRecu" role="status" hidden></p>
+
+      <ul class="solicitudes" id="listaRecu"></ul>
+      <p class="revision__vacio" id="recuVacia" hidden></p>
+    </section>
+
     <!-- Empresas dealer (fase 7, ADMIN-02). El sello solo se podía tocar
          desde la pestaña «Aprobadas» de la cola: una empresa sin solicitud,
          o perdida entre muchas, no lo obtenía nunca. Desde aquí también se
