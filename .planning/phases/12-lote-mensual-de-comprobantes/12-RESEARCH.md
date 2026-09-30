@@ -493,14 +493,14 @@ de un resumen de búsqueda (ver Fuentes) y **debe confirmarse con el contador o 
 
 ## Preguntas abiertas
 
-1. **¿Hace falta el 607?** (pregunta 1 de CONTEXT). Sin respuesta al empezar, no se construye; el resto de la fase no depende de ello.
-2. **¿Reponer un PDF que falta o avisar solamente?**
+1. **¿Hace falta el 607?** (pregunta 1 de CONTEXT). **Sigue abierta (Victor y su contador).** Sin respuesta al empezar, no se construye; el resto de la fase no depende de ello.
+2. **RESOLVED (para construir):** se repone y se marca «repuesto al generar» (D-07, planes 12-01 y 12-02); si no se puede, 409. Queda preguntar al contador si le basta. **¿Reponer un PDF que falta o avisar solamente?**
    - Se sabe: `regenerarPdfsPendientes` lo repone sin cambiar importes ni NCF, pero sin las líneas de `detalle`.
    - Falta: si el contador acepta un PDF repuesto o quiere saberlo siempre.
    - Recomendación: reponer y marcar «repuesto» en el resumen (D-07); revisar el uso real tras el primer cierre.
-3. **¿`resumen.pdf` además del CSV?** Recomendación: sí, una página con totales (Victor lo lee mejor que un CSV); si el plan
+3. **RESOLVED:** sí, `resumen.pdf` de una página (plan 12-02). **¿`resumen.pdf` además del CSV?** Recomendación: sí, una página con totales (Victor lo lee mejor que un CSV); si el plan
    se ajusta de tiempo, es lo primero que se puede recortar.
-4. **¿Dónde comprobar la fecha de los datos existentes?** El plan debe incluir una comprobación de A5 sobre la base de
+4. **RESOLVED:** en vez de una comprobación manual única, el paquete lleva una barrera permanente: `db.fechasIrregulares` sobre el mes pedido y sus vecinos, y 500 con los números si hay alguna fecha que no sea ISO completo (planes 12-01 y 12-02); la vista previa enseña cuántas hay. **¿Dónde comprobar la fecha de los datos existentes?** El plan debe incluir una comprobación de A5 sobre la base de
    demostración (`npm run db:demo`) y sobre una copia de la de producción, si Victor la facilita.
 
 ## Disponibilidad del entorno

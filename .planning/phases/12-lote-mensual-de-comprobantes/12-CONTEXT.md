@@ -63,6 +63,10 @@ fin de mes; facturación electrónica (e-CF); la fase 13 de deuda técnica.
 - **D-08** **Se puede pedir el mes en curso** (para ver cómo va), y entonces el nombre del ZIP lleva
   `-parcial` y el resumen lo dice arriba. La consola preselecciona el mes anterior. Un mes futuro
   devuelve 400.
+  *Nota de planificación (2026-09-30, plan 12-04):* el selector `#mesFacturas` NO se preselecciona,
+  porque también filtra la tabla, que hoy arranca en «todos». Si no hay mes elegido, el paquete usa el
+  mes anterior de Santo Domingo como respaldo y la línea de la consola lo dice. Victor lo revisa; si
+  prefiere la preselección, es un cambio de una línea.
 
 ### Cómo se pide
 - **D-09** Rutas solo de administración (`conAdmin`, que responde 404 a quien no lo es), ambas GET y
@@ -98,6 +102,9 @@ fin de mes; facturación electrónica (e-CF); la fase 13 de deuda técnica.
 - Cómo se repone un PDF (función nueva en `facturas.js` o reutilizar `regenerarPdfsPendientes` con un
   parámetro de mes), siempre sin cambiar lo que dice la fila.
 - Detalle visual del botón y la línea de vista previa (fase con `UI hint`).
+- *Sin `12-UI-SPEC.md`, a propósito:* la interfaz es un botón y una línea de texto en una sección que
+  ya existe, con clases existentes y sin tocar `styles.css`; el plan 12-04 fija todo lo que un contrato
+  de diseño diría.
 
 ## Canonical References
 
