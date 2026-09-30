@@ -31,6 +31,9 @@
 const db = require('./db');
 const facturas = require('./facturas');
 const correo = require('./correo');
+/* Por el objeto del módulo y no desestructurado: la prueba sustituye su
+   transporte y el cobro tiene que ver la sustitución. */
+const cardnet = require('./cardnet');
 const { transferenciaActiva } = require('./transferencia');
 
 /* Lo que se imprime como línea de detalle.
@@ -165,6 +168,27 @@ function confirmarPago(idPago, { envolver } = {}) {
       idPlan: intencion.idPlan,
     });
   }
+
+  /* El consentimiento de renovación automática se aplica AL APROBARSE el
+     pago y no al pedirlo: un pago que no se aprueba no autoriza cobros
+     futuros (R-03). Solo con tarjeta y solo si la casilla iba marcada;
+     con transferencia no hay tarjeta que cobrar sola. Va después de
+     emitir y con su propio try/catch: no toca la emisión, y que esto
+     falle no revierte un cobro que ya entró (queda la suscripción sin
+     renovación automática, que el cliente puede activar a mano). */
+  if (!yaEstaba && membresia) {
+    try {
+      if (pago.procesador === 'cardnet' && intencion.renovacionAutomatica && pago.metodo_pago_id) {
+        db.activarRenovacionConTarjeta({
+          idSusc: membresia.id, idOrg: pago.organizacion_id, idMetodo: pago.metodo_pago_id,
+          texto: intencion.renovacionAutomatica.texto, aceptada: intencion.renovacionAutomatica.aceptada,
+        });
+      }
+      if (intencion.tipo === 'renovacion') db.reprogramarRenovacion(membresia.id);
+    } catch (e) {
+      console.error(`pagos: no se pudo aplicar la renovación automática del pago ${pago.id} · ${e.message}`);
+    }
+  }
   return { pago, membresia, comprobante, yaEstaba };
 }
 
@@ -200,11 +224,11 @@ function avisarAnuncioPublicado({ idAnuncio, para, nombre, idPlan }) {
 const nombreDeEquipo = (a) => [a.anio, a.marca_nombre || a.marca, a.modelo]
   .filter((x) => x !== null && x !== undefined && x !== '').join(' ');
 
-/* Un rechazo no emite nada ni consume NCF. El motivo solo se devuelve
-   para decírselo al anunciante; guardarlo en la base es de la fase 6,
-   que añade `codigo_respuesta` con la integración de la pasarela. */
-function rechazarPago(idPago, { motivo } = {}) {
-  const { pago, cambiado } = db.rechazarPago(idPago);
+/* Un rechazo no emite nada ni consume NCF. Código y motivo se guardan
+   en el pago (fase 6) para que el comprador y la consola vean por qué;
+   además el motivo se devuelve para decírselo al anunciante. */
+function rechazarPago(idPago, { motivo, codigo } = {}) {
+  const { pago, cambiado } = db.rechazarPago(idPago, { codigo, motivo });
   return { pago, cambiado, motivo: motivo || null };
 }
 
@@ -224,16 +248,76 @@ function rechazarPago(idPago, { motivo } = {}) {
 const PROCESADORES = {
   demo: async () => ({ resultado: 'aprobado' }),
   transferencia: async () => ({ resultado: 'pendiente' }),
+
+  /* CardNet, con la tarjeta enlazada al pago (`metodo_pago_id`).
+   *
+   * Se relee la fila del pago: el objeto que llega puede ser viejo (se
+   * enlazó la tarjeta después de crearlo) o el pago puede haberse
+   * rechazado o aprobado entre medias. Desde la relectura hasta el
+   * evento `cobro-enviado` NO hay ningún `await`: un pago que deja de
+   * estar pendiente en ese hueco no se cobra.
+   *
+   * La guarda de la 05.4 (`intencionAplicable`) se mira solo en el PRIMER
+   * intento, antes de que el dinero salga: no se cobra lo que
+   * `aprobarPago` va a rechazar. Con un intento previo NO se mira: CardNet
+   * puede haber cobrado ya, así que se reenvía siempre con el mismo
+   * `UniqueID` (devuelve el resultado ya obtenido sin duplicar) y
+   * `resolver` trata el aprobado que no se pueda aplicar como
+   * `aprobado-sin-aplicar`. Rechazar aquí un cobro que sí entró lo
+   * dejaría invisible (R-05). */
+  cardnet: async (pago) => {
+    const fila = db.pagoPorId(pago.id);
+    if (!fila || fila.estado !== 'pendiente') return { resultado: 'pendiente' };
+    const metodo = fila.metodo_pago_id ? db.metodoPagoDe(fila.metodo_pago_id, fila.organizacion_id) : null;
+    if (!metodo || metodo.activo !== 1) return { resultado: 'pendiente' };
+
+    if (!db.huboIntentoDeCobro(fila.id)) {
+      const guarda = db.intencionAplicable(fila);
+      if (!guarda.ok) {
+        return {
+          resultado: 'rechazado', codigo: guarda.codigo,
+          motivo: `${MOTIVO_NO_APLICABLE[guarda.codigo] || MOTIVO_NO_APLICABLE.default} No se le cobró nada.`,
+        };
+      }
+    }
+
+    // Antes de llamar: la conciliación sabe así que hubo intento (D-25).
+    db.anotarEventoPago({ pagoId: fila.id, procesador: 'cardnet', origen: 'cobro', tipo: 'cobro-enviado',
+      cuerpo: { referencia: fila.referencia } });
+    const r = await cardnet.cobrar({ token: metodo.token, pago: fila });
+    db.anotarEventoPago({ pagoId: fila.id, procesador: 'cardnet', origen: 'cobro', tipo: 'respuesta', cuerpo: r.crudo });
+    db.anotarRespuestaProcesador(fila.id, {
+      procesadorId: r.procesadorId, autorizacion: r.autorizacion, codigo: r.codigo, intento: true,
+    });
+    if (r.resultado === 'aprobado') db.anotarResultadoTarjeta(metodo.id, true);
+    else if (r.resultado === 'rechazado') db.anotarResultadoTarjeta(metodo.id, false);
+
+    const normalizado = { ...r };
+    delete normalizado.crudo;
+    return normalizado;
+  },
+};
+
+/* Qué dice el rechazo cuando lo comprado ya no se puede aplicar. */
+const MOTIVO_NO_APLICABLE = {
+  'membresia-vencida': 'Esa membresía ya venció y no se le puede sumar capacidad.',
+  'publicacion-huerfana': 'Ese anuncio ya no está esperando su publicación.',
+  'renovacion-huerfana': 'Esa membresía ya no se puede renovar.',
+  default: 'Lo que intentaba pagar ya no se puede aplicar.',
 };
 
 /* Los métodos con los que un comprador puede pagar HOY, en orden de
    preferencia. Los decide el servidor, en cada llamada.
 
-   Con la transferencia encendida, `demo` desaparece de la lista: demo
-   aprueba siempre, y dejarlo al alcance de un comprador real sería
-   regalar cupos a quien lo pidiera en la petición. Apagada, todo sigue
-   como antes. La fase 6 añade `cardnet` aquí. */
+   Con CardNet apagado, como en la fase 5: con la transferencia
+   encendida `demo` desaparece de la lista (demo aprueba siempre, y
+   dejarlo al alcance de un comprador real sería regalar cupos); apagada,
+   todo sigue como antes. Con CardNet activo: `cardnet` primero, la
+   transferencia detrás si está encendida, y nunca `demo`.
+   `cardnet.activo()` se lee en cada llamada, como el interruptor de la
+   transferencia. */
 function metodosDeCobro() {
+  if (cardnet.activo()) return transferenciaActiva() ? ['cardnet', 'transferencia'] : ['cardnet'];
   return transferenciaActiva() ? ['transferencia'] : ['demo'];
 }
 
@@ -246,13 +330,91 @@ function procesadorDeCobro(pedido) {
   throw Object.assign(new Error('Ese método de pago no está disponible.'), { codigo: 400 });
 }
 
+/* Lo que se le dice a quien pagó y no se pudo aplicar. Sin teléfono: los
+   únicos canales son el correo y el asistente del sitio. */
+const SIN_APLICAR = 'El banco aprobó su pago, pero no pudimos activar lo que compró y no se emitió comprobante. Le devolveremos el dinero: escríbanos por correo electrónico o por el asistente del sitio y lo resolvemos.';
+
+/* La resolución de un cobro, la misma para todos los orígenes: la
+   respuesta directa de `cobrar`, la notificación de CardNet, la
+   conciliación y la renovación automática llaman a ESTA función y no a
+   una copia. `respuesta` es lo normalizado por el procesador:
+   `{ resultado, motivo?, codigo?, procesadorId?, autorizacion?, redireccion?, origen? }`.
+   Solo un `aprobado` explícito llega a `confirmarPago`.
+   Repetirla con la misma respuesta es seguro (una factura, un evento).
+
+   El aprobado que no se puede aplicar NO se rechaza. Si `aprobarPago`
+   lanza 404/409 (la membresía venció entre la guarda y la aprobación),
+   o `confirmarPago` vuelve con el pago en otro estado que `aprobado`
+   (`db.aprobarPago` devuelve `yaEstaba` en silencio para un pago ya
+   rechazado: `reemplazado`, `abandonado`, la guarda), el dinero SÍ
+   entró. Rechazarlo lo haría invisible; se anota UN evento
+   `aprobado-sin-aplicar` (sin comprobante ni NCF) que recoge el informe
+   y la conciliación deja de reintentar. */
+function resolver(pago, respuesta) {
+  const pendiente = (extra = {}) => ({
+    estado: 'pendiente', pago: db.pagoPorId(pago.id), membresia: null, comprobante: null, motivo: null, ...extra,
+  });
+  const resultado = respuesta && respuesta.resultado;
+
+  if (respuesta && (respuesta.procesadorId || respuesta.autorizacion || respuesta.codigo)) {
+    db.anotarRespuestaProcesador(pago.id, {
+      procesadorId: respuesta.procesadorId, autorizacion: respuesta.autorizacion, codigo: respuesta.codigo,
+    });
+  }
+
+  if (resultado === 'aprobado') {
+    let r = null;
+    let fallo = null;
+    try {
+      r = confirmarPago(pago.id);
+    } catch (e) {
+      if (e && (e.codigo === 404 || e.codigo === 409)) fallo = e;
+      else throw e;
+    }
+    if (r && r.pago.estado === 'aprobado') {
+      return {
+        estado: 'aprobado', pago: r.pago, membresia: r.membresia, comprobante: r.comprobante, motivo: null,
+      };
+    }
+    const actual = db.pagoPorId(pago.id);
+    if (!db.eventosDePago(pago.id).some((e) => e.tipo === 'aprobado-sin-aplicar')) {
+      db.anotarEventoPago({
+        pagoId: pago.id, procesador: pago.procesador, origen: respuesta.origen || 'cobro',
+        tipo: 'aprobado-sin-aplicar',
+        cuerpo: {
+          referencia: actual ? actual.referencia : null,
+          procesadorId: respuesta.procesadorId || null, autorizacion: respuesta.autorizacion || null,
+          estadoDelPago: actual ? actual.estado : null,
+          causa: fallo ? fallo.message : 'el pago ya no estaba pendiente',
+        },
+      });
+      console.error(`pagos: CardNet aprobó el pago ${pago.id} (${actual ? actual.referencia : '?'}) pero no se pudo aplicar · ${
+        fallo ? fallo.message : `estado ${actual ? actual.estado : '?'}`}`);
+    }
+    return pendiente({ sinAplicar: true, motivo: SIN_APLICAR });
+  }
+
+  if (resultado === 'rechazado') {
+    const codigo = respuesta.codigo || null;
+    const r = rechazarPago(pago.id, { motivo: respuesta.motivo || cardnet.mensajeDeRechazo(codigo), codigo });
+    return {
+      estado: r.pago.estado === 'rechazado' ? 'rechazado' : r.pago.estado,
+      pago: r.pago, membresia: null, comprobante: null, motivo: r.motivo,
+    };
+  }
+
+  if (respuesta && respuesta.redireccion) return pendiente({ redireccion: respuesta.redireccion });
+  return pendiente();
+}
+
 /* Pregunta al procesador del pago y resuelve la transición.
  *
  * Por defecto NUNCA se aprueba: un procesador sin entrada, uno que
- * lanza (no sabemos si se cobró; lo resolverá la reconciliación) o una
+ * lanza (no sabemos si se cobró; lo resolverá la conciliación) o una
  * respuesta que no se entiende dejan el pago 'pendiente'. Solo un
- * 'aprobado' explícito otorga cupos y consume NCF. La tabla se consulta
- * en el momento de la llamada para que las pruebas puedan sustituirla. */
+ * 'aprobado' explícito otorga cupos y consume NCF, y eso lo decide
+ * `resolver`. La tabla se consulta en el momento de la llamada para que
+ * las pruebas puedan sustituirla. */
 async function cobrar(pago) {
   const procesador = PROCESADORES[pago.procesador];
   const pendiente = () => ({
@@ -268,26 +430,147 @@ async function cobrar(pago) {
     console.error(`pagos: el procesador ${pago.procesador} falló con el pago ${pago.id} · ${e.message}`);
     return pendiente();
   }
+  return resolver(pago, respuesta);
+}
 
-  const resultado = respuesta && respuesta.resultado;
-  if (resultado === 'aprobado') {
-    const r = confirmarPago(pago.id);
-    return {
-      estado: r.pago.estado === 'aprobado' ? 'aprobado' : r.pago.estado,
-      pago: r.pago, membresia: r.membresia, comprobante: r.comprobante, motivo: null,
-    };
+/* ── El primer cobro con tarjeta: captura, registro, confirmación ───
+ *
+ * Ninguna de estas funciones acepta ni reenvía datos de tarjeta: solo
+ * ids, referencias y lo que devuelve CardNet ya limpio. */
+
+const error = (codigo, mensaje) => Object.assign(new Error(mensaje), { codigo });
+
+/* Prepara el formulario de captura de la tarjeta (D-17): crea el
+   `Customer` de la organización la primera vez y lo reutiliza después
+   (dos clientes dejarían tarjetas repartidas y ninguna renovación sabría
+   cuál usar). Cada consulta del cliente da una sesión de captura nueva,
+   así que se pide siempre. Devuelve la URL y el origen que el navegador
+   puede cargar. */
+async function prepararCaptura(pago, { correo, nombre, rnc } = {}) {
+  if (!cardnet.activo()) throw error(409, 'El pago con tarjeta no está disponible.');
+  const NO_ABRE = 'No pudimos abrir el formulario de la tarjeta. No se le cobró nada.';
+  let clienteId = db.clienteProcesador(pago.organizacion_id, 'cardnet');
+  if (!clienteId) {
+    const c = await cardnet.crearCliente({ correo, nombre, rnc });
+    if (!c.ok) {
+      console.error(`pagos: CardNet no creó el cliente de la organización ${pago.organizacion_id} · ${JSON.stringify(cardnet.limpiar(c))}`);
+      throw error(502, NO_ABRE);
+    }
+    clienteId = db.guardarClienteProcesador(pago.organizacion_id, 'cardnet', c.clienteId);
   }
-  if (resultado === 'rechazado') {
-    const r = rechazarPago(pago.id, { motivo: respuesta.motivo });
-    return {
-      estado: r.pago.estado === 'rechazado' ? 'rechazado' : r.pago.estado,
-      pago: r.pago, membresia: null, comprobante: null, motivo: r.motivo,
-    };
+  const v = await cardnet.verCliente(clienteId);
+  if (!v.ok) {
+    console.error(`pagos: CardNet no abrió la captura del cliente ${clienteId} · ${JSON.stringify(cardnet.limpiar(v))}`);
+    throw error(502, NO_ABRE);
   }
-  return pendiente();
+  return { urlCaptura: v.urlCaptura, origen: cardnet.origenCaptura() };
+}
+
+/* Registra la tarjeta que el cliente acaba de capturar (D-10, D-17).
+   El navegador solo avisa de que terminó: el token se toma del
+   `Customer` en CardNet, porque aceptar uno del navegador permitiría
+   cobrar a una tarjeta ajena. Elige el perfil que aún no está en
+   `metodos_pago` de la organización (el último, si hay varios), o el más
+   reciente si todos ya están. Devuelve la tarjeta SIN token. */
+async function registrarTarjeta(pago) {
+  const clienteId = db.clienteProcesador(pago.organizacion_id, 'cardnet');
+  if (!clienteId) throw error(409, 'No encontramos la tarjeta. Vuelva a ingresarla.');
+  const v = await cardnet.verCliente(clienteId);
+  if (!v.ok) {
+    console.error(`pagos: CardNet no devolvió el cliente ${clienteId} · ${JSON.stringify(cardnet.limpiar(v))}`);
+    throw error(502, 'No pudimos leer la tarjeta. No se le cobró nada.');
+  }
+  const perfiles = v.perfiles || [];
+  if (!perfiles.length) throw error(409, 'No encontramos la tarjeta. Vuelva a ingresarla.');
+
+  const guardados = new Set(db.metodosPagoDe(pago.organizacion_id)
+    .map((m) => db.metodoPagoDe(m.id, pago.organizacion_id))
+    .filter(Boolean).map((f) => f.procesador_perfil_id));
+  const nuevos = perfiles.filter((p) => !guardados.has(String(p.perfilId)));
+  const perfil = (nuevos.length ? nuevos : perfiles).slice(-1)[0];
+
+  const fila = db.guardarMetodoPago({ idOrg: pago.organizacion_id, procesador: 'cardnet', clienteId, perfil });
+  db.enlazarMetodoPago(pago.id, fila.id);
+  const metodo = db.metodosPagoDe(pago.organizacion_id).find((m) => m.id === fila.id);
+  return { metodo, activacion: !metodo.activo };
+}
+
+/* Los pagos que se están confirmando ahora mismo en ESTE proceso. Frena
+   el doble clic: la segunda llamada sobre el mismo pago no llega a
+   CardNet. Entre procesos protegen el `UniqueID` (que es la referencia
+   del pago) y la idempotencia de `confirmarPago`. */
+const EN_CURSO = new Set();
+
+/* Confirma el pago con tarjeta: la guardada que el cliente eligió
+   (`metodoPago`, un id que se valida contra su organización) o la que
+   acaba de capturar. El token nunca viene de quien llama: sale de la
+   fila de `metodos_pago`, que salió del `Customer` de CardNet. Una
+   tarjeta sin activar no se cobra: devuelve `{ estado: 'activacion' }`. */
+async function confirmarConTarjeta(idPago, idOrg, { metodoPago } = {}) {
+  const pago = db.pagoPorId(idPago);
+  if (!pago || pago.organizacion_id !== idOrg || pago.procesador !== 'cardnet') {
+    throw error(404, 'Ese pago no existe.');
+  }
+  if (EN_CURSO.has(idPago)) throw error(409, 'Ese pago ya se está procesando.');
+  EN_CURSO.add(idPago);
+  try {
+    const actual = db.pagoPorId(idPago);
+    if (actual.estado !== 'pendiente') {
+      return { estado: actual.estado, pago: actual, membresia: null, comprobante: null, motivo: actual.motivo || null };
+    }
+    let metodo;
+    if (metodoPago) {
+      const tarjeta = db.metodoPagoDe(metodoPago, idOrg);
+      if (!tarjeta || tarjeta.activo !== 1) throw error(400, 'Esa tarjeta no está disponible.');
+      db.enlazarMetodoPago(idPago, tarjeta.id);
+      metodo = { id: tarjeta.id, activo: true };
+    } else {
+      metodo = (await registrarTarjeta(actual)).metodo;
+    }
+    if (!metodo.activo) return { estado: 'activacion', metodoPago: metodo };
+    return await cobrar(db.pagoPorId(idPago));
+  } finally {
+    EN_CURSO.delete(idPago);
+  }
+}
+
+/* Activa una tarjeta con el código que CardNet le pide al cliente (D-20).
+   Solo se marca activa si CardNet confirma. */
+async function activarTarjeta(idMetodo, idOrg, codigo) {
+  const c = typeof codigo === 'string' ? codigo.trim() : '';
+  if (!c || c.length > 12) throw error(400, 'Escriba el código de activación que le envió el banco.');
+  const metodo = db.metodoPagoDe(idMetodo, idOrg);
+  if (!metodo) throw error(404, 'Esa tarjeta no existe.');
+  const r = await cardnet.activarPerfil({ clienteId: metodo.procesador_cliente_id, token: metodo.token, codigo: c });
+  if (!r.ok) throw error(409, 'No pudimos activar la tarjeta. Revise el código e intente de nuevo.');
+  db.activarMetodoPago(idMetodo, idOrg);
+  return { metodo: db.metodosPagoDe(idOrg).find((m) => m.id === idMetodo) || null };
+}
+
+/* Un pendiente de tarjeta que nunca llegó a CardNet no puede bloquear
+   24 horas un borrador o una membresía: los índices únicos de la 05.2 y
+   la 05.3 solo admiten un pendiente, y quien cambió de idea o abandonó
+   la captura tendría que esperar. Uno CON intento de cobro NO se anula
+   aquí: pudo cobrarse, y lo resuelve la conciliación. */
+function pendienteSinCobro(pago) {
+  return !!pago && pago.procesador === 'cardnet' && pago.estado === 'pendiente' && !db.huboIntentoDeCobro(pago.id);
+}
+
+function anularPendienteSinCobro(idPago) {
+  const pago = db.pagoPorId(idPago);
+  if (!pago) throw error(404, 'Ese pago no existe.');
+  if (pago.procesador === 'cardnet' && pago.estado === 'pendiente' && db.huboIntentoDeCobro(idPago)) {
+    throw error(409, 'Ese pago ya se envió al banco: lo resuelve la conciliación.');
+  }
+  if (!pendienteSinCobro(pago)) return { pago, cambiado: false, motivo: null };
+  return rechazarPago(idPago, {
+    codigo: 'reemplazado', motivo: 'Se abrió otro pago para lo mismo. No se le cobró nada.',
+  });
 }
 
 module.exports = {
-  confirmarPago, rechazarPago, cobrar, PROCESADORES, lineaDeCupos,
+  confirmarPago, rechazarPago, cobrar, resolver, PROCESADORES, lineaDeCupos,
   metodosDeCobro, procesadorDeCobro, avisarAnuncioPublicado, nombreDeEquipo,
+  prepararCaptura, registrarTarjeta, confirmarConTarjeta, activarTarjeta,
+  pendienteSinCobro, anularPendienteSinCobro,
 };

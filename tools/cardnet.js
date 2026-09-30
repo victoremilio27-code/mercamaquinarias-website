@@ -159,7 +159,7 @@ const RECHAZOS = {
   '91': `El banco que emitió la tarjeta no respondió. Inténtelo de nuevo en unos minutos. ${NADA}`,
   CS012: `Antes de usar esta tarjeta hay que activarla con el código que le envió su banco. ${NADA}`,
 };
-const RECHAZO_GENERICO = 'El banco no aprobó el pago. No se le cobró nada, no se añadió ningún cupo y no se emitió comprobante.';
+const RECHAZO_GENERICO = 'El banco no aprobó el pago. No se le cobró nada, no se activó nada y no se emitió comprobante.';
 
 function mensajeDeRechazo(codigo) {
   const c = codigo === undefined || codigo === null ? '' : String(codigo).trim();
