@@ -160,13 +160,13 @@ huérfanos y sin duplicados.
 | MOD-06 | Phase 05.2 — Publicar este equipo | Hecho 2026-09-29 | `research/modelo-comercial.md` |
 | MOD-07 | Phase 05.2 — Publicar este equipo | Hecho 2026-09-29 | `research/modelo-comercial.md` |
 | MOD-08 | Phase 05.2 — Publicar este equipo | Hecho 2026-09-29 | `research/modelo-comercial.md` |
-| MOD-09 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
-| MOD-10 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
-| MOD-11 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
-| MOD-12 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
-| MOD-13 | Phase 05.4 — Dealer con capacidad | Pendiente | `research/modelo-comercial.md` |
-| MOD-14 | Phase 05.4 — Dealer con capacidad | Pendiente | `research/modelo-comercial.md` |
-| MOD-15 | Phase 05.3 — Renovación y alertas | Pendiente | `research/modelo-comercial.md` |
+| MOD-09 | Phase 05.3 — Renovación y alertas | Hecho 2026-09-29 (PR #39) | `research/modelo-comercial.md` |
+| MOD-10 | Phase 05.3 — Renovación y alertas | Hecho 2026-09-29 (PR #39) | `research/modelo-comercial.md` |
+| MOD-11 | Phase 05.3 — Renovación y alertas | Hecho 2026-09-29 (PR #39) | `research/modelo-comercial.md` |
+| MOD-12 | Phase 05.3 — Renovación y alertas | Hecho 2026-09-29 (PR #39) | `research/modelo-comercial.md` |
+| MOD-13 | Phase 05.4 — Dealer con capacidad | Hecho 2026-09-30 (PR #44) | `research/modelo-comercial.md` |
+| MOD-14 | Phase 05.4 — Dealer con capacidad | Hecho 2026-09-30 (PR #44) | `research/modelo-comercial.md` |
+| MOD-15 | Phase 05.3 — Renovación y alertas | Hecho 2026-09-29 (PR #39) | `research/modelo-comercial.md` |
 | ADMIN-01 | Phase 4 — Bandeja de solicitudes y bitácora | Pendiente | `codebase/CONCERNS.md` — rutas sin pantalla |
 | ADMIN-02 | Phase 7 — Verificación y soporte al dealer | Pendiente | `codebase/CONCERNS.md` — solo por línea de comandos hoy |
 | ADMIN-03 | Phase 7 — Verificación y soporte al dealer | Pendiente | `research/mercado.md`, huecos priorizados; cumple CONF-01 |

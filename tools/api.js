@@ -3264,7 +3264,7 @@ const publicar = conSesion(async (req, res, ctx) => {
 
      D-15: al particular (no exento) no se le habla de «cupo» —el
      borrador y el pago son su camino de hoy en adelante—; el dealer
-     sigue leyendo los textos de siempre (la 05.4 los cambia). */
+     lee los textos de capacidad y publicaciones activas de la 05.4. */
   const esParticularQuePaga = org.tipo === 'particular' && !exenta;
   if (!membresia) {
     if (esParticularQuePaga) {
