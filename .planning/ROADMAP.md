@@ -50,7 +50,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [ ] **Phase 8: Moneda y disponibilidad en el catálogo** - El buscador respeta DOP y USD, y la ficha dice si el equipo está en el país
 - [ ] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana
 - [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
-- [ ] **Phase 10.1: Recuperar la cuenta y cambiar el correo** (INSERTED) - Cambio de correo y de contraseña con sesión, «No fui yo» y recuperación revisada para quien perdió el correo
+- [x] **Phase 10.1: Recuperar la cuenta y cambiar el correo** (INSERTED) - Cambio de correo y de contraseña con sesión, «No fui yo» y recuperación revisada para quien perdió el correo (completed 2026-09-30)
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
 
@@ -398,9 +398,9 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 
 Plans:
 
-- [ ] 10.1-01-PLAN.md — Núcleo: migración, correos, rutas de cambio de correo, reversión, contraseña con sesión y recuperación revisada; arnés `cuenta:probar` en CI
-- [ ] 10.1-02-PLAN.md — Panel «Seguridad de la cuenta» y acceso: «No fui yo» y «¿Ya no tiene acceso a su correo?»
-- [ ] 10.1-03-PLAN.md — Consola «Recuperación de cuentas» con expediente para cotejar, y el asistente
+- [x] 10.1-01-PLAN.md — Núcleo: migración, correos, rutas de cambio de correo, reversión, contraseña con sesión y recuperación revisada; arnés `cuenta:probar` en CI
+- [x] 10.1-02-PLAN.md — Panel «Seguridad de la cuenta» y acceso: «No fui yo» y «¿Ya no tiene acceso a su correo?»
+- [x] 10.1-03-PLAN.md — Consola «Recuperación de cuentas» con expediente para cotejar, y el asistente
 
 ### Phase 11: Transporte y financiamiento encendidos
 

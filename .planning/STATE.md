@@ -16,7 +16,7 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-09-30, tarde) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-09-30, noche) — EMPIEZA AQUÍ
 
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
@@ -27,6 +27,13 @@ Sonnet 5.5, sin excepciones** (también ITBIS, comprobante o NCF; regla de Victo
 segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions».
 
 ### Dónde estamos
+
+- **Fase 10.1 (recuperar la cuenta y cambiar el correo) HECHA y SIN FUSIONAR** en la rama `claude/recuperar-cuenta`
+  (PR abierto). Pedida por Victor el 2026-09-30. Batería completa y navegador en verde en local; verificación
+  `human_needed` (`10.1-VERIFICATION.md`). **No se fusiona hasta que Victor haga el respaldo verificado**: la
+  migración `2026-10-cuenta-recuperacion` rehace la tabla `codigos` (su CHECK no admitía `cambio_correo`) y
+  crea `cambios_correo` y `solicitudes_recuperacion`. Con su «respaldo hecho» + CI en verde: fusionar y
+  comprobar el «Sitio arriba» del paso `desplegar`.
 
 - **Todo en producción** (último despliegue «Sitio arriba: d86d47a», PR #46, 2026-09-30 15:56 UTC): fases 2,
   3, 4, 5, 05.1, 05.2, 05.3, 05.4, 6, 7, 8, 9 y 10 (la 3, 4, 8 y 9 sin su casilla en el ROADMAP, ver «Papeleo»).
@@ -55,7 +62,10 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 ### Lo que falta, en orden
 
-1. **Cuenta de dealer de prueba para Victor (pedida el 2026-09-30).** Una cuenta de empresa (dealer) con
+1. **Cuenta de dealer de prueba para Victor (pedida el 2026-09-30). Comprobado en local el 2026-09-30:** no hace
+   falta tocar código. Una empresa `--exenta` recibe al publicar su primer equipo una membresía Premium interna
+   (`membresiaInterna`, sin fin) que enciende `perfil_publico`, y `apagarPerfilesSinPlan` no la apaga; luego
+   publica la página en «Mi página». **Espera la respuesta de Victor** (correo, empresa y RNC únicos). Una cuenta de empresa (dealer) con
    página de dealer publicada y **exenta de pagos**, para su uso personal y de pruebas, y darle las
    credenciales. Hay que hacerla **en producción**, así que la corre Victor por SSH en el VPS con los comandos
    exactos que le prepare la sesión: `tools/admin.js crear <correo> "<Nombre>" --empresa "<Razón social>"
