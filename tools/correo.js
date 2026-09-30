@@ -1301,8 +1301,8 @@ function enviarRenovacionProxima({ para, nombre, concepto, total, fecha: cuando,
     ? 'Tu renovación automática no se podrá cobrar'
     : 'Tu renovación automática se cobrará pronto';
   const parrafo = noSeRenovara
-    ? `Tu ${concepto} vence pronto y con ${tarjetaTxt} NO podremos renovarlo solo. Renuévalo tú desde el panel para no perder la publicación.`
-    : `El ${fecha(cuando)} intentaremos renovar tu ${concepto} con ${tarjetaTxt}, por ${importe}.`;
+    ? `Tu suscripción (${concepto}) vence pronto y con ${tarjetaTxt} NO podremos renovarlo solo. Renuévalo tú desde el panel para no perder la publicación.`
+    : `El ${fecha(cuando)} intentaremos renovar tu suscripción (${concepto}) con ${tarjetaTxt}, por ${importe}.`;
   return enviar({
     para,
     responderA: BUZONES.facturacion,
@@ -1341,8 +1341,8 @@ function enviarRenovacionRechazada({ para, nombre, concepto, motivo, intento, qu
   const enlace = enlacePanel(idAnuncio);
   const ultimo = !(quedan > 0);
   const linea = ultimo
-    ? `No pudimos renovar tu ${concepto} y no lo intentaremos de nuevo. Vence el ${fecha(fin)}: renuévalo a mano desde el panel para seguir publicado.`
-    : `No pudimos renovar tu ${concepto} (intento ${intento} de 3). Volveremos a intentarlo mañana; te quedan ${quedan} ${quedan === 1 ? 'intento' : 'intentos'} antes del ${fecha(fin)}. También puedes renovarlo a mano o cambiar de tarjeta desde el panel.`;
+    ? `No pudimos renovar tu suscripción (${concepto}) y no lo intentaremos de nuevo. Vence el ${fecha(fin)}: renuévalo a mano desde el panel para seguir publicado.`
+    : `No pudimos renovar tu suscripción (${concepto}): intento ${intento} de 3. Volveremos a intentarlo mañana; te quedan ${quedan} ${quedan === 1 ? 'intento' : 'intentos'} antes del ${fecha(fin)}. También puedes renovarlo a mano o cambiar de tarjeta desde el panel.`;
   const asunto = ultimo ? 'No pudimos renovar tu publicación' : 'Tu renovación automática fue rechazada';
   return enviar({
     para,
