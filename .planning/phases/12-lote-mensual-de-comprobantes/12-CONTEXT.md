@@ -138,6 +138,28 @@ fin de mes; facturación electrónica (e-CF); la fase 13 de deuda técnica.
 - Facturación electrónica (e-CF): pendiente de la respuesta del contador (ver STATE).
 - Encender o borrar `incluida_en_lote` y `lotes_contador`: decisión para la fase 13.
 
+## Respuestas de Victor (2026-09-30) — mandan sobre los valores por defecto de abajo
+
+- **R-01 — Formato 607: SÍ.** Se añade `607-AAAAMM.txt` al ZIP en el formato estándar de la DGII (texto
+  delimitado por `|`), como **borrador para que el contador lo revise y lo suba él**: el sitio nunca lo envía.
+  Necesita investigación de la especificación vigente (columnas, tipo de ingreso, formas de pago, B02 de consumo) y
+  su propio plan con prueba. Lo que no se pueda saber de la base (p. ej. retenciones) va vacío y el LEEME lo dice.
+- **R-02 — ZIP con los PDF y CSV: SÍ, separados** en dos carpetas, `con-ncf/` y `sin-ncf/`, cada una con sus PDF
+  y su CSV. El `resumen.pdf`, el `LEEME.txt` y el 607 van en la raíz.
+- **R-03 — Corte por fecha de cobro en hora dominicana: SÍ** (lo planificado).
+- **R-04 — PDF repuesto: aceptado como último recurso, pero «lo ideal es que no se pierdan bajo ninguna
+  circunstancia».** Se añade: (a) guardar al emitir, en la fila del comprobante (columna nueva, migración al
+  final), todo lo que dibuja el PDF (líneas de detalle), para que un PDF repuesto salga idéntico al original en
+  los comprobantes que se emitan desde entonces (los ya emitidos no se reescriben); (b) incluir la carpeta de
+  PDF (`MERCA_FACTURAS`) en el respaldo diario de `tools/tareas.js`. (c) La copia fuera del servidor (Backups de
+  DigitalOcean) la activa Victor; se documenta en `deploy/README.md`.
+- **R-05 — Selector de mes (D-08):** el paquete tiene **su propio selector de mes, preseleccionado en el mes
+  anterior de Santo Domingo** y separado del filtro de la tabla de facturas (Victor lo pidió tras ver las dos
+  opciones; sustituye a «usar el mes anterior si el filtro está en Todos»).
+
+Los planes 12-01..12-04 se escribieron antes de estas respuestas: hay que replanificar para R-01, R-02, R-04 y
+R-05 antes de ejecutar.
+
 ## Preguntas para Victor
 
 Solo lo que él o su contador pueden contestar. Cada una trae el valor por defecto con el que se
