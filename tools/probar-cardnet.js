@@ -2552,6 +2552,182 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
     apagar();
   }
 
+  console.log('\n23. tareas.js: renovar, avisar-tarjetas y los tres correos');
+  {
+    const db = require('./db');
+    const tareas = require('./tareas');
+    const correoMod = require('./correo');
+    const { spawnSync } = require('child_process');
+    const d = db.abrir();
+    const SELLO = Date.now().toString(36);
+    const DIA = 86400000;
+    let n = 0;
+    db.secuenciasNcf();
+    const enDias = (x) => new Date(Date.now() + x * DIA).toISOString();
+    const cuenta = (etiqueta) => {
+      const { idUsuario } = db.crearCuenta({
+        correo: `${etiqueta}-${SELLO}@prueba.invalid`, clave: 'UnaClaveLargaYSegura9', nombre: `Prueba ${etiqueta}`,
+        telefono: '8095550000', tipo: 'particular',
+      });
+      return { org: db.organizacionDe(idUsuario).id, correo: `${etiqueta}-${SELLO}@prueba.invalid` };
+    };
+    const tarjeta = (idOrg, extra = {}) => db.guardarMetodoPago({
+      idOrg, procesador: 'cardnet', clienteId: 'C-23',
+      perfil: { perfilId: `PF23-${SELLO}-${++n}`, token: `CT__23-${SELLO}-${n}`, marca: 'Visa', ultimos4: '4242', venceMes: 12, venceAnio: 2035, activo: true, ...extra },
+    });
+    const susc = (idOrg, { fin = enDias(6), cupo = 1, metodo = null, proximo = enDias(3), intentos = 0 } = {}) => {
+      const idSusc = `susc23-${SELLO}-${++n}`;
+      d.prepare(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
+                   anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada)
+                 VALUES (?, ?, 'estandar', 'vigencia', NULL, 'activa', 1800, ?, 30, ?, ?, ?, ?)`)
+        .run(idSusc, idOrg, cupo, enDias(-24), fin, proximo, new Date().toISOString());
+      d.prepare(`UPDATE suscripciones SET renovacion_automatica = 1, renovacion_aceptada = ?, renovacion_texto = 'Acepto',
+                        metodo_pago_id = ?, renovacion_intentos = ? WHERE id = ?`)
+        .run(new Date().toISOString(), metodo ? metodo.id : null, intentos, idSusc);
+      return idSusc;
+    };
+    const anuncioDe = (idOrg, idSusc, vence) => {
+      const id = `anu23-${SELLO}-${++n}`;
+      const t = new Date().toISOString();
+      d.prepare(`INSERT INTO anuncios (id, organizacion_id, suscripcion_id, estado, categoria, subcategoria, marca, modelo, anio,
+                   precio, provincia, publicado, vence, creado, actualizado)
+                 VALUES (?, ?, ?, 'activo', 'camiones', 'cam-volteo', 'peterbilt', '567', 2019, 2500000, 'Santo Domingo', ?, ?, ?, ?)`)
+        .run(id, idOrg, idSusc, t, vence, t, t);
+      return id;
+    };
+    const fila = (idSusc) => d.prepare('SELECT * FROM suscripciones WHERE id = ?').get(idSusc);
+    const compras = () => llamadas.filter((l) => /purchase/.test(l.url)).length;
+    const rechazado = () => doble(() => ({ estado: 200, cuerpo: { ResponseCode: '51', Status: 'Rejected' } }));
+    const NOMBRES = ['enviarRenovacionProxima', 'enviarRenovacionRechazada', 'enviarTarjetaPorVencer', 'enviarRecordatorioVencimiento'];
+    const registro = Object.fromEntries(NOMBRES.map((k) => [k, []]));
+    const originales = {};
+    for (const k of NOMBRES) {
+      originales[k] = correoMod[k];
+      correoMod[k] = async (a) => { const r = await originales[k](a); registro[k].push({ a, r }); return r; };
+    }
+    const vaciar = () => NOMBRES.forEach((k) => { registro[k].length = 0; });
+    const texto = (e) => fs.readFileSync(e.r.archivo, 'utf8');
+    const html = (e) => fs.readFileSync(e.r.archivo.replace(/\.txt$/, '.html'), 'utf8');
+    const LIMPIO = (t) => !/whatsapp|tel:|tel[eé]fono|cupo|contador|gerencia@/i.test(t);
+
+    d.prepare("UPDATE suscripciones SET renovacion_automatica = 0 WHERE id NOT LIKE 'susc23-%'").run();
+    d.prepare('UPDATE planes SET precio_promocional = NULL, promo_hasta = NULL').run();
+
+    // Apagado: las dos tareas no hacen nada y los avisos 7/3/1 salen como hoy
+    apagar();
+    doble(() => null);
+    const cA = cuenta('a23');
+    const tA = tarjeta(cA.org);
+    const sA = susc(cA.org, { metodo: tA });
+    const idAnA = anuncioDe(cA.org, sA, enDias(5));
+    await tareas.TAREAS.renovar();
+    await tareas.TAREAS['avisar-tarjetas']();
+    ok(NOMBRES.slice(0, 3).every((k) => registro[k].length === 0) && llamadas.length === 0 && fila(sA).renovacion_avisada == null,
+      'CardNet apagado: renovar y avisar-tarjetas no mandan ni anotan nada, y no llaman a nadie');
+    ok(typeof tareas.TAREAS.renovar === 'function' && typeof tareas.TAREAS['avisar-tarjetas'] === 'function'
+      && Object.keys(tareas.TAREAS).indexOf('renovar') < Object.keys(tareas.TAREAS).indexOf('por-vencer')
+      && Object.keys(tareas.TAREAS).indexOf('avisar-tarjetas') < Object.keys(tareas.TAREAS).indexOf('por-vencer'),
+      'renovar y avisar-tarjetas están en TAREAS, antes de por-vencer');
+    ok(db.recordatoriosPendientes(undefined, {}).some((a) => a.id === idAnA) && db.recordatoriosPendientes().some((a) => a.id === idAnA),
+      'sin la opción, recordatoriosPendientes sigue devolviendo el anuncio (los avisos 7/3/1 de siempre)');
+    await tareas.avisarRecordatorios();
+    ok(registro.enviarRecordatorioVencimiento.some((e) => e.a.idAnuncio === idAnA), 'apagado: el aviso 7/3/1 sale exactamente como hoy');
+    vaciar();
+    d.prepare('DELETE FROM recordatorios WHERE anuncio_id = ?').run(idAnA);
+
+    // Encendido: los 7/3/1 de una suscripción que se renueva sola no salen
+    encender('lab');
+    ok(!db.recordatoriosPendientes(undefined, { omitirAutomaticas: true }).some((a) => a.id === idAnA)
+      && db.recordatoriosPendientes(undefined, { omitirAutomaticas: true }).every((a) => a.id !== idAnA),
+      'con omitirAutomaticas, la suscripción con casilla y tarjeta usable no recibe los 7/3/1');
+    await tareas.avisarRecordatorios();
+    ok(registro.enviarRecordatorioVencimiento.every((e) => e.a.idAnuncio !== idAnA), 'encendido: el aviso 7/3/1 de esa suscripción no sale');
+
+    // El aviso de 7 días
+    await tareas.TAREAS.renovar();
+    const av = registro.enviarRenovacionProxima.filter((e) => e.a.para === cA.correo);
+    ok(av.length === 1 && av[0].r.entregado && fila(sA).renovacion_avisada === fila(sA).fin, 'un aviso de 7 días al propietario, anotado con el fin del ciclo');
+    const tx = av.length ? texto(av[0]) : '';
+    const ht = av.length ? html(av[0]) : '';
+    ok(/Visa terminada en 4242/.test(tx) && /ITBIS incluido/.test(tx) && /RD\$\s?[\d,]+/.test(tx) && /apágalo en tu panel/.test(tx) && /Primer intento|intentaremos/.test(tx + ht),
+      'el aviso lleva marca y últimos cuatro, el importe con ITBIS incluido, la fecha y cómo apagarlo');
+    ok(!tx.includes(tA.token) && !ht.includes(tA.token) && LIMPIO(tx) && LIMPIO(ht), 'el aviso no lleva token, teléfono, WhatsApp ni «cupo», ni va a un contador');
+    ok(/peterbilt|Peterbilt/i.test(av[0] ? av[0].a.concepto : '') && /panel\.html\?renovar=anu23/.test(tx), 'el concepto nombra el equipo y el enlace renueva ese anuncio');
+    await tareas.TAREAS.renovar();
+    ok(registro.enviarRenovacionProxima.filter((e) => e.a.para === cA.correo).length === 1 && compras() === 0,
+      'repetida la tarea, no hay segundo aviso y nadie cobra antes de tiempo');
+
+    // Aviso «no se podrá renovar» con una tarjeta que ya no sirve
+    const cB = cuenta('b23');
+    const tB = tarjeta(cB.org);
+    const sB = susc(cB.org, { metodo: tB });
+    d.prepare('UPDATE metodos_pago SET activo = 0 WHERE id = ?').run(tB.id);
+    await tareas.TAREAS.renovar();
+    const avB = registro.enviarRenovacionProxima.filter((e) => e.a.para === cB.correo);
+    ok(avB.length === 1 && avB[0].a.noSeRenovara === true && /NO podremos/.test(texto(avB[0])) && /Renuévalo tú/.test(texto(avB[0])),
+      'con la tarjeta inactiva el aviso dice que NO se podrá renovar sola');
+
+    // Rechazo: correo con el motivo, el intento y cómo renovar a mano
+    const cR = cuenta('r23');
+    const tR = tarjeta(cR.org);
+    const sR = susc(cR.org, { metodo: tR, fin: enDias(3), proximo: enDias(0) });
+    rechazado();
+    await tareas.TAREAS.renovar();
+    const rc = registro.enviarRenovacionRechazada.filter((e) => e.a.para === cR.correo);
+    const txr = rc.length ? texto(rc[0]) : '';
+    ok(rc.length === 1 && rc[0].a.intento === 1 && rc[0].a.quedan === 2 && /Motivo del banco: La tarjeta no tiene fondos/.test(txr)
+      && /intento 1 de 3/.test(txr) && /te quedan 2 intentos/.test(txr) && /panel\.html/.test(txr) && LIMPIO(txr) && !txr.includes(tR.token),
+      'el rechazo manda un correo con el motivo, el intento 1 de 3, cuántos quedan y cómo renovar a mano');
+    await tareas.TAREAS.renovar();
+    ok(registro.enviarRenovacionRechazada.filter((e) => e.a.para === cR.correo).length === 1, 'repetida el mismo día, no hay otro correo de rechazo ni otro cobro');
+    // El último intento dice que no se reintentará
+    const cU = cuenta('u23');
+    const tU = tarjeta(cU.org);
+    const sU = susc(cU.org, { metodo: tU, fin: enDias(1.5), proximo: enDias(0), intentos: 2 });
+    rechazado();
+    await tareas.TAREAS.renovar();
+    const ru = registro.enviarRenovacionRechazada.filter((e) => e.a.para === cU.correo);
+    ok(ru.length === 1 && ru[0].a.quedan === 0 && /no lo intentaremos de nuevo/.test(texto(ru[0])) && /renuévalo a mano/.test(texto(ru[0])),
+      'en el último intento el correo dice que no se reintentará y cómo renovar a mano');
+    ok(fila(sU).estado === 'activa' && fila(sU).renovacion_intentos === 3, 'sigue activa hasta su fecha: vence por el camino de siempre');
+
+    // Tarjetas por vencer
+    const cT = cuenta('t23');
+    const hoyD = new Date();
+    const mesPrev = hoyD.getUTCMonth() === 0 ? { m: 12, a: hoyD.getUTCFullYear() - 1 } : { m: hoyD.getUTCMonth(), a: hoyD.getUTCFullYear() };
+    const tT = tarjeta(cT.org, { venceMes: mesPrev.m, venceAnio: mesPrev.a });
+    susc(cT.org, { metodo: tT, fin: enDias(20), proximo: enDias(17) });
+    const tSin = tarjeta(cA.org, { ultimos4: '9999', venceMes: mesPrev.m, venceAnio: mesPrev.a });
+    await tareas.TAREAS['avisar-tarjetas']();
+    const at = registro.enviarTarjetaPorVencer.filter((e) => e.a.para === cT.correo);
+    ok(at.length === 1 && /4242/.test(texto(at[0])) && !texto(at[0]).includes(tT.token) && LIMPIO(texto(at[0])) && LIMPIO(html(at[0])),
+      'un correo por tarjeta por vencer que sostiene una renovación, sin token ni teléfono');
+    ok(!registro.enviarTarjetaPorVencer.some((e) => e.a.ultimos4 === '9999') && !registro.enviarTarjetaPorVencer.some((e) => e.a.para === cA.correo && e.a.venceAnio === 2035),
+      'una tarjeta que no sostiene ninguna renovación, o que vence en 2035, no avisa');
+    await tareas.TAREAS['avisar-tarjetas']();
+    ok(registro.enviarTarjetaPorVencer.filter((e) => e.a.para === cT.correo).length === 1, 'repetida el mismo mes no reenvía');
+
+    // Tres correos: nada de contador, nada de gerencia
+    ok([...registro.enviarRenovacionProxima, ...registro.enviarRenovacionRechazada, ...registro.enviarTarjetaPorVencer]
+      .every((e) => /@prueba\.invalid$/.test(e.a.para)), 'los tres correos van solo a los propietarios de la cuenta');
+    const fuenteTareas = fs.readFileSync(path.join(__dirname, 'tareas.js'), 'utf8');
+    const trozo = fuenteTareas.slice(fuenteTareas.indexOf('async function renovarSuscripciones'), fuenteTareas.indexOf('const TAREAS'));
+    ok(!/contador|gerencia@/i.test(trozo), 'las tareas de renovación no envían nada a un contador');
+
+    // La tarea en su propio proceso
+    const env = { ...process.env, MERCA_DB: path.join(BANCO, 'tareas-seco-06-08.db'), MERCA_FACTURAS: path.join(BANCO, 'facturas-seco-08') };
+    for (const k of Object.keys(env)) if (k.startsWith('MERCA_CARDNET')) delete env[k];
+    const seco = spawnSync(process.execPath, [path.join(__dirname, 'tareas.js'), 'renovar', 'avisar-tarjetas', '--seco'], { env, encoding: 'utf8' });
+    ok(seco.status === 0 && (seco.stdout.match(/CardNet apagado/g) || []).length === 2, `--seco apagado: las dos tareas dicen «CardNet apagado» (sale ${seco.status})`);
+    const enc = spawnSync(process.execPath, [path.join(__dirname, 'tareas.js'), 'renovar', 'avisar-tarjetas', '--seco'], {
+      env: { ...env, MERCA_CARDNET: 'lab', MERCA_CARDNET_LLAVE_PUB: LLAVE_PUB, MERCA_CARDNET_LLAVE_PRIV: LLAVE_PRIV, MERCA_ENV: path.join(BANCO, 'no-existe.env') }, encoding: 'utf8' });
+    ok(enc.status === 0 && /avisaría \d+ renovación/.test(enc.stdout) && /avisaría de \d+ tarjeta/.test(enc.stdout),
+      '--seco encendido: cuenta lo que haría sin llamar a nadie');
+
+    for (const k of NOMBRES) correoMod[k] = originales[k];
+    apagar();
+  }
+
   apagar();
   ok(intentosDeRed === 0, `ninguna llamada llegó al transporte sin doble (${intentosDeRed})`);
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
