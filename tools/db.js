@@ -1214,8 +1214,30 @@ const MIGRACIONES = [
      de quienes perdieron el acceso a su correo y esperan una revisión
      humana; `usuario_id` puede ser NULL a propósito, porque la solicitud
      se acepta igual exista o no la cuenta (no revela qué correos están
-     registrados). Ninguna de las dos toca comprobantes fiscales. */
+     registrados). Ninguna de las dos toca comprobantes fiscales.
+
+     `codigos.tipo` llevaba un CHECK cerrado a tres valores y SQLite no
+     permite cambiarlo con ALTER: sin rehacer la tabla, el primer código
+     de tipo `cambio_correo` reventaba con «CHECK constraint failed» y el
+     usuario veía un 500. Se rehace copiando las filas y los índices. */
   ['2026-10-cuenta-recuperacion', [
+    `CREATE TABLE codigos_nueva (
+       id          TEXT PRIMARY KEY,
+       usuario_id  TEXT REFERENCES usuarios(id) ON DELETE CASCADE,
+       correo      TEXT NOT NULL,
+       tipo        TEXT NOT NULL CHECK (tipo IN ('verificacion', 'acceso', 'restablecer', 'cambio_correo')),
+       codigo_hash TEXT NOT NULL,
+       intentos    INTEGER NOT NULL DEFAULT 0,
+       consumido   INTEGER NOT NULL DEFAULT 0,
+       expira      TEXT NOT NULL,
+       creado      TEXT NOT NULL
+     )`,
+    `INSERT INTO codigos_nueva (id, usuario_id, correo, tipo, codigo_hash, intentos, consumido, expira, creado)
+       SELECT id, usuario_id, correo, tipo, codigo_hash, intentos, consumido, expira, creado FROM codigos`,
+    'DROP TABLE codigos',
+    'ALTER TABLE codigos_nueva RENAME TO codigos',
+    'CREATE INDEX IF NOT EXISTS ix_codigos_vigentes ON codigos (correo, tipo, consumido, expira)',
+    'CREATE INDEX IF NOT EXISTS ix_codigos_usuario ON codigos (usuario_id)',
     `CREATE TABLE IF NOT EXISTS cambios_correo (
        id TEXT PRIMARY KEY,
        usuario_id TEXT NOT NULL REFERENCES usuarios(id),
@@ -5689,7 +5711,7 @@ function expedienteRecuperacion(idSol) {
       estado_revision: org.estado_revision };
     exp.anuncios.total = d.prepare(`SELECT COUNT(*) AS n FROM anuncios
                                      WHERE organizacion_id = ? AND estado <> 'borrador'`).get(org.id).n;
-    exp.anuncios.titulos = d.prepare(`SELECT COALESCE(NULLIF(titulo, ''), marca || ' ' || modelo) AS t
+    exp.anuncios.titulos = d.prepare(`SELECT anio || ' ' || marca || ' ' || modelo AS t
                                         FROM anuncios WHERE organizacion_id = ? AND estado <> 'borrador'
                                        ORDER BY creado DESC LIMIT 5`).all(org.id).map((f) => f.t);
     exp.pagos = d.prepare(`SELECT p.creado AS fecha, COALESCE(p.referencia, p.id) AS referencia,
