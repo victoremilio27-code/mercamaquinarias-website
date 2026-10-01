@@ -258,6 +258,31 @@ async function bloqueSmsCuenta() {
     }
     delete process.env.MERCA_SMS_TOPE_DIA;
 
+    console.log('\nLos avisos por correo');
+    const leer = (r) => (r && r.archivo ? fs.readFileSync(r.archivo, 'utf8') : '');
+    const liberado = leer(correo.enviarAvisoTelefonoLiberado({ para: 'a@ejemplo.test', nombre: 'A', numero: '8095550001' }));
+    comprobar(liberado.includes('Para: a@ejemplo.test') && liberado.includes('•••-0001') && !liberado.includes('8095550001'),
+      'celular liberado: va al titular con la máscara y sin los 10 dígitos');
+    const cambiado = leer(correo.enviarAvisoTelefonoCambiado({
+      para: 'b@ejemplo.test', nombre: 'B', anterior: '8095550001', nuevo: '8295550002', verificado: true,
+    }));
+    comprobar(cambiado.includes('Para: b@ejemplo.test') && cambiado.includes('•••-0001') && cambiado.includes('•••-0002')
+      && !cambiado.includes('8095550001') && !cambiado.includes('8295550002'),
+    'celular cambiado: las dos máscaras y ningún número entero');
+    const sinAnterior = leer(correo.enviarAvisoTelefonoCambiado({
+      para: 'b@ejemplo.test', nombre: 'B', anterior: null, nuevo: '8295550002', verificado: false,
+    }));
+    comprobar(sinAnterior.includes('sin celular'), 'celular cambiado sin anterior dice «sin celular»');
+    const porSms = leer(correo.enviarAvisoCambioClave({ para: 'c@ejemplo.test', nombre: 'C', via: 'sms', numero: '8495550003' }));
+    comprobar(['SMS', '•••-0003', '10 días', 'por correo', 'quitamos ese celular'].every((t) => porSms.includes(t))
+      && !porSms.includes('8495550003'),
+    'contraseña por SMS: promete los 10 días y quitar el celular, sin el número entero');
+    const sinVia = leer(correo.enviarAvisoCambioClave({ para: 'c@ejemplo.test', nombre: 'C' }));
+    comprobar(sinVia.includes('acaba de cambiar') && !sinVia.includes('SMS'), 'contraseña sin via: el texto de siempre');
+    const tope = leer(correo.avisarTopeSms({ tope: 2 }));
+    comprobar(tope.includes(`Para: ${correo.BUZONES.soporte}`) && tope.includes('Tope diario de SMS'),
+      'el tope diario avisa a soporte');
+
     console.log('\nLa ruta de Brevo');
     process.env.MERCA_SMS = 'brevo';
     process.env.BREVO_API_KEY = 'clave-de-prueba';
