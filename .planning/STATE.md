@@ -44,14 +44,12 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
 
 **Estado al cerrar el chat del 2026-10-01 (vuelta de la tanda 2):** en producción la tanda 1 (PR #84) y la
 tanda 2 (PR #87, «Sitio arriba: 9e4f88e»: #57 consultas del periodo, #64 fecha RD del comprobante, #75
-recordatorios en días RD, #77 sello por la bitácora). **PR #92** (resto de la tanda 2: #60 Formato 607 y #71 scrypt
-asíncrono): verificado entero en la nube; se fusiona con CI en verde (si este chat no llegó a hacerlo, hacerlo
-primero y confirmar «Sitio arriba»). **PR #88 (#58, migración `2026-10-dibujo-factura`) está LISTO pero NO se
+recordatorios en días RD, #77 sello por la bitácora). También en producción el **PR #92** (#60 Formato 607 y #71 scrypt
+asíncrono); comprobar su «Sitio arriba» en el registro del job `desplegar` si no consta abajo. **PR #88 (#58, migración `2026-10-dibujo-factura`) está LISTO pero NO se
 fusiona hasta que Victor confirme el respaldo verificado** (pedido en #79).
-**En Codex ahora:** **#59** (`armarPaquete`, fiscal: la prueba es `tools/probar-paquete.js` en la rama
+**En Codex ahora (2, sin archivos en común):** **#89** (eliminar cuenta: base y API) y **#59** (`armarPaquete`, fiscal: la prueba es `tools/probar-paquete.js` en la rama
 `claude/59-paquete`, que va encima de la tanda 2; el parche va SOBRE esa rama y solo puede tocar `tools/lote.js`).
-**Bloqueados y listos para despachar en cuanto se desbloqueen:** #89 (eliminar cuenta, base y API; por #71: al
-fusionar #92, quitar `bloqueado` y encargarlo), #90 (interfaz de eliminar cuenta; por #89), #61 (rutas del paquete;
+**Bloqueados y listos para despachar en cuanto se desbloqueen:** #90 (interfaz de eliminar cuenta; por #89), #61 (rutas del paquete;
 por #59) → #62 (selector de la consola; por #61). **De Claude:** #91 (607 dentro del paquete: escribir antes su
 prueba en `probar-paquete.js` cuando #59 y #60 estén en `main`, luego pasarlo a `codex`), #72 (HMAC de testigos,
 migración), #73 (respaldo antes de migrar, producción), #65/#66 (CardNet antes de encender), #76 (partir
