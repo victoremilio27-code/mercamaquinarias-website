@@ -269,6 +269,59 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
     ok(fechaCorta('no es fecha') === '' && fechaCorta(null) === '', 'lo que no es fecha da cadena vacía');
   }
 
+  /* #58 — Un PDF repuesto sale idéntico al original. Antes se redibujaba
+     solo con la fila: el «2 cupos × RD$ 3.500» de f2 volvía como
+     «1 × RD$ 7.000», y con el emisor de ese momento, no el del día en que
+     se emitió. El emisor distinto de abajo simula un domicilio cambiado. */
+  console.log('\n── El PDF repuesto es idéntico al emitido (#58) ──');
+  const otroEmisor = {
+    razonSocial: 'Otra Razón, S.R.L.', rnc: '999999999', registroMercantil: '',
+    domicilioFiscal: 'Otro domicilio', correoFacturacion: 'otro@invalid',
+  };
+  const reponerIgual = (idFactura) => {
+    const fila = db.facturaPorId(idFactura);
+    const antes = facturas.leerPdf(fila.ruta_pdf);
+    fs.rmSync(facturas.rutaAbsoluta(fila.ruta_pdf));
+    const r = facturas.reponerPdfsDe([db.facturaPorId(idFactura)], { emisor: otroEmisor });
+    const despues = facturas.leerPdf(db.facturaPorId(idFactura).ruta_pdf);
+    return r.hechos.includes(fila.numero) && !!antes && !!despues && Buffer.compare(antes, despues) === 0;
+  };
+  /* Uno nuevo y no f1/f2: la sección 11 les cambió la fecha a propósito,
+     y con otra fecha el papel ya no es el mismo. */
+  const p5 = pago({ subtotal: 7000, itbis: 1260, total: 8260, referencia: 'PRUEBA-5' });
+  const f5 = facturas.emitirPorPago(p5, {
+    concepto: 'Plan Destacado · 2 cupos · 30 días',
+    detalle: { cantidad: 2, precio_unitario: 3500, periodo: '23/09/2026 al 23/10/2026' },
+    cliente: { razonSocial: 'Constructora del Este, S.R.L.', rnc: '130123456', correo: 'compras@ejemplo.do' },
+  });
+  const dibujoF5 = JSON.parse(db.facturaPorId(f5.id).dibujo || 'null');
+  ok(dibujoF5 && dibujoF5.detalle.cantidad === 2 && dibujoF5.detalle.precio_unitario === 3500
+    && dibujoF5.emisor && dibujoF5.emisor.domicilioFiscal,
+  'al emitir se guarda la cantidad, el precio unitario y el emisor');
+  ok(reponerIgual(f5.id), 'la factura de 2 cupos se repone byte a byte, aunque el emisor de hoy sea otro');
+  ok(reponerIgual(nota.id), 'la nota de crédito también');
+  ok(reponerIgual(f4.id), 'y la de consumo sin detalle');
+  const vista = facturas.comoHtml(db.facturaPorId(f5.id));
+  ok(vista.includes('<td class="c">2</td>') && !vista.includes('Otro domicilio'),
+    'la vista web sale de lo guardado: 2 cupos y el emisor de entonces');
+
+  {
+    const d = conexion();
+    let bloqueado = false;
+    try {
+      d.prepare("UPDATE facturas SET dibujo = '{}' WHERE id = ?").run(f5.id);
+    } catch (e) {
+      bloqueado = /no se reescribe/.test(e.message);
+    }
+    /* Lo emitido antes de #58 no tiene `dibujo` y no se le inventa: se
+       redibuja con la fila y el emisor que se pase, como siempre. */
+    const viejo = { ...db.facturaPorId(f3.id), dibujo: null };
+    d.close();
+    ok(bloqueado, 'la base no deja reescribir el dibujo de un comprobante');
+    const html = facturas.comoHtml(viejo, { emisor: otroEmisor });
+    ok(html.includes('Otro domicilio'), 'un comprobante sin dibujo guardado se dibuja como antes');
+  }
+
   console.log();
   console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
   console.log();

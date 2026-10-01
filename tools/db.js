@@ -1348,6 +1348,26 @@ const MIGRACIONES = [
     'CREATE INDEX IF NOT EXISTS ix_cambios_clave_usuario ON cambios_clave (usuario_id)',
     'CREATE UNIQUE INDEX IF NOT EXISTS ux_cambios_clave_revertir ON cambios_clave (revertir_hash)',
   ]],
+
+  /* 2026-10 — Lo que dibuja el PDF y no está en columnas (#58, R-04 de
+     Victor: «que no se pierdan bajo ninguna circunstancia»).
+
+     Al reponer un PDF perdido se redibujaba solo con la fila, y la fila
+     no guarda la cantidad ni el precio unitario ni el emisor de aquel día:
+     un comprobante de «2 cupos × RD$ 3.500» volvía como «1 × RD$ 7.000», y
+     si el domicilio fiscal cambiaba, el repuesto llevaba el nuevo. El
+     cliente tiene el original; un duplicado distinto es un problema.
+
+     `dibujo` es un JSON que se escribe una sola vez, al emitir. Lo ya
+     emitido queda en NULL y se redibuja como siempre: rellenarlo después
+     sería inventar lo que se imprimió. El disparador impide reescribirlo,
+     igual que no se reescribe el resto del comprobante. */
+  ['2026-10-dibujo-factura', [
+    'ALTER TABLE facturas ADD COLUMN dibujo TEXT',
+    `CREATE TRIGGER IF NOT EXISTS tr_facturas_dibujo_sin_cambios
+       BEFORE UPDATE OF dibujo ON facturas
+       BEGIN SELECT RAISE(ABORT, 'el dibujo de un comprobante emitido no se reescribe'); END`,
+  ]],
 ];
 
 function migrar() {
@@ -6302,8 +6322,8 @@ function crearFactura(datos) {
        razon_social, rnc, direccion, telefono, correo,
        concepto, subtotal, descuento, itbis_tasa, itbis, total, moneda,
        condicion_pago, metodo_pago, referencia_pago, periodo_servicio, notas,
-       fecha, ruta_pdf, anula_a, creada)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       fecha, ruta_pdf, anula_a, creada, dibujo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
   const idFactura = id();
   const fecha = datos.fecha || ahora();
@@ -6327,6 +6347,7 @@ function crearFactura(datos) {
         datos.condicionPago || null, datos.metodoPago || null,
         datos.referenciaPago || null, datos.periodoServicio || null, datos.notas || null,
         fecha, datos.rutaPdf || null, datos.anulaA || null, ahora(),
+        datos.dibujo ? JSON.stringify(datos.dibujo) : null,
       );
       return { id: idFactura, numero };
     } catch (e) {
