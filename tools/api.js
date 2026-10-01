@@ -652,6 +652,7 @@ const pedirCambioCorreo = conSesion(async (req, res, ctx) => {
   if (!db.permitir(`cambio-correo:${ctx.usuario.id}`, 5, 60)) {
     return fallo(res, 429, 'Demasiados intentos. Espere un rato antes de volver a pedirlo.');
   }
+  if (enfriado(res, ctx.usuario.id)) return;
 
   const u = db.usuarioPorId(ctx.usuario.id);
   if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
@@ -677,6 +678,7 @@ const confirmarCambioCorreo = conSesion(async (req, res, ctx) => {
   if (!db.permitir(`confirmar-correo:${ctx.usuario.id}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
+  if (enfriado(res, ctx.usuario.id)) return;
 
   const destino = String(c.correo || '').trim().toLowerCase();
   const r = db.verificarCodigo({ correo: destino, tipo: 'cambio_correo', codigo: c.codigo });
@@ -2296,6 +2298,9 @@ const crearSucursal = conSesion(async (req, res, ctx) => {
   }
   const v = datosSucursal(await leerCuerpo(req));
   if (v.error) return fallo(res, 400, v.error);
+  // Una sucursal nueva siempre trae teléfono (es obligatorio) y sale en la
+  // página pública del dealer: es un número nuevo en su nombre.
+  if (enfriado(res, ctx.usuario.id)) return;
 
   // Tope defensivo: mil sucursales es un error de guion, no un dealer.
   if (db.sucursalesDe(ctx.organizacion.id).length >= 50) {
@@ -2317,6 +2322,15 @@ const editarSucursal = conSesion(async (req, res, ctx, idSucursal) => {
 
   const v = datosSucursal(c);
   if (v.error) return fallo(res, 400, v.error);
+
+  // El teléfono y el WhatsApp de cada sucursal salen en la página pública
+  // del dealer (assets/perfil.js): cambiarlos cuenta como cambiar un contacto.
+  const actual = db.sucursal(idSucursal, ctx.organizacion.id);
+  if (!actual) return fallo(res, 404, 'Esa sucursal no existe');
+  const num = (x) => db.normalizarNumero(x) || '';
+  if ((num(v.datos.telefono) !== num(actual.telefono) || num(v.datos.whatsapp) !== num(actual.whatsapp))
+    && enfriado(res, ctx.usuario.id)) return;
+
   const r = db.actualizarSucursal(idSucursal, ctx.organizacion.id, v.datos);
   if (!r.changes) return fallo(res, 404, 'Esa sucursal no existe');
   return responder(res, 200, { sucursal: db.sucursal(idSucursal, ctx.organizacion.id) });
@@ -2825,7 +2839,30 @@ const verMiPagina = conPagina((req, res, ctx) => responder(res, 200, {
   editadaPorSoporte: db.ultimaAnotacion(ctx.organizacion.id, 'pagina.editar'),
 }));
 
-const editarMiPagina = delDueno(nucleoEditarPagina);
+/* Páginas del DUEÑO con la guarda de las 72 horas (D-09). Hacen lo mismo
+   que `delDueno` (misma llamada al núcleo, mismo responder); lo único que
+   añaden es negarse si el cuerpo cambia el teléfono, el WhatsApp o el
+   correo público durante el enfriamiento. El personal que edita en nombre
+   del dealer pasa por `conAdminEnNombreDe` y la bitácora: no se le aplica. */
+const cambiaTelefonoPublico = (org, c) => c.telefonoPublico !== undefined
+  && (db.normalizarNumero(c.telefonoPublico) || '') !== (db.normalizarNumero(org.telefono_publico) || '');
+const cambiaCorreoPublico = (org, c) => c.correoPublico !== undefined
+  && String(c.correoPublico || '').trim().toLowerCase() !== String(org.correo_publico || '').trim().toLowerCase();
+/* Quitar el WhatsApp no cuenta: no añade un número del estafador. */
+function cambiaWhatsapp(org, c) {
+  const nuevo = (Array.isArray(c.enlaces) ? c.enlaces : []).slice(0, 8)
+    .find((e) => e && e.tipo === 'whatsapp' && texto(e.valor, 200) && telefonoValido(e.valor));
+  if (!nuevo) return false;
+  const actual = db.enlacesDe(org.id).find((e) => e.tipo === 'whatsapp');
+  return (db.normalizarNumero(nuevo.valor) || '') !== (db.normalizarNumero(actual && actual.valor) || '');
+}
+const editarMiPagina = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if ((cambiaTelefonoPublico(ctx.organizacion, c) || cambiaCorreoPublico(ctx.organizacion, c))
+    && enfriado(res, ctx.usuario.id)) return;
+  const r = nucleoEditarPagina(ctx.organizacion, c);
+  return responder(res, r.codigo || 200, r.respuesta);
+});
 
 const publicarMiPagina = conPagina((req, res, ctx) => {
   const pagina = db.paginaDe(ctx.organizacion.id);
@@ -2857,7 +2894,12 @@ const borrarMiSeccion = delDueno(nucleoBorrarSeccion, { conCuerpo: false });
 const ordenarMisSecciones = delDueno(nucleoOrdenarSecciones);
 const anadirAMiGaleria = delDueno(nucleoAnadirFoto);
 const quitarDeMiGaleria = delDueno(nucleoQuitarFoto, { conCuerpo: false });
-const guardarMisEnlaces = delDueno(nucleoEnlaces);
+const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if (cambiaWhatsapp(ctx.organizacion, c) && enfriado(res, ctx.usuario.id)) return;
+  const r = nucleoEnlaces(ctx.organizacion, c);
+  return responder(res, r.codigo || 200, r.respuesta);
+});
 
 /* ── El personal: la página de un dealer, en su nombre ─────
  *
@@ -5083,6 +5125,8 @@ const listarContactos = conSesion((req, res, ctx) => {
 
 const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
   if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  // Vale para correo y SMS: tras una recuperación por SMS el correo también puede ser del intruso.
+  if (enfriado(res, ctx.usuario.id)) return;
   const c = await leerCuerpo(req);
   const numero = db.normalizarNumero(c.numero);
   if (!numero) return fallo(res, 400, 'Indique un teléfono de 10 dígitos');
@@ -5158,6 +5202,7 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
 
 const confirmarContacto = conSesion(async (req, res, ctx) => {
   if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
+  if (enfriado(res, ctx.usuario.id)) return;
   const c = await leerCuerpo(req);
   if (!db.permitir(`contacto-confirmar:${origen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');

@@ -855,6 +855,120 @@ try {
   delete process.env.MERCA_SMS_TOPE_DIA;
 }
 
+/* ── 15. Guardas de las 72 horas ─────────────────────────────── */
+seccion('15. Guardas de las 72 horas');
+{
+  const poner = (idUsuario, cuando) =>
+    db.abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = ? WHERE id = ?').run(cuando, idUsuario);
+  const enf = (r) => r.codigo === 409 && r.datos && r.datos.enfriamientoHasta === FUTURO;
+  const noEnf = (r) => !(r.codigo === 409 && r.datos && r.datos.enfriamientoHasta);
+
+  /* Cuenta de particular: correo, celular y contactos. */
+  const P = cuenta('guarda-15p@ejemplo.test', 'Guarda P', { telefono: '8295551501' });
+  const tp = db.abrirSesion(P);
+  poner(P, FUTURO);
+  let r = await post('/api/cuenta/correo', { clave: CLAVE, correo: 'nuevo-15p@ejemplo.test' }, como(tp));
+  comprobar(enf(r), 'cambiar el correo en enfriamiento: 409 con enfriamientoHasta');
+  r = await post('/api/cuenta/correo/confirmar', { correo: 'nuevo-15p@ejemplo.test', codigo: '123456' }, como(tp));
+  comprobar(enf(r), 'confirmar el correo en enfriamiento: 409');
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '8295551599' }, como(tp));
+  comprobar(enf(r), 'cambiar el celular en enfriamiento: 409');
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'verificar', codigo: '123456' }, como(tp));
+  comprobar(r.codigo === 400, 'confirmar el celular con el SMS apagado sigue siendo 400');
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    r = await post('/api/cuenta/telefono/verificar', {}, como(tp));
+    comprobar(enf(r), 'verificar el celular en enfriamiento: 409');
+    r = await post('/api/cuenta/telefono/confirmar', { proposito: 'verificar', codigo: '123456' }, como(tp));
+    comprobar(enf(r), 'confirmar el celular en enfriamiento: 409');
+  } finally { delete process.env.MERCA_SMS; }
+  r = await post('/api/contactos/codigo', { numero: '8095558001', via: 'correo' }, como(tp));
+  comprobar(enf(r), 'pedir un código de contacto en enfriamiento: 409');
+  r = await post('/api/contactos/confirmar', { numero: '8095558001', codigo: '123456' }, como(tp));
+  comprobar(enf(r), 'confirmar un contacto en enfriamiento: 409');
+
+  poner(P, PASADO);
+  r = await post('/api/cuenta/correo', { clave: CLAVE, correo: 'nuevo-15p@ejemplo.test' }, como(tp));
+  comprobar(noEnf(r) && r.codigo === 202, 'con el enfriamiento pasado, cambiar el correo funciona (202)');
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '8295551599' }, como(tp));
+  comprobar(noEnf(r) && r.codigo === 200, 'con el enfriamiento pasado, cambiar el celular funciona');
+  r = await post('/api/contactos/codigo', { numero: '8095558001', via: 'correo' }, como(tp));
+  comprobar(noEnf(r) && r.codigo === 200, 'con el enfriamiento pasado, pedir un contacto funciona');
+  r = await post('/api/contactos/confirmar', { numero: '8095558001', codigo: '123456' }, como(tp));
+  comprobar(noEnf(r), 'con el enfriamiento pasado, confirmar un contacto no da 409 de enfriamiento');
+
+  /* Dealer: página, enlaces y sucursales. */
+  const D = cuenta('guarda-15d@ejemplo.test', 'Guarda D', { telefono: '8295551502', telefonoEmpresa: '8095558100', dealer: 'Empresa Guarda' });
+  for (const doc of legales.OBLIGATORIOS) db.registrarAceptacion({ usuarioId: D, documento: doc.id, version: doc.version, ip: '201.5.5.5' });
+  const td = db.abrirSesion(D);
+  const org = db.organizacionDe(D);
+  const principal = db.sucursalPrincipal(org.id);
+  r = await patch('/api/mi-pagina', { telefonoPublico: '8095558101', correoPublico: 'publico@empresa-guarda.test' }, como(td));
+  comprobar(r.codigo === 200, 'dealer sin enfriamiento: guardar teléfono y correo públicos funciona');
+  r = await put('/api/mi-pagina/enlaces', { enlaces: [{ tipo: 'whatsapp', valor: '8095558102' }, { tipo: 'instagram', valor: 'https://instagram.com/guarda' }] }, como(td));
+  comprobar(r.codigo === 200, 'dealer sin enfriamiento: guardar el WhatsApp funciona');
+
+  poner(D, FUTURO);
+  r = await patch('/api/mi-pagina', { telefonoPublico: '8095558199' }, como(td));
+  comprobar(enf(r), 'página: otro teléfono público en enfriamiento: 409');
+  r = await patch('/api/mi-pagina', { telefonoPublico: '(809) 555-8101' }, como(td));
+  comprobar(r.codigo === 200, 'página: el mismo teléfono público (otro formato): 200');
+  r = await patch('/api/mi-pagina', { correoPublico: 'otro@empresa-guarda.test' }, como(td));
+  comprobar(enf(r), 'página: otro correo público en enfriamiento: 409');
+  r = await patch('/api/mi-pagina', { descripcion: 'x' }, como(td));
+  comprobar(r.codigo === 200, 'página: la descripción se puede cambiar');
+  r = await put('/api/mi-pagina/enlaces', { enlaces: [{ tipo: 'whatsapp', valor: '8095558199' }] }, como(td));
+  comprobar(enf(r), 'enlaces: otro WhatsApp en enfriamiento: 409');
+  r = await put('/api/mi-pagina/enlaces', { enlaces: [{ tipo: 'instagram', valor: 'https://instagram.com/guarda' }] }, como(td));
+  comprobar(r.codigo === 200, 'enlaces: quitar el WhatsApp y dejar solo instagram: 200');
+
+  const sucursalNueva = (extra) => ({
+    nombre: 'Sucursal Dos', provincia: 'santiago', direccion: 'Avenida Central No. 20', telefono: '8095558200', ...extra,
+  });
+  r = await post('/api/sucursales', sucursalNueva(), como(td));
+  comprobar(enf(r), 'sucursales: crear una en enfriamiento: 409');
+  const datosPrincipal = (extra) => ({
+    nombre: principal.nombre, provincia: principal.provincia || 'santo-domingo',
+    direccion: principal.direccion || 'Calle Principal No. 10', municipio: principal.municipio || '',
+    telefono: principal.telefono, whatsapp: principal.whatsapp || '', ...extra,
+  });
+  r = await patch(`/api/sucursales/${principal.id}`, datosPrincipal({ nombre: 'Casa Matriz' }), como(td));
+  comprobar(r.codigo === 200, 'sucursales: cambiar solo el nombre en enfriamiento: 200');
+  r = await patch(`/api/sucursales/${principal.id}`, datosPrincipal({ telefono: '8095558299' }), como(td));
+  comprobar(enf(r), 'sucursales: otro teléfono en enfriamiento: 409');
+  r = await patch(`/api/sucursales/${principal.id}`, datosPrincipal({ whatsapp: '8095558298' }), como(td));
+  comprobar(enf(r), 'sucursales: otro WhatsApp en enfriamiento: 409');
+  r = await patch(`/api/sucursales/${principal.id}`, { principal: true }, como(td));
+  comprobar(noEnf(r), 'sucursales: marcar la principal no da 409 de enfriamiento');
+
+  poner(D, PASADO);
+  r = await patch('/api/mi-pagina', { telefonoPublico: '8095558199' }, como(td));
+  comprobar(noEnf(r) && r.codigo === 200, 'enfriamiento pasado: el teléfono público cambia');
+  r = await put('/api/mi-pagina/enlaces', { enlaces: [{ tipo: 'whatsapp', valor: '8095558199' }] }, como(td));
+  comprobar(noEnf(r) && r.codigo === 200, 'enfriamiento pasado: el WhatsApp cambia');
+  r = await post('/api/sucursales', sucursalNueva(), como(td));
+  comprobar(noEnf(r) && r.codigo === 201, 'enfriamiento pasado: se crea la sucursal');
+  r = await patch(`/api/sucursales/${principal.id}`, datosPrincipal({ telefono: '8095558299' }), como(td));
+  comprobar(noEnf(r) && r.codigo === 200, 'enfriamiento pasado: la sucursal cambia de teléfono');
+}
+
+/* ── 16. Orden de rutas y sesión ─────────────────────────────── */
+seccion('16. Orden de rutas y sesión');
+{
+  const primera = (ruta) => api.RUTAS.find(([m, re]) => m === 'POST' && re.test(ruta));
+  const pv = primera('/api/cuenta/telefono/verificar');
+  const pc = primera('/api/cuenta/telefono/confirmar');
+  const pt = primera('/api/cuenta/telefono');
+  comprobar(!!pv && pv[1].source.includes('verificar'),
+    'la primera ruta que casa con /telefono/verificar es la de verificar');
+  comprobar(!!pc && pc[1].source.includes('confirmar'), 'la primera ruta que casa con /telefono/confirmar es la de confirmar');
+  comprobar(!!pt && pt[1].source === '^\\/api\\/cuenta\\/telefono$' && pt !== pv && pt !== pc, '/telefono a secas tiene su propia ruta');
+  for (const u of ['/api/cuenta/telefono', '/api/cuenta/telefono/verificar', '/api/cuenta/telefono/confirmar']) {
+    const r = await post(u, {}, como(null));
+    comprobar(r.codigo === 401, `sin sesión: ${u} responde 401`);
+  }
+}
+
 }
 
 main().then(() => {
