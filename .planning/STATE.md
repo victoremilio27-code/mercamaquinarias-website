@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "05.3 en producción. 05.4 y 12 con CONTEXT y RESEARCH listos; siguiente: planificar la 05.4."
-last_updated: "2026-10-01T12:00:00.000Z"
+stopped_at: "10.2 en producción (PR #51). Siguiente: replanificar la 12 con R-01..R-05."
+last_updated: "2026-10-01T18:10:00.000Z"
 last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
@@ -28,36 +28,24 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 ### Dónde estamos
 
-- **Todo en producción hasta la 10.1** (último despliegue «Sitio arriba: 0d05858», PR #48, 2026-09-30 22:30 UTC):
-  fases 2, 3, 4, 5, 05.1, 05.2, 05.3, 05.4, 6, 7, 8, 9, 10 y **10.1** (recuperar la cuenta y cambiar el correo). Victor
-  hizo el respaldo antes (`/var/backups/mercamaquinarias/antes-recuperar-cuenta.db`, `integrity_check` = ok):
-  conservarlo unos días. Victor revisó la 10.1 en claro y oscuro: «se ven bien» (su `human_needed` queda cumplido).
-  El papeleo del ROADMAP (fases 3, 4, 8 y 9 verificadas y marcadas) está en `main` (PR #49).
+- **Todo en producción hasta la 10.2** (último despliegue «Sitio arriba: e69520e», PR #51, 2026-10-01 17:59 UTC):
+  fases 2, 3, 4, 5, 05.1, 05.2, 05.3, 05.4, 6, 7, 8, 9, 10, 10.1 y **10.2** (teléfono verificado y códigos por SMS,
+  diseño D-16: el SMS nunca abre la cuenta por sí solo). CI del despliegue: `pruebas`, `navegador` y `desplegar` en
+  verde; la migración `2026-10-telefono-cuenta` se aplicó al arrancar. Victor hizo el respaldo antes
+  (`/var/backups/mercamaquinarias/antes-telefono.db`, `integrity_check` = ok): conservarlo unos días, igual que
+  `antes-recuperar-cuenta.db` de la 10.1. Privacidad 2.2 vigente desde 2026-10-01 (fecha de la fusión, ya correcta).
+  - **Re-verificación 10.2:** 8/8, `human_needed`, sin huecos (`10.2-VERIFICATION.md`). Decisiones del cierre: entrar
+    con contraseña + SMS NO anula la solicitud revisada pendiente (avisa a soporte y al titular); el aviso de
+    contraseña cambiada dice que se cerraron las sesiones «en otros equipos» y pide usar primero el «No fui yo» del
+    cambio de correo si también lo recibió (si no, el código iría al correo del intruso).
+  - **Pendiente de Victor (no bloquea nada):** mirar a ojo en móvil y escritorio, claro y oscuro, el celular en el
+    panel (`#segTelefono`, `#formTelefono`) y la pantalla «¿No cambió usted su contraseña?» (`cuenta.html?revertir-clave=`);
+    `#formAccesoVia` solo se ve con `MERCA_SMS` encendido. `npm run correo:probar` con una dirección propia (manda
+    correos reales; no se ha corrido). Un SMS real por Brevo el día que lo encienda (`deploy/README.md` §9b).
+  - Las bases LOCALES creadas con la versión vieja de la rama de la 10.2 hay que rehacerlas
+    (`npm run db:reset && npm run db:demo`).
 
-- **FASE EN CURSO: 10.2 «Teléfono verificado y códigos por SMS» — LISTA PARA PR** — rama
-  **`claude/fase-10.2-telefono`** (SIN PR todavía; `origin/main` ya está fusionado en la rama). Pedida por Victor el
-  2026-09-30. Los planes 01-08 (primera versión) y 09-16 (corrección por D-16 de `10.2-CONTEXT.md`: el SMS nunca abre
-  la cuenta por sí solo) están EJECUTADOS, cada uno con su SUMMARY en `.planning/phases/10.2-telefono-verificado-y-codigos-por-sms/`.
-  - **Quitado (09, 12, 13):** «Olvidé mi contraseña» por SMS, la recuperación sin correo por SMS, el enfriamiento de
-    72 h y la ventana de 10 días; la migración `2026-10-telefono-cuenta` ya no rehace `cambios_correo`.
-  - **Añadido (10, 13, 14):** al entrar desde un equipo nuevo se elige que el código llegue al correo o al celular
-    verificado (`#formAccesoVia`, solo con `MERCA_SMS` encendido); «No fui yo» de un uso en todo aviso de cambio de
-    contraseña (cierra sesiones, anula la contraseña, quita el celular, código al correo).
-  - **Textos (11):** Privacidad 2.2, asistente y `deploy/README.md` según D-16. Auditorías de navegador al día (15).
-  - **Estado de las pruebas (plan 16, 2026-10-01, sobre 62c01cd + merge de `origin/main`):** todas las baterías del CI
-    en verde, `npm run auditar`, `npm run check` y `check:motion` en verde. `correo:probar` NO se corrió (manda correos
-    reales): está en «Solo manual» de `10.2-VALIDATION.md`. Detalle por batería en esa misma validación.
-  - **Lo que falta, en orden:** (1) re-verificar la fase con gsd-verifier (el `gaps_found` viejo del segundo WhatsApp
-    durante las 72 h queda sin objeto: ya no hay 72 h); (2) abrir el PR; (3) pedir a Victor el **respaldo verificado**
-    antes de fusionar (`deploy/README.md`, «Respaldo verificado antes de fusionar una migración», nombre sugerido
-    `antes-telefono`): la migración ya no rehace `cambios_correo`, pero añade una columna a `usuarios` y las tablas
-    `codigos_telefono`, `cambios_telefono` y `cambios_clave`; (4) **el día de la fusión, en un último commit del PR:
-    poner la fecha real en `vigenteDesde` de Privacidad 2.2, en `assets/legales.js` y en la línea `v2.2 · vigente
-    desde …` de `legal.html` a la vez**, correr `npm run renovacion:probar` y esperar el CI en verde; (5) fusionar y
-    comprobar el «Sitio arriba» del paso `desplegar`; (6) las bases LOCALES creadas con la versión vieja de la rama
-    hay que rehacerlas (`npm run db:reset && npm run db:demo`). La tarjeta guardada de CardNet NO se bloquea.
-
-- **Fase 12 (lote mensual de comprobantes) — PLANIFICADA, hay que REPLANIFICAR antes de ejecutar** — rama
+- **SIGUIENTE: Fase 12 (lote mensual de comprobantes) — PLANIFICADA, hay que REPLANIFICAR antes de ejecutar** — rama
   **`claude/fase-12-lote-comprobantes`** (subida, sin PR). Victor autorizó adelantarla a la 11 (bloqueada por
   contenido). Tiene 4 planes revisados, `12-VALIDATION.md`, y la investigación del Formato 607 al final de
   `12-RESEARCH.md`. Pero los planes son ANTERIORES a las respuestas de Victor (sección «Respuestas de Victor» de
@@ -92,11 +80,13 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
   `mercamaquinarias.com` ni `dgii.gov.do`: el sitio en vivo se confirma con el «Sitio arriba» del registro del paso
   `desplegar` en GitHub Actions. Nunca `git checkout <commit> --` en el directorio principal (desengancha la rama;
   ya pasó una vez): para mirar otra versión, `git worktree add`.
+  A los agentes: buscar con la herramienta Grep, no con `grep` por Bash (el 2026-10-01 el clasificador del modo
+  automático negó un `grep` por Bash y paró un plan a medias; con Grep pasó). Los worktrees de agentes en
+  paralelo van en `.claude/worktrees/`: excluirlo en `.git/info/exclude`, nunca en el commit.
 
 ### Lo que falta, en orden
 
-1. **Cerrar la 10.2** (ejecutada con D-16; ver «FASE EN CURSO» arriba): re-verificar → PR → respaldo de Victor →
-   `vigenteDesde` de Privacidad 2.2 a la fecha de la fusión → fusionar → «Sitio arriba».
+1. ~~Cerrar la 10.2~~ — en producción el 2026-10-01 (PR #51).
 2. **Replanificar y ejecutar la 12** con R-01..R-05 y los dos riesgos fiscales (arriba).
 3. **Antes de encender CardNet (no bloquea el lanzamiento, que va con transferencia):** que dos procesos no puedan
    consumir dos NCF para el mismo pago (`03-VERIFICATION.md`: `facturas` sin índice único sobre `pago_id`, y la
