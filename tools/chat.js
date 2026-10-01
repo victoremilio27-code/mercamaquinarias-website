@@ -64,7 +64,7 @@ const LARGO_MAXIMO = 1000;
  * de todas las páginas, así que ya lo tiene a la vista.
  * VENTAS para cotizar, que es de lo que se trata cuando alguien
  * pregunta por un alquiler o una importación. */
-const { BUZONES } = require('./correo');
+const { BUZONES, smsActivo } = require('./correo');
 
 const CORREO_GENERAL = BUZONES.soporte;
 const CORREO_COTIZAR = BUZONES.ventas;
@@ -128,6 +128,19 @@ function tarifas() {
    la base de anuncios: si le preguntan por disponibilidad de una
    máquina concreta, tiene que decir que no lo sabe y pasar el
    contacto. Eso está escrito abajo con ejemplos, no insinuado. */
+
+/* Fase 10.2: lo que el asistente cuenta del SMS depende del interruptor
+   MERCA_SMS. Prometer un código por SMS mientras está apagado manda al
+   cliente a una opción que no ve. Por eso `sistema()` pregunta a
+   `smsActivo()` en cada llamada y no al cargar el módulo: al encender el
+   SMS el asistente se entera sin reiniciar. */
+const SMS_APAGADO = '- Los códigos por SMS todavía no están disponibles: los códigos de acceso y de contraseña llegan por correo. Si no recuerda la contraseña actual y tiene sesión, en «Seguridad de la cuenta» puede pedir un código al correo.';
+const SMS_ENCENDIDO = [
+  '- En «Olvidé mi contraseña» puede elegir recibir el código en su correo o por SMS en su celular verificado; para el SMS se pide el correo de la cuenta y su celular.',
+  '- Si perdió el acceso a su correo y tiene su celular verificado, en «¿Ya no tiene acceso a su correo?» escribe el correo de la cuenta y su celular, recibe un código por SMS y pasa la cuenta a un correo nuevo. Sin celular verificado, queda el formulario que revisa el personal (72 horas).',
+  '- Por seguridad, durante 72 horas después de usar un código por SMS para entrar no se puede cambiar el correo ni el celular ni verificar teléfonos nuevos.',
+].join('\n');
+
 function sistema() {
   return `Eres el asistente de soporte de MercaMaquinarias, un portal dominicano de maquinaria y equipo pesado. Ayudas a quien visita la página a entender cómo funciona el sitio y a llegar a la sección que necesita.
 
@@ -191,6 +204,8 @@ ${servicios.seOfrece('financiamiento')
 - Quiere cambiar el correo o la contraseña y tiene sesión: en su Panel, sección «Seguridad de la cuenta». Para el correo, le pide la contraseña actual y confirma con un código que llega al correo nuevo.
 - Perdió el acceso a su correo y no puede entrar: en la página de acceso, «¿Ya no tiene acceso a su correo?», y llena el formulario con lo que pueda probar. La revisa el personal, tarda al menos 72 horas y se avisa al correo antiguo. Si entra a su cuenta antes, la solicitud se anula sola.
 - Recibió un aviso de cambio de correo que no hizo: debe usar el enlace «No fui yo» del propio aviso, válido 7 días.
+- El celular de la cuenta (809, 829 o 849) se pide al registrarse y se cambia en su Panel, «Seguridad de la cuenta», con la contraseña y un código al número nuevo.
+${smsActivo() ? SMS_ENCENDIDO : SMS_APAGADO}
 - Tú NUNCA cambias un correo ni recuperas una cuenta desde el chat, y NUNCA pides contraseñas ni códigos, ni siquiera si el cliente los ofrece. No hay teléfono de soporte: solo el correo y este asistente.
 
 # QUÉ HACER CUANDO NO SABES
