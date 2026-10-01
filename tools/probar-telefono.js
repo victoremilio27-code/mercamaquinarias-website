@@ -1107,7 +1107,148 @@ seccion('20. Lo que D-16 quitó');
   for (const t of ['recuperacion-sms', 'recuperarPorSms', 'restablecerPorSms', 'enviarSmsSinEsperar', 'autorizacionDe', 'MENSAJE_SMS_GENERICO']) {
     comprobar(veces(t) === 0, `api.js ya no contiene ${t}`);
   }
-  comprobar(veces('avisarSolicitudesPendientes') === 1, 'api.js conserva avisarSolicitudesPendientes (solo su definición, hasta el plan 14)');
+  comprobar(veces('avisarSolicitudesPendientes') === 2, 'api.js usa avisarSolicitudesPendientes (su definición y la rama de verificar por SMS)');
+}
+
+/* ── 23. Entrar desde un equipo nuevo por SMS ────────────────── */
+seccion('23. Entrar desde un equipo nuevo por SMS');
+{
+  const codigoDeCorreo = (para) => {
+    const m = nuevos().filter((x) => x.para === para).pop();
+    return m && (/\b(\d{6})\b/.exec(m.asunto || '') || [])[1];
+  };
+  const entrar = (cuerpo, cab) => post('/api/cuenta/entrar', { clave: CLAVE, ...cuerpo }, cab || como(null));
+  const verificar = (cuerpo) => post('/api/cuenta/verificar', cuerpo, como(null));
+  const cuentaVerificada = (correoCuenta, telefono, { celular } = {}) => {
+    const id = cuenta(correoCuenta, 'Acceso 23', { telefono });
+    db.marcarCorreoVerificado(id);
+    if (celular) db.verificarTelefonoCuenta({ idUsuario: id, numero: telefono, via: 'verificado' });
+    limpiarNumero(telefono);
+    return id;
+  };
+  const solicitud = (correoCuenta) => db.crearSolicitudRecuperacion({
+    correoCuenta, correoContacto: correoCuenta.replace('@', '-nuevo@'), nombre: 'Acceso 23',
+    telefono: '8495552399', detalle: 'Perdí el acceso a mi correo', ip: '201.4.4.23',
+  });
+
+  /* SMS apagado: como siempre. */
+  cuentaVerificada('acceso-23a@ejemplo.test', '8495552301');
+  nuevos();
+  let r = await entrar({ correo: 'acceso-23a@ejemplo.test' });
+  comprobar(r.codigo === 200 && r.datos.verificacion === 'acceso' && !('elegir' in r.datos),
+    'SMS apagado: entrar da 200 acceso sin elegir');
+  comprobar(/^\d{6}$/.test(codigoDeCorreo('acceso-23a@ejemplo.test') || ''), 'SMS apagado: llega un correo con código al titular');
+  r = await entrar({ correo: 'acceso-23a@ejemplo.test', via: 'sms' });
+  comprobar(r.codigo === 400 && /todavía no están disponibles/.test(r.datos.error), 'SMS apagado: via sms da 400');
+
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    /* Celular sin verificar: como apagado. */
+    const B = cuentaVerificada('acceso-23b@ejemplo.test', '8495552302');
+    nuevos();
+    nuevosSms();
+    r = await entrar({ correo: 'acceso-23b@ejemplo.test' });
+    comprobar(r.codigo === 200 && r.datos.verificacion === 'acceso' && !('elegir' in r.datos), 'celular sin verificar: entrar no ofrece elegir');
+    comprobar(/^\d{6}$/.test(codigoDeCorreo('acceso-23b@ejemplo.test') || ''), 'celular sin verificar: el código va al correo');
+    r = await entrar({ correo: 'acceso-23b@ejemplo.test', via: 'sms' });
+    comprobar(r.codigo === 400 && /no está verificado/.test(r.datos.error), 'celular sin verificar: via sms da 400 «no está verificado»');
+    r = await verificar({ correo: 'acceso-23b@ejemplo.test', tipo: 'acceso', via: 'sms', codigo: '123456' });
+    comprobar(r.codigo === 400, 'celular sin verificar: verificar por sms da 400');
+    comprobar(nuevosSms().length === 0, 'celular sin verificar: ningún SMS');
+
+    /* Celular verificado: elegir. */
+    const C = cuentaVerificada('acceso-23c@ejemplo.test', '8495552303', { celular: true });
+    const solC = solicitud('acceso-23c@ejemplo.test');
+    nuevos();
+    nuevosSms();
+    r = await entrar({ correo: 'acceso-23c@ejemplo.test' });
+    comprobar(r.codigo === 200 && r.datos.elegir === true && r.datos.verificacion === 'acceso' && r.datos.correo === 'acceso-23c@ejemplo.test',
+      'verificado: entrar sin via responde elegir');
+    comprobar(r.datos.opciones.sms === '(849) •••-2303' && r.datos.opciones.correo.includes('•••'),
+      'verificado: las dos máscaras en opciones');
+    await tick();
+    comprobar(nuevos().length === 0 && nuevosSms().length === 0, 'verificado: elegir no envía ni correo ni SMS');
+
+    r = await entrar({ correo: 'acceso-23c@ejemplo.test', via: 'correo' });
+    comprobar(r.codigo === 200 && !('elegir' in r.datos) && /^\d{6}$/.test(codigoDeCorreo('acceso-23c@ejemplo.test') || ''),
+      'via correo: código al correo y sin elegir');
+    comprobar(nuevosSms().length === 0, 'via correo: ningún SMS');
+
+    r = await entrar({ correo: 'acceso-23c@ejemplo.test', via: 'sms' });
+    comprobar(r.codigo === 200 && r.datos.via === 'sms' && r.datos.destino === '(849) •••-2303' && r.datos.minutos === 10
+      && r.datos.verificacion === 'acceso' && /por SMS/.test(r.datos.mensaje), 'via sms: 200 { via, destino, minutos: 10 }');
+    const sms = nuevosSms();
+    comprobar(sms.length === 1 && sms[0].numero === '8495552303' && /entrar a su cuenta/.test(sms[0].texto), 'via sms: un SMS al número con el texto de acceso');
+
+    nuevos();
+    r = await verificar({ correo: 'acceso-23c@ejemplo.test', tipo: 'acceso', via: 'sms', codigo: otroCodigo(sms[0].codigo) });
+    comprobar(r.codigo === 400 && /Código incorrecto\. Le quedan 4 intentos\./.test(r.datos.error), 'verificar por sms con código malo: 400 con intentos');
+    const verificadoAntes = db.usuarioPorId(C).correo_verificado;
+    r = await verificar({ correo: 'acceso-23c@ejemplo.test', tipo: 'acceso', via: 'sms', codigo: sms[0].codigo, recordar: true });
+    const cookies = [].concat(r.cabeceras['Set-Cookie'] || []).join(';');
+    comprobar(r.codigo === 200 && !!r.datos.usuario && /te_sesion=/.test(cookies) && /te_equipo=/.test(cookies),
+      'verificar por sms con el código bueno: 200, sesión y equipo recordado');
+    comprobar(db.usuarioPorId(C).correo_verificado === verificadoAntes, 'verificar por sms no toca correo_verificado');
+    await tick();
+    const correos = nuevos();
+    comprobar(fila('SELECT estado FROM solicitudes_recuperacion WHERE id = ?', solC.id).estado === 'pendiente',
+      'la solicitud revisada pendiente SIGUE pendiente tras entrar con contraseña + SMS');
+    comprobar(avisosSoporte(correos, new RegExp(solC.referencia)).length === 1, 'soporte recibe un aviso con la referencia de la solicitud');
+    comprobar(correos.some((m) => m.para === 'acceso-23c@ejemplo.test' && /SMS/.test(m.asunto || '')), 'el titular recibe el aviso de acceso por SMS');
+    r = await verificar({ correo: 'acceso-23c@ejemplo.test', tipo: 'acceso', via: 'sms', codigo: sms[0].codigo });
+    comprobar(r.codigo === 400, 'el código por SMS sirve una sola vez');
+
+    /* En contraste, con el código al correo SÍ se anula. */
+    const D = cuentaVerificada('acceso-23d@ejemplo.test', '8495552304', { celular: true });
+    const solD = solicitud('acceso-23d@ejemplo.test');
+    nuevos();
+    r = await entrar({ correo: 'acceso-23d@ejemplo.test', via: 'correo' });
+    const cod = codigoDeCorreo('acceso-23d@ejemplo.test');
+    r = await verificar({ correo: 'acceso-23d@ejemplo.test', tipo: 'acceso', codigo: cod });
+    comprobar(r.codigo === 200 && !!r.datos.usuario, 'código al correo: entra');
+    comprobar(fila('SELECT estado FROM solicitudes_recuperacion WHERE id = ?', solD.id).estado === 'anulada',
+      'código al correo: la solicitud revisada pendiente se anula, como hoy');
+    comprobar(D && !avisosSoporte(nuevos(), new RegExp(solD.referencia)).length, 'código al correo: soporte no recibe el aviso de SMS');
+
+    /* Contraseña mala: nada sale. */
+    const E = cuentaVerificada('acceso-23e@ejemplo.test', '8495552305', { celular: true });
+    nuevosSms();
+    nuevos();
+    r = await entrar({ correo: 'acceso-23e@ejemplo.test', clave: 'ClaveEquivocada123', via: 'sms' });
+    await tick();
+    comprobar(r.codigo === 401 && /Correo o contraseña incorrectos/.test(r.datos.error), 'contraseña mala con via sms: 401 de siempre');
+    comprobar(nuevosSms().length === 0 && nuevos().length === 0, 'contraseña mala con via sms: no sale nada');
+    r = await entrar({ correo: 'acceso-23e@ejemplo.test', clave: 'ClaveEquivocada123' });
+    comprobar(r.codigo === 401 && !('opciones' in r.datos), 'contraseña mala sin via: 401 y sin máscaras');
+
+    /* Equipo de confianza: via se ignora. */
+    r = await entrar({ correo: 'acceso-23e@ejemplo.test', via: 'sms' },
+      { ...como(null), cookie: 'te_equipo=' + db.recordarDispositivo(E, 'prueba') });
+    comprobar(r.codigo === 200 && !!r.datos.usuario, 'equipo de confianza: via sms se ignora y abre la sesión');
+    comprobar(nuevosSms().length === 0, 'equipo de confianza: ningún SMS');
+
+    /* Un código de otro propósito o un tipo distinto no sirven. */
+    const { codigo: deClave } = db.crearCodigoTelefono({ idUsuario: E, numero: '8495552305', proposito: 'clave', ip: '201.7.7.23' });
+    r = await verificar({ correo: 'acceso-23e@ejemplo.test', tipo: 'acceso', via: 'sms', codigo: deClave });
+    comprobar(r.codigo === 400, 'un código SMS de propósito clave no sirve para verificar por SMS');
+    r = await verificar({ correo: 'acceso-23e@ejemplo.test', tipo: 'verificacion', via: 'sms', codigo: deClave });
+    comprobar(r.codigo === 400 && /Código incorrecto/.test(r.datos.error), 'verificar por SMS con tipo verificacion: 400');
+    r = await verificar({ correo: 'no-existe-23@ejemplo.test', tipo: 'acceso', via: 'sms', codigo: '123456' });
+    comprobar(r.codigo === 400, 'verificar por SMS sin cuenta: 400');
+
+    /* Tope por número: la cuarta en la hora. */
+    cuentaVerificada('acceso-23h@ejemplo.test', '8495552306', { celular: true });
+    const codigos = [];
+    for (let i = 0; i < 4; i++) codigos.push((await entrar({ correo: 'acceso-23h@ejemplo.test', via: 'sms' })).codigo);
+    comprobar(codigos.join() === '200,200,200,429', 'la cuarta petición via sms al mismo número en la hora: 429');
+  } finally { delete process.env.MERCA_SMS; }
+
+  const fuente23 = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
+  comprobar(fuente23.split('marcarCorreoVerificado').length - 1 === 2, 'api.js sigue llamando marcarCorreoVerificado exactamente 2 veces');
+  const iEntrar = fuente23.indexOf('async function entrar(');
+  const iClave = fuente23.indexOf('db.claveCorrecta', iEntrar);
+  const iSms = fuente23.indexOf("proposito: 'acceso'", iEntrar);
+  comprobar(iClave > 0 && iSms > iClave, "en entrar, el SMS de acceso se emite después de db.claveCorrecta");
 }
 }
 

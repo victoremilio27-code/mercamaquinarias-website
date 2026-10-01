@@ -509,6 +509,36 @@ async function entrar(req, res) {
     return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
   }
 
+  /* Equipo nuevo (D-16): el código puede ir al correo o al celular verificado.
+     Todo esto está DESPUÉS de `claveCorrecta`: el SMS sale solo con la
+     contraseña correcta (hace falta la contraseña Y la SIM, nunca la SIM sola)
+     y las máscaras solo se enseñan a quien ya demostró la contraseña. La
+     respuesta `elegir` no envía nada, porque cada SMS cuesta créditos. */
+  const numero = db.normalizarNumero(u.telefono);
+  if (c.via === 'sms') {
+    if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+    if (!u.telefono_verificado || !numero) return fallo(res, 400, MENSAJE_CELULAR_SIN_VERIFICAR);
+    const r = await enviarSmsDeCuenta({ res, idUsuario: u.id, numero, proposito: 'acceso', ip });
+    if (!r) return;
+    return responder(res, 200, {
+      verificacion: 'acceso',
+      via: 'sms',
+      correo: u.correo,
+      destino: r.destino,
+      minutos: r.minutos,
+      mensaje: 'Le enviamos un código de acceso por SMS porque no reconocemos este equipo.',
+    });
+  }
+  if (c.via !== 'correo' && correo.smsActivo() && u.telefono_verificado && numero) {
+    return responder(res, 200, {
+      verificacion: 'acceso',
+      elegir: true,
+      correo: u.correo,
+      opciones: { correo: ocultarCorreo(u.correo), sms: ocultarNumero(numero) },
+      mensaje: 'No reconocemos este equipo. Elija dónde quiere recibir el código de acceso.',
+    });
+  }
+
   emitirCodigo({ correo: u.correo, tipo: 'acceso', idUsuario: u.id, nombre: u.nombre });
   return responder(res, 200, {
     verificacion: 'acceso',
@@ -528,15 +558,37 @@ async function verificar(req, res) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
-  const r = db.verificarCodigo({ correo: destino, tipo, codigo: c.codigo });
-  if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
+  let u;
+  let numeroSms = null;
+  if (c.via === 'sms') {
+    // Solo el código de acceso (D-16): el SMS acompaña a la contraseña, que ya
+    // se comprobó en `entrar` antes de que saliera el SMS.
+    if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+    if (c.tipo !== 'acceso') return fallo(res, 400, 'Código incorrecto');
+    u = db.usuarioPorCorreo(destino);
+    numeroSms = u ? db.normalizarNumero(u.telefono) : null;
+    if (!u || !u.telefono_verificado || !numeroSms) {
+      return fallo(res, 400, mensajeDeCodigo({ motivo: 'inexistente' }));
+    }
+    const rs = db.verificarCodigoTelefono({ idUsuario: u.id, numero: numeroSms, proposito: 'acceso', codigo: c.codigo });
+    if (!rs.ok) return fallo(res, 400, mensajeDeCodigo(rs));
+    /* DECISIÓN (2026-10-01): contraseña + SMS NO anula las solicitudes
+       revisadas pendientes de la 10.1. Quien tenga la contraseña y una SIM
+       duplicada no debe poder cerrar en silencio la única salida del dueño;
+       soporte la coteja antes de aprobarla. Con el código al correo sí se
+       anulan, como siempre. */
+    avisarSolicitudesPendientes(u, 'entró desde un equipo nuevo con su contraseña y un código por SMS');
+  } else {
+    const r = db.verificarCodigo({ correo: destino, tipo, codigo: c.codigo });
+    if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
 
-  const u = db.usuarioPorId(r.usuario_id);
-  if (!u) return fallo(res, 400, 'La cuenta ya no existe');
-  // Entrar el titular anula lo que alguien pidió a sus espaldas (10.1).
-  db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
+    u = db.usuarioPorId(r.usuario_id);
+    if (!u) return fallo(res, 400, 'La cuenta ya no existe');
+    // Entrar el titular anula lo que alguien pidió a sus espaldas (10.1).
+    db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
+  }
 
-  if (tipo === 'verificacion') {
+  if (tipo === 'verificacion' && c.via !== 'sms') {
     db.marcarCorreoVerificado(u.id);
     // Bienvenida solo al confirmar la cuenta, no en cada acceso desde
     // un equipo nuevo. Orienta sobre el siguiente paso, que es distinto
@@ -553,6 +605,7 @@ async function verificar(req, res) {
   if (c.recordar !== false) {
     cookies.push(cookieEquipo(db.recordarDispositivo(u.id, equipoDescrito(req))));
   }
+  if (c.via === 'sms') correo.enviarAvisoAccesoSms({ para: u.correo, nombre: u.nombre, numero: numeroSms });
   return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookies });
 }
 
