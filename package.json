@@ -50,6 +50,7 @@
     "dealer:probar": "node tools/probar-pagina-dealer.js",
     "bitacora:probar": "node tools/probar-bitacora.js",
     "cuenta:probar": "node tools/probar-cuenta.js",
+    "busquedas:probar": "node tools/probar-busquedas.js",
     "telefono:probar": "node tools/probar-telefono.js",
     "metricas:probar": "node tools/probar-metricas.js",
     "contactos:probar": "node tools/probar-contactos.js",
