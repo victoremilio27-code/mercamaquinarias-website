@@ -589,6 +589,8 @@ async function recuperar(req, res) {
     return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
   }
 
+  if (c.via === 'sms') return recuperarPorSms(req, res, c);
+
   if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
 
   const u = db.usuarioPorCorreo(c.correo);
@@ -614,6 +616,8 @@ async function restablecer(req, res) {
   const debil = claveDebil(c.clave, destino);
   if (debil) return fallo(res, 400, debil);
 
+  if (c.via === 'sms') return restablecerPorSms(req, res, c, destino);
+
   const r = db.verificarCodigo({ correo: destino, tipo: 'restablecer', codigo: c.codigo });
   if (!r.ok) {
     return fallo(res, 400, r.motivo === 'vencido'
@@ -628,9 +632,84 @@ async function restablecer(req, res) {
   // Cambiar la contraseña echa fuera a todo el mundo, incluido quien
   // hubiera entrado sin permiso. Es el sentido de recuperarla.
   db.cerrarTodoDe(u.id);
+  /* Quien tiene el correo reclama la cuenta tras una acción hecha solo con
+     SMS (durante las 72 h o los 7 días siguientes, 10 en total): el celular
+     deja de servir. El enfriamiento se queda como esté: si el correo lo
+     cambió un intruso por SMS, borrarlo le regalaría la salida de las 72 h.
+     Es lo que promete el aviso de contraseña por SMS (10 días). */
+  if (db.accionSmsReciente(u)) db.quitarVerificacionTelefono({ idUsuario: u.id, ip: origen(req) });
   db.marcarCorreoVerificado(u.id);
   db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
   correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre });
+
+  const testigo = db.abrirSesion(u.id);
+  return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
+}
+
+/* «Olvidé mi contraseña» con el código por SMS (D-05, D-08). Se pide el
+   correo Y el celular completo, y la respuesta es idéntica exista o no la
+   cuenta, coincida o no el celular y esté o no verificado: nunca se enseña
+   el número guardado, solo la máscara del que la persona escribió.
+
+   Aquí no hay ningún `await` y la cuenta se busca DESPUÉS de responder, en
+   `setImmediate`: ni la búsqueda ni las escrituras ni el envío pueden
+   alargar la respuesta cuando la cuenta existe. Los topes van antes de
+   mirar la base, así que tampoco dependen de ella. */
+function recuperarPorSms(req, res, c) {
+  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+  if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
+  const n = db.celularRd(c.telefono);
+  if (!n) return fallo(res, 400, MENSAJE_CELULAR);
+  const ip = origen(req);
+  const tope = topesSms({ numero: n, ip });
+  if (tope) return fallo(res, 429, tope);
+
+  const escrito = String(c.correo).trim().toLowerCase();
+  responder(res, 202, {
+    verificacion: 'restablecer',
+    via: 'sms',
+    correo: escrito,
+    destino: ocultarNumero(n),
+    minutos: db.MINUTOS_SMS.restablecer,
+    mensaje: MENSAJE_SMS_GENERICO,
+  });
+
+  setImmediate(() => {
+    try {
+      const u = db.usuarioPorCorreo(escrito);
+      if (u && u.telefono_verificado && db.normalizarNumero(u.telefono) === n) {
+        enviarSmsSinEsperar({ idUsuario: u.id, numero: n, proposito: 'restablecer', ip });
+      }
+    } catch (e) {
+      console.error('recuperar por SMS:', e.message);
+    }
+  });
+}
+
+/* Restablecer con el código del SMS. Todos los fallos son el mismo 400.
+   Tres cosas que parecen omisiones y no lo son:
+   - NO se llama `marcarCorreoVerificado`: por SMS no se prueba nada del
+     correo (Error 3 de la investigación).
+   - Se abre sesión: con ello la SIM pasa a ser llave. Lo aceptó Victor
+     (D-12) y lo cubren el aviso al correo, las 72 h y «No fui yo» (Error 4).
+   - NO se llama `anularRecuperacionesDe`: la solicitud revisada de la 10.1
+     es la única salida del dueño víctima de un duplicado de SIM, y un
+     intruso con la SIM no puede anularla. */
+function restablecerPorSms(req, res, c, destino) {
+  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+  const n = db.celularRd(c.telefono);
+  const u = n && db.usuarioPorCorreo(destino);
+  if (!u || !u.telefono_verificado || db.normalizarNumero(u.telefono) !== n) {
+    return fallo(res, 400, MENSAJE_CODIGO_SMS);
+  }
+  const r = db.verificarCodigoTelefono({ idUsuario: u.id, numero: n, proposito: 'restablecer', codigo: c.codigo });
+  if (!r.ok) return fallo(res, 400, MENSAJE_CODIGO_SMS);
+
+  db.cambiarClave(u.id, c.clave);
+  db.cerrarTodoDe(u.id);
+  db.ponerEnfriamiento(u.id);
+  avisarSolicitudesPendientes(u, 'restableció la contraseña por SMS');
+  correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre, via: 'sms', numero: n });
 
   const testigo = db.abrirSesion(u.id);
   return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
@@ -790,7 +869,13 @@ function enfriado(res, idUsuario) {
   return true;
 }
 
-const MENSAJE_SMS_APAGADO = 'Los códigos por SMS todavía no están disponibles.';
+const MENSAJE_SMS_APAGADO = 'Los códigos por SMS todavía no están disponibles. Use el correo.';
+const MENSAJE_SMS_GENERICO = 'Si el correo y el celular corresponden a una cuenta con ese celular verificado, le enviamos un código por SMS.';
+/* Todo fallo de código en una ruta pública por SMS dice esto, y nada más:
+   «vencido» o «le quedan N intentos» delatarían que el par correo + celular
+   es bueno. */
+const MENSAJE_CODIGO_SMS = 'Código incorrecto o vencido. Solicite uno nuevo.';
+const MENSAJE_AUTORIZACION = 'La autorización venció o ya se usó. Empiece de nuevo.';
 const MENSAJE_TOPE_DIA = 'Hoy no podemos enviar más SMS. Use el correo o inténtelo mañana.';
 
 /* El primer tope de SMS que no pase, o null. El tope por número va SIN
@@ -840,6 +925,44 @@ async function enviarSmsDeCuenta({ res, idUsuario, numero, proposito, ip }) {
     return null;
   }
   return { destino: ocultarNumero(numero), minutos };
+}
+
+/* Versión de `enviarSmsDeCuenta` para las rutas PÚBLICAS: no espera el envío
+   ni responde nada. Con `await`, la respuesta tardaría más cuando la cuenta
+   existe y el tiempo de respuesta la delataría (OWASP, Forgot Password
+   Cheat Sheet); `emitirCodigo` hace lo mismo con el correo. Si el tope
+   diario global está agotado no hace nada: la respuesta pública no cambia y
+   soporte ya recibió el aviso en `cupoGlobalSms`. */
+function enviarSmsSinEsperar({ idUsuario, numero, proposito, ip }) {
+  if (!cupoGlobalSms()) return;
+  const { codigo, minutos } = db.crearCodigoTelefono({ idUsuario, numero, proposito, ip });
+  try {
+    Promise.resolve(correo.enviarSms({ numero, texto: correo.textoSmsCuenta({ codigo, minutos, proposito }) }))
+      .catch(() => {});
+  } catch { /* enviarSms no lanza; por si acaso, no hay a quién responder */ }
+}
+
+/* Si la cuenta tiene una solicitud de recuperación revisada (10.1) sin
+   resolver, las acciones por SMS no la anulan: es la única salida del dueño
+   víctima de un duplicado de SIM, y quien tiene la SIM no puede cancelarla.
+   Se avisa a soporte para que lo coteje antes de aprobar. */
+function avisarSolicitudesPendientes(u, que) {
+  try {
+    const mias = db.solicitudesRecuperacion({ estado: 'pendiente' }).filter((s) => s.usuario_id === u.id);
+    if (!mias.length) return;
+    const referencias = mias.map((s) => s.referencia).join(', ');
+    correo.avisarInternamente({
+      buzon: 'soporte',
+      asunto: `Acción por SMS con una recuperación pendiente (${referencias})`,
+      texto: [
+        `Alguien con el celular verificado de la cuenta ${u.correo} ${que} mientras hay una solicitud de recuperación revisada sin resolver (${referencias}).`,
+        '',
+        'Puede ser el titular o alguien con un duplicado de su SIM. La solicitud sigue pendiente: cotéjelo antes de aprobarla.',
+      ].join('\n'),
+    });
+  } catch (e) {
+    console.error('aviso de solicitudes pendientes:', e.message);
+  }
 }
 
 /* Cambiar el celular pide la contraseña (quien encuentra una sesión abierta

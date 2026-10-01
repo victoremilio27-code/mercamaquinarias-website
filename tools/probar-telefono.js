@@ -969,6 +969,178 @@ seccion('16. Orden de rutas y sesión');
   }
 }
 
+/* ── 17. Olvidé mi contraseña por SMS ────────────────────────── */
+const tick = () => new Promise((resolver) => setImmediate(resolver));
+const NUEVA = 'OtraClaveNuevaLarga7';
+const limpiarNumero = (n) => { db.limpiarIntentos(`sms-num-h:${n}`); db.limpiarIntentos(`sms-num-d:${n}`); };
+const avisosSoporte = (lista, patron) =>
+  lista.filter((m) => m.para === correo.BUZONES.soporte && patron.test(m.asunto || ''));
+
+seccion('17. Olvidé mi contraseña por SMS');
+{
+  const N = '8495550900';
+  nuevosSms();
+  nuevos();
+
+  let r = await post('/api/cuenta/recuperar', { correo: 'olvido-17@ejemplo.test', via: 'sms', telefono: N }, como(null));
+  comprobar(r.codigo === 400 && /todavía no están disponibles/.test(r.datos.error), 'SMS apagado: via sms da 400');
+  cuenta('olvido-17z@ejemplo.test', 'Olvido Z', { telefono: '8495550999' });
+  r = await post('/api/cuenta/recuperar', { correo: 'olvido-17z@ejemplo.test' }, como(null));
+  comprobar(r.codigo === 202 && r.datos.verificacion === 'restablecer' && !r.datos.via, 'SMS apagado: recuperar por correo sigue igual (202)');
+  comprobar(nuevosSms().length === 0, 'y no sale SMS');
+
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    const B = cuenta('olvido-17b@ejemplo.test', 'Olvido B', { telefono: '8495550901' });
+    db.verificarTelefonoCuenta({ idUsuario: B, numero: '8495550901', via: 'verificado' });
+    const C = cuenta('olvido-17c@ejemplo.test', 'Olvido C', { telefono: N });
+    const D = cuenta('olvido-17d@ejemplo.test', 'Olvido D', { telefono: N });
+    db.verificarTelefonoCuenta({ idUsuario: D, numero: N, via: 'verificado' });
+    // C guardó el número antes de que D lo verificara: sigue sin verificar.
+    db.abrir().prepare('UPDATE usuarios SET telefono = ? WHERE id = ?').run(N, C);
+
+    const casos = [
+      ['inexistente', 'olvido-17-no-existe@ejemplo.test', false],
+      ['otro celular verificado', 'olvido-17b@ejemplo.test', false],
+      ['sin verificar', 'olvido-17c@ejemplo.test', false],
+      ['verificado', 'olvido-17d@ejemplo.test', true],
+    ];
+    const cuerpos = [];
+    for (const [nombre, correoCaso, envia] of casos) {
+      limpiarNumero(N);
+      nuevosSms();
+      r = await post('/api/cuenta/recuperar', { correo: correoCaso, via: 'sms', telefono: N }, como(null));
+      await tick();
+      const sms = nuevosSms();
+      comprobar(r.codigo === 202, `(${nombre}): 202`);
+      comprobar(envia ? (sms.length === 1 && sms[0].numero === N && /^\d{6}$/.test(sms[0].codigo)) : sms.length === 0,
+        envia ? `(${nombre}): sale un SMS a ${N}` : `(${nombre}): no sale SMS`);
+      cuerpos.push(JSON.stringify({ ...r.datos, correo: 'fijo' }));
+    }
+    comprobar(new Set(cuerpos).size === 1, 'los cuatro casos devuelven exactamente el mismo cuerpo');
+    const cuerpo = JSON.parse(cuerpos[0]);
+    comprobar(cuerpo.via === 'sms' && cuerpo.destino === '(849) •••-0900' && cuerpo.minutos === 20
+      && cuerpo.verificacion === 'restablecer' && /Si el correo y el celular corresponden/.test(cuerpo.mensaje),
+    'el cuerpo es el del contrato, con la máscara del número ESCRITO');
+
+    /* Sin limpiar, el tope por número cuenta antes de mirar la base. */
+    const M = '8495550910';
+    limpiarNumero(M);
+    const codigos = [];
+    for (let i = 0; i < 4; i++) {
+      codigos.push((await post('/api/cuenta/recuperar', { correo: 'olvido-17-no-existe@ejemplo.test', via: 'sms', telefono: M }, como(null))).codigo);
+    }
+    comprobar(codigos.join() === '202,202,202,429', 'la cuarta petición al mismo número, con un correo inexistente: 429');
+    r = await post('/api/cuenta/recuperar', { correo: 'olvido-17d@ejemplo.test', via: 'sms', telefono: '123' }, como(null));
+    comprobar(r.codigo === 400 && r.datos.error === MENSAJE_CELULAR, 'celular mal escrito: 400 con el texto del contrato');
+    r = await post('/api/cuenta/recuperar', { correo: 'no-es-correo', via: 'sms', telefono: N }, como(null));
+    comprobar(r.codigo === 400 && /correo válido/.test(r.datos.error), 'correo mal escrito: 400');
+
+    /* Tope diario agotado: el mismo 202, sin SMS y con aviso a soporte. */
+    db.limpiarIntentos('sms-dia');
+    db.limpiarIntentos('sms-dia-aviso');
+    process.env.MERCA_SMS_TOPE_DIA = '1';
+    try {
+      db.permitir('sms-dia', 1, 1440);
+      limpiarNumero(N);
+      nuevosSms();
+      nuevos();
+      r = await post('/api/cuenta/recuperar', { correo: 'olvido-17d@ejemplo.test', via: 'sms', telefono: N }, como(null));
+      await tick();
+      comprobar(r.codigo === 202 && JSON.stringify({ ...r.datos, correo: 'fijo' }) === cuerpos[0], 'tope diario agotado: el mismo 202');
+      comprobar(nuevosSms().length === 0, 'tope diario agotado: no sale SMS');
+      comprobar(avisosSoporte(nuevos(), /Tope diario de SMS/).length === 1, 'tope diario agotado: soporte recibe un aviso');
+    } finally {
+      delete process.env.MERCA_SMS_TOPE_DIA;
+      db.limpiarIntentos('sms-dia');
+      db.limpiarIntentos('sms-dia-aviso');
+    }
+  } finally { delete process.env.MERCA_SMS; }
+}
+
+/* ── 18. Restablecer por SMS y por correo ────────────────────── */
+seccion('18. Restablecer por SMS y por correo');
+{
+  nuevosSms();
+  nuevos();
+  const N = '8495550920';
+  const cuerpoSms = (correoCuenta, extra) => ({ correo: correoCuenta, via: 'sms', telefono: N, clave: NUEVA, ...extra });
+
+  let r = await post('/api/cuenta/restablecer', cuerpoSms('rest-18a@ejemplo.test', { codigo: '123456' }), como(null));
+  comprobar(r.codigo === 400 && /todavía no están disponibles/.test(r.datos.error), 'SMS apagado: restablecer via sms da 400');
+
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    const A = cuenta('rest-18a@ejemplo.test', 'Rest A', { telefono: N });
+    db.verificarTelefonoCuenta({ idUsuario: A, numero: N, via: 'verificado' });
+    const testigoViejo = db.abrirSesion(A);
+    const sinVerificar = cuenta('rest-18s@ejemplo.test', 'Rest S', { telefono: '8495550921' });
+
+    r = await post('/api/cuenta/recuperar', { correo: 'rest-18a@ejemplo.test', via: 'sms', telefono: N }, como(null));
+    await tick();
+    const codigo = nuevosSms().find((s) => s.numero === N).codigo;
+    nuevos();
+
+    r = await post('/api/cuenta/restablecer', cuerpoSms('rest-18a@ejemplo.test', { codigo, telefono: '8495550929' }), como(null));
+    comprobar(r.codigo === 400 && r.datos.error === 'Código incorrecto o vencido. Solicite uno nuevo.', 'celular distinto: 400 genérico');
+    r = await post('/api/cuenta/restablecer', cuerpoSms('rest-18s@ejemplo.test', { codigo, telefono: '8495550921' }), como(null));
+    comprobar(r.codigo === 400 && r.datos.error === 'Código incorrecto o vencido. Solicite uno nuevo.', 'cuenta sin verificar: el mismo 400');
+    r = await post('/api/cuenta/restablecer', cuerpoSms('rest-18-no-existe@ejemplo.test', { codigo }), como(null));
+    comprobar(r.codigo === 400 && r.datos.error === 'Código incorrecto o vencido. Solicite uno nuevo.', 'cuenta inexistente: el mismo 400');
+    r = await post('/api/cuenta/restablecer', cuerpoSms('rest-18a@ejemplo.test', { codigo: otroCodigo(codigo) }), como(null));
+    comprobar(r.codigo === 400 && r.datos.error === 'Código incorrecto o vencido. Solicite uno nuevo.', 'código equivocado: el mismo 400 (sin «le quedan N intentos»)');
+    comprobar(db.claveCorrecta(CLAVE, db.usuarioPorId(A).clave_hash, db.usuarioPorId(A).clave_sal), 'los fallos no cambiaron la contraseña');
+
+    /* Una solicitud revisada pendiente de esta cuenta. */
+    const sol = db.crearSolicitudRecuperacion({ correoCuenta: 'rest-18a@ejemplo.test', correoContacto: 'contacto-18@ejemplo.test',
+      nombre: 'Rest A', telefono: N, detalle: 'Perdí el acceso a mi correo', ip: '201.3.3.3' });
+    nuevos();
+
+    r = await post('/api/cuenta/restablecer', cuerpoSms('rest-18a@ejemplo.test', { codigo }), como(null));
+    const ua = db.usuarioPorId(A);
+    comprobar(r.codigo === 200 && !!r.cabeceras['Set-Cookie'], 'con el código: 200 y Set-Cookie');
+    comprobar(!db.claveCorrecta(CLAVE, ua.clave_hash, ua.clave_sal) && db.claveCorrecta(NUEVA, ua.clave_hash, ua.clave_sal),
+      'la contraseña vieja ya no vale y la nueva sí');
+    comprobar(db.sesion(testigoViejo) === null, 'la sesión abierta antes ya no existe');
+    comprobar(ua.correo_verificado === 0, 'por SMS el correo NO se da por verificado');
+    comprobar(db.enEnfriamiento(ua), 'quedan 72 h de enfriamiento');
+    const correos = nuevos();
+    comprobar(correos.some((m) => m.para === 'rest-18a@ejemplo.test' && /SMS/.test(m.texto) && /\(849\) •••-0920/.test(m.texto)),
+      'el titular recibe un correo que menciona el SMS y la máscara');
+    comprobar(fila('SELECT estado FROM solicitudes_recuperacion WHERE id = ?', sol.id).estado === 'pendiente',
+      'la solicitud revisada pendiente sigue pendiente');
+    comprobar(avisosSoporte(correos, /recuperación pendiente/).some((m) => m.texto.includes(sol.referencia)),
+      'soporte recibe un aviso con la referencia de la solicitud');
+
+    r = await post('/api/cuenta/restablecer', cuerpoSms('rest-18a@ejemplo.test', { codigo }), como(null));
+    comprobar(r.codigo === 400, 'el código ya gastado no sirve otra vez');
+  } finally { delete process.env.MERCA_SMS; }
+
+  /* Por correo: el celular se quita si hubo una acción solo con SMS en 10 días. */
+  const porCorreo = async (nombre, correoCuenta, telefono, enfriamiento) => {
+    const u = cuenta(correoCuenta, nombre, { telefono });
+    db.verificarTelefonoCuenta({ idUsuario: u, numero: telefono, via: 'verificado' });
+    if (enfriamiento === 'ayer') {
+      db.abrir().prepare(`UPDATE usuarios SET enfriamiento_hasta = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day') WHERE id = ?`).run(u);
+    } else if (enfriamiento) {
+      db.abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = ? WHERE id = ?').run(enfriamiento, u);
+    }
+    const { codigo } = db.crearCodigo({ correo: correoCuenta, tipo: 'restablecer', idUsuario: u });
+    const resp = await post('/api/cuenta/restablecer', { correo: correoCuenta, codigo, clave: NUEVA }, como(null));
+    return { resp, u: db.usuarioPorId(u) };
+  };
+  let x = await porCorreo('Correo F', 'rest-18f@ejemplo.test', '8495550931', FUTURO);
+  comprobar(x.resp.codigo === 200 && x.u.telefono_verificado === null && x.u.enfriamiento_hasta === FUTURO,
+    'por correo con enfriamiento vigente: celular quitado y enfriamiento intacto');
+  x = await porCorreo('Correo G', 'rest-18g@ejemplo.test', '8495550932', 'ayer');
+  comprobar(x.resp.codigo === 200 && x.u.telefono_verificado === null, 'por correo con una acción por SMS de hace un día: celular quitado');
+  x = await porCorreo('Correo H', 'rest-18h@ejemplo.test', '8495550933', PASADO);
+  comprobar(x.resp.codigo === 200 && !!x.u.telefono_verificado, 'por correo con una acción de hace años: el celular sigue verificado');
+  x = await porCorreo('Correo I', 'rest-18i@ejemplo.test', '8495550934', null);
+  comprobar(x.resp.codigo === 200 && !!x.u.telefono_verificado && x.u.correo_verificado === 1,
+    'por correo sin enfriamiento: el celular sigue verificado y el correo queda verificado');
+}
+
 }
 
 main().then(() => {
