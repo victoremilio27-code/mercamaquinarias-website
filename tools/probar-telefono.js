@@ -101,7 +101,7 @@ function nuevosSms() {
     salida.push({
       numero: (/-(\d{10})\.txt$/.exec(nombre) || [])[1],
       texto: t,
-      codigo: (/(\d{6})/.exec(t) || [])[1] || null,
+      codigo: (/\b(\d{6})\b/.exec(t) || [])[1] || null,
     });
   }
   return salida;
@@ -634,6 +634,225 @@ seccion('11. La sesión y telefono');
     r = await obtener('/api/sesion', cab);
     comprobar(r.datos.telefono.verificado === true && r.datos.telefono.pedir === false, 'encendido y verificado: pedir false');
   } finally { delete process.env.MERCA_SMS; }
+}
+
+/* ── 12. SMS apagado ─────────────────────────────────────────── */
+seccion('12. SMS apagado');
+{
+  nuevosSms();
+  nuevos();
+  const u = cuenta('apagado-12@ejemplo.test', 'Apagado', { telefono: '8295551201' });
+  const tk = db.abrirSesion(u);
+
+  let r = await post('/api/cuenta/telefono/verificar', {}, como(null));
+  comprobar(r.codigo === 401, 'sin sesión: verificar 401');
+  r = await post('/api/cuenta/telefono/confirmar', {}, como(null));
+  comprobar(r.codigo === 401, 'sin sesión: confirmar 401');
+  r = await post('/api/cuenta/telefono', {}, como(null));
+  comprobar(r.codigo === 401, 'sin sesión: cambiar 401');
+
+  r = await post('/api/cuenta/telefono/verificar', {}, como(tk));
+  comprobar(r.codigo === 400 && /todavía no están disponibles/.test(r.datos.error), 'verificar con el SMS apagado: 400');
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'verificar', codigo: '123456' }, como(tk));
+  comprobar(r.codigo === 400, 'confirmar con el SMS apagado: 400');
+  comprobar(nuevosSms().length === 0, 'no salió ningún SMS');
+
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '8495550111' }, como(tk));
+  const uu = db.usuarioPorId(u);
+  comprobar(r.codigo === 200 && uu.telefono === '8495550111' && uu.telefono_verificado === null,
+    'cambiar sin SMS: 200, guardado y sin verificar');
+  comprobar(todas('SELECT 1 FROM cambios_telefono WHERE usuario_id = ? AND via = ?', u, 'sin_verificar').length === 1,
+    'la bitácora anota sin_verificar');
+  comprobar(nuevos().some((m) => m.para === 'apagado-12@ejemplo.test' && /celular/.test(m.asunto || '')),
+    'el titular recibe el aviso del cambio por correo');
+  comprobar(nuevosSms().length === 0, 'cambiar sin SMS tampoco manda SMS');
+
+  const v = cuenta('apagado-12b@ejemplo.test', 'Apagado B', { telefono: '8295551202' });
+  db.verificarTelefonoCuenta({ idUsuario: v, numero: '8295551202', via: 'verificado' });
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '8495550112' }, como(db.abrirSesion(v)));
+  comprobar(r.codigo === 409 && db.usuarioPorId(v).telefono === '8295551202', 'con el celular verificado y sin SMS: 409 y no cambia');
+}
+
+/* ── 13. SMS encendido ───────────────────────────────────────── */
+seccion('13. SMS encendido: verificar, confirmar, cambiar y liberar');
+process.env.MERCA_SMS = 'archivo';
+try {
+  nuevosSms();
+  nuevos();
+
+  /* Verificar y confirmar. */
+  const B = cuenta('enc-13b@ejemplo.test', 'Enc B', { telefono: '8295551301' });
+  const tb = db.abrirSesion(B);
+  let r = await post('/api/cuenta/telefono/verificar', {}, como(tb));
+  comprobar(r.codigo === 202 && r.datos.destino === '(829) •••-1301' && r.datos.minutos === 15, 'verificar: 202 con destino y minutos');
+  let sms = nuevosSms();
+  comprobar(sms.length === 1 && sms[0].numero === '8295551301' && /^\d{6}$/.test(sms[0].codigo), 'sale un SMS con 6 dígitos al celular guardado');
+  const codigoB = sms[0] && sms[0].codigo;
+
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'verificar', codigo: otroCodigo(codigoB) }, como(tb));
+  comprobar(r.codigo === 400 && /Le quedan 4 intentos/.test(r.datos.error), 'código equivocado: 400 con 4 intentos');
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'verificar' }, como(tb));
+  comprobar(r.codigo === 400, 'sin código: 400');
+  r = await post('/api/cuenta/telefono/confirmar', { codigo: codigoB }, como(tb));
+  comprobar(r.codigo === 400 && /propósito/.test(r.datos.error), 'sin propósito: 400');
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'verificar', codigo: codigoB }, como(tb));
+  comprobar(r.codigo === 200 && r.datos.telefono.verificado === true && r.datos.telefono.pedir === false, 'código bueno: 200 y verificado');
+  comprobar(!!db.usuarioPorId(B).telefono_verificado, 'queda telefono_verificado en la base');
+  r = await post('/api/cuenta/telefono/verificar', {}, como(tb));
+  comprobar(r.codigo === 400 && /ya está verificado/.test(r.datos.error), 'verificar otra vez: 400 ya verificado');
+
+  /* Carrera: dos confirmaciones a la vez con el mismo código bueno. */
+  const C = cuenta('enc-13c@ejemplo.test', 'Enc C', { telefono: '8295551302' });
+  const tc = db.abrirSesion(C);
+  await post('/api/cuenta/telefono/verificar', {}, como(tc));
+  const codigoC = nuevosSms().find((s) => s.numero === '8295551302').codigo;
+  const dos = await Promise.all([
+    post('/api/cuenta/telefono/confirmar', { proposito: 'verificar', codigo: codigoC }, como(tc)),
+    post('/api/cuenta/telefono/confirmar', { proposito: 'verificar', codigo: codigoC }, como(tc)),
+  ]);
+  comprobar(dos.map((x) => x.codigo).sort().join() === '200,400', 'dos confirmaciones simultáneas: exactamente una 200 y una 400');
+
+  /* Cambio. */
+  const D = cuenta('enc-13d@ejemplo.test', 'Enc D', { telefono: '8295551303' });
+  db.verificarTelefonoCuenta({ idUsuario: D, numero: '8295551303', via: 'verificado' });
+  const td = db.abrirSesion(D);
+  r = await post('/api/cuenta/telefono', { telefono: '8295551304' }, como(td));
+  comprobar(r.codigo === 401, 'cambio sin contraseña: 401');
+  r = await post('/api/cuenta/telefono', { clave: 'otra-clave-equivocada', telefono: '8295551304' }, como(td));
+  comprobar(r.codigo === 401, 'cambio con contraseña mala: 401');
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '8005551234' }, como(td));
+  comprobar(r.codigo === 400 && r.datos.error === MENSAJE_CELULAR, 'cambio a un número fuera de área: 400');
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '(829) 555-1303' }, como(td));
+  comprobar(r.codigo === 400 && /ya es su celular verificado/.test(r.datos.error), 'cambio al mismo número verificado: 400');
+  comprobar(nuevosSms().length === 0, 'los rechazos no mandaron SMS');
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '8295551304' }, como(td));
+  comprobar(r.codigo === 202 && r.datos.destino === '(829) •••-1304', 'cambio a número nuevo: 202');
+  sms = nuevosSms();
+  comprobar(sms.length === 1 && sms[0].numero === '8295551304', 'el código va al número NUEVO');
+  const codigoD = sms[0] && sms[0].codigo;
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'cambio', telefono: '8295551399', codigo: codigoD }, como(td));
+  comprobar(r.codigo === 400, 'el código no vale para otro número');
+  nuevos();
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'cambio', telefono: '8295551304', codigo: codigoD }, como(td));
+  const ud = db.usuarioPorId(D);
+  comprobar(r.codigo === 200 && ud.telefono === '8295551304' && !!ud.telefono_verificado, 'confirmar el cambio: 200 y número nuevo verificado');
+  comprobar(todas('SELECT 1 FROM cambios_telefono WHERE usuario_id = ? AND via = ? AND nuevo = ?', D, 'cambio', '8295551304').length === 1,
+    'la bitácora anota cambio');
+  comprobar(nuevos().some((m) => m.para === 'enc-13d@ejemplo.test' && /1304/.test(m.texto)), 'el titular recibe el aviso con la máscara del nuevo');
+
+  /* Unicidad por la API: B2 confirma el número que A tenía verificado. */
+  const A = cuenta('enc-13a@ejemplo.test', 'Enc A', { telefono: '8295551305' });
+  db.verificarTelefonoCuenta({ idUsuario: A, numero: '8295551305', via: 'verificado' });
+  const B2 = cuenta('enc-13e@ejemplo.test', 'Enc B2', { telefono: '8295551306' });
+  const tb2 = db.abrirSesion(B2);
+  nuevosSms();
+  r = await post('/api/cuenta/telefono', { clave: CLAVE, telefono: '8295551305' }, como(tb2));
+  comprobar(r.codigo === 202, 'B2 pide el número que otra cuenta tiene verificado: 202');
+  const codigoB2 = nuevosSms().find((s) => s.numero === '8295551305').codigo;
+  nuevos();
+  r = await post('/api/cuenta/telefono/confirmar', { proposito: 'cambio', telefono: '8295551305', codigo: codigoB2 }, como(tb2));
+  comprobar(r.codigo === 200 && db.usuarioPorId(B2).telefono_verificado, 'B2 queda con el número verificado');
+  comprobar(db.usuarioPorId(A).telefono_verificado === null, 'A pierde la verificación');
+  comprobar(nuevos().some((m) => m.para === 'enc-13a@ejemplo.test' && /celular/.test(m.asunto || '')), 'A recibe un correo sobre su celular');
+
+  /* Celular de otra área, de antes. */
+  const F = cuenta('enc-13f@ejemplo.test', 'Enc F', { telefono: '8005550000' });
+  r = await post('/api/cuenta/telefono/verificar', {}, como(db.abrirSesion(F)));
+  comprobar(r.codigo === 400 && /809, 829 o 849/.test(r.datos.error), 'celular guardado de otra área: verificar da 400');
+  comprobar(nuevosSms().length === 0, 'y no sale SMS');
+} finally { delete process.env.MERCA_SMS; }
+
+/* ── 14. Topes y tope diario ─────────────────────────────────── */
+seccion('14. Topes y tope diario');
+process.env.MERCA_SMS = 'archivo';
+try {
+  nuevosSms();
+  nuevos();
+
+  /* Por número, venga de la cuenta que venga. */
+  const C = cuenta('tope-14c@ejemplo.test', 'Tope C', { telefono: '8295551401' });
+  const tc = db.abrirSesion(C);
+  const codigos = [];
+  for (let i = 0; i < 3; i++) codigos.push((await post('/api/cuenta/telefono/verificar', {}, como(tc))).codigo);
+  comprobar(codigos.join() === '202,202,202', 'tres SMS al mismo número en una hora: 202');
+  let r = await post('/api/cuenta/telefono/verificar', {}, como(tc));
+  comprobar(r.codigo === 429 && /última hora/.test(r.datos.error), 'el cuarto: 429 por número');
+  const D = cuenta('tope-14d@ejemplo.test', 'Tope D', { telefono: '8295551401' });
+  r = await post('/api/cuenta/telefono/verificar', {}, como(db.abrirSesion(D)));
+  comprobar(r.codigo === 429 && /última hora/.test(r.datos.error), 'otra cuenta con el mismo número: 429 también');
+
+  /* Por cuenta. */
+  const E = cuenta('tope-14e@ejemplo.test', 'Tope E', { telefono: '8295551402' });
+  const te = db.abrirSesion(E);
+  const e1 = [];
+  for (const n of ['8295551411', '8295551412', '8295551413']) {
+    e1.push((await post('/api/cuenta/telefono', { clave: CLAVE, telefono: n }, como(te))).codigo);
+  }
+  for (let i = 0; i < 2; i++) e1.push((await post('/api/cuenta/telefono/verificar', {}, como(te))).codigo);
+  comprobar(e1.join() === '202,202,202,202,202', 'cinco SMS de una cuenta en una hora: 202');
+  r = await post('/api/cuenta/telefono/verificar', {}, como(te));
+  comprobar(r.codigo === 429 && /Ha pedido demasiados códigos/.test(r.datos.error), 'el sexto de la cuenta: 429');
+
+  /* Por IP. */
+  const ipFija = '201.77.7.7';
+  const f = [];
+  for (let i = 1; i <= 11; i++) {
+    const n = `82955520${String(i).padStart(2, '0')}`;
+    const F = cuenta(`tope-14f${i}@ejemplo.test`, `Tope F${i}`, { telefono: n });
+    f.push(await post('/api/cuenta/telefono/verificar', {}, como(db.abrirSesion(F), ipFija)));
+  }
+  comprobar(f.slice(0, 10).every((x) => x.codigo === 202), 'diez SMS desde la misma IP: 202');
+  comprobar(f[10].codigo === 429 && /desde esta conexión/.test(f[10].datos.error), 'el undécimo desde la IP: 429');
+
+  /* Tope diario global. */
+  db.limpiarIntentos('sms-dia');
+  db.limpiarIntentos('sms-dia-aviso');
+  process.env.MERCA_SMS_TOPE_DIA = '2';
+  try {
+    nuevosSms();
+    nuevos();
+    const g = [];
+    for (let i = 1; i <= 4; i++) {
+      const n = `829555210${i}`;
+      const G = cuenta(`tope-14g${i}@ejemplo.test`, `Tope G${i}`, { telefono: n });
+      g.push(await post('/api/cuenta/telefono/verificar', {}, como(db.abrirSesion(G))));
+      if (i === 3) {
+        comprobar(nuevos().filter((m) => m.para === correo.BUZONES.soporte && /Tope diario de SMS/.test(m.asunto || '')).length === 1,
+          'al agotarse, soporte recibe un aviso');
+      }
+    }
+    comprobar(g[0].codigo === 202 && g[1].codigo === 202, 'con tope 2: los dos primeros salen');
+    comprobar(g[2].codigo === 429 && /Hoy no podemos enviar más SMS/.test(g[2].datos.error), 'el tercero: 429 del tope diario');
+    comprobar(g[3].codigo === 429, 'el cuarto: 429');
+    comprobar(nuevos().filter((m) => m.para === correo.BUZONES.soporte && /Tope diario de SMS/.test(m.asunto || '')).length === 0,
+      'el aviso a soporte no se repite');
+    comprobar(nuevosSms().length === 2, 'solo salieron dos SMS');
+
+    /* SMS de contactos de la fase 9 con el tope agotado. */
+    const P = cuenta('tope-14p@ejemplo.test', 'Tope P', { telefono: '8095551501' });
+    const tp = db.abrirSesion(P);
+    r = await post('/api/contactos/codigo', { numero: '8095557001', via: 'sms' }, como(tp));
+    comprobar(r.codigo === 429 && /Hoy no podemos enviar más SMS/.test(r.datos.error), 'contactos por SMS con el tope agotado: 429');
+    comprobar(nuevosSms().length === 0, 'y no sale SMS');
+  } finally {
+    delete process.env.MERCA_SMS_TOPE_DIA;
+    db.limpiarIntentos('sms-dia');
+    db.limpiarIntentos('sms-dia-aviso');
+  }
+
+  /* Contactos de la fase 9 con el tope limpio. */
+  const P2 = cuenta('tope-14q@ejemplo.test', 'Tope Q', { telefono: '8095551502' });
+  const tq = db.abrirSesion(P2);
+  r = await post('/api/contactos/codigo', { numero: '8005557002', via: 'sms' }, como(tq));
+  comprobar(r.codigo === 400 && /809, 829 o 849/.test(r.datos.error), 'contactos por SMS a un número fuera de área: 400');
+  comprobar(nuevosSms().length === 0, 'sin SMS');
+  r = await post('/api/contactos/codigo', { numero: '8005557002', via: 'correo' }, como(tq));
+  comprobar(r.codigo === 200, 'el mismo número por correo sigue funcionando');
+  r = await post('/api/contactos/codigo', { numero: '8095557003', via: 'sms' }, como(tq));
+  comprobar(r.codigo === 200 && nuevosSms().length === 1, 'un 809 por SMS sigue funcionando');
+} finally {
+  delete process.env.MERCA_SMS;
+  delete process.env.MERCA_SMS_TOPE_DIA;
 }
 
 }

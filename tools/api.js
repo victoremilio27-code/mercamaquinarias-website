@@ -760,6 +760,179 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
 const cerrarOtrasSesiones = conSesion((req, res, ctx) =>
   responder(res, 200, { ok: true, cerradas: db.cerrarOtrasDe(ctx.usuario.id, ctx.testigo) }));
 
+/* ── Celular de la cuenta y SMS (fase 10.2) ───────────────── */
+
+/* Fecha legible en hora de Santo Domingo, la misma que usa
+   `aprobarRecuperacion`: el servidor corre en UTC y «a partir del 4 de
+   enero, 3:00 a. m.» no le dice nada a quien está en el país. */
+const fechaRd = (iso) => new Date(iso).toLocaleString('es-DO', {
+  timeZone: 'America/Santo_Domingo', day: 'numeric', month: 'long', year: 'numeric',
+  hour: 'numeric', minute: '2-digit',
+});
+
+/* Guarda de las 72 horas (D-09). Quien entró o recuperó la cuenta SOLO con
+   un SMS no puede, durante ese tiempo, cambiar el correo ni el celular,
+   verificar contactos nuevos ni cambiar el teléfono o el WhatsApp de la
+   página del dealer. El daño real de una cuenta robada con una SIM
+   duplicada es publicar equipos falsos con el nombre de un vendedor
+   confiable y un teléfono del estafador; estas guardas lo cierran sin dejar
+   fuera al dueño, que sigue publicando con sus números ya verificados.
+   Responde el 409 del contrato y devuelve true; si no hay enfriamiento,
+   devuelve false y no toca la respuesta. */
+function enfriado(res, idUsuario) {
+  const u = db.usuarioPorId(idUsuario);
+  if (!db.enEnfriamiento(u)) return false;
+  fallo(res, 409,
+    `Por seguridad, después de usar un código por SMS para entrar no se puede hacer esto durante 72 horas. Podrá hacerlo a partir del ${fechaRd(u.enfriamiento_hasta)}.`,
+    { enfriamientoHasta: u.enfriamiento_hasta });
+  return true;
+}
+
+const MENSAJE_SMS_APAGADO = 'Los códigos por SMS todavía no están disponibles.';
+const MENSAJE_TOPE_DIA = 'Hoy no podemos enviar más SMS. Use el correo o inténtelo mañana.';
+
+/* El primer tope de SMS que no pase, o null. El tope por número va SIN
+   mirar la cuenta (lección de la fase 9, `contacto-sms:`): frena a quien
+   quiera acosar un teléfono abriendo varias cuentas, y el de 10 al día
+   acota los intentos de adivinar códigos ajenos; el de IP frena el bombeo
+   de SMS. El de cuenta solo existe cuando hay cuenta. */
+function topesSms({ numero, ip, idUsuario }) {
+  if (!db.permitir(`sms-num-h:${numero}`, 3, 60)) {
+    return 'Ese número ya recibió varios SMS en la última hora. Espere y vuelva a intentarlo.';
+  }
+  if (!db.permitir(`sms-num-d:${numero}`, 10, 1440)) {
+    return 'Ese número ya recibió demasiados SMS hoy. Use el correo o inténtelo mañana.';
+  }
+  if (!db.permitir(`sms-ip:${ip}`, 10, 60)) {
+    return 'Demasiadas peticiones desde esta conexión. Espere una hora y vuelva a intentarlo.';
+  }
+  if (idUsuario && !db.permitir(`sms-cuenta:${idUsuario}`, 5, 60)) {
+    return 'Ha pedido demasiados códigos. Espere una hora y vuelva a intentarlo.';
+  }
+  return null;
+}
+
+/* Tope diario de TODA la plataforma (D-10). Ventana de 24 horas y no día de
+   calendario, para no depender del reloj del servidor. Acota el gasto de
+   créditos si todo lo demás falla; al agotarse avisa una sola vez a soporte,
+   porque sin aviso nadie se entera de que los códigos dejaron de salir. */
+function cupoGlobalSms() {
+  if (db.permitir('sms-dia', correo.topeSmsDia(), 1440)) return true;
+  if (db.permitir('sms-dia-aviso', 1, 1440)) correo.avisarTopeSms({ tope: correo.topeSmsDia() });
+  return false;
+}
+
+/* Pide el código, lo guarda y manda el SMS. Devuelve `{ destino, minutos }`
+   o null si ya respondió con el error. Solo para rutas CON sesión: ahí
+   esperar el envío no delata nada (en las públicas no se espera, para que
+   el tiempo de respuesta no diga si el número existe). */
+async function enviarSmsDeCuenta({ res, idUsuario, numero, proposito, ip }) {
+  const tope = topesSms({ numero, ip, idUsuario });
+  if (tope) { fallo(res, 429, tope); return null; }
+  if (!cupoGlobalSms()) { fallo(res, 429, MENSAJE_TOPE_DIA); return null; }
+
+  const { codigo, minutos } = db.crearCodigoTelefono({ idUsuario, numero, proposito, ip });
+  const envio = await correo.enviarSms({ numero, texto: correo.textoSmsCuenta({ codigo, minutos, proposito }) });
+  if (!envio || !envio.entregado) {
+    fallo(res, 502, 'No se pudo enviar el SMS. Inténtelo de nuevo en unos minutos.');
+    return null;
+  }
+  return { destino: ocultarNumero(numero), minutos };
+}
+
+/* Cambiar el celular pide la contraseña (quien encuentra una sesión abierta
+   no debe poder llevarse la cuenta) y, con el SMS encendido, un código al
+   número NUEVO. Con el SMS apagado el número se guarda sin verificar, salvo
+   que el actual ya esté verificado: ese solo se cambia con un código. */
+const pedirCambioTelefono = conSesion(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`telefono-cambio:${ctx.usuario.id}`, 5, 60)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere un rato antes de volver a pedirlo.');
+  }
+  if (enfriado(res, ctx.usuario.id)) return;
+
+  const u = db.usuarioPorId(ctx.usuario.id);
+  if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
+    return fallo(res, 401, 'La contraseña no es correcta');
+  }
+  const nuevo = db.celularRd(c.telefono);
+  if (!nuevo) return fallo(res, 400, MENSAJE_CELULAR);
+  const actual = db.normalizarNumero(u.telefono);
+  if (u.telefono_verificado && actual === nuevo) return fallo(res, 400, 'Ese ya es su celular verificado');
+
+  if (!correo.smsActivo()) {
+    if (u.telefono_verificado) {
+      return fallo(res, 409, 'Su celular verificado solo se cambia con un código por SMS, que todavía no está disponible.');
+    }
+    const g = db.guardarTelefonoSinVerificar({ idUsuario: u.id, numero: nuevo, ip: origen(req) });
+    correo.enviarAvisoTelefonoCambiado({
+      para: u.correo, nombre: u.nombre, anterior: g.anterior, nuevo: g.numero, verificado: false,
+    });
+    return responder(res, 200, sesionPublica(u.id));
+  }
+
+  const r = await enviarSmsDeCuenta({
+    res, idUsuario: u.id, numero: nuevo, proposito: 'cambio', ip: origen(req),
+  });
+  if (!r) return;
+  return responder(res, 202, r);
+});
+
+const verificarTelefono = conSesion(async (req, res, ctx) => {
+  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+  if (enfriado(res, ctx.usuario.id)) return;
+
+  const u = db.usuarioPorId(ctx.usuario.id);
+  const guardado = db.normalizarNumero(u.telefono);
+  if (!guardado) return fallo(res, 400, 'Primero indique su celular.');
+  if (u.telefono_verificado) return fallo(res, 400, 'Su celular ya está verificado.');
+  if (!db.celularRd(guardado)) {
+    return fallo(res, 400, 'Su celular no es un número dominicano (809, 829 o 849). Cámbielo antes de verificarlo.');
+  }
+
+  const r = await enviarSmsDeCuenta({
+    res, idUsuario: u.id, numero: guardado, proposito: 'verificar', ip: origen(req),
+  });
+  if (!r) return;
+  return responder(res, 202, r);
+});
+
+const confirmarTelefono = conSesion(async (req, res, ctx) => {
+  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`telefono-confirmar:${origen(req)}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
+  }
+  const proposito = c.proposito;
+  if (proposito !== 'verificar' && proposito !== 'cambio') {
+    return fallo(res, 400, 'Falta el propósito del código.');
+  }
+  if (enfriado(res, ctx.usuario.id)) return;
+
+  const u = db.usuarioPorId(ctx.usuario.id);
+  const numero = proposito === 'cambio' ? db.celularRd(c.telefono) : db.normalizarNumero(u.telefono);
+  if (!numero) {
+    return fallo(res, 400, proposito === 'cambio' ? MENSAJE_CELULAR : 'Primero indique su celular.');
+  }
+
+  const r = db.verificarCodigoTelefono({ idUsuario: u.id, numero, proposito, codigo: c.codigo });
+  if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
+
+  const hecho = db.verificarTelefonoCuenta({
+    idUsuario: u.id, numero, via: proposito === 'cambio' ? 'cambio' : 'verificado', ip: origen(req),
+  });
+  // D-13: se lo queda quien demuestra tenerlo; la cuenta que lo perdió se entera.
+  for (const l of hecho.liberados) {
+    correo.enviarAvisoTelefonoLiberado({ para: l.correo, nombre: l.nombre, numero });
+  }
+  if (proposito === 'cambio') {
+    correo.enviarAvisoTelefonoCambiado({
+      para: u.correo, nombre: u.nombre, anterior: hecho.anterior, nuevo: numero, verificado: true,
+    });
+  }
+  return responder(res, 200, sesionPublica(u.id));
+});
+
 /* ── Recuperación sin acceso al correo (10.1) ─────────────── */
 
 const MENSAJE_RECUPERACION = 'Recibimos su solicitud. Si los datos corresponden a una cuenta, '
@@ -4938,6 +5111,18 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
     return fallo(res, 429, 'Ese número ya recibió varios SMS en la última hora. Espere y vuelva a intentarlo.');
   }
 
+  /* Todo SMS gasta los mismos créditos (D-10). Este aceptaba cualquier
+     número de 10 dígitos del plan norteamericano, así que el tope diario
+     global no habría sido verdad: ahora solo 809/829/849 y cuenta contra
+     el tope de la plataforma. La rama de correo no cambia: los anuncios
+     pueden llevar teléfonos de otra área verificados por correo. */
+  if (via === 'sms') {
+    if (!db.celularRd(numero)) {
+      return fallo(res, 400, 'Solo podemos enviar SMS a celulares dominicanos (809, 829 o 849). Verifique este número por correo.');
+    }
+    if (!cupoGlobalSms()) return fallo(res, 429, MENSAJE_TOPE_DIA);
+  }
+
   const r = db.pedirCodigoContacto({ idOrg, numero, via });
   if (r.yaVerificado) return responder(res, 200, { yaVerificado: true, via: r.via, numero });
 
@@ -5086,6 +5271,9 @@ const RUTAS = [
   ['POST', /^\/api\/cuenta\/correo\/confirmar$/, confirmarCambioCorreo],
   ['POST', /^\/api\/cuenta\/correo\/revertir$/,  revertirCorreo],
   ['POST', /^\/api\/cuenta\/correo$/,            pedirCambioCorreo],
+  ['POST', /^\/api\/cuenta\/telefono\/verificar$/, verificarTelefono],
+  ['POST', /^\/api\/cuenta\/telefono\/confirmar$/, confirmarTelefono],
+  ['POST', /^\/api\/cuenta\/telefono$/,            pedirCambioTelefono],
   ['POST', /^\/api\/cuenta\/clave$/,             cambiarClaveConSesion],
   ['POST', /^\/api\/cuenta\/cerrar-otras$/,      cerrarOtrasSesiones],
   ['POST', /^\/api\/cuenta\/recuperacion$/,      pedirRecuperacion],
