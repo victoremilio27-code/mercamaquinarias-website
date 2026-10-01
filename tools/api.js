@@ -688,7 +688,7 @@ function recuperarPorSms(req, res, c) {
 
 /* Restablecer con el código del SMS. Todos los fallos son el mismo 400.
    Tres cosas que parecen omisiones y no lo son:
-   - NO se llama `marcarCorreoVerificado`: por SMS no se prueba nada del
+   - NO se marca el correo como verificado: por SMS no se prueba nada del
      correo (Error 3 de la investigación).
    - Se abre sesión: con ello la SIM pasa a ser llave. Lo aceptó Victor
      (D-12) y lo cubren el aviso al correo, las 72 h y «No fui yo» (Error 4).
@@ -825,6 +825,42 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
   }
 
   const u = db.usuarioPorId(ctx.usuario.id);
+
+  /* Sin recordar la actual: con un código al correo o al celular verificado
+     (D-05). Sin `codigo` queda intacta la rama de siempre. */
+  if (c.codigo !== undefined) {
+    if (!u) return fallo(res, 401, 'La cuenta ya no existe');
+    const debil = claveDebil(c.nueva, u.correo);
+    if (debil) return fallo(res, 400, debil);
+
+    const porSms = c.via === 'sms';
+    let numero = null;
+    if (porSms) {
+      if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+      numero = db.normalizarNumero(u.telefono);
+      if (!u.telefono_verificado || !numero) return fallo(res, 400, MENSAJE_CELULAR_SIN_VERIFICAR);
+      const r = db.verificarCodigoTelefono({ idUsuario: u.id, numero, proposito: 'clave', codigo: c.codigo });
+      // Hay sesión: aquí el motivo concreto no delata nada.
+      if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
+    } else {
+      const r = db.verificarCodigo({ correo: u.correo, tipo: 'restablecer', codigo: c.codigo });
+      if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
+      // El código se pidió para OTRA cuenta: no vale para esta.
+      if (r.usuario_id !== u.id) return fallo(res, 400, 'Código incorrecto');
+    }
+
+    db.cambiarClave(u.id, c.nueva);
+    db.cerrarOtrasDe(u.id, ctx.testigo);
+    /* W3: una sesión robada más la SIM bastan para cambiar la contraseña sin
+       saber la actual; desde ahí rigen las mismas 72 h que cualquier acción
+       hecha solo con SMS. Por correo no: el correo es la identidad. */
+    if (porSms) db.ponerEnfriamiento(u.id);
+    correo.enviarAvisoCambioClave({
+      para: u.correo, nombre: u.nombre, ...(porSms ? { via: 'sms', numero } : {}),
+    });
+    return responder(res, 200, { ok: true, mensaje: 'Su contraseña cambió y se cerraron las demás sesiones.' });
+  }
+
   if (!u || !db.claveCorrecta(String(c.actual || ''), u.clave_hash, u.clave_sal)) {
     return fallo(res, 401, 'La contraseña actual no es correcta');
   }
@@ -836,6 +872,35 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
   correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre });
 
   return responder(res, 200, { ok: true, mensaje: 'Su contraseña cambió y se cerraron las demás sesiones.' });
+});
+
+const MENSAJE_CELULAR_SIN_VERIFICAR = 'Su celular no está verificado. Pida el código al correo.';
+
+/* Pide el código para cambiar la contraseña SIN la actual (D-05). El tipo
+   `restablecer` del correo ya lo admite el CHECK de `codigos`: es el mismo
+   poder que «Olvidé mi contraseña», pero con sesión. Por correo funciona
+   también con el SMS apagado. */
+const pedirCodigoClave = conSesion(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`clave-codigo:${ctx.usuario.id}`, 5, 60)) {
+    return fallo(res, 429, 'Ha pedido demasiados códigos. Espere un rato.');
+  }
+  const u = db.usuarioPorId(ctx.usuario.id);
+  if (!u) return fallo(res, 401, 'La cuenta ya no existe');
+  const via = c.via === 'sms' ? 'sms' : 'correo';
+
+  if (via === 'correo') {
+    const e = emitirCodigo({ correo: u.correo, tipo: 'restablecer', idUsuario: u.id, nombre: u.nombre });
+    if (e.limitado) return fallo(res, 429, 'Ya pidió varios códigos para ese correo. Espere unos minutos.');
+    return responder(res, 202, { via: 'correo', destino: ocultarCorreo(u.correo), minutos: e.minutos });
+  }
+
+  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
+  const numero = db.normalizarNumero(u.telefono);
+  if (!u.telefono_verificado || !numero) return fallo(res, 400, MENSAJE_CELULAR_SIN_VERIFICAR);
+  const r = await enviarSmsDeCuenta({ res, idUsuario: u.id, numero, proposito: 'clave', ip: origen(req) });
+  if (!r) return;
+  return responder(res, 202, { via: 'sms', destino: r.destino, minutos: r.minutos });
 });
 
 const cerrarOtrasSesiones = conSesion((req, res, ctx) =>
@@ -5442,6 +5507,7 @@ const RUTAS = [
   ['POST', /^\/api\/cuenta\/telefono\/verificar$/, verificarTelefono],
   ['POST', /^\/api\/cuenta\/telefono\/confirmar$/, confirmarTelefono],
   ['POST', /^\/api\/cuenta\/telefono$/,            pedirCambioTelefono],
+  ['POST', /^\/api\/cuenta\/clave\/codigo$/,      pedirCodigoClave],
   ['POST', /^\/api\/cuenta\/clave$/,             cambiarClaveConSesion],
   ['POST', /^\/api\/cuenta\/cerrar-otras$/,      cerrarOtrasSesiones],
   ['POST', /^\/api\/cuenta\/recuperacion$/,      pedirRecuperacion],

@@ -1141,6 +1141,103 @@ seccion('18. Restablecer por SMS y por correo');
     'por correo sin enfriamiento: el celular sigue verificado y el correo queda verificado');
 }
 
+/* ── 19. Cambiar la contraseña sin la actual ─────────────────── */
+seccion('19. Cambiar la contraseña sin la actual');
+{
+  nuevosSms();
+  nuevos();
+  const codigoDeCorreo = (para) => {
+    const m = nuevos().filter((x) => x.para === para).pop();
+    return m && (/\b(\d{6})\b/.exec(m.asunto || '') || [])[1];
+  };
+
+  const A = cuenta('clave-19a@ejemplo.test', 'Clave A', { telefono: '8495550940' });
+  const ta = db.abrirSesion(A);
+  const otra = db.abrirSesion(A);
+
+  let r = await post('/api/cuenta/clave/codigo', { via: 'correo' }, como(null));
+  comprobar(r.codigo === 401, 'sin sesión: clave/codigo 401');
+  r = await post('/api/cuenta/clave/codigo', { via: 'sms' }, como(ta));
+  comprobar(r.codigo === 400 && /todavía no están disponibles/.test(r.datos.error), 'SMS apagado: clave/codigo via sms da 400');
+  r = await post('/api/cuenta/clave/codigo', { via: 'correo' }, como(ta));
+  comprobar(r.codigo === 202 && r.datos.via === 'correo' && r.datos.destino === 'c•••@ejemplo.test' && r.datos.minutos === 20,
+    'SMS apagado: via correo da 202 con destino y minutos');
+  const cod = codigoDeCorreo('clave-19a@ejemplo.test');
+  comprobar(/^\d{6}$/.test(cod || ''), 'llega un correo con código al titular');
+
+  r = await post('/api/cuenta/clave', { via: 'correo', codigo: otroCodigo(cod), nueva: NUEVA }, como(ta));
+  comprobar(r.codigo === 400, 'código equivocado: 400');
+  const B = cuenta('clave-19b@ejemplo.test', 'Clave B', { telefono: '8495550941' });
+  const { codigo: deOtra } = db.crearCodigo({ correo: 'clave-19b@ejemplo.test', tipo: 'restablecer', idUsuario: B });
+  r = await post('/api/cuenta/clave', { via: 'correo', codigo: deOtra, nueva: NUEVA }, como(ta));
+  comprobar(r.codigo === 400, 'un código restablecer de OTRA cuenta no vale');
+  r = await post('/api/cuenta/clave', { via: 'correo', codigo: cod, nueva: 'corta' }, como(ta));
+  comprobar(r.codigo === 400, 'contraseña débil: 400');
+  nuevos();
+  r = await post('/api/cuenta/clave', { via: 'correo', codigo: cod, nueva: NUEVA }, como(ta));
+  const ua = db.usuarioPorId(A);
+  comprobar(r.codigo === 200 && r.datos.ok === true && typeof r.datos.mensaje === 'string', 'código del correo: 200 { ok, mensaje }');
+  comprobar(db.claveCorrecta(NUEVA, ua.clave_hash, ua.clave_sal) && !db.claveCorrecta(CLAVE, ua.clave_hash, ua.clave_sal),
+    'la contraseña nueva vale y la vieja no');
+  comprobar(!!db.sesion(ta) && db.sesion(otra) === null, 'la sesión actual sigue y la otra se cerró');
+  comprobar(!db.enEnfriamiento(ua), 'por correo el enfriamiento no cambia');
+  comprobar(nuevos().some((m) => m.para === 'clave-19a@ejemplo.test' && /cambió/.test(m.asunto || '')), 'el titular recibe el aviso');
+
+  /* La rama de siempre. */
+  db.limpiarIntentos(`clave:${A}`); // el tope de 5 por hora ya se gastó arriba
+  r = await post('/api/cuenta/clave', { actual: NUEVA, nueva: 'ClaveDeSiempre1234' }, como(ta));
+  comprobar(r.codigo === 200, '{ actual, nueva } sigue funcionando');
+  r = await post('/api/cuenta/clave', { actual: 'no-es-la-actual', nueva: 'ClaveDeSiempre5678' }, como(ta));
+  comprobar(r.codigo === 401, '{ actual } equivocada sigue dando 401');
+
+  /* SMS encendido. */
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    const S = cuenta('clave-19s@ejemplo.test', 'Clave S', { telefono: '8495550942' });
+    const ts = db.abrirSesion(S);
+    r = await post('/api/cuenta/clave/codigo', { via: 'sms' }, como(ts));
+    comprobar(r.codigo === 400 && /no está verificado/.test(r.datos.error), 'celular sin verificar: 400 «no está verificado»');
+    r = await post('/api/cuenta/clave', { via: 'sms', codigo: '123456', nueva: NUEVA }, como(ts));
+    comprobar(r.codigo === 400, 'y clave por sms tampoco');
+    comprobar(nuevosSms().length === 0, 'sin SMS');
+
+    db.verificarTelefonoCuenta({ idUsuario: S, numero: '8495550942', via: 'verificado' });
+    const otraS = db.abrirSesion(S);
+    r = await post('/api/cuenta/clave/codigo', { via: 'sms' }, como(ts));
+    comprobar(r.codigo === 202 && r.datos.via === 'sms' && r.datos.destino === '(849) •••-0942' && r.datos.minutos === 20,
+      'celular verificado: 202 { via, destino, minutos }');
+    const sms = nuevosSms();
+    comprobar(sms.length === 1 && sms[0].numero === '8495550942', 'sale un SMS al celular');
+    nuevos();
+    r = await post('/api/cuenta/clave', { via: 'sms', codigo: otroCodigo(sms[0].codigo), nueva: NUEVA }, como(ts));
+    comprobar(r.codigo === 400, 'código SMS equivocado: 400');
+    r = await post('/api/cuenta/clave', { via: 'sms', codigo: sms[0].codigo, nueva: NUEVA }, como(ts));
+    const us = db.usuarioPorId(S);
+    comprobar(r.codigo === 200 && db.claveCorrecta(NUEVA, us.clave_hash, us.clave_sal), 'código SMS: 200 y contraseña cambiada');
+    comprobar(db.enEnfriamiento(us), 'por SMS: 72 h de enfriamiento');
+    comprobar(!!db.sesion(ts) && db.sesion(otraS) === null, 'por SMS: la otra sesión se cerró');
+    comprobar(nuevos().some((m) => m.para === 'clave-19s@ejemplo.test' && /SMS/.test(m.texto) && /\(849\) •••-0942/.test(m.texto)),
+      'por SMS: el aviso al correo menciona el SMS y la máscara');
+
+    /* Con el SMS encendido, el correo sigue sirviendo. */
+    const E = cuenta('clave-19e@ejemplo.test', 'Clave E', { telefono: '8495550943' });
+    const te = db.abrirSesion(E);
+    r = await post('/api/cuenta/clave/codigo', { via: 'correo' }, como(te));
+    comprobar(r.codigo === 202 && r.datos.via === 'correo', 'encendido: via correo sigue dando 202');
+  } finally { delete process.env.MERCA_SMS; }
+
+  /* Tope: el sexto en una hora. */
+  const T = cuenta('clave-19t@ejemplo.test', 'Clave T', { telefono: '8495550944' });
+  const tt = db.abrirSesion(T);
+  const codigos = [];
+  db.limpiarIntentos(`codigo:clave-19t@ejemplo.test`);
+  for (let i = 0; i < 6; i++) {
+    db.limpiarIntentos('codigo:clave-19t@ejemplo.test');
+    codigos.push((await post('/api/cuenta/clave/codigo', { via: 'correo' }, como(tt))).codigo);
+  }
+  comprobar(codigos.join() === '202,202,202,202,202,429', 'el sexto clave/codigo de una cuenta en una hora: 429');
+}
+
 }
 
 main().then(() => {
