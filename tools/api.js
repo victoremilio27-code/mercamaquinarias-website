@@ -589,8 +589,8 @@ async function recuperar(req, res) {
     return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
   }
 
-  if (c.via === 'sms') return recuperarPorSms(req, res, c);
-
+  // `via: 'sms'` se ignora (D-16): «Olvidé mi contraseña» es solo por correo;
+  // el SMS nunca abre la cuenta por sí solo.
   if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
 
   const u = db.usuarioPorCorreo(c.correo);
@@ -616,8 +616,6 @@ async function restablecer(req, res) {
   const debil = claveDebil(c.clave, destino);
   if (debil) return fallo(res, 400, debil);
 
-  if (c.via === 'sms') return restablecerPorSms(req, res, c, destino);
-
   const r = db.verificarCodigo({ correo: destino, tipo: 'restablecer', codigo: c.codigo });
   if (!r.ok) {
     return fallo(res, 400, r.motivo === 'vencido'
@@ -632,84 +630,9 @@ async function restablecer(req, res) {
   // Cambiar la contraseña echa fuera a todo el mundo, incluido quien
   // hubiera entrado sin permiso. Es el sentido de recuperarla.
   db.cerrarTodoDe(u.id);
-  /* Quien tiene el correo reclama la cuenta tras una acción hecha solo con
-     SMS (durante las 72 h o los 7 días siguientes, 10 en total): el celular
-     deja de servir. El enfriamiento se queda como esté: si el correo lo
-     cambió un intruso por SMS, borrarlo le regalaría la salida de las 72 h.
-     Es lo que promete el aviso de contraseña por SMS (10 días). */
-  if (db.accionSmsReciente(u)) db.quitarVerificacionTelefono({ idUsuario: u.id, ip: origen(req) });
   db.marcarCorreoVerificado(u.id);
   db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
   correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre });
-
-  const testigo = db.abrirSesion(u.id);
-  return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
-}
-
-/* «Olvidé mi contraseña» con el código por SMS (D-05, D-08). Se pide el
-   correo Y el celular completo, y la respuesta es idéntica exista o no la
-   cuenta, coincida o no el celular y esté o no verificado: nunca se enseña
-   el número guardado, solo la máscara del que la persona escribió.
-
-   Aquí no hay ningún `await` y la cuenta se busca DESPUÉS de responder, en
-   `setImmediate`: ni la búsqueda ni las escrituras ni el envío pueden
-   alargar la respuesta cuando la cuenta existe. Los topes van antes de
-   mirar la base, así que tampoco dependen de ella. */
-function recuperarPorSms(req, res, c) {
-  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
-  if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
-  const n = db.celularRd(c.telefono);
-  if (!n) return fallo(res, 400, MENSAJE_CELULAR);
-  const ip = origen(req);
-  const tope = topesSms({ numero: n, ip });
-  if (tope) return fallo(res, 429, tope);
-
-  const escrito = String(c.correo).trim().toLowerCase();
-  responder(res, 202, {
-    verificacion: 'restablecer',
-    via: 'sms',
-    correo: escrito,
-    destino: ocultarNumero(n),
-    minutos: db.MINUTOS_SMS.restablecer,
-    mensaje: MENSAJE_SMS_GENERICO,
-  });
-
-  setImmediate(() => {
-    try {
-      const u = db.usuarioPorCorreo(escrito);
-      if (u && u.telefono_verificado && db.normalizarNumero(u.telefono) === n) {
-        enviarSmsSinEsperar({ idUsuario: u.id, numero: n, proposito: 'restablecer', ip });
-      }
-    } catch (e) {
-      console.error('recuperar por SMS:', e.message);
-    }
-  });
-}
-
-/* Restablecer con el código del SMS. Todos los fallos son el mismo 400.
-   Tres cosas que parecen omisiones y no lo son:
-   - NO se marca el correo como verificado: por SMS no se prueba nada del
-     correo (Error 3 de la investigación).
-   - Se abre sesión: con ello la SIM pasa a ser llave. Lo aceptó Victor
-     (D-12) y lo cubren el aviso al correo, las 72 h y «No fui yo» (Error 4).
-   - NO se llama `anularRecuperacionesDe`: la solicitud revisada de la 10.1
-     es la única salida del dueño víctima de un duplicado de SIM, y un
-     intruso con la SIM no puede anularla. */
-function restablecerPorSms(req, res, c, destino) {
-  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
-  const n = db.celularRd(c.telefono);
-  const u = n && db.usuarioPorCorreo(destino);
-  if (!u || !u.telefono_verificado || db.normalizarNumero(u.telefono) !== n) {
-    return fallo(res, 400, MENSAJE_CODIGO_SMS);
-  }
-  const r = db.verificarCodigoTelefono({ idUsuario: u.id, numero: n, proposito: 'restablecer', codigo: c.codigo });
-  if (!r.ok) return fallo(res, 400, MENSAJE_CODIGO_SMS);
-
-  db.cambiarClave(u.id, c.clave);
-  db.cerrarTodoDe(u.id);
-  db.ponerEnfriamiento(u.id);
-  avisarSolicitudesPendientes(u, 'restableció la contraseña por SMS');
-  correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre, via: 'sms', numero: n });
 
   const testigo = db.abrirSesion(u.id);
   return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
@@ -731,7 +654,6 @@ const pedirCambioCorreo = conSesion(async (req, res, ctx) => {
   if (!db.permitir(`cambio-correo:${ctx.usuario.id}`, 5, 60)) {
     return fallo(res, 429, 'Demasiados intentos. Espere un rato antes de volver a pedirlo.');
   }
-  if (enfriado(res, ctx.usuario.id)) return;
 
   const u = db.usuarioPorId(ctx.usuario.id);
   if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
@@ -757,7 +679,6 @@ const confirmarCambioCorreo = conSesion(async (req, res, ctx) => {
   if (!db.permitir(`confirmar-correo:${ctx.usuario.id}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
-  if (enfriado(res, ctx.usuario.id)) return;
 
   const destino = String(c.correo || '').trim().toLowerCase();
   const r = db.verificarCodigo({ correo: destino, tipo: 'cambio_correo', codigo: c.codigo });
@@ -854,10 +775,6 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
 
     db.cambiarClave(u.id, c.nueva);
     db.cerrarOtrasDe(u.id, ctx.testigo);
-    /* W3: una sesión robada más la SIM bastan para cambiar la contraseña sin
-       saber la actual; desde ahí rigen las mismas 72 h que cualquier acción
-       hecha solo con SMS. Por correo no: el correo es la identidad. */
-    if (porSms) db.ponerEnfriamiento(u.id);
     correo.enviarAvisoCambioClave({
       para: u.correo, nombre: u.nombre, ...(porSms ? { via: 'sms', numero } : {}),
     });
@@ -911,39 +828,12 @@ const cerrarOtrasSesiones = conSesion((req, res, ctx) =>
 
 /* ── Celular de la cuenta y SMS (fase 10.2) ───────────────── */
 
-/* Fecha legible en hora de Santo Domingo, la misma que usa
-   `aprobarRecuperacion`: el servidor corre en UTC y «a partir del 4 de
-   enero, 3:00 a. m.» no le dice nada a quien está en el país. */
-const fechaRd = (iso) => new Date(iso).toLocaleString('es-DO', {
-  timeZone: 'America/Santo_Domingo', day: 'numeric', month: 'long', year: 'numeric',
-  hour: 'numeric', minute: '2-digit',
-});
-
-/* Guarda de las 72 horas (D-09). Quien entró o recuperó la cuenta SOLO con
-   un SMS no puede, durante ese tiempo, cambiar el correo ni el celular,
-   verificar contactos nuevos ni cambiar el teléfono o el WhatsApp de la
-   página del dealer. El daño real de una cuenta robada con una SIM
-   duplicada es publicar equipos falsos con el nombre de un vendedor
-   confiable y un teléfono del estafador; estas guardas lo cierran sin dejar
-   fuera al dueño, que sigue publicando con sus números ya verificados.
-   Responde el 409 del contrato y devuelve true; si no hay enfriamiento,
-   devuelve false y no toca la respuesta. */
-function enfriado(res, idUsuario) {
-  const u = db.usuarioPorId(idUsuario);
-  if (!db.enEnfriamiento(u)) return false;
-  fallo(res, 409,
-    `Por seguridad, después de usar un código por SMS para entrar no se puede hacer esto durante 72 horas. Podrá hacerlo a partir del ${fechaRd(u.enfriamiento_hasta)}.`,
-    { enfriamientoHasta: u.enfriamiento_hasta });
-  return true;
-}
+/* D-16: el SMS nunca abre la cuenta por sí solo. Siempre acompaña a la
+   contraseña o a una sesión, así que usarlo no bloquea nada durante ningún
+   plazo (antes había un bloqueo de 72 h tras usarlo solo, y una guarda en
+   cada ruta que pudiera servir para llevarse la cuenta). */
 
 const MENSAJE_SMS_APAGADO = 'Los códigos por SMS todavía no están disponibles. Use el correo.';
-const MENSAJE_SMS_GENERICO = 'Si el correo y el celular corresponden a una cuenta con ese celular verificado, le enviamos un código por SMS.';
-/* Todo fallo de código en una ruta pública por SMS dice esto, y nada más:
-   «vencido» o «le quedan N intentos» delatarían que el par correo + celular
-   es bueno. */
-const MENSAJE_CODIGO_SMS = 'Código incorrecto o vencido. Solicite uno nuevo.';
-const MENSAJE_AUTORIZACION = 'La autorización venció o ya se usó. Empiece de nuevo.';
 const MENSAJE_TOPE_DIA = 'Hoy no podemos enviar más SMS. Use el correo o inténtelo mañana.';
 
 /* El primer tope de SMS que no pase, o null. El tope por número va SIN
@@ -979,8 +869,9 @@ function cupoGlobalSms() {
 
 /* Pide el código, lo guarda y manda el SMS. Devuelve `{ destino, minutos }`
    o null si ya respondió con el error. Solo para rutas CON sesión: ahí
-   esperar el envío no delata nada (en las públicas no se espera, para que
-   el tiempo de respuesta no diga si el número existe). */
+   esperar el envío no delata nada. También sirve tras comprobar la
+   contraseña al entrar (D-16: el SMS siempre acompaña a la contraseña o a
+   una sesión, nunca va solo). */
 async function enviarSmsDeCuenta({ res, idUsuario, numero, proposito, ip }) {
   const tope = topesSms({ numero, ip, idUsuario });
   if (tope) { fallo(res, 429, tope); return null; }
@@ -995,25 +886,10 @@ async function enviarSmsDeCuenta({ res, idUsuario, numero, proposito, ip }) {
   return { destino: ocultarNumero(numero), minutos };
 }
 
-/* Versión de `enviarSmsDeCuenta` para las rutas PÚBLICAS: no espera el envío
-   ni responde nada. Con `await`, la respuesta tardaría más cuando la cuenta
-   existe y el tiempo de respuesta la delataría (OWASP, Forgot Password
-   Cheat Sheet); `emitirCodigo` hace lo mismo con el correo. Si el tope
-   diario global está agotado no hace nada: la respuesta pública no cambia y
-   soporte ya recibió el aviso en `cupoGlobalSms`. */
-function enviarSmsSinEsperar({ idUsuario, numero, proposito, ip }) {
-  if (!cupoGlobalSms()) return;
-  const { codigo, minutos } = db.crearCodigoTelefono({ idUsuario, numero, proposito, ip });
-  try {
-    Promise.resolve(correo.enviarSms({ numero, texto: correo.textoSmsCuenta({ codigo, minutos, proposito }) }))
-      .catch(() => {});
-  } catch { /* enviarSms no lanza; por si acaso, no hay a quién responder */ }
-}
-
 /* Si la cuenta tiene una solicitud de recuperación revisada (10.1) sin
-   resolver, las acciones por SMS no la anulan: es la única salida del dueño
-   víctima de un duplicado de SIM, y quien tiene la SIM no puede cancelarla.
-   Se avisa a soporte para que lo coteje antes de aprobar. */
+   resolver, entrar con contraseña + SMS no la anula: es la única salida del
+   dueño víctima de un duplicado de SIM, y quien tiene la SIM no puede
+   cancelarla. Se avisa a soporte para que lo coteje antes de aprobar. */
 function avisarSolicitudesPendientes(u, que) {
   try {
     const mias = db.solicitudesRecuperacion({ estado: 'pendiente' }).filter((s) => s.usuario_id === u.id);
@@ -1042,7 +918,6 @@ const pedirCambioTelefono = conSesion(async (req, res, ctx) => {
   if (!db.permitir(`telefono-cambio:${ctx.usuario.id}`, 5, 60)) {
     return fallo(res, 429, 'Demasiados intentos. Espere un rato antes de volver a pedirlo.');
   }
-  if (enfriado(res, ctx.usuario.id)) return;
 
   const u = db.usuarioPorId(ctx.usuario.id);
   if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
@@ -1073,7 +948,6 @@ const pedirCambioTelefono = conSesion(async (req, res, ctx) => {
 
 const verificarTelefono = conSesion(async (req, res, ctx) => {
   if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
-  if (enfriado(res, ctx.usuario.id)) return;
 
   const u = db.usuarioPorId(ctx.usuario.id);
   const guardado = db.normalizarNumero(u.telefono);
@@ -1100,7 +974,6 @@ const confirmarTelefono = conSesion(async (req, res, ctx) => {
   if (proposito !== 'verificar' && proposito !== 'cambio') {
     return fallo(res, 400, 'Falta el propósito del código.');
   }
-  if (enfriado(res, ctx.usuario.id)) return;
 
   const u = db.usuarioPorId(ctx.usuario.id);
   const numero = proposito === 'cambio' ? db.celularRd(c.telefono) : db.normalizarNumero(u.telefono);
@@ -1127,6 +1000,9 @@ const confirmarTelefono = conSesion(async (req, res, ctx) => {
 });
 
 /* ── Recuperación sin acceso al correo (10.1) ─────────────── */
+
+/* Quien olvidó la contraseña y perdió el correo usa esta solicitud revisada;
+   por SMS no hay atajo (D-16: el SMS nunca abre la cuenta por sí solo). */
 
 const MENSAJE_RECUPERACION = 'Recibimos su solicitud. Si los datos corresponden a una cuenta, '
   + 'la revisaremos y le escribiremos al correo de contacto que nos dio.';
@@ -1268,166 +1144,6 @@ const rechazarRecuperacion = conAdmin(async (req, res, ctx, idSol) => {
   return responder(res, 200, { ok: true, solicitud: resuelta });
 });
 
-/* ── Recuperación sin correo por SMS (fase 10.2) ──────────────
-
-   Quien perdió el acceso a su correo pero tiene su celular verificado
-   recupera la cuenta sin personal, en cuatro pasos:
-
-     1. `recuperacion-sms`          correo + celular → código por SMS.
-     2. `recuperacion-sms/codigo`   el código → una autorización.
-     3. `recuperacion-sms/correo`   la autorización + un correo NUEVO →
-                                    código a ese correo.
-     4. `recuperacion-sms/confirmar` autorización + correo nuevo + código +
-                                    contraseña nueva → cuenta en el correo
-                                    nuevo, ya verificado.
-
-   Por qué cada paso es así:
-   - Se piden el correo y el celular completos y la respuesta del paso 1 es
-     idéntica siempre (D-08): si no, el formulario diría qué correos tienen
-     cuenta o qué celular tiene cada una.
-   - La autorización es un testigo de 32 bytes al azar (en la base solo su
-     HMAC, 15 minutos, un solo uso) porque el estado entre pasos no puede
-     vivir en el navegador: sería una sesión sin contraseña.
-   - La contraseña nueva va en el ÚLTIMO paso para no dejar nunca una cuenta
-     con el correo nuevo y la contraseña de quien tuviera la SIM.
-   - No hay espera de 24 h (D-11): el aviso con «No fui yo» al correo
-     anterior, las 72 h de enfriamiento y quitarle el celular a la cuenta
-     al pulsarlo son la red de seguridad.
-   - En enfriamiento no se envía el SMS del paso 1 (D-09: no se cambia el
-     correo durante esas 72 h) y la respuesta no cambia. */
-
-/* El celular de la autorización tiene que seguir siendo el verificado de la
-   cuenta (W2): «No fui yo», un restablecimiento por correo o una aprobación
-   pudieron quitarlo entre el paso 2 y el siguiente. */
-function celularSigue(a) {
-  const u = db.usuarioPorId(a.idUsuario);
-  return !!(u && u.telefono_verificado && db.normalizarNumero(u.telefono) === a.numero);
-}
-
-/* Autorización del cuerpo: devuelve la lectura de la base o null (y ya
-   respondió el 400). */
-function autorizacionDe(res, c) {
-  const testigo = String(c.autorizacion || '');
-  const a = /^[0-9a-f]{64}$/.test(testigo) ? db.leerAutorizacion(testigo) : { ok: false };
-  if (!a.ok || !celularSigue(a)) {
-    fallo(res, 400, MENSAJE_AUTORIZACION);
-    return null;
-  }
-  return { ...a, testigo };
-}
-
-async function pedirRecuperacionSms(req, res) {
-  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
-  const c = await leerCuerpo(req);
-  const ip = origen(req);
-  if (!db.permitir(`recuperacion-sms:${ip}`, 5, 60)) {
-    return fallo(res, 429, 'Demasiadas solicitudes desde esta conexión. Inténtelo más tarde.');
-  }
-  if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
-  const n = db.celularRd(c.telefono);
-  if (!n) return fallo(res, 400, MENSAJE_CELULAR);
-  const tope = topesSms({ numero: n, ip });
-  if (tope) return fallo(res, 429, tope);
-
-  const escrito = String(c.correo).trim().toLowerCase();
-  responder(res, 202, {
-    destino: ocultarNumero(n),
-    minutos: db.MINUTOS_SMS.recuperar,
-    mensaje: MENSAJE_SMS_GENERICO,
-  });
-
-  // Como `recuperarPorSms`: la cuenta se busca después de responder.
-  setImmediate(() => {
-    try {
-      const u = db.usuarioPorCorreo(escrito);
-      if (u && u.telefono_verificado && db.normalizarNumero(u.telefono) === n && !db.enEnfriamiento(u)) {
-        enviarSmsSinEsperar({ idUsuario: u.id, numero: n, proposito: 'recuperar', ip });
-      }
-    } catch (e) {
-      console.error('recuperación por SMS:', e.message);
-    }
-  });
-}
-
-async function codigoRecuperacionSms(req, res) {
-  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
-  const c = await leerCuerpo(req);
-  if (!db.permitir(`recuperacion-sms-codigo:${origen(req)}`, 20, 15)) {
-    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
-  }
-  const n = db.celularRd(c.telefono);
-  const u = n && correoValido(c.correo) && db.usuarioPorCorreo(c.correo);
-  if (!u || !u.telefono_verificado || db.normalizarNumero(u.telefono) !== n) {
-    return fallo(res, 400, MENSAJE_CODIGO_SMS);
-  }
-  const r = db.verificarCodigoTelefono({ idUsuario: u.id, numero: n, proposito: 'recuperar', codigo: c.codigo });
-  if (!r.ok) return fallo(res, 400, MENSAJE_CODIGO_SMS);
-
-  const autorizacion = db.autorizarRecuperacion(r.id);
-  return responder(res, 200, { autorizacion, minutos: db.MINUTOS_AUTORIZACION });
-}
-
-async function correoRecuperacionSms(req, res) {
-  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
-  const c = await leerCuerpo(req);
-  if (!db.permitir(`recuperacion-sms-correo:${origen(req)}`, 10, 15)) {
-    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
-  }
-  const a = autorizacionDe(res, c);
-  if (!a) return;
-  if (!correoValido(c.correoNuevo)) return fallo(res, 400, 'Escriba un correo válido');
-  const nuevo = String(c.correoNuevo).trim().toLowerCase();
-  const u = db.usuarioPorId(a.idUsuario);
-  if (nuevo === u.correo) return fallo(res, 400, 'Ese ya es el correo de su cuenta');
-  if (db.usuarioPorCorreo(nuevo)) return fallo(res, 409, 'Ese correo ya tiene una cuenta');
-
-  const e = emitirCodigo({ correo: nuevo, tipo: 'cambio_correo', idUsuario: u.id, nombre: u.nombre });
-  if (e.limitado) return fallo(res, 429, 'Ya pidió varios códigos para ese correo. Espere unos minutos.');
-  return responder(res, 202, { correo: nuevo, minutos: e.minutos });
-}
-
-async function confirmarRecuperacionSms(req, res) {
-  if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
-  const c = await leerCuerpo(req);
-  const ip = origen(req);
-  if (!db.permitir(`recuperacion-sms-confirmar:${ip}`, 20, 15)) {
-    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
-  }
-  const a = autorizacionDe(res, c);
-  if (!a) return;
-  if (!correoValido(c.correoNuevo)) return fallo(res, 400, 'Escriba un correo válido');
-  const nuevo = String(c.correoNuevo).trim().toLowerCase();
-  const debil = claveDebil(c.clave, nuevo);
-  if (debil) return fallo(res, 400, debil);
-  if (enfriado(res, a.idUsuario)) return;
-  // Antes de gastar nada: un correo ocupado no debe costarle la autorización.
-  if (db.usuarioPorCorreo(nuevo)) return fallo(res, 409, 'Ese correo ya tiene una cuenta');
-
-  const r = db.verificarCodigo({ correo: nuevo, tipo: 'cambio_correo', codigo: c.codigo });
-  if (!r.ok) return fallo(res, 400, mensajeDeCodigo(r));
-  if (r.usuario_id !== a.idUsuario) return fallo(res, 400, 'Código incorrecto');
-  if (!db.gastarAutorizacion(a.testigo)) return fallo(res, 400, MENSAJE_AUTORIZACION);
-
-  const u = db.usuarioPorId(a.idUsuario);
-  const cambio = db.cambiarCorreo({
-    idUsuario: u.id, nuevo, via: 'sms', ip, verificado: true, conReversion: true,
-  });
-  db.cambiarClave(u.id, c.clave);
-  db.cerrarTodoDe(u.id);
-  db.ponerEnfriamiento(u.id);
-  // Sin `anularRecuperacionesDe` (B4): el mismo motivo que en `restablecerPorSms`.
-  avisarSolicitudesPendientes(u, 'pasó la cuenta a otro correo por SMS');
-
-  correo.enviarAvisoCambioCorreo({
-    para: cambio.anterior, nombre: u.nombre, nuevo: cambio.nuevo,
-    enlaceRevertir: `${correo.SITIO}/cuenta.html?revertir=${cambio.testigoRevertir}`,
-  });
-  correo.enviarCorreoCambiado({ para: cambio.nuevo, nombre: u.nombre });
-
-  const testigo = db.abrirSesion(u.id);
-  return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
-}
-
 /* Retrato de la sesión que consume el navegador: quién es, en qué
    organización trabaja y qué tiene contratado. */
 function sesionPublica(idUsuario) {
@@ -1455,19 +1171,16 @@ function sesionPublica(idUsuario) {
 
     /* El celular de la cuenta. Solo viaja la máscara. `pedir` con el SMS
        apagado sirve para que las cuentas viejas añadan su celular; con él
-       encendido, para pedir la verificación, nunca durante un enfriamiento
-       (en ese tiempo no se puede verificar). */
+       encendido, para pedir la verificación. */
     telefono: (() => {
       const numero = db.normalizarNumero(u.telefono);
       const sms = correo.smsActivo();
       const verificado = !!u.telefono_verificado;
-      const enfriado = db.enEnfriamiento(u);
       return {
         mascara: numero ? ocultarNumero(numero) : null,
         verificado,
         sms,
-        pedir: sms ? (!verificado && !enfriado) : !numero,
-        enfriamientoHasta: enfriado ? u.enfriamiento_hasta : null,
+        pedir: sms ? !verificado : !numero,
       };
     })(),
 
@@ -2653,9 +2366,6 @@ const crearSucursal = conSesion(async (req, res, ctx) => {
   }
   const v = datosSucursal(await leerCuerpo(req));
   if (v.error) return fallo(res, 400, v.error);
-  // Una sucursal nueva siempre trae teléfono (es obligatorio) y sale en la
-  // página pública del dealer: es un número nuevo en su nombre.
-  if (enfriado(res, ctx.usuario.id)) return;
 
   // Tope defensivo: mil sucursales es un error de guion, no un dealer.
   if (db.sucursalesDe(ctx.organizacion.id).length >= 50) {
@@ -2677,14 +2387,6 @@ const editarSucursal = conSesion(async (req, res, ctx, idSucursal) => {
 
   const v = datosSucursal(c);
   if (v.error) return fallo(res, 400, v.error);
-
-  // El teléfono y el WhatsApp de cada sucursal salen en la página pública
-  // del dealer (assets/perfil.js): cambiarlos cuenta como cambiar un contacto.
-  const actual = db.sucursal(idSucursal, ctx.organizacion.id);
-  if (!actual) return fallo(res, 404, 'Esa sucursal no existe');
-  const num = (x) => db.normalizarNumero(x) || '';
-  if ((num(v.datos.telefono) !== num(actual.telefono) || num(v.datos.whatsapp) !== num(actual.whatsapp))
-    && enfriado(res, ctx.usuario.id)) return;
 
   const r = db.actualizarSucursal(idSucursal, ctx.organizacion.id, v.datos);
   if (!r.changes) return fallo(res, 404, 'Esa sucursal no existe');
@@ -3194,31 +2896,6 @@ const verMiPagina = conPagina((req, res, ctx) => responder(res, 200, {
   editadaPorSoporte: db.ultimaAnotacion(ctx.organizacion.id, 'pagina.editar'),
 }));
 
-/* Páginas del DUEÑO con la guarda de las 72 horas (D-09). Hacen lo mismo
-   que `delDueno` (misma llamada al núcleo, mismo responder); lo único que
-   añaden es negarse si el cuerpo cambia el teléfono, el WhatsApp o el
-   correo público durante el enfriamiento. El personal que edita en nombre
-   del dealer pasa por `conAdminEnNombreDe` y la bitácora: no se le aplica. */
-const cambiaTelefonoPublico = (org, c) => c.telefonoPublico !== undefined
-  && (db.normalizarNumero(c.telefonoPublico) || '') !== (db.normalizarNumero(org.telefono_publico) || '');
-const cambiaCorreoPublico = (org, c) => c.correoPublico !== undefined
-  && String(c.correoPublico || '').trim().toLowerCase() !== String(org.correo_publico || '').trim().toLowerCase();
-/* Quitar el WhatsApp no cuenta: no añade un número del estafador. */
-function cambiaWhatsapp(org, c) {
-  const nuevo = (Array.isArray(c.enlaces) ? c.enlaces : []).slice(0, 8)
-    .find((e) => e && e.tipo === 'whatsapp' && texto(e.valor, 200) && telefonoValido(e.valor));
-  if (!nuevo) return false;
-  const actual = db.enlacesDe(org.id).find((e) => e.tipo === 'whatsapp');
-  return (db.normalizarNumero(nuevo.valor) || '') !== (db.normalizarNumero(actual && actual.valor) || '');
-}
-const editarMiPagina = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
-  if ((cambiaTelefonoPublico(ctx.organizacion, c) || cambiaCorreoPublico(ctx.organizacion, c))
-    && enfriado(res, ctx.usuario.id)) return;
-  const r = nucleoEditarPagina(ctx.organizacion, c);
-  return responder(res, r.codigo || 200, r.respuesta);
-});
-
 const publicarMiPagina = conPagina((req, res, ctx) => {
   const pagina = db.paginaDe(ctx.organizacion.id);
   const estado = reglasDePagina(ctx.organizacion, pagina);
@@ -3243,18 +2920,14 @@ const despublicarMiPagina = conPagina((req, res, ctx) => {
   return responder(res, 200, { pagina: db.paginaDe(ctx.organizacion.id) });
 });
 
+const editarMiPagina = delDueno(nucleoEditarPagina);
 const crearMiSeccion = delDueno(nucleoCrearSeccion);
 const editarMiSeccion = delDueno(nucleoEditarSeccion);
 const borrarMiSeccion = delDueno(nucleoBorrarSeccion, { conCuerpo: false });
 const ordenarMisSecciones = delDueno(nucleoOrdenarSecciones);
 const anadirAMiGaleria = delDueno(nucleoAnadirFoto);
 const quitarDeMiGaleria = delDueno(nucleoQuitarFoto, { conCuerpo: false });
-const guardarMisEnlaces = conPagina(async (req, res, ctx) => {
-  const c = await leerCuerpo(req);
-  if (cambiaWhatsapp(ctx.organizacion, c) && enfriado(res, ctx.usuario.id)) return;
-  const r = nucleoEnlaces(ctx.organizacion, c);
-  return responder(res, r.codigo || 200, r.respuesta);
-});
+const guardarMisEnlaces = delDueno(nucleoEnlaces);
 
 /* ── El personal: la página de un dealer, en su nombre ─────
  *
@@ -5480,8 +5153,6 @@ const listarContactos = conSesion((req, res, ctx) => {
 
 const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
   if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
-  // Vale para correo y SMS: tras una recuperación por SMS el correo también puede ser del intruso.
-  if (enfriado(res, ctx.usuario.id)) return;
   const c = await leerCuerpo(req);
   const numero = db.normalizarNumero(c.numero);
   if (!numero) return fallo(res, 400, 'Indique un teléfono de 10 dígitos');
@@ -5557,7 +5228,6 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
 
 const confirmarContacto = conSesion(async (req, res, ctx) => {
   if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
-  if (enfriado(res, ctx.usuario.id)) return;
   const c = await leerCuerpo(req);
   if (!db.permitir(`contacto-confirmar:${origen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
@@ -5678,10 +5348,6 @@ const RUTAS = [
   ['POST', /^\/api\/cuenta\/clave$/,             cambiarClaveConSesion],
   ['POST', /^\/api\/cuenta\/cerrar-otras$/,      cerrarOtrasSesiones],
   ['POST', /^\/api\/cuenta\/recuperacion$/,      pedirRecuperacion],
-  ['POST', /^\/api\/cuenta\/recuperacion-sms\/codigo$/,    codigoRecuperacionSms],
-  ['POST', /^\/api\/cuenta\/recuperacion-sms\/correo$/,    correoRecuperacionSms],
-  ['POST', /^\/api\/cuenta\/recuperacion-sms\/confirmar$/, confirmarRecuperacionSms],
-  ['POST', /^\/api\/cuenta\/recuperacion-sms$/,           pedirRecuperacionSms],
   ['GET',  /^\/api\/admin\/recuperaciones$/,                   listarRecuperaciones],
   ['POST', /^\/api\/admin\/recuperaciones\/([\w-]+)\/aprobar$/,  aprobarRecuperacion],
   ['POST', /^\/api\/admin\/recuperaciones\/([\w-]+)\/rechazar$/, rechazarRecuperacion],
