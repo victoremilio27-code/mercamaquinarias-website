@@ -268,6 +268,42 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   console.log(`  registro + verificación → panel: ${entro ? 'sí' : 'NO'}`);
   if (!entro) anota('particular', 'flujo', 'no llegó al panel tras verificar el correo');
 
+  /* ALERT-01: esta misma cuenta nació para la auditoría. Se recorre la
+     interfaz pública completa en vez de preparar filas directamente. */
+  console.log('\n  ── Alertas de búsqueda ──');
+  await p.goto(`${BASE}/equipos.html?categoria=construccion&provincia=Santo%20Domingo`, { waitUntil: 'networkidle0' });
+  const ofreceGuardar = await p.$eval('#guardarBusqueda', (el) => !el.hidden).catch(() => false);
+  if (ofreceGuardar) {
+    await p.click('#btnGuardarBusqueda');
+    await p.waitForFunction(() => /Le avisaremos|Ya tenía/.test(document.querySelector('#estadoGuardarBusqueda').textContent), { timeout: 5000 }).catch(() => {});
+    const guardada = await p.$eval('#estadoGuardarBusqueda', (el) => el.textContent).catch(() => '');
+    if (/Le avisaremos|Ya tenía/.test(guardada)) ok('se guarda una búsqueda filtrada desde equipos.html');
+    else anota('alertas', 'flujo', `guardar la búsqueda no confirmó el resultado: ${guardada || 'sin mensaje'}`);
+  } else {
+    anota('alertas', 'flujo', 'equipos.html no ofrece guardar una búsqueda con filtros');
+  }
+
+  await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+  const alerta = await p.$('#listaAlertas [data-alerta]');
+  if (alerta) {
+    ok('el panel muestra la búsqueda guardada en «Mis alertas»');
+    p.once('dialog', async (dialogo) => dialogo.accept());
+    await p.click('#listaAlertas [data-borrar-alerta]');
+    await p.waitForFunction(() => !document.querySelector('#listaAlertas [data-alerta]'), { timeout: 5000 }).catch(() => {});
+    if (!(await p.$('#listaAlertas [data-alerta]'))) ok('la alerta se borra desde el panel');
+    else anota('alertas', 'flujo', 'la alerta siguió en el panel después de borrarla');
+  } else {
+    anota('alertas', 'flujo', 'el panel no mostró la búsqueda recién guardada');
+  }
+
+  await p.goto(`${BASE}/alertas.html?baja=invalido`, { waitUntil: 'networkidle0' });
+  const botonBaja = await p.$('#btnBajaAlerta');
+  if (botonBaja) await botonBaja.click();
+  await p.waitForFunction(() => /no es válido|no está disponible/.test(document.querySelector('#estadoBajaAlerta').textContent), { timeout: 5000 }).catch(() => {});
+  const bajaClara = await p.$eval('#estadoBajaAlerta', (el) => el.textContent).catch(() => '');
+  if (/no es válido|no está disponible/.test(bajaClara)) ok('alertas.html explica un testigo inválido sin romper la página');
+  else anota('alertas', 'flujo', `alertas.html no resolvió claramente el testigo inválido: ${bajaClara || 'sin mensaje'}`);
+
   /* Publicar un equipo (fase 05.2, MOD-05, MOD-06, MOD-07).
 
      Esta parte esperaba el flujo VIEJO: que un particular recién
