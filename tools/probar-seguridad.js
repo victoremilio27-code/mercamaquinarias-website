@@ -99,6 +99,35 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   });
   const org = db.organizacionDe(idUsuario);
 
+  /* ── 0 · scrypt asíncrono conserva las claves existentes ── */
+  console.log('Las contraseñas no bloquean el proceso');
+  const usuarioViejo = db.usuarioPorId(idUsuario);
+  let cedioConUsuario = false;
+  const comprobacionVieja = db.verificarClave(
+    'UnaClaveLargaYSegura9', usuarioViejo.clave_hash, usuarioViejo.clave_sal);
+  setImmediate(() => { cedioConUsuario = true; });
+  comprobar(await comprobacionVieja, 'una clave guardada por el código síncrono sigue siendo válida');
+  comprobar(cedioConUsuario, 'verificar una clave cede el turno mientras scrypt trabaja');
+
+  let cedioSinUsuario = false;
+  const comprobacionRelleno = db.verificarClave('UnaClaveLargaYSegura9', null, null);
+  setImmediate(() => { cedioSinUsuario = true; });
+  comprobar(await comprobacionRelleno === false, 'sin hash ni sal deriva una clave y devuelve falso');
+  comprobar(cedioSinUsuario, 'la comprobación de relleno tampoco resuelve en el mismo turno');
+
+  const accesoIncorrecto = await pedir({
+    metodo: 'POST', url: '/api/cuenta/entrar',
+    cuerpo: { correo: 'vendedor@ejemplo.test', clave: 'UnaClaveIncorrecta9' },
+  });
+  const accesoInexistente = await pedir({
+    metodo: 'POST', url: '/api/cuenta/entrar',
+    cuerpo: { correo: 'nadie@ejemplo.test', clave: 'UnaClaveIncorrecta9' },
+  });
+  comprobar(accesoIncorrecto.codigo === 401
+    && accesoInexistente.codigo === accesoIncorrecto.codigo
+    && JSON.stringify(accesoInexistente.datos) === JSON.stringify(accesoIncorrecto.datos),
+  'correo inexistente y clave incorrecta reciben el mismo código y cuerpo');
+
   const creado = db.crearAnuncio({
     idOrg: org.id,
     usuarioId: idUsuario,
