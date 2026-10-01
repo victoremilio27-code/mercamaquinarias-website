@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es-DO">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administrar alertas · MercaMaquinarias</title>
+<meta name="description" content="Confirme la baja de una alerta de búsqueda de MercaMaquinarias.">
+<meta name="theme-color" content="#F4F4F1">
+<link rel="icon" href="brand_assets/svg/favicon-512.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="assets/tema.js"></script>
+</head>
+<body>
+<a class="skip" href="#contenido">Saltar al contenido</a>
+<header class="cab">
+  <div class="cab__barra"><div class="envoltura cab__inner">
+    <a class="cab__logo" href="index.html" aria-label="MercaMaquinarias, inicio"><img src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias"></a>
+    <button class="cab__toggle" id="navToggle" aria-expanded="false" aria-controls="navMenu" aria-label="Abrir menú"><span></span><span></span><span></span></button>
+    <nav class="cab__nav" id="navMenu" aria-label="Principal">
+      <a href="equipos.html">Equipos</a><a href="categorias.html">Categorías</a><a href="alquiler.html">Alquiler</a><a href="importar.html">Importación</a><a href="planes.html">Planes</a>
+      <a class="cab__nav-cta" href="publicar.html">Publicar equipo</a>
+    </nav>
+  </div></div>
+</header>
+<main id="contenido"><div class="envoltura">
+  <header class="pagina">
+    <nav class="miga" aria-label="Ruta"><a href="index.html">Inicio</a> &rsaquo; <span>Alertas</span></nav>
+    <h1 class="pagina__titulo"><em>Administrar</em> alerta</h1>
+    <p class="pagina__sub">Usted decide cuándo dejar de recibir los avisos de una búsqueda guardada.</p>
+  </header>
+  <section class="panel" id="bajaAlerta" aria-labelledby="t-baja">
+    <h2 class="panel__titulo" id="t-baja"><em>Correos</em> de esta búsqueda</h2>
+    <p class="panel__texto" id="explicacionAlerta"></p>
+    <button type="button" class="btn btn--ambar" id="btnBajaAlerta" hidden>Dejar de recibir esta alerta</button>
+    <p class="acceso__aviso acceso__aviso--bien" id="estadoBajaAlerta" role="status"></p>
+  </section>
+</div></main>
+<footer class="pie"><div class="envoltura pie__inner">
+  <div class="pie__col"><img class="pie__logo" src="brand_assets/svg/mercamaquinarias-horizontal-oscuro.svg" alt="MercaMaquinarias"><p class="pie__legal">© 2026 MercaMaquinarias · Inversiones XZT, S.R.L., RNC 1-31-27975-9. Todos los derechos reservados.</p><p class="pie__texto">El uso de este sitio implica la aceptación de nuestra política de privacidad y los términos y condiciones de uso.</p></div>
+  <div class="pie__col"><h3 class="pie__titulo">Enlaces</h3><ul class="pie__lista"><li><a href="equipos.html">Equipos</a></li><li><a href="panel.html">Mi panel</a></li><li><a href="legal.html">Centro legal</a></li><li><a href="contacto.html">Contacto</a></li></ul></div>
+  <div class="pie__col"><p class="pie__sede">Santo Domingo, República Dominicana</p></div>
+</div></footer>
+<script src="assets/sesion.js"></script>
+<script src="assets/taxonomia.js"></script>
+<script src="assets/precios.js"></script>
+<script src="assets/servicios.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+<script src="assets/alertas.js"></script>
+<script src="assets/chat.js" defer></script>
+</body>
+</html>

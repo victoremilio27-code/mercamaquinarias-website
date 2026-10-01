@@ -11,6 +11,55 @@
 let ANUNCIOS = [];
 let FILTRO = 'todos';
 
+/* ── Alertas de búsquedas ───────────────────────────────── */
+
+function enlaceDeAlerta(filtros) {
+  const q = new URLSearchParams();
+  Object.entries(filtros || {}).forEach(([clave, valor]) => {
+    if (Array.isArray(valor)) valor.forEach((v) => q.append(clave, v));
+    else if (valor !== '' && valor !== null && valor !== undefined) q.set(clave, valor);
+  });
+  return `equipos.html${q.toString() ? `?${q}` : ''}`;
+}
+
+function pintarAlertas(busquedas) {
+  const caja = $('#listaAlertas');
+  if (!caja) return;
+  if (!busquedas.length) {
+    caja.innerHTML = '<p class="panel__texto">Todavía no tiene alertas. Aplique filtros en el <a href="equipos.html">catálogo</a> y pulse «Guardar esta búsqueda».</p>';
+    return;
+  }
+  caja.innerHTML = `<div class="tabla-envoltura"><table class="tabla-anuncios">
+    <thead><tr><th>Búsqueda</th><th>Estado</th><th><span class="visualmente-oculto">Acciones</span></th></tr></thead>
+    <tbody>${busquedas.map((b) => `<tr data-alerta="${esc(b.id)}">
+      <td><a class="celda-equipo__nombre" href="${esc(enlaceDeAlerta(b.filtros))}">${esc(b.resumen)}</a></td>
+      <td><span class="estado ${b.activa ? 'estado--activo' : 'estado--pausado'}">${b.activa ? 'Activa' : 'Pausada'}</span></td>
+      <td class="col-acciones"><button type="button" class="btn-tabla btn-tabla--borrar" data-borrar-alerta="${esc(b.id)}">Borrar</button></td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+async function montarAlertas() {
+  const caja = $('#listaAlertas');
+  if (!caja) return;
+  const respuesta = await api('/busquedas', { silencioso: true });
+  pintarAlertas((respuesta && respuesta.busquedas) || []);
+
+  caja.addEventListener('click', async (ev) => {
+    const boton = ev.target.closest('[data-borrar-alerta]');
+    if (!boton || !confirm('¿Borrar esta alerta? Dejará de recibir sus avisos.')) return;
+    boton.disabled = true;
+    try {
+      await api(`/busquedas/${encodeURIComponent(boton.dataset.borrarAlerta)}`, { metodo: 'DELETE' });
+      boton.closest('tr').remove();
+      if (!caja.querySelector('tbody tr')) pintarAlertas([]);
+      $('#estadoAlertas').textContent = 'Alerta borrada.';
+    } catch (e) {
+      boton.disabled = false;
+      $('#estadoAlertas').textContent = e.message;
+    }
+  });
+}
+
 const ESTADOS = {
   activo:   { nombre: 'Activo',    clase: 'estado--activo' },
   pausado:  { nombre: 'Pausado',   clase: 'estado--pausado' },
@@ -1173,6 +1222,7 @@ async function montarPanel() {
   montarContactos();
   montarRecibidos();
   montarSeguridad();
+  montarAlertas();
 
   const org = SESION.organizacion || {};
   $('#panelTitulo').innerHTML = `<em>${esc((org.nombre || SESION.usuario.nombre).split(/[\s,]+/)[0])}</em> ${esc((org.nombre || '').replace(/^\S+\s*/, ''))}`;

@@ -182,6 +182,11 @@
         <p class="barra-resultados__cuenta" id="resumenBusqueda">&mdash;</p>
         <div class="chips" id="chipsFiltros"></div>
 
+        <div id="guardarBusqueda" hidden>
+          <button type="button" class="btn btn--linea btn--chico" id="btnGuardarBusqueda">Guardar esta búsqueda</button>
+          <p class="form-secuencia__eco" id="estadoGuardarBusqueda" role="status"></p>
+        </div>
+
         <label class="orden">
           <span>Ordenar por</span>
           <select id="ordenResultados"></select>
@@ -261,6 +266,7 @@
 <script src="assets/servicios.js"></script>
 <script src="assets/data.js"></script>
 <script src="assets/app.js"></script>
+<script src="assets/alertas.js"></script>
 <script src="assets/chat.js" defer></script>
 </body>
 </html>
