@@ -551,14 +551,16 @@ const textoSmsContacto = ({ codigo, minutos }) =>
   `MercaMaquinarias: su codigo para verificar este telefono es ${codigo}. `
   + `Vence en ${minutos} min. No lo comparta: nunca se lo pediremos.`;
 
-/* El SMS de los códigos de la cuenta (fase 10.2). Sin tildes por lo mismo
-   que `textoSmsContacto`, y cada propósito cabe en un solo SMS de 160. */
+/* El SMS de los códigos de la cuenta (fase 10.2, D-16). Sirve para verificar
+   o cambiar el celular, cambiar la contraseña con sesión y entrar desde un
+   equipo nuevo JUNTO con la contraseña; nunca para entrar solo con él, por eso
+   «restablecer» y «recuperar» ya no existen. Sin tildes por lo mismo que
+   `textoSmsContacto`, y cada propósito cabe en un solo SMS de 160. */
 const PARA_SMS = Object.freeze({
   verificar: 'confirmar su celular',
   cambio: 'confirmar su celular nuevo',
-  restablecer: 'cambiar su contrasena',
   clave: 'cambiar su contrasena',
-  recuperar: 'recuperar su cuenta',
+  acceso: 'entrar a su cuenta',
 });
 
 function textoSmsCuenta({ codigo, minutos, proposito }) {
@@ -689,35 +691,38 @@ function enviarSms({ numero, texto }) {
   }
 }
 
-/* Aviso de que la contraseña cambió. No lleva código ni enlace: su
-   único fin es que el dueño se entere si el cambio no fue suyo.
+/* Aviso de que la contraseña cambió. No lleva código: su fin es que el
+   dueño se entere si el cambio no fue suyo.
 
-   Con `via: 'sms'` (la contraseña cambió con un código enviado al celular)
-   dice además qué hacer si no fue el titular, y es EXACTAMENTE lo que hace
-   el código: en los próximos 10 días, pedir el código de «Olvidé mi
-   contraseña» por correo quita ese celular de la cuenta. Los 10 días son
-   las 72 h del enfriamiento más los 7 de `db.accionSmsReciente` (plan 01),
-   que es lo que mira el restablecimiento por correo (plan 05): si se
-   cambia uno, se cambia el otro. */
-function enviarAvisoCambioClave({ para, nombre, via, numero }) {
+   Antes prometía una ventana de plazo fijo para quitar el celular por «Olvidé
+   mi contraseña»; D-16 la quitó y el aviso lleva ahora el botón «No fui yo».
+   El enlace de un solo uso lo crea la API con `db.anotarCambioClave`, y su
+   efecto (cerrar sesiones, anular la contraseña, quitar el celular verificado
+   y mandar un código al correo) se aplica con un POST al pulsar, nunca con
+   el GET del enlace, como en la 10.1: así un rastreador de correo no lo
+   dispara. Sin `enlaceNoFuiYo`, el texto de siempre. `via: 'sms'` solo cambia
+   la primera frase. */
+function enviarAvisoCambioClave({ para, nombre, via, numero, enlaceNoFuiYo }) {
   const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
   const porSms = via === 'sms';
   const masc = porSms ? (enmascararNumero(numero) || 'su celular') : null;
   const p1 = porSms
     ? `La contraseña de su cuenta de MercaMaquinarias acaba de cambiar con un código enviado por SMS al ${masc} y se cerraron todas las sesiones abiertas.`
     : 'La contraseña de su cuenta de MercaMaquinarias acaba de cambiar y se cerraron todas las sesiones abiertas.';
-  const noFue = porSms
-    ? 'Si no fue usted, en los próximos 10 días entre por «Olvidé mi contraseña» y pida el código por correo: '
-      + 'al usarlo quitamos ese celular de su cuenta. Después escríbanos a '
-    : 'Si no fue usted, escriba de inmediato a ';
+  const p2 = enlaceNoFuiYo
+    ? 'Si fue usted, no hay nada que hacer. Si no fue usted, use el enlace de abajo: cierra todas las sesiones, anula la contraseña, quita el celular verificado de su cuenta y le envía a este correo un código para crear otra. El enlace vale 7 días y sirve una sola vez.'
+    : 'Si fue usted, no hay nada que hacer.';
   return enviar({
     para,
     asunto: 'Su contraseña de MercaMaquinarias cambió',
     texto: [
       saludo, '',
       p1, '',
-      'Si fue usted, no hay nada que hacer.',
-      `${noFue}${SOPORTE}.`, '',
+      p2,
+      ...(enlaceNoFuiYo
+        ? ['', `No fui yo: ${enlaceNoFuiYo}`, '', `Si necesita ayuda escríbanos a ${SOPORTE}.`]
+        : [`Si no fue usted, escriba de inmediato a ${SOPORTE}.`]),
+      '',
       'MercaMaquinarias',
     ].join('\n'),
     responderA: BUZONES.soporte,
@@ -725,16 +730,10 @@ function enviarAvisoCambioClave({ para, nombre, via, numero }) {
       titulo: 'Su contraseña cambió',
       saludo,
       responderA: BUZONES.soporte,
-      parrafos: [
-        porSms
-          ? esc(`La contraseña de su cuenta acaba de cambiar con un código enviado por SMS al ${masc} y se cerraron todas las sesiones abiertas.`)
-          : 'La contraseña de su cuenta acaba de cambiar y se cerraron todas las sesiones abiertas.',
-        'Si fue usted, no hay nada que hacer.',
-      ],
-      nota: porSms
-        ? `Si <b style="color:${AZUL}">no</b> fue usted, en los próximos 10 días entre por «Olvidé mi contraseña» y pida el código por correo: `
-          + 'al usarlo quitamos ese celular de su cuenta. Después escríbanos a '
-          + `<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`
+      parrafos: [esc(p1), esc(p2)],
+      accion: enlaceNoFuiYo ? { texto: 'No fui yo', url: enlaceNoFuiYo } : undefined,
+      nota: enlaceNoFuiYo
+        ? `Si necesita ayuda escríbanos a ${enlaceSoporte}.`
         : `Si <b style="color:${AZUL}">no</b> fue usted, escríbanos de inmediato a `
           + `<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`,
     }),
@@ -747,7 +746,7 @@ function enviarAvisoTelefonoLiberado({ para, nombre, numero }) {
   const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
   const masc = enmascararNumero(numero) || 'su celular';
   const p1 = `El celular ${masc} dejó de estar vinculado a su cuenta de MercaMaquinarias porque otra cuenta demostró tenerlo.`;
-  const p2 = 'Ya no sirve para recuperar su cuenta por SMS.';
+  const p2 = 'Ya no recibirá en ese número los códigos de su cuenta.';
   const p3 = 'Si no lo esperaba, entre a su Panel, «Seguridad de la cuenta», verifique otro celular y escríbanos a ';
   return enviar({
     para,
@@ -780,6 +779,32 @@ function enviarAvisoTelefonoCambiado({ para, nombre, anterior, nuevo, verificado
     texto: [saludo, '', p1, '', p2, '', `${p3}${SOPORTE}.`, '', 'MercaMaquinarias'].join('\n'),
     html: envoltura({
       titulo: 'El celular de su cuenta cambió',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      nota: `${esc(p3)}<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`,
+    }),
+  });
+}
+
+/* Al correo de la cuenta cuando alguien entra desde un equipo nuevo con la
+   contraseña y un código por SMS (D-06): la segunda llave fue la SIM, y el
+   dueño del correo es quien puede enterarse si no fue el titular. Número
+   siempre enmascarado. */
+function enviarAvisoAccesoSms({ para, nombre, numero }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const masc = enmascararNumero(numero) || 'su celular';
+  const p1 = `Se entró a su cuenta desde un equipo nuevo con su contraseña y un código enviado por SMS al ${masc}.`;
+  const p2 = 'Si fue usted, no hay nada que hacer.';
+  const p3 = 'Si no fue usted, alguien conoce su contraseña: cámbiela ya en «Olvidé mi contraseña» '
+    + '(el código llega a este correo y se cierran todas las sesiones) y escríbanos a ';
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: 'Se entró a su cuenta de MercaMaquinarias con un código por SMS',
+    texto: [saludo, '', p1, '', p2, '', `${p3}${SOPORTE}.`, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'Entraron a su cuenta con un código por SMS',
       saludo,
       responderA: BUZONES.soporte,
       parrafos: [esc(p1), esc(p2)],
@@ -1734,7 +1759,7 @@ module.exports = {
   enviarCodigoContacto, textoSmsContacto, enviarSms, smsActivo, BANDEJA_SMS,
   // Fase 10.2: SMS de la cuenta, máscara del número y tope diario.
   textoSmsCuenta, enmascararNumero, topeSmsDia,
-  enviarAvisoTelefonoLiberado, enviarAvisoTelefonoCambiado, avisarTopeSms,
+  enviarAvisoTelefonoLiberado, enviarAvisoTelefonoCambiado, enviarAvisoAccesoSms, avisarTopeSms,
   BANDEJA, SITIO, BUZONES, EMPRESA, avisarInternamente,
   // Nombres sueltos que ya usaba otro código. BUZONES es lo que hay que
   // usar a partir de ahora.
