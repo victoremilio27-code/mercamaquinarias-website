@@ -576,7 +576,9 @@ async function contratar() {
 
   /* Compra hecha: lo mismo que antes de CardNet. */
   const terminarCompra = async () => {
-    if (destino()) { location.href = destino(); return; }
+    /* El parámetro viene de la URL: nunca se navega a un destino externo. */
+    const volver = destinoPropio();
+    if (volver) { location.href = volver; return; }
     try {
       const mios = await api('/membresias', { silencioso: true });
       MIS_CUPOS = (mios || {}).membresias || MIS_CUPOS;

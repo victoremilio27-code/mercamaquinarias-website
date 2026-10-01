@@ -128,6 +128,20 @@ async function escribir(p, sel, valor) {
   await p.type(sel, valor);
 }
 
+async function destinoHostilNoSale(p, destinoHostil) {
+  const pagina = `${BASE}/planes.html?destino=${encodeURIComponent(destinoHostil)}`;
+  await p.goto(pagina, { waitUntil: 'networkidle0' });
+  await esperar(500);
+  const enlaces = await p.$$eval('a[href]', (n) => n.map((a) => a.getAttribute('href')));
+  const apuntaAlDestino = enlaces.some((href) => href === destinoHostil);
+  const sigueEnPlanes = p.url().startsWith(`${BASE}/planes.html?destino=`);
+  if (!apuntaAlDestino && sigueEnPlanes) {
+    ok(`planes.html rechaza el destino ajeno «${destinoHostil}» en enlaces y navegación`);
+  } else {
+    anota('planes', 'SEGURIDAD', `planes.html acepta el destino ajeno «${destinoHostil}» (enlace=${apuntaAlDestino}, url=${p.url()})`);
+  }
+}
+
 /* Registro + verificación del correo. Devuelve true si acabó con sesión. */
 async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await p.goto(`${BASE}/cuenta.html?crear=1`, { waitUntil: 'networkidle0' });
@@ -708,6 +722,9 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
   await esperar(400);
   vigilar(p, 'visitante');
+  for (const destinoHostil of ['https://ejemplo.com', 'javascript:alert(1)']) {
+    await destinoHostilNoSale(p, destinoHostil);
+  }
   for (const pagina of ['index.html', 'dealers.html', 'planes.html']) {
     await p.goto(`${BASE}/${pagina}`, { waitUntil: 'networkidle0' });
     await esperar(800);
