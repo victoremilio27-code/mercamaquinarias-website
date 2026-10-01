@@ -1002,6 +1002,18 @@ function contactosHTML(e) {
    la mitad de los campos en blanco parece una publicación incompleta
    aunque el anunciante haya puesto todo lo que aplica a su máquina. */
 function fichaTecnicaHTML(e) {
+  const formatoNumero = new Intl.NumberFormat('es-DO');
+  const especificaciones = e.especificaciones && typeof e.especificaciones === 'object'
+    ? e.especificaciones
+    : {};
+  const filasEspecificaciones = especificacionesDe(e.categoria, e.subcategoria)
+    .filter((item) => Object.prototype.hasOwnProperty.call(especificaciones, item.id)
+      && Number.isFinite(especificaciones[item.id]))
+    .map((item) => [
+      item.nombre,
+      `${formatoNumero.format(especificaciones[item.id])} ${item.unidad}`,
+      'num',
+    ]);
   const filas = [
     ['Año', e.anio, 'num'],
     [e.uso.unidad === 'h' ? 'Horas de uso' : 'Kilometraje', e.uso.valor ? fmtUso(e.uso) : null, 'num'],
@@ -1013,6 +1025,8 @@ function fichaTecnicaHTML(e) {
     ['Transmisión', e.transmision_marca ? `${e.transmision_marca_nombre || e.transmision_marca}${e.transmision_modelo ? ` ${e.transmision_modelo}` : ''}` : ''],
     ['Potencia', e.potencia, 'num'],
     ['Peso operativo', e.peso, 'num'],
+    ['Implementos', e.implementos],
+    ...filasEspecificaciones,
     ['Ubicación', [e.municipio, e.provincia].filter(Boolean).join(', ')],
     ['Disponibilidad', e.disponibilidad === 'bajo-pedido' ? 'Bajo pedido' : 'En el país'],
   ];
@@ -1020,6 +1034,25 @@ function fichaTecnicaHTML(e) {
     ${filas.filter(([, valor]) => valor).map(([rotulo, valor, clase, crudo]) =>
       `<div><dt>${esc(rotulo)}</dt><dd class="${clase || ''}">${crudo ? valor : esc(valor)}</dd></div>`).join('')}
   </dl>`;
+}
+
+/* Los ids guardados se traducen siempre contra el catálogo vigente.
+   Si un implemento se retiró del catálogo, no se publica su id como
+   sustituto: deja de aparecer hasta que los datos vuelvan a ser válidos. */
+function implementosHTML(e) {
+  if (!Array.isArray(e.implementos_lista) || !e.implementos_lista.length) return '';
+  const elegidos = new Set(e.implementos_lista);
+  const nombres = implementosDe(e.categoria)
+    .filter((item) => elegidos.has(item.id))
+    .map((item) => item.nombre);
+  if (!nombres.length) return '';
+
+  return `<div class="detalle__implementos" data-implementos-estructurados>
+    <p class="etiqueta etiqueta--bloque">Implementos incluidos</p>
+    <ul class="detalle__condiciones">
+      ${nombres.map((nombre) => `<li>${icono('i-check')} ${esc(nombre)}</li>`).join('')}
+    </ul>
+  </div>`;
 }
 
 /* Si la máquina ya está en el país o hay que traerla. Bajo pedido cambia
@@ -1336,6 +1369,10 @@ async function montarDetalle() {
     ? await api(`/anuncios/${encodeURIComponent(idPedido)}`, { silencioso: true })
     : null;
   const e = datos && datos.anuncio ? anuncioDeApi(datos.anuncio) : null;
+  if (e) {
+    e.especificaciones = datos.anuncio.especificaciones;
+    e.implementos_lista = datos.anuncio.implementos_lista;
+  }
 
   if (!e) {
     cont.innerHTML = `<div class="vacio">
@@ -1377,6 +1414,7 @@ async function montarDetalle() {
         ${accionesFichaHTML(e)}
 
         ${fichaTecnicaHTML(e)}
+        ${implementosHTML(e)}
 
         ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> MercaMaquinarias cotejó la existencia registral del negocio y sus datos de contacto. No certifica la calidad del equipo ni garantiza la operación.</p>` : ''}
         ${e.serieCotejada ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Serie cotejada</span> El personal de MercaMaquinarias comprobó que el número de serie declarado coincide con la placa de las fotos y no se repite en otro anuncio. No es un certificado de propiedad ni de ausencia de robo.</p>` : ''}

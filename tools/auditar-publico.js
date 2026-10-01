@@ -150,6 +150,14 @@ async function vigilar(p, pagina) {
     if (!/República Dominicana|Bajo pedido/.test(dispo)) {
       anota('Ficha de equipo', 'lógica', 'la ficha no dice si el equipo está en el país o es bajo pedido');
     }
+    // La siembra de demostración conserva únicamente el campo libre
+    // antiguo. No debe aparecer un encabezado vacío para los datos
+    // estructurados que esos anuncios todavía no tienen.
+    const implementosEstructurados = await p.$('[data-implementos-estructurados]');
+    console.log(`  bloque de implementos sin datos nuevos: ${implementosEstructurados ? 'SÍ' : 'no'}`);
+    if (implementosEstructurados) {
+      anota('Ficha de equipo', 'lógica', 'un anuncio sin implementos estructurados enseña el bloque');
+    }
   } else {
     anota('Catálogo', 'lógica', 'ninguna tarjeta enlaza a la ficha del equipo');
   }
