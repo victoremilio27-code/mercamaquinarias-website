@@ -16,7 +16,7 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-09-30, noche) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-10-01) — EMPIEZA AQUÍ
 
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
@@ -28,81 +28,103 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 ### Dónde estamos
 
-- **Fase 10.1 (recuperar la cuenta y cambiar el correo) HECHA y SIN FUSIONAR** en la rama `claude/recuperar-cuenta`
-  (PR abierto). Pedida por Victor el 2026-09-30. Batería completa y navegador en verde en local; verificación
-  `human_needed` (`10.1-VERIFICATION.md`). **No se fusiona hasta que Victor haga el respaldo verificado**: la
-  migración `2026-10-cuenta-recuperacion` rehace la tabla `codigos` (su CHECK no admitía `cambio_correo`) y
-  crea `cambios_correo` y `solicitudes_recuperacion`. Con su «respaldo hecho» + CI en verde: fusionar y
-  comprobar el «Sitio arriba» del paso `desplegar`.
+- **Todo en producción hasta la 10.1** (último despliegue «Sitio arriba: 0d05858», PR #48, 2026-09-30 22:30 UTC):
+  fases 2, 3, 4, 5, 05.1, 05.2, 05.3, 05.4, 6, 7, 8, 9, 10 y **10.1** (recuperar la cuenta y cambiar el correo). Victor
+  hizo el respaldo antes (`/var/backups/mercamaquinarias/antes-recuperar-cuenta.db`, `integrity_check` = ok):
+  conservarlo unos días. Victor revisó la 10.1 en claro y oscuro: «se ven bien» (su `human_needed` queda cumplido).
+  El papeleo del ROADMAP (fases 3, 4, 8 y 9 verificadas y marcadas) está en `main` (PR #49).
 
-- **Todo en producción** (último despliegue «Sitio arriba: d86d47a», PR #46, 2026-09-30 15:56 UTC): fases 2,
-  3, 4, 5, 05.1, 05.2, 05.3, 05.4, 6, 7, 8, 9 y 10 (la 3, 4, 8 y 9 sin su casilla en el ROADMAP, ver «Papeleo»).
-- **05.4 (dealer con capacidad y consola de solo lectura):** entera (PR #44 y #45). Ni una cadena visible dice
-  «cupo» salvo `legal.html` (ver «Preguntas»). Contratación en la **2.3**: quien aceptó la 2.2 vuelve a
-  aceptar antes de su próximo pago. Verificación `human_needed` (revisión visual de Victor).
-- **Fase 6 (CardNet) en producción y APAGADA** (`MERCA_CARDNET` sin fijar): 10 planes, verificación 5/5
-  `human_needed`, W-01 arreglado. La migración `2026-10-cardnet` ya se aplicó en producción; Victor hizo el
-  respaldo verificado antes (`/var/backups/mercamaquinarias/antes-cardnet.db`, `integrity_check` = ok) —
-  conservarlo unos días. Encender: `deploy/README.md` §10c y `06-USER-SETUP.md`; el temporizador
-  `mercamaquinarias-pagos` NO lo instala el despliegue (§10c).
-- **Servidor:** Ubuntu 24.04 en el droplet `137.184.111.241` (acceso `ssh root@…`); pedía reinicio por kernel y
-  se le dijo a Victor que reiniciara tras el despliegue. El repositorio del VPS es del usuario
-  `mercamaquinarias` (git como root da «dubious ownership»: usar `sudo -u mercamaquinarias git …`). **No
-  actualizar a Ubuntu 26.04 antes del lanzamiento.** `sqlite3` ya está instalado allí.
-- **Preparado sin planificar todavía:** la 12 tiene `CONTEXT.md` y `RESEARCH.md`; la facturación
-  electrónica tiene `research/facturacion-electronica.md`.
-- **En la nube:** puppeteer como root necesita un envoltorio de Chrome en el scratchpad con `--no-sandbox`,
-  `--disable-dev-shm-usage --no-zygote --disable-gpu --ignore-certificate-errors`, vía
-  `PUPPETEER_EXECUTABLE_PATH` (ver «Decisions»); nunca se toca `tools/` por eso. Las auditorías tienen el
-  puerto 8080 fijo: con agentes en paralelo, solo el orquestador corre el navegador tras fusionar cada ola,
-  y hay que matar el servidor con `lsof -t -i :8080 | xargs -r kill` (un servidor viejo apuntando a una base
-  borrada ya hizo fallar la auditoría del administrador una vez). La red de la nube NO alcanza
-  `mercamaquinarias.com`: el sitio en vivo se confirma con el «Sitio arriba» del registro del paso
-  `desplegar` en GitHub Actions.
+- **FASE EN CURSO: 10.2 «Teléfono verificado y códigos por SMS»** — rama **`claude/fase-10.2-telefono`** (subida,
+  SIN PR todavía). Pedida por Victor el 2026-09-30. Los 8 planes de la primera versión están EJECUTADOS (con SUMMARY),
+  con todas las baterías y `npm run auditar` en verde, pero **Victor cambió el diseño al final (D-16 en
+  `10.2-CONTEXT.md`, LEERLO PRIMERO): el SMS nunca abre la cuenta por sí solo.** Hay que REHACER parte de lo
+  construido antes de abrir el PR:
+  - **Quitar:** «Olvidé mi contraseña» por SMS (`recuperar`/`restablecer` con `via:'sms'`, `recuperarPorSms`,
+    `restablecerPorSms`); la recuperación sin correo por SMS en 4 pasos (`/api/cuenta/recuperacion-sms*` en
+    `tools/api.js`, `#formRecuperacionSms` y `#recVia` en `cuenta.html`/`assets/cuenta.js`); **todo el enfriamiento
+    de 72 h** (`enfriado`, `ponerEnfriamiento`, `quitarEnfriamiento`, `enEnfriamiento`, las guardas en correo,
+    celular, contactos, página del dealer y sucursales, `#avisoEnfriamiento` del panel, `enfriamientoHasta` de
+    `GET /api/sesion`); la ventana de 10 días (`accionSmsReciente`, `DIAS_ACCION_SMS_RECIENTE`, el texto «en los
+    próximos 10 días…» de `enviarAvisoCambioClave` en `tools/correo.js`); y sus secciones en `tools/probar-telefono.js`
+    y `tools/auditar-telefono.js`. La migración `2026-10-telefono-cuenta` NO está en producción: se puede quitar
+    `usuarios.enfriamiento_hasta` de ella en la rama (una vez fusionada, ya no se reescribe).
+  - **Añadir:** (1) al entrar desde un equipo nuevo (contraseña + código tipo `acceso`, `dispositivos`), elegir que el
+    código llegue **al correo o al celular verificado** (solo con `MERCA_SMS` encendido; apagado, como hoy); (2)
+    **«No fui yo» en el aviso de cambio de contraseña** (por cualquier vía): enlace de un uso como el de la 10.1
+    (POST al pulsar, nunca en el GET) que quita la verificación del celular, cierra todas las sesiones, anula la
+    contraseña y manda código al correo para crear otra.
+  - **Se queda:** celular obligatorio en el registro (809/829/849) y verificable; verificar/cambiar el celular desde
+    el panel; cambiar la contraseña CON sesión con código por correo o SMS; tope diario de SMS
+    (`MERCA_SMS_TOPE_DIA`, 300) y solo 809/829/849 también en el SMS de contactos; «No fui yo» del cambio de correo
+    y la aprobación revisada quitan el celular; unicidad del número verificado (se lo queda quien lo demuestra, la
+    otra cuenta pierde la verificación y recibe correo); Privacidad 2.2 (`vigenteDesde` 2026-10-01 en
+    `assets/legales.js` y `legal.html`: **cambiarla a la fecha real de la fusión en los dos sitios**); asistente;
+    `deploy/README.md` (§9b SMS y `MERCA_DB` en «Cuentas del equipo»). La tarjeta guardada de CardNet NO se bloquea.
+  - **Cómo seguir:** planificar los cambios de D-16 como planes nuevos `10.2-09..` (gsd-planner con Opus; pasarlos por
+    gsd-plan-checker, que en esta fase encontró bloqueantes reales dos veces), ejecutar con Sonnet, correr TODAS las
+    baterías y `npm run auditar` (envoltorio de Chrome, abajo), re-verificar (`10.2-VERIFICATION.md` hoy dice
+    `gaps_found` por el segundo WhatsApp durante las 72 h: desaparece al quitar el enfriamiento), marcar ROADMAP y
+    REQUIREMENTS (TEL-01..08: revisar su texto, algunos describen el diseño viejo), abrir el PR, y **pedir a Victor el
+    respaldo verificado antes de fusionar** (la migración rehace `cambios_correo` y añade columnas a `usuarios`).
+    Instrucciones del respaldo para Victor: `deploy/README.md`, «Respaldo verificado antes de fusionar una migración»
+    (nombre sugerido `antes-telefono`).
+
+- **Fase 12 (lote mensual de comprobantes) — PLANIFICADA, hay que REPLANIFICAR antes de ejecutar** — rama
+  **`claude/fase-12-lote-comprobantes`** (subida, sin PR). Victor autorizó adelantarla a la 11 (bloqueada por
+  contenido). Tiene 4 planes revisados, `12-VALIDATION.md`, y la investigación del Formato 607 al final de
+  `12-RESEARCH.md`. Pero los planes son ANTERIORES a las respuestas de Victor (sección «Respuestas de Victor» de
+  `12-CONTEXT.md`, R-01..R-05): **607 sí** (borrador para el contador; el sitio nunca lo envía); ZIP con carpetas
+  `con-ncf/` y `sin-ncf/`, cada una con sus PDF y su CSV; corte por fecha de cobro en hora dominicana; que los PDF no
+  se pierdan nunca (guardar al emitir lo que dibuja el PDF para reponerlo idéntico + carpeta `MERCA_FACTURAS` en el
+  respaldo diario de `tools/tareas.js`; los Backups de DigitalOcean los activa Victor); **selector de mes propio** en
+  la consola, preseleccionado en el mes anterior. Además, dos riesgos fiscales de la investigación del 607 a llevar
+  a planes: (a) `fechaCorta` imprime en UTC y lo cobrado de 20:00 a 24:00 hora RD sale con el día siguiente en el
+  PDF (el cliente lo cruza en su 606): arreglarlo para comprobantes nuevos antes del lanzamiento; (b) una nota de
+  crédito sobre un recibo sin NCF gasta un B04 indeclarable: propuesta, no permitirlo (pendiente de Victor y su
+  contador). La rama de la 12 está detrás de `main` en STATE: al retomarla, fusionar `main` en ella.
+
+- **Cuenta de dealer de prueba:** se le dieron a Victor los comandos (correo `mercamaquinarias.rd@gmail.com`,
+  empresa «Inversiones XZT», RNC 131279759, `--exenta`, CON `MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db`).
+  La corre él por SSH; no ha confirmado. La página del dealer se enciende al publicar su primer equipo.
+
+- **Servidor:** Ubuntu 24.04 en el droplet `137.184.111.241` (acceso `ssh root@…`). El repositorio del VPS es del
+  usuario `mercamaquinarias` (git como root da «dubious ownership»: usar `sudo -u mercamaquinarias git …`). **No
+  actualizar a Ubuntu 26.04 antes del lanzamiento.** `sqlite3` ya está instalado allí. **`tools/admin.js` en
+  producción necesita `MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db`** (sin ella escribe en `db/` del
+  repositorio).
+- **Fase 6 (CardNet) en producción y APAGADA** (`MERCA_CARDNET` sin fijar). Encender: `deploy/README.md` §10c y
+  `06-USER-SETUP.md`; el temporizador `mercamaquinarias-pagos` NO lo instala el despliegue.
+- **En la nube:** puppeteer como root necesita un envoltorio de Chrome. El binario está en
+  `/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell`; el envoltorio (un `.sh` en el
+  scratchpad) lo llama con `--no-sandbox --disable-dev-shm-usage --no-zygote --disable-gpu
+  --ignore-certificate-errors "$@"`, vía `PUPPETEER_EXECUTABLE_PATH`; nunca se toca `tools/` por eso. Si falta
+  `node_modules`, `npm ci` (con `PUPPETEER_SKIP_DOWNLOAD=1`). Las auditorías tienen el puerto 8080 fijo
+  (`auditar-telefono` usa el 8091): con agentes en paralelo, solo el orquestador corre el navegador tras fusionar
+  cada ola, y hay que matar el servidor con `lsof -t -i :8080 | xargs -r kill`. La red de la nube NO alcanza
+  `mercamaquinarias.com` ni `dgii.gov.do`: el sitio en vivo se confirma con el «Sitio arriba» del registro del paso
+  `desplegar` en GitHub Actions. Nunca `git checkout <commit> --` en el directorio principal (desengancha la rama;
+  ya pasó una vez): para mirar otra versión, `git worktree add`.
 
 ### Lo que falta, en orden
 
-1. **Cuenta de dealer de prueba para Victor (pedida el 2026-09-30). Comprobado en local el 2026-09-30:** no hace
-   falta tocar código. Una empresa `--exenta` recibe al publicar su primer equipo una membresía Premium interna
-   (`membresiaInterna`, sin fin) que enciende `perfil_publico`, y `apagarPerfilesSinPlan` no la apaga; luego
-   publica la página en «Mi página». **Espera la respuesta de Victor** (correo, empresa y RNC únicos). Una cuenta de empresa (dealer) con
-   página de dealer publicada y **exenta de pagos**, para su uso personal y de pruebas, y darle las
-   credenciales. Hay que hacerla **en producción**, así que la corre Victor por SSH en el VPS con los comandos
-   exactos que le prepare la sesión: `tools/admin.js crear <correo> "<Nombre>" --empresa "<Razón social>"
-   --rnc <RNC> --exenta [--clave "…"]` (como el usuario `mercamaquinarias`, con las variables de
-   `/etc/mercamaquinarias.env` y `MERCA_DB`), y la contraseña se le entrega en el chat. Antes, comprobar en
-   el código qué necesita la página pública del dealer para estar visible (P14: hoy solo con Premium,
-   `encenderPerfilSiProcede`/`perfil_publico` en `tools/db.js`) y si una cuenta `exenta_pago` la obtiene sin
-   membresía; si no, añadir al procedimiento lo que falte (sin tocar precios). Probar el procedimiento entero
-   antes en local con `db:demo`. Preguntar a Victor el correo y el nombre de empresa que quiere (datos
-   reales: una sola pregunta agrupada).
-2. **Fase 12 — lote mensual de comprobantes.** Planificar con `12-CONTEXT.md` y `12-RESEARCH.md` (ZIP escrito a
-   mano con `node:zlib`, solo lectura, sin migración; no usar `facturas.incluida_en_lote` ni `lotes_contador`,
-   restos del envío automático prohibido). Se ejecuta en su turno, tras la 11. Cuando exista la e-CF, el lote
-   incluye también el XML y la representación impresa.
-3. **Antes de encender CardNet (no bloquea el lanzamiento, que va con transferencia):** **que dos procesos no puedan consumir dos NCF para el mismo pago**
-   (hallazgo de `03-VERIFICATION.md`: `facturas` no tiene índice único sobre `pago_id` y la comprobación de
-   `pagos.js:126` y el `INSERT` de `crearFactura` no van en la misma transacción, con `tomarNcf` en medio; hoy no
-   ocurre porque con CardNet apagado `reconciliar` y `renovarAutomaticas` no hacen nada); que los cobros
-   `aprobado-sin-aplicar` se puedan marcar como devueltos (hoy «Pasarela de pago» los repite en cada informe);
-   certificar en lab lo marcado «POR CONFIRMAR EN LAB» (forma del `message` del iframe, que admita ser
-   embebido, alto para 3-D Secure, orden de perfiles nuevos, W-01 con otra tarjeta y mismo `UniqueID`, si el
-   cobro recurrente exige un indicador) e instalar el temporizador `mercamaquinarias-pagos`.
-4. **Papeleo del ROADMAP (hecho el 2026-09-30 salvo la fase 1).** La 3 (`passed`), la 4 (`human_needed`: revisión
-   visual de bandeja y bitácora), la 8 y la 9 ya tienen VERIFICATION y casilla. Queda la **fase 1**, que espera la
-   protección de rama de `main` (paso manual de Victor, plan 01-02) antes de verificarla.
-5. **Facturación electrónica (e-CF) — en espera.** Victor la solicita en **octubre de 2026**. Cuando diga que
-   está presentada: insertar la fase «6.1 e-CF» con `gsd-phase` (propuesta en §7 de la investigación: FE-01 a
-   FE-13, construida y apagada tras `MERCA_ECF`, ejecutada con Sonnet 5.5) y planificarla. Recomendación:
-   proveedor autorizado (PSFE) por API detrás de un adaptador.
-6. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan
-   personas y protocolo de inspección); 13, 15 y 16 se planifican cuando se acerquen.
-7. **Deuda anotada para la 13 (no bloquea):** `fechaCorta` de `assets/panel.js` y de los PDF pinta la fecha en
-   UTC; `tipoRecordatorio` redondea hacia arriba («vence mañana» el mismo día del corte); desborde de
-   `panel.html` a 390 px; `destino` sin validar en `assets/planes.js`; `tools/admin.js` cambia el sello sin
-   bitácora; borrar `proximamente.html` y `vercel.json` (con el visto bueno de Victor); el script de despliegue
-   no respalda la base antes de una migración (cada migración nueva exige el respaldo manual de Victor antes
-   de fusionar); el temporizador de pagos no lo instala el despliegue.
+1. **Terminar la 10.2 con D-16** (arriba): planes nuevos → ejecutar → baterías y navegador → re-verificar → PR → respaldo
+   de Victor → fusionar → «Sitio arriba».
+2. **Replanificar y ejecutar la 12** con R-01..R-05 y los dos riesgos fiscales (arriba).
+3. **Antes de encender CardNet (no bloquea el lanzamiento, que va con transferencia):** que dos procesos no puedan
+   consumir dos NCF para el mismo pago (`03-VERIFICATION.md`: `facturas` sin índice único sobre `pago_id`, y la
+   comprobación de `pagos.js:126` y el `INSERT` de `crearFactura` no van en la misma transacción, con `tomarNcf` en
+   medio); que los cobros `aprobado-sin-aplicar` se puedan marcar como devueltos; certificar en lab lo marcado «POR
+   CONFIRMAR EN LAB»; instalar el temporizador `mercamaquinarias-pagos`.
+4. **Papeleo:** la **fase 1** espera la protección de rama de `main` (paso manual de Victor, plan 01-02).
+5. **Facturación electrónica (e-CF) — en espera.** Victor la solicita en octubre de 2026. Cuando diga que está
+   presentada: insertar la fase «6.1 e-CF» con `gsd-phase` (§7 de `research/facturacion-electronica.md`) y planificarla.
+6. **Sin planificar a propósito:** 11 (falta el contenido real de transporte y financiamiento) y 14 (faltan personas y
+   protocolo de inspección); 13, 15 y 16 se planifican cuando se acerquen.
+7. **Deuda anotada para la 13 (no bloquea):** `tipoRecordatorio` redondea hacia arriba; desborde de `panel.html` a
+   390 px; `destino` sin validar en `assets/planes.js`; `tools/admin.js` cambia el sello sin bitácora; borrar
+   `proximamente.html` y `vercel.json` (con el visto bueno de Victor); el despliegue no respalda la base antes de una
+   migración; el temporizador de pagos no lo instala el despliegue; la tabla de facturas de la consola filtra por mes
+   UTC. (`fechaCorta` en UTC pasa a la 12 por ser fiscal.)
 
 ### Preguntas para Victor (se trabaja con el valor por defecto si no contesta)
 
@@ -114,8 +136,8 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
   viva.
 - 05.4: la contratación 2.3 obliga a todos a aceptar de nuevo antes de su próximo pago, a dos semanas del
   lanzamiento. **Ya subida y en producción** (PR #44); revisar la redacción de 1.1, 1.2 y 4.2.
-- 05.4: `legal.html` aún dice «cupos» en el preámbulo (l. 90), la tabla de privacidad (l. 225) y la política
-  de publicación §3 (l. 288). Cambiarlo sube versión de esos documentos y pide nueva aceptación: decide él.
+- 05.4: `legal.html` aún dice «cupos» en el preámbulo (l. 90) y la política de publicación §3 (l. 288); la
+  fila de Privacidad la cambia la 10.2. Cambiar el resto sube Términos y pide nueva aceptación: decide él.
 - 05.4 revisión visual (lo único que dejó `human_needed` la verificación): panel del dealer (resumen,
   membresías, «Agregar publicaciones activas» con «ITBIS incluido»/«Sin costo» y «La quinta no se cobra») en
   móvil y escritorio, claro y oscuro; y la consola con datos reales (Publicaciones, Pagos, Renovaciones con
@@ -125,13 +147,18 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
   dejar vencer esas suscripciones.
 - 06-09: «Tu anuncio vence el {fecha}.» va de tú (texto literal de `modelo-comercial.md`) y el resto del panel
   trata de usted: ¿se pasa a usted?
-- 12 (con el contador): ¿Formato 607 de la DGII y en qué formato? (**por defecto no se genera**; el CSV trae
-  los campos); ¿ZIP (**por defecto**) o un solo PDF?; ¿contenido del paquete (PDF de cada comprobante,
-  `resumen.csv` con `;`, `resumen.pdf`, `LEEME.txt`)?; ¿recibos no fiscales dentro, aparte (**por defecto**)?;
-  ¿corte por mes calendario dominicano y fecha de cobro (**por defecto**)?
+- 12, para el contador (por defecto lo de `12-RESEARCH.md` §607): ¿campos vacíos o `0.00` en el 607?; ¿tipo de
+  ingreso `01`?; ¿algún cliente retiene ITBIS/ISR?; ¿nombre del archivo (`DGII_F_607_131279759_AAAAMM.TXT`)?; ¿factura
+  algo fuera del sitio y cuándo pasa a e-CF?; ¿cómo declara un mes sin ventas?; ¿qué hacer con una nota de crédito
+  sobre un recibo sin NCF (propuesta: no permitirla)?
+- 10.2: Victor pagará pronto los créditos SMS de Brevo; al pagar, validar el remitente `MercaMaq` para RD y fijar el
+  tope diario (300 por defecto). Hasta entonces la 10.2 va apagada tras `MERCA_SMS`.
 
 ### Lo que solo puede hacer Victor
 
+- **Pendientes del 2026-10-01:** crear la cuenta de dealer de prueba por SSH (comandos dados, con `MERCA_DB`);
+  activar los **Backups de DigitalOcean** del droplet (copia fuera del servidor, R-04 de la 12); pagar los créditos
+  SMS de Brevo; hacer el respaldo verificado antes de fusionar la 10.2.
 - **CardNet:** meter el expediente de afiliación (es lo único que puede retrasar el lanzamiento) y contestar
   las 8 preguntas de `06-CONTEXT.md` («Preguntas abiertas»), sobre todo si `DataDo.Invoice` es número de orden
   o NCF; llaves de lab, afiliación con `Ecommerce_COF` y `MOTO_Recurring`, registrar la URL de notificación.
