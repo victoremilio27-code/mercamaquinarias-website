@@ -685,7 +685,10 @@ async function restablecer(req, res) {
   db.cerrarTodoDe(u.id);
   db.marcarCorreoVerificado(u.id);
   db.anularRecuperacionesDe(u.id, 'El titular entró a su cuenta');
-  correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre });
+  const { testigoRevertir } = db.anotarCambioClave({ idUsuario: u.id, via: 'restablecer', ip: origen(req) });
+  correo.enviarAvisoCambioClave({
+    para: u.correo, nombre: u.nombre, enlaceNoFuiYo: enlaceNoFuiYoClave(testigoRevertir),
+  });
 
   const testigo = db.abrirSesion(u.id);
   return responder(res, 200, sesionPublica(u.id), { 'Set-Cookie': cookieSesion(testigo) });
@@ -795,6 +798,51 @@ async function revertirCorreo(req, res) {
   });
 }
 
+/* Enlace de un solo uso del aviso de contraseña cambiada. El efecto se aplica
+   con POST al pulsar en la página, nunca con el GET del enlace: los
+   antivirus de correo abren los enlaces por su cuenta. */
+const enlaceNoFuiYoClave = (testigo) => `${correo.SITIO}/cuenta.html?revertir-clave=${testigo}`;
+
+/* «No fui yo» del cambio de contraseña (D-16). Sin sesión: quien pulsa es el
+   dueño del correo. Quien cambió la contraseña pudo hacerlo con una sesión
+   robada más la SIM, por eso además se quita el celular verificado (lo hace
+   `revertirCambioClave`). Se cierran todas las sesiones y se anula la
+   contraseña; el código para crear otra va al correo. Si vuelve a pasar, el
+   cliente contacta al equipo o cambia de número. */
+async function revertirClave(req, res) {
+  const c = await leerCuerpo(req);
+  const ip = origen(req);
+  if (!db.permitir(`revertir-clave:${ip}`, 10, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
+  }
+
+  const testigo = String(c.testigo || '');
+  if (!/^[0-9a-f]{64}$/.test(testigo)) return fallo(res, 400, 'El enlace no es válido o ya se usó');
+
+  const r = db.revertirCambioClave(testigo, ip);
+  if (!r.ok) {
+    if (r.motivo === 'vencido') {
+      return fallo(res, 400, 'El enlace venció. Si no reconoce el cambio, entre por «Olvidé mi contraseña» o escríbanos a soporte.');
+    }
+    return fallo(res, 400, 'El enlace no es válido o ya se usó');
+  }
+
+  const u = db.usuarioPorId(r.idUsuario);
+  db.cerrarTodoDe(u.id);
+  db.anularClave(u.id);
+  db.anularRecuperacionesDe(u.id, 'El titular pulsó «No fui yo» en un cambio de contraseña');
+  emitirCodigo({ correo: u.correo, tipo: 'restablecer', idUsuario: u.id, nombre: u.nombre });
+
+  return responder(res, 200, {
+    verificacion: 'restablecer',
+    correo: u.correo,
+    mensaje: 'Cerramos todas las sesiones y anulamos la contraseña. Le enviamos un código a este correo para crear una nueva.'
+      + (r.telefonoQuitado
+        ? ' También quitamos el celular verificado de su cuenta: verifíquelo de nuevo desde su Panel.'
+        : ''),
+  });
+}
+
 const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
   const c = await leerCuerpo(req);
   if (!db.permitir(`clave:${ctx.usuario.id}`, 5, 60)) {
@@ -828,8 +876,12 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
 
     db.cambiarClave(u.id, c.nueva);
     db.cerrarOtrasDe(u.id, ctx.testigo);
+    const { testigoRevertir } = db.anotarCambioClave({
+      idUsuario: u.id, via: porSms ? 'sms' : 'correo', ip: origen(req),
+    });
     correo.enviarAvisoCambioClave({
       para: u.correo, nombre: u.nombre, ...(porSms ? { via: 'sms', numero } : {}),
+      enlaceNoFuiYo: enlaceNoFuiYoClave(testigoRevertir),
     });
     return responder(res, 200, { ok: true, mensaje: 'Su contraseña cambió y se cerraron las demás sesiones.' });
   }
@@ -842,7 +894,10 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
 
   db.cambiarClave(u.id, c.nueva);
   db.cerrarOtrasDe(u.id, ctx.testigo);
-  correo.enviarAvisoCambioClave({ para: u.correo, nombre: u.nombre });
+  const { testigoRevertir } = db.anotarCambioClave({ idUsuario: u.id, via: 'actual', ip: origen(req) });
+  correo.enviarAvisoCambioClave({
+    para: u.correo, nombre: u.nombre, enlaceNoFuiYo: enlaceNoFuiYoClave(testigoRevertir),
+  });
 
   return responder(res, 200, { ok: true, mensaje: 'Su contraseña cambió y se cerraron las demás sesiones.' });
 });
@@ -5397,6 +5452,7 @@ const RUTAS = [
   ['POST', /^\/api\/cuenta\/telefono\/verificar$/, verificarTelefono],
   ['POST', /^\/api\/cuenta\/telefono\/confirmar$/, confirmarTelefono],
   ['POST', /^\/api\/cuenta\/telefono$/,            pedirCambioTelefono],
+  ['POST', /^\/api\/cuenta\/clave\/revertir$/,    revertirClave],
   ['POST', /^\/api\/cuenta\/clave\/codigo$/,      pedirCodigoClave],
   ['POST', /^\/api\/cuenta\/clave$/,             cambiarClaveConSesion],
   ['POST', /^\/api\/cuenta\/cerrar-otras$/,      cerrarOtrasSesiones],

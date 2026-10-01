@@ -1250,6 +1250,121 @@ seccion('23. Entrar desde un equipo nuevo por SMS');
   const iSms = fuente23.indexOf("proposito: 'acceso'", iEntrar);
   comprobar(iClave > 0 && iSms > iClave, "en entrar, el SMS de acceso se emite después de db.claveCorrecta");
 }
+
+/* ── 24. «No fui yo» del cambio de contraseña ────────────────── */
+seccion('24. «No fui yo» del cambio de contraseña');
+{
+  const codigoDeCorreo = (lista, para) => {
+    const m = lista.filter((x) => x.para === para).pop();
+    return m && (/\b(\d{6})\b/.exec(m.asunto || '') || [])[1];
+  };
+  const avisoDe = (lista, para) => lista.filter((m) => m.para === para && /cambió/.test(m.asunto || '')).pop();
+  const testigoDe = (m) => (m && (/revertir-clave=([0-9a-f]{64})/.exec(m.texto) || [])[1]) || null;
+  const viasDe = (id) => todas('SELECT via FROM cambios_clave WHERE usuario_id = ? ORDER BY rowid', id).map((f) => f.via);
+  const enlace = (m) => m && m.texto.includes('No fui yo: ' + correo.SITIO + '/cuenta.html?revertir-clave=');
+
+  /* con la actual, con código al correo, y «Olvidé mi contraseña» (SMS apagado) */
+  const A = cuenta('noyo-24a@ejemplo.test', 'Noyo A', { telefono: '8495552401' });
+  db.marcarCorreoVerificado(A);
+  const ta = db.abrirSesion(A);
+  nuevos();
+  let r = await post('/api/cuenta/clave', { actual: CLAVE, nueva: 'NuevaClave24Uno' }, como(ta));
+  let avisos = nuevos();
+  const m1 = avisoDe(avisos, 'noyo-24a@ejemplo.test');
+  comprobar(r.codigo === 200 && viasDe(A).join() === 'actual', 'con la actual: 200 y cambios_clave gana una fila actual');
+  comprobar(enlace(m1) && !!testigoDe(m1), 'con la actual: el aviso lleva «No fui yo: » + enlace + 64 hex');
+
+  r = await post('/api/cuenta/clave/codigo', { via: 'correo' }, como(ta));
+  const cod = codigoDeCorreo(nuevos(), 'noyo-24a@ejemplo.test');
+  r = await post('/api/cuenta/clave', { via: 'correo', codigo: cod, nueva: 'NuevaClave24Dos' }, como(ta));
+  avisos = nuevos();
+  const m2 = avisoDe(avisos, 'noyo-24a@ejemplo.test');
+  comprobar(r.codigo === 200 && viasDe(A).join() === 'actual,correo' && enlace(m2), 'con código al correo: fila correo y enlace');
+
+  db.limpiarIntentos('codigo:noyo-24a@ejemplo.test');
+  await post('/api/cuenta/recuperar', { correo: 'noyo-24a@ejemplo.test' }, como(null));
+  const codR = codigoDeCorreo(nuevos(), 'noyo-24a@ejemplo.test');
+  r = await post('/api/cuenta/restablecer', { correo: 'noyo-24a@ejemplo.test', codigo: codR, clave: 'NuevaClave24Tres' }, como(null));
+  avisos = nuevos();
+  const m3 = avisoDe(avisos, 'noyo-24a@ejemplo.test');
+  comprobar(r.codigo === 200 && viasDe(A).join() === 'actual,correo,restablecer' && enlace(m3), '«Olvidé mi contraseña»: fila restablecer y enlace');
+  comprobar(new Set([testigoDe(m1), testigoDe(m2), testigoDe(m3)]).size === 3, 'cada aviso lleva un testigo distinto');
+
+  /* con SMS encendido y celular verificado */
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    const S = cuenta('noyo-24s@ejemplo.test', 'Noyo S', { telefono: '8495552402' });
+    db.marcarCorreoVerificado(S);
+    db.verificarTelefonoCuenta({ idUsuario: S, numero: '8495552402', via: 'verificado' });
+    limpiarNumero('8495552402');
+    const t1 = db.abrirSesion(S);
+    const t2 = db.abrirSesion(S);
+    const sol = db.crearSolicitudRecuperacion({
+      correoCuenta: 'noyo-24s@ejemplo.test', correoContacto: 'noyo-24s-nuevo@ejemplo.test', nombre: 'Noyo S',
+      telefono: '8495552499', detalle: 'Perdí el acceso a mi correo', ip: '201.4.4.24',
+    });
+    nuevosSms();
+    nuevos();
+    await post('/api/cuenta/clave/codigo', { via: 'sms' }, como(t1));
+    const smsS = nuevosSms();
+    r = await post('/api/cuenta/clave', { via: 'sms', codigo: smsS[0].codigo, nueva: 'NuevaClave24Sms' }, como(t1));
+    const mS = avisoDe(nuevos(), 'noyo-24s@ejemplo.test');
+    comprobar(r.codigo === 200 && viasDe(S).join() === 'sms' && enlace(mS) && /SMS/.test(mS.texto),
+      'con SMS: fila sms, aviso con «SMS» y enlace');
+    const testigo = testigoDe(mS);
+    comprobar(!!testigo && testigo !== testigoDe(m3), 'el testigo del aviso por SMS es otro');
+    const t3 = db.abrirSesion(S); // una sesión más, abierta con la contraseña nueva
+    db.recordarDispositivo(S, 'prueba');
+
+    /* el testigo, sin sesión */
+    nuevos();
+    r = await post('/api/cuenta/clave/revertir', { testigo }, como(null));
+    const us = db.usuarioPorId(S);
+    comprobar(r.codigo === 200 && r.datos.verificacion === 'restablecer' && r.datos.correo === 'noyo-24s@ejemplo.test' && /celular/.test(r.datos.mensaje),
+      'revertir: 200 { verificacion: restablecer, correo } y el mensaje menciona el celular');
+    comprobar(db.sesion(t1) === null && db.sesion(t2) === null && db.sesion(t3) === null, 'revertir: no queda ninguna sesión');
+    comprobar(!db.claveCorrecta('NuevaClave24Sms', us.clave_hash, us.clave_sal) && !db.claveCorrecta(CLAVE, us.clave_hash, us.clave_sal),
+      'revertir: ni la contraseña vieja ni la nueva valen');
+    comprobar(us.telefono_verificado === null, 'revertir: el celular queda sin verificar');
+    comprobar(todas('SELECT 1 FROM dispositivos WHERE usuario_id = ?', S).length === 0, 'revertir: no queda ningún equipo recordado');
+    comprobar(fila('SELECT estado FROM solicitudes_recuperacion WHERE id = ?', sol.id).estado === 'anulada', 'revertir: la solicitud revisada pendiente se anula');
+    await tick();
+    const codS = codigoDeCorreo(nuevos(), 'noyo-24s@ejemplo.test');
+    comprobar(/^\d{6}$/.test(codS || ''), 'revertir: llega al titular un código restablecer');
+    r = await post('/api/cuenta/restablecer', { correo: 'noyo-24s@ejemplo.test', codigo: codS, clave: 'ClaveElegida24Ok' }, como(null));
+    const us2 = db.usuarioPorId(S);
+    comprobar(r.codigo === 200 && db.claveCorrecta('ClaveElegida24Ok', us2.clave_hash, us2.clave_sal), 'con ese código se crea una contraseña y vale');
+
+    /* un solo uso, inventado, vencido */
+    r = await post('/api/cuenta/clave/revertir', { testigo }, como(null));
+    comprobar(r.codigo === 400 && /no es válido o ya se usó/.test(r.datos.error), 'el mismo testigo otra vez: 400');
+    r = await post('/api/cuenta/clave/revertir', { testigo: 'zz' }, como(null));
+    comprobar(r.codigo === 400 && /no es válido o ya se usó/.test(r.datos.error), 'testigo «zz»: 400 igual');
+
+    const V = cuenta('noyo-24v@ejemplo.test', 'Noyo V', { telefono: '8495552403' });
+    db.verificarTelefonoCuenta({ idUsuario: V, numero: '8495552403', via: 'verificado' });
+    const cv = db.anotarCambioClave({ idUsuario: V, via: 'actual', ip: '201.7.7.24' });
+    db.abrir().prepare('UPDATE cambios_clave SET revertir_expira = ? WHERE id = ?').run(PASADO, cv.id);
+    const vAntes = db.usuarioPorId(V);
+    r = await post('/api/cuenta/clave/revertir', { testigo: cv.testigoRevertir }, como(null));
+    const vDespues = db.usuarioPorId(V);
+    comprobar(r.codigo === 400 && /venció/.test(r.datos.error), 'testigo vencido: 400 «venció»');
+    comprobar(vDespues.clave_hash === vAntes.clave_hash && !!vDespues.telefono_verificado, 'testigo vencido: la cuenta queda intacta');
+  } finally { delete process.env.MERCA_SMS; }
+
+  /* tope por IP: el 11.º en 15 minutos */
+  const ipTope = '201.8.8.24';
+  const codigos = [];
+  for (let i = 0; i < 11; i++) codigos.push((await post('/api/cuenta/clave/revertir', { testigo: 'zz' }, como(null, ipTope))).codigo);
+  comprobar(codigos.slice(0, 10).every((x) => x === 400) && codigos[10] === 429, 'el undécimo intento desde la misma IP: 429');
+
+  /* orden de rutas */
+  const primera = (ruta) => api.RUTAS.find(([m, re]) => m === 'POST' && re.test(ruta));
+  const pr = primera('/api/cuenta/clave/revertir');
+  const pk = primera('/api/cuenta/clave');
+  comprobar(!!pr && pr[1].source.includes('revertir$'), 'la primera ruta que casa con /clave/revertir termina en revertir$');
+  comprobar(!!pk && pk[1].source === '^\\/api\\/cuenta\\/clave$' && pk !== pr, '/clave sigue con su propia ruta');
+}
 }
 
 main().then(() => {
