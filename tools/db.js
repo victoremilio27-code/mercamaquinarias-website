@@ -6417,10 +6417,30 @@ function ultimosDatosFiscales(idOrg) {
   };
 }
 
+/* sustituir por lote.validarMes cuando exista el módulo del lote mensual. */
+function validarMes(mes) {
+  const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(mes || ''));
+  if (!m) return null;
+  const anio = Number(m[1]);
+  const numero = Number(m[2]);
+  const siguiente = numero === 12
+    ? `${String(anio + 1).padStart(4, '0')}-01`
+    : `${m[1]}-${String(numero + 1).padStart(2, '0')}`;
+  return {
+    mes: m[0],
+    desde: `${m[0]}-01T04:00:00.000Z`,
+    hasta: `${siguiente}-01T04:00:00.000Z`,
+  };
+}
+
 function facturas({ mes, pendientes = false, limite = 500 } = {}) {
   const donde = [];
   const args = [];
-  if (mes) { donde.push("substr(f.fecha, 1, 7) = ?"); args.push(mes); }
+  const periodo = validarMes(mes);
+  if (periodo) {
+    donde.push('f.fecha >= ? AND f.fecha < ?');
+    args.push(periodo.desde, periodo.hasta);
+  }
   if (pendientes) donde.push('(f.enviada_cliente IS NULL OR f.enviada_interna IS NULL)');
 
   args.push(limite);
@@ -6458,7 +6478,7 @@ module.exports = {
   reprogramarRenovacion, suscripcionesPorRenovar, anotarIntentoRenovacion, clienteDeRenovacion,
   anuncioUnicoDeSuscripcion, suscripcionesPorAvisar, anotarAvisoRenovacion, tarjetasPorVencer,
   anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
-  facturasDe, facturas, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
+  facturasDe, facturas, validarMes, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
   cifrarClave, claveCorrecta, cambiarClave,
   /* Fase 10.1: cambio de correo, reversión y recuperación de cuenta. */

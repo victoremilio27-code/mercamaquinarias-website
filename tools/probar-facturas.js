@@ -32,6 +32,8 @@ process.env.MERCA_FACTURAS = path.join(BANCO, 'facturas');
 
 const db = require('./db');
 const facturas = require('./facturas');
+const api = require('./api');
+const { EventEmitter } = require('events');
 
 const ID_ORG = 'org-prueba';
 
@@ -48,6 +50,37 @@ function conexion() {
   const d = new DatabaseSync(process.env.MERCA_DB);
   d.exec('PRAGMA foreign_keys = ON');
   return d;
+}
+
+/* Una petición real al enrutador permite comprobar tanto el JSON como el
+   CSV sin levantar un puerto ni salir de la base temporal. */
+function pedir(url, cabeceras) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = 'GET';
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-facturas', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      cabeceras: {},
+      setHeader() {},
+      writeHead(codigo, headers = {}) {
+        res.codigo = codigo;
+        res.cabeceras = headers;
+        return res;
+      },
+      destroy() {},
+      end(cuerpo) {
+        resolver({ codigo: res.codigo, cabeceras: res.cabeceras, cuerpo: cuerpo || '' });
+      },
+    };
+
+    api.manejar(req, res, new URL(url, 'http://localhost').pathname);
+    setImmediate(() => req.emit('end'));
+  });
 }
 
 function prepararOrganizacion() {
@@ -168,6 +201,46 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
   const bueno = asuntos.find((s) => s.startsWith('[Facturación]')
     && s.includes(enviada.numero) && s.includes(enviada.referencia_pago));
   ok(!!bueno, bueno || `no salió el asunto esperado; salieron: ${asuntos.join(' | ') || 'ninguno'}`);
+
+  console.log();
+  console.log('11. El mes se corta a medianoche de Santo Domingo en listado y CSV');
+
+  const d = conexion();
+  d.prepare('UPDATE facturas SET fecha = ? WHERE id = ?').run('2025-10-01T03:59:59.999Z', f1.id);
+  d.prepare('UPDATE facturas SET fecha = ? WHERE id = ?').run('2025-10-01T04:00:00.000Z', f2.id);
+  const { idUsuario: idAdmin } = db.crearCuenta({
+    correo: 'admin-facturas@prueba.invalid', clave: 'UnaClaveLargaYSegura9',
+    nombre: 'Administradora de prueba', telefono: '8095550199', tipo: 'particular',
+  });
+  d.prepare('UPDATE usuarios SET es_admin = 1 WHERE id = ?').run(idAdmin);
+  const antes = d.prepare('SELECT id, fecha FROM facturas ORDER BY id').all();
+  d.close();
+
+  const cabeceras = { cookie: `te_sesion=${db.abrirSesion(idAdmin)}` };
+  const septiembre = await pedir('/api/admin/facturas?mes=2025-09', cabeceras);
+  const octubre = await pedir('/api/admin/facturas?mes=2025-10', cabeceras);
+  const listaSeptiembre = JSON.parse(septiembre.cuerpo).facturas;
+  const listaOctubre = JSON.parse(octubre.cuerpo).facturas;
+  ok(septiembre.codigo === 200 && listaSeptiembre.some((f) => f.id === f1.id)
+    && !listaSeptiembre.some((f) => f.id === f2.id),
+  '03:59:59.999Z sale en septiembre en el listado');
+  ok(octubre.codigo === 200 && listaOctubre.some((f) => f.id === f2.id)
+    && !listaOctubre.some((f) => f.id === f1.id),
+  '04:00:00.000Z sale en octubre en el listado');
+
+  const csvSeptiembre = await pedir('/api/admin/facturas.csv?mes=2025-09', cabeceras);
+  const csvOctubre = await pedir('/api/admin/facturas.csv?mes=2025-10', cabeceras);
+  const textoSeptiembre = Buffer.from(csvSeptiembre.cuerpo).toString('utf8');
+  const textoOctubre = Buffer.from(csvOctubre.cuerpo).toString('utf8');
+  ok(csvSeptiembre.codigo === 200 && textoSeptiembre.includes(f1.numero)
+    && !textoSeptiembre.includes(f2.numero), '03:59:59.999Z sale en septiembre en el CSV');
+  ok(csvOctubre.codigo === 200 && textoOctubre.includes(f2.numero)
+    && !textoOctubre.includes(f1.numero), '04:00:00.000Z sale en octubre en el CSV');
+
+  const verificacion = conexion();
+  const despues = verificacion.prepare('SELECT id, fecha FROM facturas ORDER BY id').all();
+  verificacion.close();
+  ok(JSON.stringify(despues) === JSON.stringify(antes), 'los dos filtros son de solo lectura');
 
   console.log();
   console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
