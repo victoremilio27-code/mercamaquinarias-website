@@ -1495,8 +1495,14 @@ const usuarioPorId = (idUsuario) =>
    propietario. Va en una transacción porque una cuenta a medio crear
    (usuario sin organización) no podría publicar nada y habría que
    repararla a mano. */
-function crearCuenta({ correo, clave, nombre, telefono, tipo, empresa, rnc, direccion, provincia, municipio, solicitud }) {
+function crearCuenta({ correo, clave, nombre, telefono, telefonoEmpresa, tipo, empresa, rnc, direccion, provincia, municipio, solicitud }) {
   const d = abrir();
+  // El celular es de quien abre la cuenta y se guarda en 10 dígitos (el
+  // índice del celular verificado compara números, no formatos). El
+  // teléfono de la empresa es otro dato y, si falta, se usa el celular
+  // como hasta ahora (D-14).
+  const celular = normalizarNumero(telefono) || telefono || null;
+  const telefonoOrg = telefonoEmpresa || telefono || null;
   const { hash, sal } = cifrarClave(clave);
   const idUsuario = id();
   const idOrg = id();
@@ -1515,13 +1521,13 @@ function crearCuenta({ correo, clave, nombre, telefono, tipo, empresa, rnc, dire
   try {
     d.prepare(`INSERT INTO usuarios (id, correo, nombre, telefono, clave_hash, clave_sal, creado)
                VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .run(idUsuario, String(correo).trim().toLowerCase(), nombre, telefono || null, hash, sal, t);
+      .run(idUsuario, String(correo).trim().toLowerCase(), nombre, celular, hash, sal, t);
 
     d.prepare(`INSERT INTO organizaciones
                (id, tipo, nombre, rnc, slug, correo, telefono, estado_revision, creada)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(idOrg, esDealer ? 'dealer' : 'particular', nombreOrg,
-        esDealer ? (rnc || null) : null, slug, String(correo).trim().toLowerCase(), telefono || null,
+        esDealer ? (rnc || null) : null, slug, String(correo).trim().toLowerCase(), telefonoOrg,
         esDealer ? 'pendiente' : 'no_aplica', t);
 
     // La sucursal principal nace con la cuenta. En un dealer llega ya
@@ -1534,7 +1540,7 @@ function crearCuenta({ correo, clave, nombre, telefono, tipo, empresa, rnc, dire
         esDealer ? (provincia || null) : null,
         esDealer ? (municipio || null) : null,
         esDealer ? (direccion || null) : null,
-        telefono || null, t);
+        telefonoOrg, t);
 
     d.prepare(`INSERT INTO miembros (id, organizacion_id, usuario_id, rol, creado)
                VALUES (?, ?, ?, 'propietario', ?)`)
@@ -1693,6 +1699,19 @@ function normalizarNumero(numero) {
   let d = String(numero == null ? '' : numero).replace(/\D/g, '');
   if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
   return d.length === 10 ? d : null;
+}
+
+/* Códigos de área del país. Limitar el destino de los SMS a estos tres
+   impide el bombeo de SMS hacia números internacionales caros (D-10): un
+   formulario público que envía a cualquier número es una factura abierta. */
+const AREAS_RD = Object.freeze(['809', '829', '849']);
+
+/* El celular de una cuenta: 10 dígitos con área dominicana, o null.
+   No distingue un celular de un fijo (los tres prefijos cubren todo el
+   país): eso lo demuestra el código por SMS. */
+function celularRd(valor) {
+  const n = normalizarNumero(valor);
+  return n && AREAS_RD.includes(n.slice(0, 3)) ? n : null;
 }
 
 const MINUTOS_CODIGO_CONTACTO = 15;
@@ -1911,6 +1930,7 @@ function purgar() {
   d.prepare('DELETE FROM dispositivos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM intentos WHERE expira < ?').run(t);
   d.prepare('DELETE FROM codigos WHERE expira < ?').run(new Date(Date.now() - 86400000).toISOString());
+  d.prepare('DELETE FROM codigos_telefono WHERE expira < ?').run(new Date(Date.now() - 86400000).toISOString());
 
   /* Números que alguien empezó a verificar y nunca terminó. Los ya
      verificados no se tocan nunca: borrarlos escondería el teléfono de
@@ -5671,6 +5691,7 @@ function revertirCambioCorreo(testigo, ip) {
   const otro = d.prepare('SELECT id FROM usuarios WHERE correo = ? AND id <> ?').get(fila.anterior, u.id);
   if (otro) return { ok: false, motivo: 'ocupado' };
 
+  let telefonoQuitado = false;
   d.prepare('SAVEPOINT revertir_correo').run();
   try {
     const t = ahora();
@@ -5700,13 +5721,26 @@ function revertirCambioCorreo(testigo, ip) {
                 WHERE usuario_id = ? AND creado >= ? AND revertido IS NULL AND id <> ?`)
       .run(u.id, fila.creado, fila.id);
 
+    /* El celular verificado también se quita (D-09). Sin esto, quien tiene
+       la SIM duplicada repite la recuperación por SMS un minuto después de
+       que el dueño pulsó «No fui yo». Vale para TODAS las vías: un intruso
+       con sesión y contraseña pudo haber cambiado el celular antes que el
+       correo. El enfriamiento se borra porque quien pulsa «No fui yo» es
+       el dueño del correo anterior, que ya ha vuelto. */
+    telefonoQuitado = !!u.telefono_verificado;
+    d.prepare('UPDATE usuarios SET telefono_verificado = NULL, enfriamiento_hasta = NULL WHERE id = ?').run(u.id);
+    anularCodigosTelefono(u.id);
+    if (telefonoQuitado) {
+      anotarCambioTelefono({ idUsuario: u.id, anterior: u.telefono, nuevo: null, via: 'reversion', ip });
+    }
+
     d.prepare('RELEASE revertir_correo').run();
   } catch (e) {
     d.prepare('ROLLBACK TO revertir_correo').run();
     d.prepare('RELEASE revertir_correo').run();
     throw e;
   }
-  return { ok: true, idUsuario: u.id, correo: fila.anterior };
+  return { ok: true, idUsuario: u.id, correo: fila.anterior, telefonoQuitado };
 }
 
 /* Deja una contraseña que nadie conoce. Se usa tras revertir un cambio:
@@ -5775,14 +5809,16 @@ function expedienteRecuperacion(idSol) {
   const s = solicitudRecuperacion(idSol);
   if (!s) return null;
   const exp = { ...s, cuenta: null, organizacion: null, anuncios: { total: 0, titulos: [] },
-    pagos: [], telefonosVerificados: [], cambiosCorreo: [] };
+    pagos: [], telefonosVerificados: [], cambiosCorreo: [], cambiosTelefono: [] };
   if (!s.usuario_id) return exp;
 
   const d = abrir();
   const u = usuarioPorId(s.usuario_id);
   if (!u) return exp;
   exp.cuenta = { nombre: u.nombre, correo: u.correo, telefono: u.telefono || null,
-    creado: u.creado, correo_verificado: u.correo_verificado };
+    creado: u.creado, correo_verificado: u.correo_verificado,
+    telefono_verificado: u.telefono_verificado || null,
+    enfriamiento_hasta: u.enfriamiento_hasta || null };
 
   const org = organizacionDe(u.id);
   if (org) {
@@ -5805,6 +5841,7 @@ function expedienteRecuperacion(idSol) {
   }
   exp.cambiosCorreo = d.prepare(`SELECT anterior, nuevo, via, creado, revertido FROM cambios_correo
                                   WHERE usuario_id = ? ORDER BY creado DESC LIMIT 5`).all(u.id);
+  exp.cambiosTelefono = cambiosTelefonoDe(u.id);
   return exp;
 }
 
@@ -5829,6 +5866,241 @@ function resolverRecuperacion({ id: idSol, estado, idAdmin, motivo }) {
   if (!r.changes) throw errorCodigo('Esa solicitud ya no está pendiente', 409);
   return solicitudRecuperacion(idSol);
 }
+
+/* ── Celular de la cuenta (fase 10.2) ───────────────────── */
+
+/* Lista congelada en JS y no CHECK en la tabla: las fases 9 y 10.1 pagaron
+   un CHECK cerrado con una tabla rehecha. La prueba vigila esta lista. */
+const PROPOSITOS_SMS = Object.freeze(['verificar', 'cambio', 'restablecer', 'clave', 'recuperar']);
+
+/* Los mismos vencimientos que los códigos de correo equivalentes (D-05). */
+const MINUTOS_SMS = Object.freeze({ verificar: 15, cambio: 15, restablecer: 20, clave: 20, recuperar: 15 });
+const MINUTOS_AUTORIZACION = 15;
+const HORAS_ENFRIAMIENTO_SMS = 72;
+const DIAS_ACCION_SMS_RECIENTE = 7;
+const VIAS_CAMBIO_TELEFONO = Object.freeze(['sin_verificar', 'verificado', 'cambio', 'liberado', 'reversion']);
+
+/* La firma lleva propósito, usuario y número: un código pedido para una
+   cosa o un número no sirve para otro. El prefijo `sms|` impide que
+   coincida con la firma de un código de correo. */
+const firmarCodigoTelefono = (proposito, idUsuario, numero, codigo) =>
+  crypto.createHmac('sha256', SECRETO).update(`sms|${proposito}|${idUsuario}|${numero}|${codigo}`).digest('hex');
+
+const firmarAutorizacion = (testigo) =>
+  crypto.createHmac('sha256', SECRETO).update(`autoriza|${testigo}`).digest('hex');
+
+/* Anula todos los códigos SMS pendientes de la cuenta. */
+const anularCodigosTelefono = (idUsuario) =>
+  abrir().prepare('UPDATE codigos_telefono SET consumido = 1 WHERE usuario_id = ? AND consumido = 0').run(idUsuario);
+
+/* Emite un código al celular y anula los anteriores del mismo usuario y
+   propósito: si se piden tres seguidos, solo vale el último. */
+function crearCodigoTelefono({ idUsuario, numero, proposito, ip }) {
+  if (!PROPOSITOS_SMS.includes(proposito)) throw errorCodigo('Propósito de código no válido', 400);
+  const celular = celularRd(numero);
+  if (!celular) throw errorCodigo('Escriba un celular dominicano de 10 dígitos (809, 829 o 849)', 400);
+
+  const d = abrir();
+  d.prepare(`UPDATE codigos_telefono SET consumido = 1
+              WHERE usuario_id = ? AND proposito = ? AND consumido = 0`).run(idUsuario, proposito);
+
+  const codigo = generarCodigo();
+  const minutos = MINUTOS_SMS[proposito];
+  // Un solo Date.now(): `expira - creado` son exactamente `minutos`.
+  const t = Date.now();
+  const idCodigo = id();
+  d.prepare(`INSERT INTO codigos_telefono
+             (id, usuario_id, numero, proposito, codigo_hash, expira, creado, ip)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(idCodigo, idUsuario, celular, proposito, firmarCodigoTelefono(proposito, idUsuario, celular, codigo),
+      new Date(t + minutos * 60000).toISOString(), new Date(t).toISOString(),
+      ip ? String(ip).slice(0, 64) : null);
+
+  return { id: idCodigo, codigo, minutos, numero: celular };
+}
+
+/* Comprueba y consume. Mismo orden de motivos y misma comparación en
+   tiempo constante que verificarCodigo; devuelve { ok, motivo, restantes }
+   o { ok:true, id }. El consumo es condicional: dos peticiones simultáneas
+   con el código correcto no pueden pasar las dos. */
+function verificarCodigoTelefono({ idUsuario, numero, proposito, codigo }) {
+  const d = abrir();
+  const celular = celularRd(numero);
+  const fila = celular && d.prepare(`
+    SELECT * FROM codigos_telefono
+    WHERE usuario_id = ? AND proposito = ? AND numero = ? AND consumido = 0
+    ORDER BY creado DESC, rowid DESC LIMIT 1`).get(idUsuario, proposito, celular);
+
+  if (!fila) return { ok: false, motivo: 'inexistente' };
+  if (fila.expira < ahora()) return { ok: false, motivo: 'vencido' };
+  if (fila.intentos >= MAX_INTENTOS_CODIGO) {
+    d.prepare('UPDATE codigos_telefono SET consumido = 1 WHERE id = ?').run(fila.id);
+    return { ok: false, motivo: 'agotado' };
+  }
+
+  const esperado = Buffer.from(fila.codigo_hash, 'hex');
+  const recibido = Buffer.from(
+    firmarCodigoTelefono(proposito, idUsuario, celular, String(codigo || '').trim()), 'hex');
+  const coincide = esperado.length === recibido.length && crypto.timingSafeEqual(esperado, recibido);
+
+  if (!coincide) {
+    d.prepare('UPDATE codigos_telefono SET intentos = intentos + 1 WHERE id = ?').run(fila.id);
+    return { ok: false, motivo: 'incorrecto', restantes: MAX_INTENTOS_CODIGO - fila.intentos - 1 };
+  }
+
+  const r = d.prepare('UPDATE codigos_telefono SET consumido = 1 WHERE id = ? AND consumido = 0').run(fila.id);
+  if (!r.changes) return { ok: false, motivo: 'usado' };
+  return { ok: true, id: fila.id };
+}
+
+/* Tras acertar el SMS de la recuperación el servidor no abre sesión:
+   entrega un testigo de 32 bytes que los pasos siguientes presentan. En la
+   base queda solo su HMAC, así que quien lea la base no puede usarlo. */
+function autorizarRecuperacion(idCodigo) {
+  const d = abrir();
+  const fila = d.prepare('SELECT * FROM codigos_telefono WHERE id = ?').get(idCodigo);
+  if (!fila || fila.proposito !== 'recuperar' || fila.consumido !== 1 || fila.autoriza_hash) {
+    throw errorCodigo('Código no válido para autorizar', 400);
+  }
+  const testigo = crypto.randomBytes(32).toString('hex');
+  const r = d.prepare(`UPDATE codigos_telefono SET autoriza_hash = ?, autoriza_expira = ?
+                        WHERE id = ? AND autoriza_hash IS NULL`)
+    .run(firmarAutorizacion(testigo), new Date(Date.now() + MINUTOS_AUTORIZACION * 60000).toISOString(), fila.id);
+  if (!r.changes) throw errorCodigo('Código no válido para autorizar', 400);
+  return testigo;
+}
+
+/* Devuelve también el `numero` al que fue el código: la API comprueba que
+   sigue siendo el celular verificado de la cuenta (pudo cambiar entre el
+   paso 2 y el 4). */
+function leerAutorizacion(testigo) {
+  const fila = abrir().prepare('SELECT * FROM codigos_telefono WHERE autoriza_hash = ?')
+    .get(firmarAutorizacion(String(testigo || '')));
+  if (!fila) return { ok: false, motivo: 'inexistente' };
+  if (fila.autoriza_usada) return { ok: false, motivo: 'usado' };
+  if (fila.autoriza_expira < ahora()) return { ok: false, motivo: 'vencido' };
+  return { ok: true, id: fila.id, idUsuario: fila.usuario_id, numero: fila.numero };
+}
+
+/* Un solo uso, en una sentencia condicional (como `revertido IS NULL`). */
+function gastarAutorizacion(testigo) {
+  const r = abrir().prepare(`UPDATE codigos_telefono SET autoriza_usada = ?
+                              WHERE autoriza_hash = ? AND autoriza_usada IS NULL`)
+    .run(ahora(), firmarAutorizacion(String(testigo || '')));
+  return Number(r.changes) === 1;
+}
+
+/* La bitácora del celular (D-06). */
+function anotarCambioTelefono({ idUsuario, anterior, nuevo, via, ip }) {
+  if (!VIAS_CAMBIO_TELEFONO.includes(via)) throw errorCodigo('Vía de cambio de celular no válida', 400);
+  abrir().prepare(`INSERT INTO cambios_telefono (id, usuario_id, anterior, nuevo, via, creado, ip)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(id(), idUsuario, anterior || null, nuevo || null, via, ahora(), ip ? String(ip).slice(0, 64) : null);
+}
+
+/* Deja el número como celular verificado de la cuenta (`via`: 'verificado'
+   la primera vez, 'cambio' si reemplaza a otro) y, en la misma
+   transacción, se lo quita a cualquier otra cuenta que lo tuviera
+   verificado (D-13). Rechazar la segunda verificación delataría qué
+   números tienen cuenta y atraparía al dueño de un número reciclado: se
+   lo queda quien lo demuestra. Devuelve las cuentas liberadas para que la
+   API les avise por correo. SAVEPOINT y no BEGIN, como el resto de la
+   fase 10.1: tiene que poder ir dentro de otra transacción. */
+function verificarTelefonoCuenta({ idUsuario, numero, via, ip }) {
+  if (via !== 'verificado' && via !== 'cambio') throw errorCodigo('Vía de verificación no válida', 400);
+  const celular = celularRd(numero);
+  if (!celular) throw errorCodigo('Escriba un celular dominicano de 10 dígitos (809, 829 o 849)', 400);
+
+  const d = abrir();
+  const u = usuarioPorId(idUsuario);
+  if (!u) throw errorCodigo('La cuenta no existe', 404);
+
+  d.prepare('SAVEPOINT verificar_telefono').run();
+  try {
+    const liberados = d.prepare(`SELECT id, correo, nombre FROM usuarios
+                                  WHERE telefono = ? AND id <> ? AND telefono_verificado IS NOT NULL`)
+      .all(celular, idUsuario).map((f) => ({ id: f.id, correo: f.correo, nombre: f.nombre }));
+    for (const otra of liberados) {
+      d.prepare('UPDATE usuarios SET telefono_verificado = NULL WHERE id = ?').run(otra.id);
+      anularCodigosTelefono(otra.id);
+      anotarCambioTelefono({ idUsuario: otra.id, anterior: celular, nuevo: null, via: 'liberado', ip });
+    }
+
+    d.prepare('UPDATE usuarios SET telefono = ?, telefono_verificado = ? WHERE id = ?')
+      .run(celular, ahora(), idUsuario);
+    anotarCambioTelefono({ idUsuario, anterior: u.telefono, nuevo: celular, via, ip });
+
+    d.prepare('RELEASE verificar_telefono').run();
+    return { numero: celular, anterior: u.telefono || null, liberados };
+  } catch (e) {
+    d.prepare('ROLLBACK TO verificar_telefono').run();
+    d.prepare('RELEASE verificar_telefono').run();
+    // Dos verificaciones simultáneas del mismo número: la frena el índice.
+    if (/UNIQUE/i.test(e.message)) {
+      throw errorCodigo('Ese celular acaba de verificarse en otra cuenta. Inténtelo de nuevo.', 409);
+    }
+    throw e;
+  }
+}
+
+/* Guardar un celular sin demostrarlo. Con uno verificado no vale: eso
+   exigiría el código al número nuevo. */
+function guardarTelefonoSinVerificar({ idUsuario, numero, ip }) {
+  const u = usuarioPorId(idUsuario);
+  if (!u) throw errorCodigo('La cuenta no existe', 404);
+  if (u.telefono_verificado) throw errorCodigo('Su celular verificado solo se cambia con un código por SMS.', 409);
+  const celular = celularRd(numero);
+  if (!celular) throw errorCodigo('Escriba un celular dominicano de 10 dígitos (809, 829 o 849)', 400);
+  abrir().prepare('UPDATE usuarios SET telefono = ? WHERE id = ?').run(celular, idUsuario);
+  anotarCambioTelefono({ idUsuario, anterior: u.telefono, nuevo: celular, via: 'sin_verificar', ip });
+  return { anterior: u.telefono || null, numero: celular };
+}
+
+/* Quita la verificación (el número queda guardado). true si estaba
+   verificado. */
+function quitarVerificacionTelefono({ idUsuario, ip }) {
+  const u = usuarioPorId(idUsuario);
+  if (!u || !u.telefono_verificado) return false;
+  abrir().prepare('UPDATE usuarios SET telefono_verificado = NULL WHERE id = ?').run(idUsuario);
+  anularCodigosTelefono(idUsuario);
+  anotarCambioTelefono({ idUsuario, anterior: u.telefono, nuevo: null, via: 'reversion', ip });
+  return true;
+}
+
+/* Puras: comparan cadenas ISO y reciben el instante, para que la prueba no
+   dependa del reloj. */
+const enEnfriamiento = (usuario, instante = new Date().toISOString()) =>
+  !!(usuario && usuario.enfriamiento_hasta && usuario.enfriamiento_hasta > instante);
+
+/* El enfriamiento solo lo pone una acción hecha solo con SMS, así que su
+   fecha dice cuándo fue. Durante sus 72 h y los 7 días siguientes (10 días
+   en total), recuperar la contraseña por CORREO quita el celular: quien
+   tiene el correo reclama la cuenta. Es lo que promete el aviso de
+   contraseña cambiada por SMS. */
+function accionSmsReciente(usuario, instante = new Date().toISOString()) {
+  if (!usuario || !usuario.enfriamiento_hasta) return false;
+  const umbral = new Date(Date.parse(instante) - DIAS_ACCION_SMS_RECIENTE * 86400000).toISOString();
+  return usuario.enfriamiento_hasta > umbral;
+}
+
+/* Fija `desde + horas` sin acortar uno más largo. Devuelve lo que queda
+   en la fila. */
+function ponerEnfriamiento(idUsuario, { desde = new Date(), horas = HORAS_ENFRIAMIENTO_SMS } = {}) {
+  const d = abrir();
+  const hasta = new Date(desde.getTime() + horas * 3600000).toISOString();
+  d.prepare(`UPDATE usuarios SET enfriamiento_hasta = ?
+              WHERE id = ? AND (enfriamiento_hasta IS NULL OR enfriamiento_hasta < ?)`)
+    .run(hasta, idUsuario, hasta);
+  const u = usuarioPorId(idUsuario);
+  return u ? u.enfriamiento_hasta : null;
+}
+
+const quitarEnfriamiento = (idUsuario) =>
+  abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = NULL WHERE id = ?').run(idUsuario);
+
+const cambiosTelefonoDe = (idUsuario, limite = 5) =>
+  abrir().prepare(`SELECT anterior, nuevo, via, creado FROM cambios_telefono
+                    WHERE usuario_id = ? ORDER BY creado DESC, rowid DESC LIMIT ?`).all(idUsuario, limite);
 
 /* ── Aceptaciones legales ───────────────────────────────── */
 
@@ -6190,6 +6462,13 @@ module.exports = {
   cerrarOtrasDe, cambiarCorreo, revertirCambioCorreo, anularClave,
   HORAS_ESPERA_RECUPERACION, crearSolicitudRecuperacion, solicitudRecuperacion,
   solicitudesRecuperacion, expedienteRecuperacion, anularRecuperacionesDe, resolverRecuperacion,
+  /* Fase 10.2: celular de la cuenta y códigos por SMS. */
+  AREAS_RD, PROPOSITOS_SMS, MINUTOS_SMS, MINUTOS_AUTORIZACION, HORAS_ENFRIAMIENTO_SMS,
+  DIAS_ACCION_SMS_RECIENTE, VIAS_CAMBIO_TELEFONO, celularRd, crearCodigoTelefono,
+  verificarCodigoTelefono, anularCodigosTelefono, autorizarRecuperacion, leerAutorizacion,
+  gastarAutorizacion, verificarTelefonoCuenta, guardarTelefonoSinVerificar,
+  quitarVerificacionTelefono, enEnfriamiento, accionSmsReciente, ponerEnfriamiento,
+  quitarEnfriamiento, cambiosTelefonoDe,
   usuarioPorCorreo, usuarioPorId, crearCuenta, organizacionDe, sucursalPrincipal,
   abrirSesion, sesion, cerrarSesion, cerrarTodoDe,
   crearCodigo, verificarCodigo, marcarCorreoVerificado,
