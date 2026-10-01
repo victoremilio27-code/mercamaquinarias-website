@@ -2753,7 +2753,10 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 }
 .filtro-panel--activo { background: var(--azul); color: var(--blanco); }
 
-.tabla-envoltura { overflow-x: auto; margin-top: 6px; }
+/* `position: relative` porque los `.visualmente-oculto` de las cabeceras son
+   absolutos: sin un ancestro posicionado se escapaban del scroll de la tabla y
+   ensanchaban el panel a 628 px en un móvil de 390. */
+.tabla-envoltura { position: relative; overflow-x: auto; margin-top: 6px; }
 .tabla-anuncios { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tabla-anuncios th, .tabla-anuncios td { padding: 11px 10px; text-align: left; border-bottom: 1px solid var(--linea-suave); }
 .tabla-anuncios thead th {
