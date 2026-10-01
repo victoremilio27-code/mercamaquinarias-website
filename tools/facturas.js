@@ -161,7 +161,7 @@ function dibujar(f, { emisor }) {
   /* El domicilio fiscal SÍ va aquí. En el sitio no aparece —es una
      vivienda—, pero un comprobante sin domicilio del emisor no cumple. */
   yEmisor = d.parrafo(emisor.domicilioFiscal, M, yEmisor, 240, { tamano: 8.5, color: GRIS, interlinea: 1.35 });
-  d.texto(`${correo.BUZONES.facturacion} · mercamaquinarias.com`, M, yEmisor, { tamano: 8.5, color: GRIS });
+  d.texto(`${emisor.correoFacturacion || correo.BUZONES.facturacion} · mercamaquinarias.com`, M, yEmisor, { tamano: 8.5, color: GRIS });
   yEmisor += 12;
 
   /* ── Recuadro del comprobante ─────────────────────────── */
@@ -439,7 +439,7 @@ function variablesDe(f, { emisor = correo.EMPRESA } = {}) {
     EMISOR_RAZON_SOCIAL: emisor.razonSocial,
     EMISOR_RNC: emisor.rnc,
     EMISOR_DOMICILIO: emisor.domicilioFiscal,
-    EMISOR_CORREO: correo.BUZONES.facturacion,
+    EMISOR_CORREO: emisor.correoFacturacion || correo.BUZONES.facturacion,
   };
 }
 
@@ -448,7 +448,9 @@ function comoHtml(f, opciones = {}) {
      edita, y lo que se le sirve al cliente es su comprobante, no las
      instrucciones de la maqueta. */
   let html = fs.readFileSync(PLANTILLA, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
-  const valores = variablesDe(f, opciones);
+  // La vista web es el mismo comprobante que el PDF: también sale de lo guardado (#58).
+  const { fila, emisor } = paraDibujar(f, opciones.emisor);
+  const valores = variablesDe(fila, { ...opciones, emisor });
 
   /* Primero se quitan los bloques opcionales vacíos, con la variable
      todavía sin sustituir: así se reconoce el elemento por su atributo
@@ -519,6 +521,45 @@ function decidirTipo({ quiereFiscal }) {
   return { tipo: 'recibo', ncf: null };
 }
 
+/* Lo que el PDF dibuja y la fila no guarda (#58).
+ *
+ * Se fija al emitir en `facturas.dibujo` y manda siempre sobre lo de
+ * ahora: un duplicado tiene que salir igual que el original, aunque
+ * después cambie el domicilio fiscal o el buzón. El periodo no va aquí
+ * porque ya tiene columna (`periodo_servicio`). */
+const CAMPOS_DETALLE = ['cantidad', 'precio_unitario', 'lineas'];
+
+function instantanea(detalle, emisor) {
+  const guardado = {};
+  for (const campo of CAMPOS_DETALLE) {
+    if (detalle && detalle[campo] != null) guardado[campo] = detalle[campo];
+  }
+  return {
+    detalle: guardado,
+    emisor: {
+      razonSocial: emisor.razonSocial,
+      rnc: emisor.rnc,
+      registroMercantil: emisor.registroMercantil || '',
+      domicilioFiscal: emisor.domicilioFiscal,
+      correoFacturacion: emisor.correoFacturacion || correo.BUZONES.facturacion,
+    },
+  };
+}
+
+/* La fila lista para dibujar. Sin `dibujo` (todo lo emitido antes de
+   #58) sale como siempre: la fila y el emisor que se pase. Un JSON
+   ilegible no tumba la reposición: vale más un duplicado como los de
+   antes que ninguno. */
+function paraDibujar(f, emisor = correo.EMPRESA) {
+  let guardado = null;
+  try { guardado = f.dibujo ? JSON.parse(f.dibujo) : null; } catch (_) { guardado = null; }
+  if (!guardado) return { fila: f, emisor };
+  return {
+    fila: { ...f, ...(guardado.detalle || {}) },
+    emisor: guardado.emisor || emisor,
+  };
+}
+
 /* Emite el comprobante de un pago. Devuelve la fila creada.
  *
  * No manda el correo: eso lo hace `enviar()`, aparte, para que un fallo
@@ -569,6 +610,7 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
        en el mes equivocado. Los pagos anteriores a `confirmado` no la
        tienen y usan `creado`, como siempre. */
     fecha: pago.confirmado || pago.creado,
+    dibujo: instantanea(detalle, emisor),
   });
 
   /* El PDF va APARTE y a prueba de fallos.
@@ -584,8 +626,10 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
    * factura quede marcada como enviada, porque entonces ninguna tarea
    * vuelve a mirarla nunca. De eso se ocupa `enviar()`. */
   try {
-    const fila = db.facturaPorId(idFactura);
-    const bytes = dibujar({ ...fila, ...detalle }, { emisor });
+    /* Se dibuja desde lo guardado, no desde `detalle`: así el original
+       y cualquier duplicado salen del mismo sitio y no pueden diferir. */
+    const { fila, emisor: emisorGuardado } = paraDibujar(db.facturaPorId(idFactura), emisor);
+    const bytes = dibujar(fila, { emisor: emisorGuardado });
     const ruta = guardarPdf(numero, fila.fecha, bytes);
     db.anotarPdf(idFactura, ruta);
   } catch (e) {
@@ -613,7 +657,8 @@ function reponerPdfsDe(filas, { emisor = correo.EMPRESA } = {}) {
     const falta = !f.ruta_pdf || !fs.existsSync(rutaAbsoluta(f.ruta_pdf));
     if (!falta) continue;
     try {
-      const bytes = dibujar(f, { emisor });
+      const { fila, emisor: emisorGuardado } = paraDibujar(f, emisor);
+      const bytes = dibujar(fila, { emisor: emisorGuardado });
       db.anotarPdf(f.id, guardarPdf(f.numero, f.fecha, bytes));
       hechos.push(f.numero);
     } catch (e) {
@@ -682,12 +727,13 @@ function emitirNotaCredito(original, { motivo, emisor = correo.EMPRESA } = {}) {
     referenciaPago: original.referencia_pago,
     notas: motivo || null,
     anulaA: original.id,
+    dibujo: instantanea({}, emisor),
   });
 
   db.marcarAnulada(original.id, idNota);
 
-  const fila = db.facturaPorId(idNota);
-  const bytes = dibujar(fila, { emisor });
+  const { fila, emisor: emisorGuardado } = paraDibujar(db.facturaPorId(idNota), emisor);
+  const bytes = dibujar(fila, { emisor: emisorGuardado });
   db.anotarPdf(idNota, guardarPdf(numero, fila.fecha, bytes));
 
   return db.facturaPorId(idNota);
