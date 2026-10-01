@@ -1246,9 +1246,9 @@ seccion('23. Entrar desde un equipo nuevo por SMS');
   const fuente23 = fs.readFileSync(path.join(__dirname, 'api.js'), 'utf8');
   comprobar(fuente23.split('marcarCorreoVerificado').length - 1 === 2, 'api.js sigue llamando marcarCorreoVerificado exactamente 2 veces');
   const iEntrar = fuente23.indexOf('async function entrar(');
-  const iClave = fuente23.indexOf('db.claveCorrecta', iEntrar);
+  const iClave = fuente23.indexOf('db.verificarClave', iEntrar);
   const iSms = fuente23.indexOf("proposito: 'acceso'", iEntrar);
-  comprobar(iClave > 0 && iSms > iClave, "en entrar, el SMS de acceso se emite después de db.claveCorrecta");
+  comprobar(iClave > 0 && iSms > iClave, "en entrar, el SMS de acceso se emite después de db.verificarClave");
 }
 
 /* ── 24. «No fui yo» del cambio de contraseña ────────────────── */
