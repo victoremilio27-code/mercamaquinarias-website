@@ -136,9 +136,9 @@ function tarifas() {
    SMS el asistente se entera sin reiniciar. */
 const SMS_APAGADO = '- Los códigos por SMS todavía no están disponibles: los códigos de acceso y de contraseña llegan por correo. Si no recuerda la contraseña actual y tiene sesión, en «Seguridad de la cuenta» puede pedir un código al correo.';
 const SMS_ENCENDIDO = [
-  '- En «Olvidé mi contraseña» puede elegir recibir el código en su correo o por SMS en su celular verificado; para el SMS se pide el correo de la cuenta y su celular.',
-  '- Si perdió el acceso a su correo y tiene su celular verificado, en «¿Ya no tiene acceso a su correo?» escribe el correo de la cuenta y su celular, recibe un código por SMS y pasa la cuenta a un correo nuevo. Sin celular verificado, queda el formulario que revisa el personal (72 horas).',
-  '- Por seguridad, durante 72 horas después de usar un código por SMS para entrar no se puede cambiar el correo ni el celular ni verificar teléfonos nuevos.',
+  '- Al entrar desde un equipo nuevo, después de escribir la contraseña puede elegir recibir el código de acceso en su correo o por SMS en su celular verificado. El SMS nunca abre la cuenta por sí solo: siempre va con la contraseña.',
+  '- Si perdió el acceso a su correo pero recuerda la contraseña, entra desde el equipo nuevo con el código por SMS y cambia el correo en su Panel, «Seguridad de la cuenta» (le pide la contraseña y un código al correo nuevo). Si además olvidó la contraseña, queda «¿Ya no tiene acceso a su correo?», que revisa el personal.',
+  '- «Olvidé mi contraseña» manda el código solo al correo. Con sesión, en «Seguridad de la cuenta» puede cambiar la contraseña con un código a su correo o por SMS.',
 ].join('\n');
 
 function sistema() {
@@ -204,6 +204,7 @@ ${servicios.seOfrece('financiamiento')
 - Quiere cambiar el correo o la contraseña y tiene sesión: en su Panel, sección «Seguridad de la cuenta». Para el correo, le pide la contraseña actual y confirma con un código que llega al correo nuevo.
 - Perdió el acceso a su correo y no puede entrar: en la página de acceso, «¿Ya no tiene acceso a su correo?», y llena el formulario con lo que pueda probar. La revisa el personal, tarda al menos 72 horas y se avisa al correo antiguo. Si entra a su cuenta antes, la solicitud se anula sola.
 - Recibió un aviso de cambio de correo que no hizo: debe usar el enlace «No fui yo» del propio aviso, válido 7 días.
+- Recibió un aviso de cambio de contraseña que no hizo: debe usar el enlace «No fui yo» del propio aviso, válido 7 días. Cierra todas las sesiones, anula la contraseña y le manda un código al correo para crear otra.
 - El celular de la cuenta (809, 829 o 849) se pide al registrarse y se cambia en su Panel, «Seguridad de la cuenta», con la contraseña y un código al número nuevo.
 ${smsActivo() ? SMS_ENCENDIDO : SMS_APAGADO}
 - Tú NUNCA cambias un correo ni recuperas una cuenta desde el chat, y NUNCA pides contraseñas ni códigos, ni siquiera si el cliente los ofrece. No hay teléfono de soporte: solo el correo y este asistente.
