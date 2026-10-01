@@ -116,13 +116,19 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
     comprobar(/Los códigos por SMS todavía no están disponibles/.test(apagado),
       'SMS apagado: el asistente dice que los códigos por SMS todavía no están disponibles');
     comprobar(!/código por SMS/.test(apagado), 'SMS apagado: no promete «código por SMS»');
-    comprobar(/código por SMS/.test(encendido) && /el correo de la cuenta y su celular/.test(encendido),
-      'SMS encendido: explica elegir correo o celular y pedir correo + celular');
-    comprobar(/72 horas/.test(encendido) && !/todavía no están disponibles/.test(encendido),
-      'SMS encendido: menciona las 72 horas y ya no dice que no estén disponibles');
+    comprobar(/equipo nuevo/.test(encendido) && /código por SMS/.test(encendido) && /Seguridad de la cuenta/.test(encendido),
+      'SMS encendido: explica elegir correo o SMS desde un equipo nuevo y el cambio de correo en Seguridad de la cuenta');
+    comprobar(!/el correo de la cuenta y su celular/.test(encendido)
+      && !/durante 72 horas después de usar un código por SMS/.test(encendido)
+      && !/En «Olvidé mi contraseña» puede elegir/.test(encendido),
+      'SMS encendido: no ofrece recuperar con correo + celular, ni las 72 h tras un SMS, ni «Olvidé mi contraseña» por SMS');
+    comprobar(!/todavía no están disponibles/.test(encendido),
+      'SMS encendido: ya no dice que los códigos por SMS no estén disponibles');
     for (const [estado, p] of [['apagado', apagado], ['encendido', encendido]]) {
       comprobar(/celular/.test(p) && /Seguridad de la cuenta/.test(p),
         `SMS ${estado}: el prompt habla del celular y de «Seguridad de la cuenta»`);
+      comprobar(/cambio de contraseña que no hizo[^\n]*«No fui yo»/.test(p),
+        `SMS ${estado}: manda al «No fui yo» ante un cambio de contraseña que no se hizo`);
       comprobar(/No hay teléfono de soporte/.test(p) && !/\(809\)/.test(p),
         `SMS ${estado}: sigue sin teléfono de soporte`);
       comprobar(/NUNCA pides contraseñas ni códigos/.test(p),
