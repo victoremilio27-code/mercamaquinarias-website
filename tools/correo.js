@@ -1208,6 +1208,49 @@ const enviarAnuncioVencido = ({ para, nombre, equipo, idAnuncio }) => enviar({
   }),
 });
 
+/* Una sola carta por búsqueda, aunque en la pasada hayan entrado varios
+   equipos. La tarea ya limita la lista a diez; `restantes` deja claro que
+   el catálogo tiene más resultados sin convertir este aviso en un correo
+   interminable. */
+function enviarAlertaBusqueda({ para, nombre, resumen, anuncios, restantes = 0, enlaceCatalogo, enlaceBaja }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const rotulo = (a) => `${a.anio || 'Año no indicado'} ${a.marca_nombre || a.marca} ${a.modelo}`;
+  const precio = (a) => a.precio == null
+    ? 'Precio a consultar'
+    : `${a.moneda === 'USD' ? 'US$' : 'RD$'}${Number(a.precio).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  const enlace = (a) => `${SITIO}/equipo.html?id=${encodeURIComponent(a.id)}`;
+  const lineas = anuncios.flatMap((a) => [
+    `${rotulo(a)} · ${a.provincia || 'República Dominicana'} · ${precio(a)}`,
+    enlace(a),
+  ]);
+  const tarjetas = anuncios.map((a) => tarjeta(`
+      <div style="font-family:${TIPO};font-size:17px;font-weight:700;color:${AZUL};line-height:1.3">${esc(rotulo(a))}</div>
+      ${filas([['Provincia', a.provincia || 'República Dominicana'], ['Precio', precio(a)]])}
+      <a href="${esc(enlace(a))}" style="font-family:${TIPO};font-size:14px;font-weight:700;color:${AMBAR}">Ver el equipo</a>`)).join('');
+  const masTexto = restantes > 0 ? `Y ${restantes} más: ${enlaceCatalogo}` : null;
+
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: `Nuevo equipo para su búsqueda: ${resumen}`,
+    texto: [
+      saludo, '', `Encontramos ${anuncios.length + restantes} equipo(s) nuevo(s) para su búsqueda: ${resumen}.`, '',
+      ...lineas, masTexto, '', `Dejar de recibir esta alerta: ${enlaceBaja}`,
+      `Puede gestionar sus alertas desde el panel: ${SITIO}/panel.html`, '', 'MercaMaquinarias',
+    ].filter((l) => l !== null).join('\n'),
+    html: envoltura({
+      titulo: 'Nuevos equipos para su búsqueda',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [`Encontramos equipos nuevos para <b style="color:${AZUL}">${esc(resumen)}</b>.`],
+      extra: tarjetas + (restantes > 0
+        ? `<p style="font-family:${TIPO};font-size:14px;color:${GRIS}">Y ${restantes} más. <a href="${esc(enlaceCatalogo)}" style="color:${AMBAR}">Ver todos los resultados</a>.</p>`
+        : ''),
+      nota: `<a href="${esc(enlaceBaja)}" style="color:${AMBAR}">Dejar de recibir esta alerta</a> · Puede gestionar sus alertas desde <a href="${SITIO}/panel.html" style="color:${AMBAR}">el panel</a>.`,
+    }),
+  });
+}
+
 /* Comprobante del cobro. No sustituye a la factura fiscal; sirve para
    que el anunciante tenga por escrito qué contrató y por cuánto.
 
@@ -1786,6 +1829,7 @@ module.exports = {
   enviar, enviarCodigo, enviarAvisoCambioClave, enviarAvisoCuentaEliminada,
   enviarSolicitudDealer, enviarResolucionDealer, enviarSolicitudServicio,
   enviarAnuncioPublicado, asuntoRecordatorio, enviarRecordatorioVencimiento, enviarAnuncioVencido,
+  enviarAlertaBusqueda,
   enviarComprobante, enviarContactoRecibido, enviarBienvenida,
   enviarDatosTransferencia, enviarTransferenciaAnulada,
   avisarInternamente,

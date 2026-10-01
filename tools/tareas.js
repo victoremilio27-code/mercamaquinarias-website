@@ -23,6 +23,7 @@ const path = require('path');
 const db = require('./db');
 const correo = require('./correo');
 const facturas = require('./facturas');
+const alertas = require('./alertas');
 
 const RAIZ = path.resolve(__dirname, '..');
 
@@ -137,6 +138,50 @@ async function avisarVencidos() {
     if (r && r.entregado) { db.marcarAviso(a.id, 'vencido'); enviados++; }
   }
   anotar('vencidos', `${enviados} de ${pendientes.length} aviso(s) de corte`);
+}
+
+/* Recorre solo lo publicado desde la última revisión de cada búsqueda.
+   Se reserva cada pareja antes de enviar: dos procesos que coincidan no
+   pueden mandar el mismo anuncio dos veces. */
+async function avisarAlertas() {
+  const busquedas = db.busquedasActivas();
+  let enviados = 0;
+
+  for (const busqueda of busquedas) {
+    const vistos = db.anunciosPublicadosDesde(busqueda.revisada_hasta);
+    if (!vistos.length) continue;
+    const hasta = vistos[vistos.length - 1].publicado;
+    const coincidencias = vistos.filter((a) => alertas.coincide(busqueda.filtros, a));
+
+    if (SECO) {
+      if (coincidencias.length) enviados++;
+      continue;
+    }
+
+    const nuevos = coincidencias.filter((a) => db.anotarAlertaEnviada(busqueda.id, a.id));
+    if (nuevos.length) {
+      const parametros = new URLSearchParams();
+      Object.entries(busqueda.filtros).forEach(([clave, valor]) => parametros.set(clave, valor));
+      try {
+        const r = await correo.enviarAlertaBusqueda({
+          para: busqueda.correo,
+          nombre: busqueda.nombre,
+          resumen: busqueda.resumen,
+          anuncios: nuevos.slice(0, 10),
+          restantes: Math.max(0, nuevos.length - 10),
+          enlaceCatalogo: `${correo.SITIO}/equipos.html?${parametros}`,
+          enlaceBaja: `${correo.SITIO}/alertas.html?baja=${encodeURIComponent(db.testigoBajaBusqueda(busqueda.id))}`,
+        });
+        if (r && r.entregado) enviados++;
+        else console.error(`  ✗ alerta de búsqueda ${busqueda.id}: el correo no fue entregado`);
+      } catch (e) {
+        console.error(`  ✗ alerta de búsqueda ${busqueda.id}: ${e.message}`);
+      }
+    }
+    db.avanzarRevisionBusqueda(busqueda.id, hasta);
+  }
+
+  anotar('alertas', `${enviados} correo(s) para ${busquedas.length} búsqueda(s) activa(s)`);
 }
 
 /* Comprobantes que no llegaron a enviarse.
@@ -723,6 +768,7 @@ const TAREAS = {
   'avisar-tarjetas': avisarTarjetas,
   'por-vencer': avisarRecordatorios,
   vencidos: avisarVencidos,
+  alertas: avisarAlertas,
   comprobantes: reenviarComprobantes,
   ncf: avisarNcf,
   limpiar,
@@ -777,4 +823,4 @@ async function principal() {
    tanda ni terminar el proceso. */
 if (require.main === module) principal();
 
-module.exports = { TAREAS, vencerMembresias, avisarRecordatorios, componerInforme };
+module.exports = { TAREAS, vencerMembresias, avisarRecordatorios, avisarAlertas, componerInforme };
