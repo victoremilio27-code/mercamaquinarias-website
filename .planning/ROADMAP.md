@@ -49,7 +49,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana (completed 2026-09-25)
 - [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
 - [x] **Phase 10.1: Recuperar la cuenta y cambiar el correo** (INSERTED) - Cambio de correo y de contraseña con sesión, «No fui yo» y recuperación revisada para quien perdió el correo (completed 2026-09-30)
-- [ ] **Phase 10.2: Teléfono verificado y códigos por SMS** (INSERTED) - Celular obligatorio y verificable, código de acceso por correo o SMS desde un equipo nuevo, «No fui yo» también en la contraseña, todo el SMS apagado tras `MERCA_SMS`
+- [x] **Phase 10.2: Teléfono verificado y códigos por SMS** (INSERTED) - Celular obligatorio y verificable, código de acceso por correo o SMS desde un equipo nuevo, «No fui yo» también en la contraseña, todo el SMS apagado tras `MERCA_SMS`
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
 
