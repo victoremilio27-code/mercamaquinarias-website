@@ -77,9 +77,17 @@ const fechaLarga = (iso) => new Date(iso).toLocaleDateString('es-DO', {
   day: '2-digit', month: 'long', year: 'numeric',
 });
 
+// Desde este corte el 606 usa la fecha dominicana; lo ya emitido no se reescribe.
+const FECHA_HORA_RD = '2026-10-02T04:00:00.000Z';
+
 const fechaCorta = (iso) => {
+  const soloFecha = typeof iso === 'string' && /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (soloFecha) return `${soloFecha[3]}/${soloFecha[2]}/${soloFecha[1]}`;
+  if (typeof iso !== 'string') return '';
+
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
+  if (d.getTime() >= Date.parse(FECHA_HORA_RD)) d.setUTCHours(d.getUTCHours() - 4);
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 };
 
@@ -592,11 +600,11 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
  * Los busca por `ruta_pdf` nulo o por archivo que ya no está en disco.
  * Un comprobante emitido hay que poder recuperarlo, y el número y los
  * importes no se tocan: se redibuja exactamente lo que dice la fila. */
-function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {}) {
+function reponerPdfsDe(filas, { emisor = correo.EMPRESA } = {}) {
   const hechos = [];
   const fallos = [];
 
-  for (const f of db.facturas({ limite })) {
+  for (const f of filas) {
     /* `ruta_pdf` se guarda RELATIVA a la carpeta de comprobantes, así
        que hay que resolverla antes de preguntar si el archivo está.
        Comprobarla tal cual daba siempre que no, y esta función pasaba
@@ -614,6 +622,10 @@ function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {})
   }
 
   return { hechos, fallos };
+}
+
+function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {}) {
+  return reponerPdfsDe(db.facturas({ limite }), { emisor });
 }
 
 /* Nota de crédito que anula un comprobante. El original no se toca:
@@ -834,10 +846,10 @@ function pendientesDeRegularizar({ limite = 500 } = {}) {
 }
 
 module.exports = {
-  CARPETA, TITULOS,
+  CARPETA, TITULOS, FECHA_HORA_RD, fechaCorta,
   dibujar, comoHtml, guardarPdf, leerPdf, rutaAbsoluta,
   emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, pendientesDeRegularizar, decidirTipo,
-  regenerarPdfsPendientes,
+  reponerPdfsDe, regenerarPdfsPendientes,
 };
 
 /* ── Línea de comandos ──────────────────────────────────── */

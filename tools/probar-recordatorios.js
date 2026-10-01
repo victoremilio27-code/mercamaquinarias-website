@@ -148,7 +148,18 @@ async function pasada(ids) {
 }
 
 (async () => {
-  console.log('\n0 · la tanda diaria');
+  console.log('\n0 · días de calendario dominicanos');
+  {
+    const momento = '2026-10-10T05:00:00.000Z';
+    ok(db.tipoRecordatorio('2026-10-11T03:59:59.000Z', momento) === null, '23:59 RD del mismo día: no se avisa');
+    ok(db.tipoRecordatorio('2026-10-11T04:00:00.000Z', momento) === '1d', '00:00 RD del día siguiente: aviso de mañana');
+    ok(db.tipoRecordatorio('2026-10-13T03:00:00.000Z', momento) === '3d', 'dos días de calendario: aviso de 3d');
+    ok(db.tipoRecordatorio('2026-10-17T12:00:00.000Z', momento) === '7d', 'siete días de calendario: aviso de 7d');
+    ok(db.tipoRecordatorio('2026-10-18T12:00:00.000Z', momento) === null, 'ocho días de calendario: no se avisa');
+    ok(correo.asuntoRecordatorio('3d', 2) === 'Tu anuncio vence en 2 días', 'el asunto dice los dos días reales');
+  }
+
+  console.log('\n1 · la tanda diaria');
   {
     const claves = Object.keys(tareas.TAREAS);
     const diaria = claves.filter((t) => !t.startsWith('informe-'));

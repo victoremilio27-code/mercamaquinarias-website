@@ -6,7 +6,7 @@
  *   node tools/admin.js retirar   <correo>
  *   node tools/admin.js eximir    <correo>     publica sin pagar
  *   node tools/admin.js cobrar    <correo>     le quita la exención
- *   node tools/admin.js crear     <correo> "<Nombre>" [--admin] [--exenta] [--empresa "Razón social" --rnc 123456789]
+ *   node tools/admin.js crear     <correo> "<Nombre>" [--admin] [--exenta] [--empresa "Razón social" --rnc 123456789] [--verificar-por <correo-admin>]
  *
  * Deliberadamente fuera del sitio: no hay pantalla, ruta ni formulario
  * que otorgue estos permisos. Se dan desde el servidor, por alguien
@@ -48,6 +48,7 @@ Opciones de crear:
   --exenta                 publica sin pagar
   --empresa "Razón social" cuenta de empresa en vez de particular
   --rnc 123456789          RNC, obligatorio con --empresa
+  --verificar-por <correo> da el sello en nombre de ese administrador
   --telefono 8095551234
   --clave "..."            si no se indica, se genera una segura
 `);
@@ -108,6 +109,13 @@ if (accion === 'crear') {
   if (!correo || !correo.includes('@')) uso('Indique un correo válido.');
   if (!nombre) uso('Indique el nombre de la persona, entre comillas.');
 
+  const verificarPor = opcion('verificar-por');
+  const administradorVerificador = verificarPor ? db.usuarioPorCorreo(verificarPor) : null;
+  if (verificarPor && (!administradorVerificador || !administradorVerificador.es_admin)) {
+    console.error(`\n${verificarPor} no corresponde a una cuenta administradora.\n`);
+    process.exit(1);
+  }
+
   if (db.usuarioPorCorreo(correo)) {
     console.error(`\nYa existe una cuenta con ${correo}.`);
     console.error('Para cambiarle los permisos use conceder, retirar, eximir o cobrar.\n');
@@ -152,10 +160,23 @@ if (accion === 'crear') {
 
   // Una empresa creada desde aquí ya está revisada: la crea el equipo.
   if (empresa) {
-    d.prepare("UPDATE organizaciones SET estado_revision = 'aprobada', verificada = 1, actualizada = ? WHERE id = ?")
+    d.prepare("UPDATE organizaciones SET estado_revision = 'aprobada', actualizada = ? WHERE id = ?")
       .run(db.ahora(), idOrg);
     d.prepare("UPDATE solicitudes_dealer SET estado = 'aprobada', revisada = ? WHERE organizacion_id = ?")
       .run(db.ahora(), idOrg);
+    if (administradorVerificador) {
+      db.enNombreDe({
+        idAdmin: administradorVerificador.id,
+        idOrganizacion: idOrg,
+        accion: 'organizacion.verificar',
+        objetoTipo: 'organizacion',
+        objetoId: idOrg,
+        motivo: 'Alta por línea de comandos (tools/admin.js)',
+      }, (org) => {
+        db.marcarVerificada(idOrg, true);
+        return { antes: { verificada: !!org.verificada }, despues: { verificada: true } };
+      });
+    }
   }
 
   console.log(`
@@ -170,7 +191,7 @@ if (accion === 'crear') {
     bandera('admin') ? 'revisa solicitudes' : null,
     bandera('exenta') ? 'publica sin pagar' : null,
   ].filter(Boolean).join(' · ') || 'ninguno'}
-│
+${empresa && !administradorVerificador ? '│  Sello       se da desde la consola, sección «Empresas»\n' : ''}│
 │  Anote la contraseña ahora: no se vuelve a mostrar.
 ╰──────────────────────────────────────────────────────────
 `);

@@ -41,6 +41,7 @@
     "precios:probar": "node --test tools/precios.prueba.js",
     "lote:puro": "node --test tools/lote.prueba.js",
     "f607:puro": "node --test tools/formato607.prueba.js",
+    "lote:probar": "node tools/probar-lote.js",
     "servicios:probar": "node --test tools/servicios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",

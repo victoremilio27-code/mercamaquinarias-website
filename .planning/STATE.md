@@ -43,12 +43,22 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
 **Estado al cerrar el chat del 2026-10-01:** tanda 1 en producción (PR #84: #56, #63, #67, #68, #69, #70).
-**En Codex ahora:** #71 (scrypt; su parche era de 2.448 líneas y no cabía: se le pidió diff mínimo o por
-partes), #57 (consultas del periodo, desbloqueado por #56), #75 (recordatorios en días de calendario RD) y
-#77 (sello por la bitácora en `tools/admin.js`). **Trabajo de Claude para el próximo chat, en orden:** #64
-(escribir primero la prueba de `fechaCorta` en hora RD y luego encargarla con red), #58 (migración: guardar lo
-que dibuja el PDF), #60 (prueba del 607 con caso esperado), y con eso #59 pasa a `codex`. Notas: `db.validarMes`
-(de #69) duplica a `lote.validarMes` (de #56) a propósito hasta #57; Codex corre Node 24.21.
+**En Codex ahora (tanda 2, 6 tareas):** #57 (consultas del periodo), #71 (scrypt; su parche anterior era de
+2.448 líneas y no cabía: se le pidió diff mínimo o por partes), #75 (recordatorios en días de calendario RD), #77
+(sello por la bitácora en `tools/admin.js`), **#64** (fecha del comprobante en hora RD: la prueba ya está en la rama
+`claude/64-fecha-rd`; su parche va SOBRE esa rama) y **#60** (Formato 607: la prueba está en la rama
+`claude/60-formato607`, `tools/formato607.prueba.js`; parche sobre esa rama). #64 y #60 son fiscales: revisar su
+diff línea a línea y comprobar que no tocaron la prueba. Para publicarlos, fusionar `main` en esas ramas (o aplicar
+la prueba y el parche en la rama de la tanda).
+**Instrucción de Victor (2026-10-01): a Codex se le da la MAYOR cantidad posible de tareas en paralelo.** En cada
+vuelta, tras publicar: encargar todos los issues `codex` listos que no compartan archivos de código (los choques
+en `package.json` y en el flujo de CI se resuelven al aplicar); y si quedan menos de ~6 listos, hacer en ese mismo
+chat la tanda de planificación necesaria: convertir issues `claude` de diseño y fases del ROADMAP (13, y la 12 que
+quede) en issues `codex` autocontenidos con la plantilla de siempre, escribiendo antes las pruebas cuando sea
+fiscal. Las migraciones y lo que toca producción siguen siendo de Claude.
+**Trabajo de Claude para el próximo chat:** #58 (migración: guardar lo que dibuja el PDF; no se delega). Cuando
+#57, #58 y #60 estén en `main`, escribir las pruebas de #59 (`armarPaquete`) y pasarlo a `codex`. Notas:
+`db.validarMes` (de #69) duplica a `lote.validarMes` (de #56) a propósito hasta #57; Codex corre Node 24.21.
 Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`).
 
 Los issues: #56-#81, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
