@@ -21,6 +21,10 @@ progress:
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
 
+**Cambio del 2026-10-01 (Victor): GSD se deja de usar** para gastar menos tokens. Claude planifica,
+revisa y verifica; Codex implementa vía `@codex` en issues y PR (ver «Delegación a Codex» en
+`CLAUDE.md`). Donde lo de abajo diga GSD, Sonnet ejecutor o `.planning/config.json`, queda sustituido.
+
 **Forma de trabajar:** una rama y un PR por fase; se fusiona y despliega al cerrar la fase (verificación
 passed + CI en verde, sin volver a preguntar). Opus planifica con GSD y verifica; **toda ejecución la hace
 Sonnet 5.5, sin excepciones** (también ITBIS, comprobante o NCF; regla de Victor del 2026-09-29). Hasta 2-3 agentes si no tocan los mismos archivos (el
