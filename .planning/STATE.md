@@ -25,6 +25,20 @@ Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y 
 revisa y verifica; Codex implementa vía `@codex` en issues y PR (ver «Delegación a Codex» en
 `CLAUDE.md`). Donde lo de abajo diga GSD, Sonnet ejecutor o `.planning/config.json`, queda sustituido.
 
+**Siguiente sesión = planificación del ciclo autónomo** (acordado con Victor el 2026-10-01; aún sin hacer):
+1. Pasar lo pendiente del ROADMAP a issues de GitHub autocontenidos (objetivo, archivos, qué no tocar,
+   pruebas que deben pasar), con hito por fase y etiqueta `codex` (delegable), `claude` (diseño,
+   migraciones, riesgo fiscal) o `victor` (solo él: CardNet, datos reales, pagos). Mantener una cola de
+   6-10 issues `codex` listos.
+2. Crear una rutina **cada hora** que abra una sesión nueva y haga: **salida rápida** primero (una consulta
+   a GitHub; si nada cambió desde la vuelta anterior, termina sin leer más); si hay algo: revisar los PR de
+   Codex (diff + pruebas), fusionar con CI en verde y comprobar el sitio, devolver con `@codex` lo que falle,
+   retomar tareas paradas más de ~2 h, y despachar 2-3 tareas a la vez que no toquen los mismos archivos,
+   dimensionadas para ~1 h de Codex. Planificar otra tanda solo cuando la cola baje. Lo que necesite a
+   Victor se le junta en un solo mensaje, sin parar lo demás.
+3. Pendiente de comprobar en la primera tarea de prueba: si Codex abre el PR solo o hace falta pulsar
+   «Create PR» en su app (eso cortaría la autonomía), y que su entorno corre Node ≥ 22.5 (se puso 22).
+
 **Forma de trabajar:** una rama y un PR por fase; se fusiona y despliega al cerrar la fase (verificación
 passed + CI en verde, sin volver a preguntar). Opus planifica con GSD y verifica; **toda ejecución la hace
 Sonnet 5.5, sin excepciones** (también ITBIS, comprobante o NCF; regla de Victor del 2026-09-29). Hasta 2-3 agentes si no tocan los mismos archivos (el
