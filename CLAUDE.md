@@ -63,9 +63,14 @@ resto de `.planning/` es historia y no se relee salvo que la tarea lo necesite.
 - Cómo: la tarea va en un issue o PR, en un comentario que empieza con `@codex`. Tiene que
   ser autocontenida, porque Codex no ve esta conversación: objetivo, archivos, requisitos,
   qué no tocar y el criterio de «terminado» (qué pruebas de `npm run` deben pasar).
-- Codex lee `AGENTS.md`, que lo manda a este archivo. Trabaja en ramas `codex/` y abre
-  PR como borrador.
-- **Nunca se edita una rama `codex/` mientras Codex trabaja en ella.**
+- Codex lee `AGENTS.md`, que lo manda a este archivo.
+- **Codex no puede subir nada a GitHub** desde una mención (su entorno no tiene remoto;
+  comprobado en el issue #54 y el PR #55). Por eso el ciclo es: Claude abre la rama y el
+  PR, encarga la tarea con `@codex` en ese PR, Codex responde con un `git format-patch`
+  en un bloque `diff`, y Claude lo descarga **por la API** (no copiándolo a mano:
+  `curl https://api.github.com/repos/<repo>/issues/comments/<id>`, sacar el bloque y
+  `git am --keep-cr`), corre las pruebas y lo sube. Si el parche no aplica, se le
+  devuelve con `@codex` diciendo por qué.
 - La palabra `@codex` solo se escribe para encargar algo: con nombrarlo en la
   descripción de un PR ya arranca una tarea (pasó en el PR #53).
 - Al terminar: Claude revisa el diff del PR y corre las pruebas que toque. Lo que Codex
