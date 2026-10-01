@@ -2745,7 +2745,7 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
 
 .pastilla--azul { background: var(--app-soft); color: var(--azul); }
 
-.filtros-panel { display: flex; gap: 5px; }
+.filtros-panel { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .filtro-panel {
   padding: 6px 12px;
   background: var(--hueso); border: 1px solid transparent; border-radius: 99px;
@@ -3002,6 +3002,18 @@ select:focus, .calc__campo input:focus { outline: none; border-color: var(--amba
   .cab__cuenta { margin-left: 0; }
   .suc-admin { grid-template-columns: auto minmax(0, 1fr); }
   .suc-admin__acciones { grid-column: 1 / -1; justify-content: flex-start; }
+
+  /* El panel autenticado mezcla filtros, tablas y datos escritos por la
+     persona. Ninguno puede imponer su ancho al documento: las tablas se
+     desplazan dentro de su envoltura y los identificadores largos se
+     parten dentro de la tarjeta. */
+  #panelContenido, #panelContenido .panel, #panelContenido .panel__cabeza > * { min-width: 0; }
+  #panelContenido .tabla-envoltura { width: 100%; max-width: 100%; }
+  #panelContenido .panel__texto,
+  #panelContenido .panel__nota,
+  #panelContenido .plan-estado dd,
+  #panelContenido .membresia { overflow-wrap: anywhere; }
+  #panelContenido .acciones > .btn { max-width: 100%; white-space: normal; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5145,5 +5157,4 @@ main > .envoltura > section.panel {
   .captura__panel { padding: 14px; }
   .captura__marco { min-height: 380px; }
 }
-
 
