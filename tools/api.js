@@ -33,6 +33,7 @@ const facturas = require('./facturas');
 const pagos = require('./pagos');
 const transferencia = require('./transferencia');
 const cardnet = require('./cardnet');
+const lote = require('./lote');
 const crypto = require('crypto');
 
 /* CardNet, igual que la transferencia: si alguien lo pidió (`lab` o
@@ -2115,6 +2116,35 @@ const exportarFacturas = conAdmin((req, res, ctx, consulta) => {
     'X-Content-Type-Options': 'nosniff',
   });
   return res.end(cuerpo);
+});
+
+/* El paquete mensual nunca se envía: estas dos rutas son, a propósito,
+   el único puente entre lote.js y el exterior. La primera solo calcula
+   la vista previa; la segunda arma el archivo cuando el administrador
+   decide descargarlo. */
+const previaLoteContador = conAdmin((req, res, ctx, mes) => {
+  try {
+    return responder(res, 200, { previa: lote.previa(mes) });
+  } catch (e) {
+    return fallo(res, e.codigo || 500, e.message);
+  }
+});
+
+const descargarLoteContador = conAdmin((req, res, ctx, mes) => {
+  try {
+    const paquete = lote.armarPaquete(mes, { emisor: correo.EMPRESA });
+    res.writeHead(200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${paquete.nombre}"`,
+      'Content-Length': paquete.zip.length,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(paquete.zip);
+  } catch (e) {
+    return fallo(res, e.codigo || 500, e.message,
+      e.codigo === 409 && Array.isArray(e.faltan) ? { faltan: e.faltan } : undefined);
+  }
 });
 
 /* Reenviar a mano un comprobante que no salió. */
@@ -5608,6 +5638,8 @@ const RUTAS = [
   ['GET',  /^\/api\/admin\/legales$/,                   verAceptaciones],
   ['GET',  /^\/api\/admin\/facturas$/,                  listarFacturas],
   ['GET',  /^\/api\/admin\/facturas\.csv$/,             exportarFacturas],
+  ['GET',  /^\/api\/admin\/lote-contador\/(\d{4}-\d{2})\.zip$/, descargarLoteContador],
+  ['GET',  /^\/api\/admin\/lote-contador\/(\d{4}-\d{2})$/, previaLoteContador],
   ['POST', /^\/api\/admin\/secuencias$/,                cargarSecuencia],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/reenviar$/, reenviarFactura],
   ['POST', /^\/api\/admin\/facturas\/([\w-]+)\/anular$/,   anularFactura],
