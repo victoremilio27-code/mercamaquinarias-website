@@ -762,7 +762,10 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     if (deshabilitado) ok('«eliminar» en minúsculas mantiene deshabilitado el envío');
     else anota('eliminar cuenta', 'flujo', '«eliminar» en minúsculas habilita el envío');
 
-    await p.click('#eliminar-confirmacion', { clickCount: 3 });
+    /* Vaciar a mano: el triple clic (`clickCount: 3`) no selecciona el
+       texto en este puppeteer, el campo quedaba en «eliminarELIMINAR» y
+       el envío seguía deshabilitado sin que la auditoría lo notara. */
+    await p.$eval('#eliminar-confirmacion', (el) => { el.value = ''; });
     await p.type('#eliminar-confirmacion', 'ELIMINAR');
     await p.click('#btnConfirmarEliminar');
     await p.waitForFunction(() => location.pathname.endsWith('/index.html') && location.search === '?cuenta=eliminada', { timeout: 5000 }).catch(() => {});
