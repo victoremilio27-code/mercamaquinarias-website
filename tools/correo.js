@@ -707,8 +707,8 @@ function enviarAvisoCambioClave({ para, nombre, via, numero, enlaceNoFuiYo }) {
   const porSms = via === 'sms';
   const masc = porSms ? (enmascararNumero(numero) || 'su celular') : null;
   const p1 = porSms
-    ? `La contraseña de su cuenta de MercaMaquinarias acaba de cambiar con un código enviado por SMS al ${masc} y se cerraron todas las sesiones abiertas.`
-    : 'La contraseña de su cuenta de MercaMaquinarias acaba de cambiar y se cerraron todas las sesiones abiertas.';
+    ? `La contraseña de su cuenta de MercaMaquinarias acaba de cambiar con un código enviado por SMS al ${masc} y se cerraron las sesiones abiertas en otros equipos.`
+    : 'La contraseña de su cuenta de MercaMaquinarias acaba de cambiar y se cerraron las sesiones abiertas en otros equipos.';
   const p2 = enlaceNoFuiYo
     ? 'Si fue usted, no hay nada que hacer. Si no fue usted, use el enlace de abajo: cierra todas las sesiones, anula la contraseña, quita el celular verificado de su cuenta y le envía a este correo un código para crear otra. El enlace vale 7 días y sirve una sola vez.'
     : 'Si fue usted, no hay nada que hacer.';
