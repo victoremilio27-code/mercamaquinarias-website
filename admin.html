@@ -296,6 +296,14 @@
         <a class="btn btn--linea btn--chico" id="btnCsv" href="/api/admin/facturas.csv" download>Exportar CSV</a>
       </div>
 
+      <div class="revision__filtros">
+        <label class="campo-v campo-v--chico"><span>Mes del paquete</span>
+          <input type="month" id="mesLote">
+        </label>
+        <a class="btn btn--linea btn--chico" id="btnLote" href="" download hidden>Descargar paquete del mes</a>
+      </div>
+      <p class="sol__meta" id="lineaLote" aria-live="polite"></p>
+
       <div class="tabla-envoltura">
         <table class="tabla-legales">
           <thead>

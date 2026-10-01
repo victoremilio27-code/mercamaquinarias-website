@@ -807,6 +807,47 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   if (/se otorgan los cupos/i.test(textoAdmin)) anota('admin', 'ux', 'admin.html todavía dice «se otorgan los cupos»');
   else ok('admin.html no dice «se otorgan los cupos»');
 
+  // R-05: el paquete usa su propio mes y nunca promete enviarlo por el sitio.
+  const lote = await p.evaluate(async () => {
+    const selector = document.querySelector('#mesLote');
+    const boton = document.querySelector('#btnLote');
+    const linea = document.querySelector('#lineaLote');
+    if (!selector || !boton || !linea) return { existe: false };
+    const respuesta = await fetch(`/api/admin/lote-contador/${selector.value}`);
+    return {
+      existe: true,
+      mes: selector.value,
+      estado: respuesta.status,
+      aviso: linea.textContent.includes('el sitio no lo envía a nadie'),
+      botonVisible: !boton.hidden,
+    };
+  });
+  if (lote.existe && lote.estado === 200 && lote.aviso && lote.botonVisible) {
+    ok(`paquete del contador: selector propio, vista previa de ${lote.mes}, botón y aviso`);
+  } else {
+    anota('admin', 'flujo', `paquete del contador incompleto (${JSON.stringify(lote)})`);
+  }
+
+  const futuroLote = await p.evaluate(async () => {
+    const d = new Date();
+    d.setUTCFullYear(d.getUTCFullYear() + 2);
+    const valor = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    const respuesta = await fetch(`/api/admin/lote-contador/${valor}`);
+    const datos = await respuesta.json();
+    const selector = document.querySelector('#mesLote');
+    selector.value = valor;
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    return { valor, error: datos.error };
+  });
+  await p.waitForFunction(() => {
+    const linea = document.querySelector('#lineaLote');
+    return linea && linea.textContent && !linea.textContent.includes('Consultando');
+  });
+  const errorLote = await p.$eval('#lineaLote', (el) => el.textContent.trim());
+  const loteOculto = await p.$eval('#btnLote', (el) => el.hidden);
+  if (errorLote === futuroLote.error && loteOculto) ok(`el mes futuro ${futuroLote.valor} deja el error del servidor y oculta la descarga`);
+  else anota('admin', 'flujo', `el mes futuro no deja el error o mantiene la descarga (mensaje=${errorLote}, oculto=${loteOculto})`);
+
   /* Acotado a #listaSolicitudes. La clase `.sol` la usan DOS listas de
      esta página: la cola de revisión y la flota propia. Sin acotar, se
      contaban los equipos de alquiler como si fueran solicitudes: con la
