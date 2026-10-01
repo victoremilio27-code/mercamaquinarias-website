@@ -632,12 +632,34 @@ const CAMPOS_BUSQUEDA = ['q', 'categoria', 'subcategoria', 'marca', 'provincia',
   'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax',
   'disponibilidad', 'permuta', 'itbis'];
 
+function pintarFiltrosEspecificaciones(form, filtros) {
+  const contenedor = $('#filtrosEspecificaciones');
+  if (!contenedor) return;
+  const categoria = form.elements.categoria.value;
+  const subcategoria = form.elements.subcategoria.value;
+  if (!categoria) {
+    contenedor.hidden = true;
+    contenedor.innerHTML = '';
+    return;
+  }
+  const especificaciones = especificacionesDe(categoria, subcategoria);
+  const implementos = implementosDe(categoria);
+  contenedor.innerHTML = especificaciones.map((item) => `<div class="campo campo--rango">
+    <label>${esc(item.nombre)} (${esc(item.unidad)})</label><div class="rango">
+    <input type="number" name="e_${esc(item.id)}_min" min="${item.min}" max="${item.max}" step="${item.paso}" placeholder="Desde" value="${esc(filtros[`e_${item.id}_min`] || '')}">
+    <span>hasta</span><input type="number" name="e_${esc(item.id)}_max" min="${item.min}" max="${item.max}" step="${item.paso}" placeholder="Hasta" aria-label="${esc(item.nombre)} hasta" value="${esc(filtros[`e_${item.id}_max`] || '')}">
+    </div></div>`).join('') + (implementos.length ? `<div class="campo"><label for="f-implemento">Implemento</label>
+    <select id="f-implemento" name="implemento"><option value="">Cualquier implemento</option>${implementos.map((item) =>
+      `<option value="${esc(item.id)}" ${filtros.implemento === item.id ? 'selected' : ''}>${esc(item.nombre)}</option>`).join('')}</select></div>` : '');
+  contenedor.hidden = false;
+}
+
 const ROTULO_FILTRO = {
   q: 'Búsqueda', categoria: 'Categoría', subcategoria: 'Tipo', marca: 'Marca',
   provincia: 'Provincia', condicion: 'Condición', anioMin: 'Desde', anioMax: 'Hasta',
   precioMin: 'Desde', precioMax: 'Hasta', horasMax: 'Hasta',
   // «Venta» y no «Condición»: ese rótulo ya es el del estado del equipo.
-  disponibilidad: 'Dónde', permuta: 'Venta', itbis: 'Venta',
+  disponibilidad: 'Dónde', permuta: 'Venta', itbis: 'Venta', implemento: 'Implemento',
 };
 
 /* Lo que dice el chip de los filtros que no son una cifra ni un nombre:
@@ -687,6 +709,17 @@ async function montarResultados() {
   const p = params();
   const filtros = {};
   CAMPOS_BUSQUEDA.forEach((k) => { filtros[k] = p.get(k) || ''; });
+  if (filtros.categoria) {
+    especificacionesDe(filtros.categoria, filtros.subcategoria).forEach((item) => {
+      ['min', 'max'].forEach((extremo) => {
+        const clave = `e_${item.id}_${extremo}`;
+        if (p.get(clave)) filtros[clave] = p.get(clave);
+      });
+    });
+    if (implementosDe(filtros.categoria).some((item) => item.id === p.get('implemento'))) {
+      filtros.implemento = p.get('implemento');
+    }
+  }
   // Un valor que el servidor no reconoce (`permuta=si`) no filtra allí;
   // aquí tampoco se enseña como aplicado, o el chip mentiría.
   Object.keys(VALOR_FILTRO).forEach((k) => {
@@ -716,8 +749,12 @@ async function montarResultados() {
     });
     // La subcategoría depende de la categoría elegida.
     sincronizarSubcategorias(form, filtros.subcategoria);
+    pintarFiltrosEspecificaciones(form, filtros);
     form.addEventListener('change', (ev) => {
-      if (ev.target.name === 'categoria') sincronizarSubcategorias(form, '');
+      if (ev.target.name === 'categoria') {
+        sincronizarSubcategorias(form, '');
+        pintarFiltrosEspecificaciones(form, {});
+      } else if (ev.target.name === 'subcategoria') pintarFiltrosEspecificaciones(form, {});
     });
   }
 
@@ -751,12 +788,19 @@ async function montarResultados() {
       q.delete(k);
       q.delete('pagina');
       const valor = k === 'categoria' ? nombreCategoria(v)
+        : k === 'implemento' ? (implementosDe(filtros.categoria).find((item) => item.id === v) || {}).nombre || v
         : VALOR_FILTRO[k] ? (textoValorFiltro(k, v) || v)
         : /precio/i.test(k) ? pesos(v)
         : k === 'horasMax' ? `${miles(v)} h`
+        : /^e_.+_(?:min|max)$/.test(k) ? `${v} ${(especificacionesDe(filtros.categoria, filtros.subcategoria)
+          .find((item) => k === `e_${item.id}_min` || k === `e_${item.id}_max`) || {}).unidad || ''}`
         : v;
+      const especificacion = especificacionesDe(filtros.categoria, filtros.subcategoria)
+        .find((item) => k === `e_${item.id}_min` || k === `e_${item.id}_max`);
+      const rotulo = especificacion ? `${especificacion.nombre} ${k.endsWith('_min') ? 'desde' : 'hasta'}`
+        : (ROTULO_FILTRO[k] || k);
       return `<a class="chip" href="equipos.html${q.toString() ? '?' + q : ''}"
-        title="Quitar este filtro"><span class="chip__clave">${esc(ROTULO_FILTRO[k] || k)}</span>
+        title="Quitar este filtro"><span class="chip__clave">${esc(rotulo)}</span>
         ${esc(valor)} <span aria-hidden="true">&times;</span>
         <span class="visualmente-oculto">Quitar filtro</span></a>`;
     }).join('');
