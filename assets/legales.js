@@ -34,8 +34,12 @@ const DOCUMENTOS = [
   {
     id: 'privacidad',
     nombre: 'Política de privacidad y protección de datos',
-    version: '2.1',
-    vigenteDesde: '2026-09-24',
+    // 2.2 (fase 10.2) añade el celular obligatorio, los códigos de seguridad
+    // por SMS y el SMS como encargado, y cambia «cupos» por «capacidad de
+    // publicaciones activas». Quien aceptó la 2.1 vuelve a aceptar antes de
+    // publicar o pagar. La fecha debe ser la misma que enseña legal.html.
+    version: '2.2',
+    vigenteDesde: '2026-10-01',
     obligatorio: true,
   },
   {
