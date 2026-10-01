@@ -54,8 +54,12 @@ resto de `.planning/` es historia y no se relee salvo que la tarea lo necesite.
 
 - **Claude planifica, decide el diseño, revisa y verifica. Codex implementa.**
 - Se delega: funciones con especificación clara, refactors mecánicos, pruebas, tareas
-  repetitivas. No se delega: tareas ambiguas, decisiones de arquitectura, ni nada que
-  emita, anule o numere comprobantes (NCF) ni toque precios: eso lo hace Claude.
+  repetitivas. No se delega: tareas ambiguas ni decisiones de arquitectura.
+- **Lo fiscal y los precios (NCF, ITBIS, notas de crédito, `assets/precios.js`) se
+  delegan solo con red:** Claude escribe *antes* las pruebas que fijan el comportamiento
+  (y las sube en el mismo PR o en uno previo), Codex implementa hasta que pasen sin
+  tocarlas, y Claude revisa ese diff línea a línea. Migraciones de `tools/db.js` y
+  cualquier cosa que toque la base de producción no se delegan nunca.
 - Cómo: la tarea va en un issue o PR, en un comentario que empieza con `@codex`. Tiene que
   ser autocontenida, porque Codex no ve esta conversación: objetivo, archivos, requisitos,
   qué no tocar y el criterio de «terminado» (qué pruebas de `npm run` deben pasar).
