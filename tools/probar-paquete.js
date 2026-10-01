@@ -378,7 +378,9 @@ console.log('\n9 · Mes vacío, mes en curso, mes futuro y sin emisor');
   ok(enCurso.nombre === 'comprobantes-2025-10-parcial.zip' && enCurso.previa.parcial === true,
     `el mes en curso se llama parcial · ${enCurso.nombre}`);
   ok(leeme.includes('parcial'), 'y el LEEME lo dice');
-  ok(leerZip(enCurso.zip).some((e) => e.nombre === `sin-ncf/${O1.numero}.pdf`), 'octubre lleva lo de octubre');
+  // O1 se emitió con la secuencia B02 ya cargada: es de consumo y lleva NCF.
+  ok(O1.tipo === 'factura_consumo'
+    && leerZip(enCurso.zip).some((e) => e.nombre === `con-ncf/${O1.numero}.pdf`), 'octubre lleva lo de octubre');
 
   const futuro = lanza(() => lote.armarPaquete('2025-12', { emisor: EMISOR, ahora: AHORA }));
   ok(futuro && futuro.codigo === 400, 'un mes futuro es un 400');
