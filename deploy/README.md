@@ -146,6 +146,10 @@ también sin ella.
 Cada comando imprime la contraseña generada **una sola vez**. Anótalas
 antes de cerrar la terminal.
 
+Las empresas quedan aprobadas, pero el sello se concede después desde
+«Empresas» en la consola. Para concederlo durante el alta y dejar la
+acción en la bitácora, añada `--verificar-por <correo-de-un-administrador>`.
+
 `--admin` da acceso a `/admin.html`; `--exenta` permite publicar sin
 pagar. Ninguna de las dos se puede conceder desde el sitio.
 
