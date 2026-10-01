@@ -264,6 +264,33 @@
           <button type="button" class="enlace-plano" id="btnReenviar">Enviar otro código</button>
           <span aria-hidden="true">·</span>
           <button type="button" class="enlace-plano" id="btnVolverAcceso">Usar otro correo</button>
+          <span aria-hidden="true">·</span>
+          <button type="button" class="enlace-plano" id="btnOtraVia" hidden>Recibirlo de otra forma</button>
+        </p>
+      </form>
+
+      <!-- Elegir dónde recibir el código al entrar desde un equipo nuevo (10.2,
+           D-16). Solo aparece con el SMS encendido y el celular verificado, y
+           después de una contraseña correcta. Nada sale hasta pulsar «Enviar
+           código»: cada SMS cuesta créditos. -->
+      <form id="formAccesoVia" novalidate hidden>
+        <p class="codigo__intro" id="accesoViaIntro"></p>
+        <fieldset class="campo-grupo">
+          <legend class="etiqueta etiqueta--bloque">¿Dónde quiere recibir el código?</legend>
+          <label class="opcion">
+            <input type="radio" name="accesoVia" value="correo" checked>
+            <span class="opcion__cuerpo"><b class="opcion__nombre">A mi correo</b>
+              <span class="opcion__detalle" id="accesoViaCorreo"></span></span>
+          </label>
+          <label class="opcion">
+            <input type="radio" name="accesoVia" value="sms">
+            <span class="opcion__cuerpo"><b class="opcion__nombre">Por SMS a mi celular</b>
+              <span class="opcion__detalle" id="accesoViaSms"></span></span>
+          </label>
+        </fieldset>
+        <button class="btn btn--ambar btn--bloque btn--grande" type="submit">Enviar código</button>
+        <p class="acceso__enlace">
+          <button type="button" class="enlace-plano" id="btnAccesoViaVolver">Volver</button>
         </p>
       </form>
 
@@ -349,8 +376,8 @@
            botón, nunca al cargar, porque los antivirus de correo abren
            los enlaces por su cuenta. -->
       <div id="formRevertir" hidden>
-        <h2 class="panel__titulo panel__titulo--limpio">¿No cambió usted el correo de su cuenta?</h2>
-        <p class="codigo__intro">Si no fue usted, pulse el botón. La cuenta vuelve a este correo, se cierran todas las sesiones abiertas y se anula la contraseña actual; le enviaremos un código para crear otra. Si el cambio lo hizo usted, no pulse nada y cierre esta página.</p>
+        <h2 class="panel__titulo panel__titulo--limpio" id="revertirTitulo">¿No cambió usted el correo de su cuenta?</h2>
+        <p class="codigo__intro" id="revertirTexto">Si no fue usted, pulse el botón. La cuenta vuelve a este correo, se cierran todas las sesiones abiertas y se anula la contraseña actual; le enviaremos un código para crear otra. Si el cambio lo hizo usted, no pulse nada y cierre esta página.</p>
         <button class="btn btn--ambar btn--bloque btn--grande" type="button" id="btnRevertir">Recuperar mi cuenta</button>
         <p class="acceso__enlace" id="revertirVolver" hidden><a href="cuenta.html">Volver al acceso</a></p>
       </div>

@@ -22,7 +22,7 @@
    un botón.
    ═══════════════════════════════════════════════════════════ */
 
-const VISTAS = ['formEntrar', 'formCrear', 'formCodigo', 'formTelefono', 'formRecuperar',
+const VISTAS = ['formEntrar', 'formCrear', 'formCodigo', 'formAccesoVia', 'formTelefono', 'formRecuperar',
   'formNuevaClave', 'formRecuperacion', 'formRevertir'];
 
 /* Correo y tipo de la verificación en curso. Vive en memoria: si se
@@ -99,9 +99,19 @@ function montarCuenta() {
     aviso.textContent = texto || '';
   };
 
+  /* Para repetir /cuenta/entrar con la vía elegida (D-16) hace falta la
+     contraseña que se acaba de escribir. Vive solo en esta variable: nunca
+     en localStorage ni en la URL. Se vacía al volver a entrar o a crear,
+     y junto con ella las máscaras de la cuenta anterior: si no, unas
+     opciones viejas harían aparecer «Recibirlo de otra forma» en la
+     cuenta de otra persona. */
+  let claveAcceso = '';
+  let opcionesAcceso = null;
+
   /* Cambia de vista. Las pestañas solo tienen sentido en las dos
      primeras: en medio de una verificación estorban. */
   function vista(cual, { conservarAviso = false } = {}) {
+    if (cual === 'formEntrar' || cual === 'formCrear') { claveAcceso = ''; opcionesAcceso = null; }
     VISTAS.forEach((v) => { el(v).hidden = v !== cual; });
     pestanas.hidden = !['formEntrar', 'formCrear'].includes(cual);
     el('tabEntrar').classList.toggle('pestanas__op--activa', cual === 'formEntrar');
@@ -228,6 +238,7 @@ function montarCuenta() {
      lo único que hay que distinguir. */
   function seguir(datos) {
     if (datos.usuario) {
+      claveAcceso = '';
       // Con el SMS encendido y el celular sin confirmar se ofrece
       // confirmarlo antes de entrar, salvo que lo haya pospuesto.
       if (datos.telefono && datos.telefono.sms && datos.telefono.pedir && !celularPospuesto()) {
@@ -244,10 +255,32 @@ function montarCuenta() {
       vista('formNuevaClave');
       return;
     }
-    pendiente = { correo: datos.correo, tipo: datos.verificacion || 'verificacion', via: 'correo', telefono: '' };
-    el('codigoIntro').innerHTML = `${esc(datos.mensaje)} Lo enviamos a <b>${esc(datos.correo)}</b>.`;
+
+    // Equipo nuevo con el SMS encendido y el celular verificado: el
+    // servidor no envió nada y pregunta por dónde. Las máscaras vienen
+    // ya enmascaradas y se pintan con textContent.
+    if (datos.elegir) {
+      pendiente = { correo: datos.correo, tipo: 'acceso', via: 'correo', telefono: '' };
+      opcionesAcceso = datos.opciones || null;
+      el('accesoViaIntro').textContent = datos.mensaje || '';
+      el('accesoViaCorreo').textContent = (opcionesAcceso && opcionesAcceso.correo) || '';
+      el('accesoViaSms').textContent = (opcionesAcceso && opcionesAcceso.sms) || '';
+      document.querySelector('input[name="accesoVia"][value="correo"]').checked = true;
+      vista('formAccesoVia');
+      return;
+    }
+
+    const porSms = datos.verificacion === 'acceso' && datos.via === 'sms';
+    pendiente = {
+      correo: datos.correo, tipo: datos.verificacion || 'verificacion',
+      via: porSms ? 'sms' : 'correo', telefono: '',
+    };
+    el('codigoIntro').innerHTML = porSms
+      ? `${esc(datos.mensaje)} Lo enviamos por SMS al <b>${esc(datos.destino)}</b>. Vence en ${esc(datos.minutos)} minutos.`
+      : `${esc(datos.mensaje)} Lo enviamos a <b>${esc(datos.correo)}</b>.`;
     el('cod-codigo').value = '';
     vista('formCodigo');
+    el('btnOtraVia').hidden = !(pendiente.tipo === 'acceso' && opcionesAcceso);
   }
 
   // ── Confirmar el celular al entrar (10.2) ──
@@ -351,11 +384,26 @@ function montarCuenta() {
   // ── Entrar ──
   el('formEntrar').addEventListener('submit', (ev) => {
     ev.preventDefault();
+    opcionesAcceso = null;
+    claveAcceso = el('ent-clave').value;
     enviar(el('formEntrar'), '/cuenta/entrar', {
       correo: el('ent-correo').value.trim(),
-      clave: el('ent-clave').value,
+      clave: claveAcceso,
     }, seguir);
   });
+
+  // ── Elegir dónde recibir el código (equipo nuevo, D-16) ──
+  el('formAccesoVia').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!claveAcceso) {
+      vista('formEntrar');
+      return mostrarAviso('Escriba otra vez su contraseña.');
+    }
+    const via = (document.querySelector('input[name="accesoVia"]:checked') || {}).value === 'sms' ? 'sms' : 'correo';
+    enviar(el('formAccesoVia'), '/cuenta/entrar', { correo: pendiente.correo, clave: claveAcceso, via }, seguir);
+  });
+  el('btnAccesoViaVolver').addEventListener('click', () => vista('formEntrar'));
+  el('btnOtraVia').addEventListener('click', () => vista('formAccesoVia'));
 
   // ── Crear cuenta ──
   el('formCrear').addEventListener('submit', (ev) => {
@@ -448,15 +496,33 @@ function montarCuenta() {
     const codigo = el('cod-codigo').value.trim();
     if (codigo.length !== 6) return mostrarAviso('El código tiene 6 dígitos.');
 
-    enviar(el('formCodigo'), '/cuenta/verificar', {
-      correo: pendiente.correo, tipo: pendiente.tipo, codigo,
-    }, seguir);
+    const cuerpo = { correo: pendiente.correo, tipo: pendiente.tipo, codigo };
+    if (pendiente.via === 'sms') cuerpo.via = 'sms';
+    enviar(el('formCodigo'), '/cuenta/verificar', cuerpo, seguir);
   });
 
   el('btnReenviar').addEventListener('click', async () => {
-    await api('/cuenta/reenviar', {
-      metodo: 'POST', cuerpo: { correo: pendiente.correo, tipo: pendiente.tipo }, silencioso: true,
-    });
+    if (pendiente.via === 'sms') {
+      /* Sin `silencioso`: con él api() devuelve null ante un 429 o un 502
+         en vez de lanzar, y la página diría «Le enviamos un código nuevo»
+         sin haber enviado nada. */
+      if (!claveAcceso) {
+        vista('formEntrar');
+        return mostrarAviso('Escriba otra vez su contraseña.');
+      }
+      try {
+        const datos = await api('/cuenta/entrar', {
+          metodo: 'POST', cuerpo: { correo: pendiente.correo, clave: claveAcceso, via: 'sms' },
+        });
+        if (!datos) return mostrarAviso('No hay conexión con el servidor. Inténtelo de nuevo.');
+      } catch (e) {
+        return mostrarAviso(e.message);
+      }
+    } else {
+      await api('/cuenta/reenviar', {
+        metodo: 'POST', cuerpo: { correo: pendiente.correo, tipo: pendiente.tipo }, silencioso: true,
+      });
+    }
     el('cod-codigo').value = '';
     mostrarAviso('Le enviamos un código nuevo. El anterior dejó de servir.', 'acceso__aviso--bien');
   });
@@ -520,14 +586,25 @@ function montarCuenta() {
     });
   });
 
-  // ── «No fui yo»: revertir un cambio de correo ──
+  // ── «No fui yo»: revertir un cambio de correo o de contraseña ──
   /* El testigo viaja en la URL, pero NADA se hace al cargar: solo el
      botón llama al servidor. Los antivirus de correo abren los enlaces
      por su cuenta y una reversión disparada por un GET anularía la
-     contraseña de alguien que no la pidió. */
-  const testigoRevertir = new URLSearchParams(location.search).get('revertir');
+     contraseña de alguien que no la pidió. Vale igual para
+     ?revertir-clave= (aviso de cambio de contraseña, 10.2). */
+  const parametros = new URLSearchParams(location.search);
+  const testigoCorreo = parametros.get('revertir');
+  const testigoClave = testigoCorreo === null ? parametros.get('revertir-clave') : null;
+  const testigoRevertir = testigoCorreo !== null ? testigoCorreo : testigoClave;
   if (testigoRevertir !== null) {
     vista('formRevertir');
+    if (testigoClave !== null) {
+      el('revertirTitulo').textContent = '¿No cambió usted su contraseña?';
+      el('revertirTexto').textContent = 'Si no fue usted, pulse el botón. Se cierran todas las sesiones abiertas, '
+        + 'se anula la contraseña actual y se quita el celular verificado de su cuenta; le enviaremos un código '
+        + 'a su correo para crear otra. Si el cambio lo hizo usted, no pulse nada y cierre esta página.';
+      el('btnRevertir').textContent = 'Proteger mi cuenta';
+    }
     el('btnRevertir').addEventListener('click', async () => {
       const boton = el('btnRevertir');
       const rotulo = boton.textContent;
@@ -535,7 +612,8 @@ function montarCuenta() {
       boton.textContent = 'Un momento…';
       mostrarAviso('');
       try {
-        const datos = await api('/cuenta/correo/revertir', {
+        const ruta = testigoClave !== null ? '/cuenta/clave/revertir' : '/cuenta/correo/revertir';
+        const datos = await api(ruta, {
           metodo: 'POST', cuerpo: { testigo: testigoRevertir },
         });
         if (!datos) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
