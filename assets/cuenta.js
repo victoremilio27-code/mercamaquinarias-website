@@ -7,10 +7,20 @@
 
    El servidor nunca dice si un correo existe; estas pantallas
    tampoco, ni siquiera cambiando el texto entre un caso y otro.
+
+   10.2: dos vistas más. #formTelefono («Confirme su celular», al
+   entrar con el SMS encendido; se puede posponer) y
+   #formRecuperacionSms (recuperar la cuenta sin correo, en cuatro
+   pasos). La recuperación pide el celular COMPLETO y no enseña nunca
+   «•••-1234» del número guardado: esa máscara diría qué correos
+   tienen cuenta. Con el SMS apagado nada de esto se enseña y el
+   acceso se comporta como antes, salvo el celular obligatorio al
+   registrarse. Ningún SMS sale al mostrar una vista: cada uno cuesta
+   créditos y solo sale al pulsar un botón.
    ═══════════════════════════════════════════════════════════ */
 
-const VISTAS = ['formEntrar', 'formCrear', 'formCodigo', 'formRecuperar', 'formNuevaClave',
-  'formRecuperacion', 'formRevertir'];
+const VISTAS = ['formEntrar', 'formCrear', 'formCodigo', 'formTelefono', 'formRecuperar',
+  'formNuevaClave', 'formRecuperacionSms', 'formRecuperacion', 'formRevertir'];
 
 /* Correo y tipo de la verificación en curso. Vive en memoria: si se
    recarga la página hay que empezar de nuevo, que es lo correcto para
@@ -120,8 +130,8 @@ function montarCuenta() {
   function pintarTipo() {
     const dealer = (tipo.querySelector('input:checked') || {}).value === 'dealer';
     el('bloqueEmpresa').hidden = !dealer;
-    el('new-telefono').closest('.campo-v').querySelector('span').textContent =
-      dealer ? 'Teléfono principal *' : 'Teléfono';
+    // El celular es de la persona en los dos tipos; el teléfono de la
+    // empresa es otro campo, solo del dealer (D-14).
     // El dealer no crea la cuenta: pide que se la revisen. El botón lo
     // dice, para que nadie espere entrar publicando.
     el('btnCrear').textContent = dealer ? 'Enviar solicitud' : 'Crear cuenta';
@@ -136,24 +146,41 @@ function montarCuenta() {
     rnc.value = rnc.value.replace(/\D/g, '').slice(0, 9);
   });
 
-  // Formato del teléfono y de los códigos mientras se escribe.
-  const telefono = el('new-telefono');
-  telefono.addEventListener('input', () => {
-    const d = telefono.value.replace(/\D/g, '').slice(0, 10);
-    telefono.value = d.length <= 3 ? d
+  /* Formato del teléfono mientras se escribe: el mismo para todos los
+     campos de celular de la página. */
+  const formatearTelefono = (campo) => {
+    const d = campo.value.replace(/\D/g, '').slice(0, 10);
+    campo.value = d.length <= 3 ? d
       : d.length <= 6 ? `(${d.slice(0, 3)}) ${d.slice(3)}`
         : `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+  };
+  ['new-telefono', 'new-telefono-empresa', 'tel-nuevo', 'rec-telefono', 'rs-telefono'].forEach((idCampo) => {
+    const campo = el(idCampo);
+    if (campo) campo.addEventListener('input', () => formatearTelefono(campo));
   });
 
-  ['cod-codigo', 'nue-codigo'].forEach((idCampo) => {
-    const campo = el(idCampo);
+  /* Celular dominicano: 10 dígitos (un 1 delante de 11 se quita) que
+     empiecen por 809, 829 o 849. Igual que el servidor; aquí solo
+     ahorra el viaje cuando el error es evidente. */
+  const celularValido = (valor) => {
+    let d = String(valor || '').replace(/\D/g, '');
+    if (d.length === 11 && d[0] === '1') d = d.slice(1);
+    return d.length === 10 && ['809', '829', '849'].includes(d.slice(0, 3));
+  };
+  const AVISO_CELULAR = 'Indique su celular: 10 dígitos que empiecen por 809, 829 o 849.';
+
+  /* Seis dígitos y se envía solo (los códigos que se pegan desde el
+     correo o el SMS). */
+  const codigoSolo = (campo, enviarSolo) => {
     campo.addEventListener('input', () => {
       campo.value = campo.value.replace(/\D/g, '').slice(0, 6);
-      // Seis dígitos ya son un código completo: se envía solo, que es
-      // lo que espera quien acaba de pegarlo desde el correo.
-      if (campo.value.length === 6) campo.form.requestSubmit();
+      if (enviarSolo && campo.value.length === 6) campo.form.requestSubmit();
     });
-  });
+  };
+
+  // Seis dígitos ya son un código completo: se envía solo, que es
+  // lo que espera quien acaba de pegarlo desde el correo.
+  ['cod-codigo', 'nue-codigo', 'tel-codigo'].forEach((idCampo) => codigoSolo(el(idCampo), true));
 
   /* Envío común: bloquea el botón mientras dura. Sin esto, una
      conexión lenta invita a pulsar tres veces y crear tres cuentas. */
@@ -171,14 +198,40 @@ function montarCuenta() {
       mostrarAviso(e.message);
     } finally {
       boton.disabled = false;
-      boton.textContent = rotulo;
+      // Las vistas por pasos cambian el rótulo del botón al terminar
+      // (alTerminar corre antes): solo se restaura el que puso «Un momento…».
+      if (boton.textContent === 'Un momento…') boton.textContent = rotulo;
     }
   }
+
+  /* «Ahora no» es comodidad, no regla (D-14): se recuerda siete días en
+     este navegador y el panel sigue avisando. localStorage puede lanzar
+     (modo privado, almacenamiento bloqueado): en ese caso se pregunta
+     de nuevo y no pasa nada. */
+  const SIETE_DIAS = 7 * 24 * 60 * 60 * 1000;
+  const celularPospuesto = () => {
+    try {
+      const desde = Number(localStorage.getItem('merca.telefono.ahoraNo'));
+      return Number.isFinite(desde) && desde > 0 && Date.now() - desde < SIETE_DIAS;
+    } catch (_) { return false; }
+  };
+  const posponerCelular = () => {
+    try { localStorage.setItem('merca.telefono.ahoraNo', String(Date.now())); } catch (_) { /* sin almacenamiento */ }
+  };
 
   /* Una respuesta puede traer sesión abierta o pedir un código; es
      lo único que hay que distinguir. */
   function seguir(datos) {
-    if (datos.usuario) { location.href = destinoTrasEntrar(); return; }
+    if (datos.usuario) {
+      // Con el SMS encendido y el celular sin confirmar se ofrece
+      // confirmarlo antes de entrar, salvo que lo haya pospuesto.
+      if (datos.telefono && datos.telefono.sms && datos.telefono.pedir && !celularPospuesto()) {
+        pedirCelular(datos.telefono);
+        return;
+      }
+      location.href = destinoTrasEntrar();
+      return;
+    }
 
     if (datos.verificacion === 'restablecer') {
       pendiente = { correo: datos.correo, tipo: 'restablecer' };
@@ -191,6 +244,104 @@ function montarCuenta() {
     el('cod-codigo').value = '';
     vista('formCodigo');
   }
+
+  // ── Confirmar el celular al entrar (10.2) ──
+  /* Pasos: 'enviar' (confirmar el guardado), 'cambio' (otro número, con
+     contraseña) y 'codigo' (el SMS ya salió). Nada sale al mostrar la
+     vista; el SMS lo pide el botón. La sesión ya está abierta: si el
+     servidor responde con error se enseña y se puede probar otra vez o
+     pulsar «Ahora no». */
+  let telPaso = 'enviar';
+  let telProposito = 'verificar';
+  let telNumeroNuevo = '';
+
+  function pintarTelefono(texto) {
+    const nombres = { enviar: 'Enviar código', cambio: 'Enviar código', codigo: 'Confirmar' };
+    el('telPasoCambio').hidden = telPaso !== 'cambio';
+    el('telPasoCodigo').hidden = telPaso !== 'codigo';
+    el('btnTelCambiar').hidden = telPaso === 'cambio';
+    el('btnTelPrincipal').textContent = nombres[telPaso];
+    el('telIntro').textContent = texto;
+  }
+
+  function pedirCelular(t) {
+    telProposito = 'verificar';
+    telNumeroNuevo = '';
+    el('tel-codigo').value = '';
+    el('tel-clave').value = '';
+    el('tel-nuevo').value = '';
+    vista('formTelefono');
+    if (t && t.mascara) {
+      telPaso = 'enviar';
+      pintarTelefono(`Confirme su celular ${t.mascara}. Le enviaremos un código por SMS.`);
+    } else {
+      telPaso = 'cambio';
+      pintarTelefono('Indique su celular para proteger su cuenta.');
+    }
+  }
+
+  const alEnviarCodigoSms = (datos) => {
+    telPaso = 'codigo';
+    el('tel-codigo').value = '';
+    pintarTelefono(`Le enviamos un código a ${datos.destino}. Vence en ${datos.minutos} minutos.`);
+    el('tel-codigo').focus();
+  };
+
+  el('btnTelCambiar').addEventListener('click', () => {
+    telPaso = 'cambio';
+    mostrarAviso('');
+    pintarTelefono('Escriba el celular nuevo y su contraseña. Le enviaremos un código por SMS al número nuevo.');
+    el('tel-nuevo').focus();
+  });
+
+  el('btnTelAhoraNo').addEventListener('click', () => {
+    posponerCelular();
+    location.href = destinoTrasEntrar();
+  });
+
+  el('formTelefono').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const form = el('formTelefono');
+
+    if (telPaso === 'enviar') {
+      // Único sitio que pide el código al celular ya guardado.
+      return enviar(form, '/cuenta/telefono/verificar', {}, (datos) => {
+        telProposito = 'verificar';
+        alEnviarCodigoSms(datos);
+      });
+    }
+
+    if (telPaso === 'cambio') {
+      if (!celularValido(el('tel-nuevo').value)) {
+        el('tel-nuevo').focus();
+        return mostrarAviso(AVISO_CELULAR);
+      }
+      if (!el('tel-clave').value) {
+        el('tel-clave').focus();
+        return mostrarAviso('Escriba su contraseña para cambiar el número.');
+      }
+      return enviar(form, '/cuenta/telefono', {
+        clave: el('tel-clave').value, telefono: el('tel-nuevo').value.trim(),
+      }, (datos) => {
+        // Con el SMS apagado entretanto, el número ya quedó guardado y
+        // no hay código que pedir: se entra.
+        if (datos.usuario) { location.href = destinoTrasEntrar(); return; }
+        telProposito = 'cambio';
+        telNumeroNuevo = el('tel-nuevo').value.trim();
+        el('tel-clave').value = '';
+        alEnviarCodigoSms(datos);
+      });
+    }
+
+    const codigo = el('tel-codigo').value.trim();
+    if (codigo.length !== 6) return mostrarAviso('El código tiene 6 dígitos.');
+    const cuerpo = telProposito === 'cambio'
+      ? { proposito: 'cambio', telefono: telNumeroNuevo, codigo }
+      : { proposito: 'verificar', codigo };
+    enviar(form, '/cuenta/telefono/confirmar', cuerpo, () => {
+      location.href = destinoTrasEntrar();
+    });
+  });
 
   // ── Entrar ──
   el('formEntrar').addEventListener('submit', (ev) => {
@@ -215,6 +366,18 @@ function montarCuenta() {
       el('new-clave2').focus();
       return mostrarAviso('Las dos contraseñas no coinciden.');
     }
+    /* El celular es obligatorio para todos: el servidor responde 400
+       sin él. Antes el formulario lo dejaba vacío y el registro caía
+       en ese 400 sin explicación. */
+    if (!celularValido(el('new-telefono').value)) {
+      el('new-telefono').focus();
+      return mostrarAviso(AVISO_CELULAR);
+    }
+    const telEmpresa = el('new-telefono-empresa').value.trim();
+    if (dealer && telEmpresa && telEmpresa.replace(/\D/g, '').length !== 10) {
+      el('new-telefono-empresa').focus();
+      return mostrarAviso('El teléfono principal de la empresa debe tener 10 dígitos.');
+    }
     if (dealer) {
       if (!el('new-empresa').value.trim()) return mostrarAviso('Escriba la razón social de la empresa.');
       if (el('new-rnc').value.replace(/\D/g, '').length !== 9) {
@@ -222,9 +385,6 @@ function montarCuenta() {
       }
       if (!el('new-encargado').value.trim()) {
         return mostrarAviso('Indique el nombre del encargado o representante.');
-      }
-      if (el('new-telefono').value.replace(/\D/g, '').length !== 10) {
-        return mostrarAviso('Indique el teléfono principal de la empresa, de 10 dígitos.');
       }
       if (el('new-direccion').value.trim().length < 8) {
         return mostrarAviso('Indique la dirección de la oficina principal.');
@@ -262,6 +422,7 @@ function montarCuenta() {
       direccion: el('new-direccion').value.trim(),
       provincia: el('new-provincia').value,
       municipio: el('new-municipio').value.trim(),
+      telefonoEmpresa: telEmpresa,
       nombreComercial: el('new-comercial').value.trim(),
       aniosOperando: el('new-anios').value,
       encargado: el('new-encargado').value.trim(),

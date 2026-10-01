@@ -107,8 +107,10 @@
           <label class="campo-v"><span>Nombre y apellido *</span>
             <input type="text" id="new-nombre" autocomplete="name" required>
           </label>
-          <label class="campo-v"><span>Teléfono</span>
-            <input type="tel" id="new-telefono" autocomplete="tel" placeholder="(809) 000-0000">
+          <label class="campo-v"><span>Su celular *</span>
+            <input type="tel" id="new-telefono" autocomplete="tel" inputmode="tel" placeholder="(809) 000-0000"
+                   required aria-describedby="new-telefono-ayuda">
+            <small class="campo-v__ayuda" id="new-telefono-ayuda">A este número le enviaremos los códigos de seguridad de su cuenta.</small>
           </label>
           <label class="campo-v"><span>Correo electrónico *</span>
             <input type="email" id="new-correo" autocomplete="email" required>
@@ -178,6 +180,10 @@
               </label>
               <label class="campo-v"><span>Municipio o sector</span>
                 <input type="text" id="new-municipio" placeholder="Ej. Herrera">
+              </label>
+              <label class="campo-v"><span>Teléfono principal de la empresa</span>
+                <input type="tel" id="new-telefono-empresa" autocomplete="tel" placeholder="(809) 000-0000">
+                <small class="campo-v__ayuda">Si es distinto de su celular. Puede ser un fijo.</small>
               </label>
             </div>
           </fieldset>
@@ -261,6 +267,35 @@
         </p>
       </form>
 
+      <!-- Confirmar el celular al entrar (10.2). Solo con el SMS encendido y
+           nunca obliga: «Ahora no» se recuerda siete días. Ningún SMS sale
+           al mostrar esta vista, solo al pulsar un botón. -->
+      <form id="formTelefono" novalidate hidden>
+        <p class="codigo__intro" id="telIntro"></p>
+        <div id="telPasoCambio" hidden>
+          <div class="campos campos--uno">
+            <label class="campo-v"><span>Celular nuevo</span>
+              <input type="tel" id="tel-nuevo" autocomplete="tel" inputmode="tel" placeholder="(809) 000-0000">
+            </label>
+            <label class="campo-v"><span>Contraseña</span>
+              <input type="password" id="tel-clave" autocomplete="current-password">
+            </label>
+          </div>
+        </div>
+        <div id="telPasoCodigo" hidden>
+          <label class="campo-v campo-v--codigo"><span>Código de 6 dígitos</span>
+            <input type="text" id="tel-codigo" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="6" placeholder="000000" aria-describedby="telIntro">
+          </label>
+        </div>
+        <button class="btn btn--ambar btn--bloque btn--grande" type="submit" id="btnTelPrincipal">Enviar código</button>
+        <p class="acceso__enlace">
+          <button type="button" class="enlace-plano" id="btnTelCambiar">Cambiar número</button>
+          <span aria-hidden="true">·</span>
+          <button type="button" class="enlace-plano" id="btnTelAhoraNo">Ahora no</button>
+        </p>
+      </form>
+
       <!-- Recuperar: pedir el código -->
       <form id="formRecuperar" novalidate hidden>
         <p class="codigo__intro">Escriba el correo de su cuenta y le enviamos un código para establecer una contraseña nueva.</p>
@@ -276,6 +311,11 @@
           <button type="button" class="enlace-plano" id="btnCancelarRec">Volver</button>
         </p>
       </form>
+
+      <!-- Recuperación sin correo por SMS (10.2): cuatro pasos, rellenada
+           más abajo. Existe desde la tarea del celular porque VISTAS la
+           nombra y vista() necesita el elemento. -->
+      <form id="formRecuperacionSms" novalidate hidden></form>
 
       <!-- Recuperación sin acceso al correo (10.1): la revisa una persona.
            No hay atajo: la espera de 72 h y el aviso al correo actual son
