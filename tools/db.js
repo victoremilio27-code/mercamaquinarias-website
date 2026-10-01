@@ -1275,6 +1275,85 @@ const MIGRACIONES = [
     'CREATE INDEX IF NOT EXISTS ix_recuperacion_estado ON solicitudes_recuperacion (estado, creada)',
     'CREATE INDEX IF NOT EXISTS ix_recuperacion_usuario ON solicitudes_recuperacion (usuario_id)',
   ]],
+
+  /* Fase 10.2: el celular de la cuenta y los códigos por SMS.
+
+     El celular verificado es ÚNICO entre cuentas: si dos cuentas pudieran
+     tener el mismo, la recuperación por SMS sería ambigua (¿a cuál de las
+     dos se le abre la puerta?). El índice es PARCIAL a propósito: el mismo
+     número sin verificar puede estar escrito en varias cuentas (se pide en
+     el registro y nadie lo ha demostrado todavía), así que la unicidad
+     solo muerde al verificar. Rechazar la segunda verificación delataría
+     qué números tienen cuenta y atraparía al dueño de un número reciclado:
+     por eso verificar libera el número en la cuenta anterior (D-13).
+
+     Los códigos SMS tienen tabla propia. En `codigos` la clave es `correo
+     NOT NULL` y su CHECK de `tipo` es cerrado; meter ahí el celular
+     obligaba a una tercera reconstrucción y `cambiarCorreo` anularía
+     códigos SMS por error (anula por correo). `proposito` y
+     `cambios_telefono.via` van SIN CHECK: las fases 9 y 10.1 pagaron un
+     CHECK cerrado con una tabla rehecha; la lista vive en JS
+     (`PROPOSITOS_SMS`, `VIAS_CAMBIO_TELEFONO`) y la prueba la vigila.
+
+     `cambios_correo` se rehace porque su CHECK de `via` no admite
+     `'sms'`: sin esto, el último paso de la recuperación por SMS
+     reventaba con «CHECK constraint failed» y la persona perdía el código
+     del correo nuevo. Se copian las filas y los índices.
+
+     NADA de esto va en `db/schema.sql`: `abrir()` lo ejecuta ANTES que
+     `migrar()`, y un índice sobre `telefono_verificado` allí tumbaría el
+     arranque en producción con «no such column». */
+  ['2026-10-telefono-cuenta', [
+    'ALTER TABLE usuarios ADD COLUMN telefono_verificado TEXT',
+    'ALTER TABLE usuarios ADD COLUMN enfriamiento_hasta TEXT',
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_usuarios_telefono_verificado ON usuarios (telefono) WHERE telefono_verificado IS NOT NULL',
+    `CREATE TABLE IF NOT EXISTS codigos_telefono (
+       id TEXT PRIMARY KEY,
+       usuario_id TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+       numero TEXT NOT NULL,
+       proposito TEXT NOT NULL,
+       codigo_hash TEXT NOT NULL,
+       intentos INTEGER NOT NULL DEFAULT 0,
+       consumido INTEGER NOT NULL DEFAULT 0,
+       expira TEXT NOT NULL,
+       creado TEXT NOT NULL,
+       ip TEXT,
+       autoriza_hash TEXT,
+       autoriza_expira TEXT,
+       autoriza_usada TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_codigos_telefono_vigentes ON codigos_telefono (usuario_id, proposito, consumido, expira)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_codigos_telefono_autoriza ON codigos_telefono (autoriza_hash)',
+    `CREATE TABLE IF NOT EXISTS cambios_telefono (
+       id TEXT PRIMARY KEY,
+       usuario_id TEXT NOT NULL REFERENCES usuarios(id),
+       anterior TEXT,
+       nuevo TEXT,
+       via TEXT NOT NULL,
+       creado TEXT NOT NULL,
+       ip TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_cambios_telefono_usuario ON cambios_telefono (usuario_id)',
+    `CREATE TABLE cambios_correo_nueva (
+       id TEXT PRIMARY KEY,
+       usuario_id TEXT NOT NULL REFERENCES usuarios(id),
+       anterior TEXT NOT NULL,
+       nuevo TEXT NOT NULL,
+       via TEXT NOT NULL CHECK (via IN ('usuario','recuperacion','reversion','sms')),
+       creado TEXT NOT NULL,
+       ip TEXT,
+       revertir_hash TEXT,
+       revertir_expira TEXT,
+       revertido TEXT,
+       solicitud_id TEXT
+     )`,
+    `INSERT INTO cambios_correo_nueva (id, usuario_id, anterior, nuevo, via, creado, ip, revertir_hash, revertir_expira, revertido, solicitud_id)
+       SELECT id, usuario_id, anterior, nuevo, via, creado, ip, revertir_hash, revertir_expira, revertido, solicitud_id FROM cambios_correo`,
+    'DROP TABLE cambios_correo',
+    'ALTER TABLE cambios_correo_nueva RENAME TO cambios_correo',
+    'CREATE INDEX IF NOT EXISTS ix_cambios_correo_usuario ON cambios_correo (usuario_id)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_cambios_correo_revertir ON cambios_correo (revertir_hash)',
+  ]],
 ];
 
 function migrar() {

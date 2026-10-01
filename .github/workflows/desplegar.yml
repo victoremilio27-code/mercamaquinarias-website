@@ -86,6 +86,8 @@ jobs:
         run: npm run bitacora:probar
       - name: Cuenta y recuperacion
         run: npm run cuenta:probar
+      - name: Telefono y SMS
+        run: npm run telefono:probar
       - name: Contactos verificados
         run: npm run contactos:probar
       - name: Catalogo
