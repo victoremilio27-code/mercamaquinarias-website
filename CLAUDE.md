@@ -66,6 +66,8 @@ resto de `.planning/` es historia y no se relee salvo que la tarea lo necesite.
 - Codex lee `AGENTS.md`, que lo manda a este archivo. Trabaja en ramas `codex/` y abre
   PR como borrador.
 - **Nunca se edita una rama `codex/` mientras Codex trabaja en ella.**
+- La palabra `@codex` solo se escribe para encargar algo: con nombrarlo en la
+  descripción de un PR ya arranca una tarea (pasó en el PR #53).
 - Al terminar: Claude revisa el diff del PR y corre las pruebas que toque. Lo que Codex
   diga que hizo es solo una afirmación hasta verificarlo. El PR de Codex sigue la misma
   regla de publicar: CI en verde antes de fusionar.
