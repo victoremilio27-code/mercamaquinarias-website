@@ -84,6 +84,8 @@ jobs:
         run: npm run f607:puro
       - name: Consultas del lote mensual
         run: npm run lote:probar
+      - name: Paquete mensual para el contador
+        run: npm run paquete:probar
       - name: Interruptor de servicios
         run: npm run servicios:probar
       - name: Seguridad
