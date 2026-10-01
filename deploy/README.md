@@ -278,11 +278,14 @@ registro del servicio lo anota.
 
 ## 9b. Códigos por SMS (Brevo, apagado hasta pagar los créditos)
 
-Con el SMS encendido, las cuentas verifican su celular, «Olvidé mi
-contraseña» deja elegir correo o celular, quien perdió su correo
-recupera la cuenta con correo + celular, y los teléfonos de contacto de
-los anuncios se pueden verificar por SMS (fase 9). Apagado (hoy), todo
-va por correo y las opciones de SMS no se ven.
+Con el SMS encendido, las cuentas verifican su celular; al entrar desde
+un equipo nuevo, tras la contraseña, se elige recibir el código por
+correo o por SMS; con sesión, la contraseña se puede cambiar con un
+código por SMS; y los teléfonos de contacto de los anuncios se pueden
+verificar por SMS (fase 9). El SMS nunca abre una cuenta por sí solo
+(siempre va con la contraseña o con una sesión); «Olvidé mi contraseña»
+va solo por correo. Apagado (hoy), todo va por correo y las opciones de
+SMS no se ven.
 
 **Antes de encender (lo único que solo puede hacer Victor):**
 
