@@ -133,7 +133,7 @@ function pdfDe(fila) {
   return Buffer.isBuffer(bytes) && bytes.length ? bytes : null;
 }
 
-function previa(mes, { ahora = Date.now() } = {}) {
+function analizar(mes, { ahora = Date.now() } = {}) {
   const periodo = validarMes(mes, ahora);
   const filas = db.comprobantesDelPeriodo(periodo.desde, periodo.hasta);
   const fiscal = bloqueVacio();
@@ -166,6 +166,22 @@ function previa(mes, { ahora = Date.now() } = {}) {
       .map((fila) => fila.numero),
     faltanPdf: filas.filter((fila) => !pdfDe(fila)).map((fila) => fila.numero),
     fechasIrregulares: db.fechasIrregulares(mesesVecinos(mes)).map((fila) => fila.numero),
+  };
+}
+
+/* Lo que ve la consola: las tres listas de `analizar` van como cantidades.
+   El paquete usa las listas (nombra los números en el resumen y en los
+   errores); la vista previa solo necesita contarlos. */
+function previa(mes, opciones = {}) {
+  return conteos(analizar(mes, opciones));
+}
+
+function conteos(datos) {
+  return {
+    ...datos,
+    noCuadran: datos.noCuadran.length,
+    faltanPdf: datos.faltanPdf.length,
+    fechasIrregulares: datos.fechasIrregulares.length,
   };
 }
 
@@ -292,7 +308,7 @@ function validarCuadre(filas, sumas) {
 function armarPaquete(mes, { emisor, ahora = Date.now(), reponer = facturas.reponerPdfsDe,
   sumas = db.sumaDelPeriodo } = {}) {
   if (!emisor) throw new Error('Hace falta el emisor para armar el paquete.');
-  let datos = previa(mes, { ahora });
+  let datos = analizar(mes, { ahora });
   if (datos.fechasIrregulares.length) {
     const error = new Error(`Hay fechas irregulares: ${datos.fechasIrregulares.join(', ')}.`);
     error.codigo = 500;
@@ -314,7 +330,7 @@ function armarPaquete(mes, { emisor, ahora = Date.now(), reponer = facturas.repo
     throw error;
   }
   validarCuadre(filas, sumas(datos.desde, datos.hasta));
-  datos = previa(mes, { ahora });
+  datos = analizar(mes, { ahora });
 
   const conNcf = filas.filter((fila) => !!fila.ncf);
   const sinNcf = filas.filter((fila) => !fila.ncf);
@@ -325,7 +341,7 @@ function armarPaquete(mes, { emisor, ahora = Date.now(), reponer = facturas.repo
   entradas.push({ nombre: 'sin-ncf/resumen.csv', datos: resumenCsv(sinNcf, repuestos) });
   entradas.push({ nombre: 'resumen.pdf', datos: resumenPdf(datos, emisor, repuestos.size) });
   entradas.push({ nombre: 'LEEME.txt', datos: leeme(datos, emisor) });
-  return { nombre: datos.archivo, zip: zip(entradas), previa: datos };
+  return { nombre: datos.archivo, zip: zip(entradas), previa: conteos(datos) };
 }
 
 module.exports = { mesDe, mesActual, validarMes, zip, previa, armarPaquete };
