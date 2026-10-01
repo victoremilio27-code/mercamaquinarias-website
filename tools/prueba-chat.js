@@ -104,6 +104,41 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
   comprobar(/NUNCA cambias un correo ni recuperas una cuenta/.test(sis) && /NUNCA pides contraseñas ni códigos/.test(sis),
     'el prompt prohíbe cambiar correos, recuperar cuentas y pedir contraseñas o códigos desde el chat');
 
+  /* Fase 10.2: el celular y el SMS. Con MERCA_SMS apagado el asistente no
+     promete códigos por SMS; encendido, explica los caminos nuevos. En los
+     dos casos sigue sin teléfono de soporte y sin pedir códigos. */
+  const smsAntes = process.env.MERCA_SMS;
+  try {
+    delete process.env.MERCA_SMS;
+    const apagado = chat.sistema();
+    process.env.MERCA_SMS = 'archivo';
+    const encendido = chat.sistema();
+    comprobar(/Los códigos por SMS todavía no están disponibles/.test(apagado),
+      'SMS apagado: el asistente dice que los códigos por SMS todavía no están disponibles');
+    comprobar(!/código por SMS/.test(apagado), 'SMS apagado: no promete «código por SMS»');
+    comprobar(/equipo nuevo/.test(encendido) && /código por SMS/.test(encendido) && /Seguridad de la cuenta/.test(encendido),
+      'SMS encendido: explica elegir correo o SMS desde un equipo nuevo y el cambio de correo en Seguridad de la cuenta');
+    comprobar(!/el correo de la cuenta y su celular/.test(encendido)
+      && !/durante 72 horas después de usar un código por SMS/.test(encendido)
+      && !/En «Olvidé mi contraseña» puede elegir/.test(encendido),
+      'SMS encendido: no ofrece recuperar con correo + celular, ni las 72 h tras un SMS, ni «Olvidé mi contraseña» por SMS');
+    comprobar(!/todavía no están disponibles/.test(encendido),
+      'SMS encendido: ya no dice que los códigos por SMS no estén disponibles');
+    for (const [estado, p] of [['apagado', apagado], ['encendido', encendido]]) {
+      comprobar(/celular/.test(p) && /Seguridad de la cuenta/.test(p),
+        `SMS ${estado}: el prompt habla del celular y de «Seguridad de la cuenta»`);
+      comprobar(/cambio de contraseña que no hizo[^\n]*«No fui yo»/.test(p),
+        `SMS ${estado}: manda al «No fui yo» ante un cambio de contraseña que no se hizo`);
+      comprobar(/No hay teléfono de soporte/.test(p) && !/\(809\)/.test(p),
+        `SMS ${estado}: sigue sin teléfono de soporte`);
+      comprobar(/NUNCA pides contraseñas ni códigos/.test(p),
+        `SMS ${estado}: sigue prohibido pedir contraseñas o códigos`);
+    }
+  } finally {
+    if (smsAntes === undefined) delete process.env.MERCA_SMS;
+    else process.env.MERCA_SMS = smsAntes;
+  }
+
   /* El asistente anuncia el precio FINAL —el mismo que cobra
      `precioCompra`/`desglose`—, nunca la base ni el 3 % de ajuste. Lo
      esperado se calcula aquí con el mismo módulo que usa chat.js, no a

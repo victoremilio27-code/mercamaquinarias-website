@@ -83,6 +83,10 @@
       </div>
     </header>
 
+    <!-- Aviso no bloqueante para quien no ha indicado o verificado su
+         celular (10.2). Texto y enlace los pone panel.js. -->
+    <p class="acceso__aviso" id="avisoCelular" role="status" hidden></p>
+
     <section class="panel" id="panelPlan" aria-labelledby="t-plan"></section>
 
     <!-- Renovar un anuncio o un plan sin rehacerlo (05.3). Oculta hasta que
@@ -345,12 +349,55 @@
         </form>
       </div>
 
+      <!-- Celular de la cuenta (fase 10.2). Recibe los códigos de
+           seguridad; es distinto de los teléfonos de los anuncios (D-04). -->
+      <div class="seguridad__bloque" id="segTelefono">
+        <h3 class="form-sucursal__titulo">Celular de la cuenta</h3>
+        <p class="panel__texto" id="segTelefonoEstado"></p>
+        <p class="acceso__aviso" id="avisoSegTelefono" role="alert" hidden></p>
+        <div class="acciones" id="segTelefonoAcciones">
+          <button type="button" class="btn btn--ambar" id="btnVerificarTelefono" hidden>Verificar celular</button>
+          <button type="button" class="btn btn--linea" id="btnCambiarTelefono" aria-expanded="false" aria-controls="formTelefonoNuevo">Cambiar celular</button>
+        </div>
+
+        <form class="form-sucursal" id="formTelefonoNuevo" hidden novalidate>
+          <div class="campos campos--uno">
+            <label class="campo-v"><span>Celular nuevo</span>
+              <input type="tel" id="seg-tel-nuevo" autocomplete="tel" inputmode="tel" placeholder="(809) 000-0000" required>
+              <small>10 dígitos que empiecen por 809, 829 o 849.</small>
+            </label>
+            <label class="campo-v"><span>Contraseña actual</span>
+              <input type="password" id="seg-tel-clave" autocomplete="current-password" required>
+            </label>
+          </div>
+          <div class="acciones">
+            <button class="btn btn--ambar" type="submit">Guardar</button>
+            <button class="btn btn--linea" type="button" id="btnCancelarTelefono">Cancelar</button>
+          </div>
+        </form>
+
+        <form class="form-sucursal" id="formTelefonoCodigo" hidden novalidate>
+          <p class="panel__texto" id="segTelCodigoIntro"></p>
+          <div class="campos campos--uno">
+            <label class="campo-v campo-v--codigo"><span>Código de 6 dígitos</span>
+              <input type="text" id="seg-tel-codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+            </label>
+          </div>
+          <div class="acciones">
+            <button class="btn btn--ambar" type="submit">Confirmar</button>
+            <button class="btn btn--linea" type="button" id="btnOtroCodigoTel">Enviar otro código</button>
+            <button class="btn btn--linea" type="button" id="btnCancelarCodigoTel">Cancelar</button>
+          </div>
+        </form>
+      </div>
+
       <!-- 2. Contraseña -->
       <div class="seguridad__bloque" id="segClave">
         <h3 class="form-sucursal__titulo">Contraseña</h3>
         <p class="acceso__aviso" id="avisoSegClave" role="alert" hidden></p>
         <div class="acciones" id="segClaveAcciones">
           <button type="button" class="btn btn--linea" id="btnCambiarClave" aria-expanded="false" aria-controls="formClaveNueva">Cambiar contraseña</button>
+          <button type="button" class="btn btn--linea" id="btnClaveSinActual" aria-expanded="false" aria-controls="formClaveCodigo">¿No recuerda la contraseña actual?</button>
         </div>
         <form class="form-sucursal" id="formClaveNueva" hidden novalidate>
           <div class="campos campos--uno">
@@ -367,6 +414,39 @@
           <div class="acciones">
             <button class="btn btn--ambar" type="submit">Cambiar contraseña</button>
             <button class="btn btn--linea" type="button" id="btnCancelarClave">Cancelar</button>
+          </div>
+        </form>
+
+        <!-- Sin recordar la actual: un código al correo o, con el SMS
+             encendido y el celular verificado, al celular (D-05). -->
+        <form class="form-sucursal" id="formClaveCodigo" hidden novalidate>
+          <fieldset class="campos campos--uno" id="segClaveVia">
+            <legend>¿Dónde quiere recibir el código?</legend>
+            <label><input type="radio" name="segClaveVia" value="correo" checked> A mi correo</label>
+            <label id="segClaveViaSms" hidden><input type="radio" name="segClaveVia" value="sms"> Por SMS a mi celular</label>
+          </fieldset>
+          <div class="acciones">
+            <button class="btn btn--ambar" type="button" id="btnClavePedirCodigo">Enviar código</button>
+          </div>
+          <div id="segClaveCodigoCampos" hidden>
+            <p class="panel__texto" id="segClaveCodigoIntro"></p>
+            <div class="campos campos--uno">
+              <label class="campo-v campo-v--codigo"><span>Código de 6 dígitos</span>
+                <input type="text" id="seg-clave-codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+              </label>
+              <label class="campo-v"><span>Contraseña nueva</span>
+                <input type="password" id="seg-clave-codigo-nueva" autocomplete="new-password" placeholder="Mínimo 10 caracteres">
+              </label>
+              <label class="campo-v"><span>Repita la contraseña nueva</span>
+                <input type="password" id="seg-clave-codigo-nueva2" autocomplete="new-password">
+              </label>
+            </div>
+            <div class="acciones">
+              <button class="btn btn--ambar" type="submit">Cambiar contraseña</button>
+            </div>
+          </div>
+          <div class="acciones">
+            <button class="btn btn--linea" type="button" id="btnCancelarClaveCodigo">Cancelar</button>
           </div>
         </form>
       </div>

@@ -873,7 +873,8 @@ function expedienteRecuHTML(e) {
       <h3 class="sol__nombre">Lo que sabe la cuenta</h3>
       ${recuLinea('Nombre', c.nombre)}
       ${recuLinea('Correo', c.correo)}
-      ${recuLinea('Teléfono', c.telefono)}
+      ${recuLinea('Celular', c.telefono)}
+      ${recuLinea('Celular verificado', c.telefono_verificado ? fechaHora(c.telefono_verificado) : 'no')}
       ${recuLinea('Alta', c.creado ? fechaHora(c.creado) : '')}
       ${o ? recuLinea('Organización', `${o.nombre} (${o.tipo}${o.rnc ? `, RNC ${o.rnc}` : ''})`) : recuLinea('Organización', '')}
       ${recuLinea('Anuncios', `${e.anuncios ? e.anuncios.total : 0}${e.anuncios && e.anuncios.titulos.length ? ` · ${e.anuncios.titulos.join(', ')}` : ''}`)}
@@ -882,6 +883,8 @@ function expedienteRecuHTML(e) {
       ${recuLinea('Teléfonos verificados', (e.telefonosVerificados || []).join(', '))}
       <p class="sol__meta">Cambios de correo recientes: ${(e.cambiosCorreo || []).length ? '' : 'ninguno'}</p>
       ${(e.cambiosCorreo || []).map((x) => `<p class="sol__meta">${esc(fechaHora(x.creado))} · ${esc(x.anterior)} → ${esc(x.nuevo)} · ${esc(x.via)}${x.revertido ? ' · revertido' : ''}</p>`).join('')}
+      <p class="sol__meta">Cambios de celular recientes: ${(e.cambiosTelefono || []).length ? '' : 'ninguno'}</p>
+      ${(e.cambiosTelefono || []).map((x) => `<p class="sol__meta">${esc(fechaHora(x.creado))} · ${esc(x.anterior || '—')} → ${esc(x.nuevo || '—')} · ${esc(x.via)}</p>`).join('')}
     </div>`;
 
   return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.25rem">${izquierda}${derecha}</div>`;

@@ -80,6 +80,18 @@ const ok = (t) => console.log(`    ✓ ${t}`);
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* D-16: con el SMS apagado, entrar desde un equipo nuevo va directo al
+   código del correo y nunca enseña la elección de vía (#formAccesoVia). */
+let viaComprobada = false;
+async function sinElegirVia(p, donde) {
+  const visibleVia = await p.$eval('#formAccesoVia', (el) => !el.hidden && el.offsetParent !== null).catch(() => false);
+  if (visibleVia) anota(donde, 'flujo', '#formAccesoVia visible con el SMS apagado');
+  else if (!viaComprobada) {
+    viaComprobada = true;
+    ok('con el SMS apagado, entrar desde un equipo nuevo va directo al código del correo');
+  }
+}
+
 /* 06-10: con CardNet apagado (el CI no enciende MERCA_CARDNET) ninguna
    pantalla enseña el selector de tarjeta, el modal de captura ni la
    lista de tarjetas guardadas. Si aparecen, el interruptor no manda. */
@@ -173,6 +185,51 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   /* ═══ VENDEDOR PARTICULAR ═══ */
   console.log('\n═══ Vendedor particular ═══');
   vigilar(p, 'particular');
+
+  /* Fase 10.2 con el SMS apagado: así corre el CI y así está producción
+     hasta que se paguen los créditos. Aquí se comprueba lo que SÍ se ve
+     (el celular obligatorio, el acceso por correo de siempre) y lo que NO
+     debe verse (el selector de SMS). Las pantallas del SMS encendido las
+     recorre auditar-telefono.js en su propio servidor. */
+  console.log('\n  ── Celular y SMS con el SMS apagado ──');
+  for (const [telefono, esperado, etiqueta] of [
+    ['', /celular/i, 'sin celular'],
+    ['8005551234', /809, 829 o 849/, 'con 8005551234'],
+  ]) {
+    await p.goto(`${BASE}/cuenta.html?crear=1`, { waitUntil: 'networkidle0' });
+    await esperar(400);
+    await escribir(p, '#new-nombre', 'José Almonte');
+    if (telefono) await escribir(p, '#new-telefono', telefono);
+    await escribir(p, '#new-correo', `sintel-${SELLO}@auditoria.do`);
+    await escribir(p, '#new-clave', CLAVE);
+    await escribir(p, '#new-clave2', CLAVE);
+    await p.click('#new-acepta');
+    await p.click('#btnCrear');
+    await esperar(900);
+    const avisoTel = await p.$eval('#avisoAcceso', (el) => (el.hidden ? '' : el.textContent.trim())).catch(() => '');
+    const sigueAqui = new URL(p.url()).pathname.endsWith('/cuenta.html');
+    if (esperado.test(avisoTel) && sigueAqui) ok(`el registro ${etiqueta} se queda en el formulario: «${avisoTel.slice(0, 70)}»`);
+    else anota('registro', 'flujo', `el registro ${etiqueta} no avisa del celular o salió del formulario (aviso=«${avisoTel}», url=${p.url()})`);
+  }
+
+  await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
+  await esperar(500);
+  await p.click('#irRecuperar');
+  await esperar(400);
+  // D-16: «Olvidé mi contraseña» solo pide el correo, con el SMS apagado o encendido.
+  const recSoloCorreo = await p.evaluate(() => document.getElementById('recVia') === null
+    && !document.querySelector('#formRecuperar input[type=tel]'));
+  if (recSoloCorreo) ok('«Olvidé mi contraseña» solo pide el correo (sin selector de vía ni campo de celular)');
+  else anota('recuperar', 'flujo', '«Olvidé mi contraseña» ofrece vía SMS o pide un celular');
+  await p.click('#btnCancelarRec').catch(() => {});
+  await esperar(300);
+  await p.click('#irRecuperacion').catch(() => {});
+  await esperar(400);
+  const rcpVisible = await p.$eval('#formRecuperacion', (el) => !el.hidden).catch(() => false);
+  const rsExiste = await p.evaluate(() => document.getElementById('formRecuperacionSms') !== null);
+  if (rcpVisible && !rsExiste) ok('«¿Ya no tiene acceso a su correo?» abre la revisión por persona (#formRecuperacion); #formRecuperacionSms no existe');
+  else anota('recuperar', 'flujo', `la recuperación sin correo no abre solo #formRecuperacion (rcp=${rcpVisible}, #formRecuperacionSms existe=${rsExiste})`);
+
   const entro = await registrar(p, {
     tipo: 'particular', correo: CORREO_PARTICULAR, nombre: 'José Almonte',
   });
@@ -483,6 +540,43 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   console.log(`  /admin.html bloqueado para particular: ${bloqueado ? 'sí ✓' : 'NO ⚠'}`);
   if (!bloqueado) anota('particular', 'SEGURIDAD', 'un particular ve el panel de administración');
 
+  /* Contraseña con un código al correo (10.2, D-05): con el SMS apagado
+     la vía del celular no existe, pero la del correo sí, y es lo que usa
+     quien no recuerda la actual. Se hace con la sesión del particular
+     recién registrado y se cambia a la MISMA contraseña, para que el
+     resto de la auditoría siga entrando con ella. */
+  console.log('\n  ── Contraseña con código al correo ──');
+  if (entro) {
+    await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+    await esperar(800);
+    if (await p.$('#btnClaveSinActual')) {
+      await p.click('#btnClaveSinActual');
+      await esperar(300);
+      const viaSmsOculta = await p.$eval('#segClaveViaSms', (el) => el.hidden).catch(() => false);
+      if (viaSmsOculta) ok('«Por SMS a mi celular» está oculto con el SMS apagado');
+      else anota('seguridad', 'flujo', '#segClaveViaSms visible con el SMS apagado');
+      await p.click('#btnClavePedirCodigo');
+      await esperar(1200);
+      const codigoClave = codigoDe('vendedor-' + SELLO);
+      if (!codigoClave) {
+        anota('seguridad', 'correo', 'no llegó el código para cambiar la contraseña al correo del particular');
+      } else {
+        await escribir(p, '#seg-clave-codigo', codigoClave);
+        await escribir(p, '#seg-clave-codigo-nueva', CLAVE);
+        await escribir(p, '#seg-clave-codigo-nueva2', CLAVE);
+        await p.click('#formClaveCodigo button[type="submit"]');
+        await esperar(1500);
+        const avClave = await p.$eval('#avisoSegClave', (el) => (el.hidden ? '' : el.textContent.trim())).catch(() => '');
+        if (avClave) ok(`la contraseña se cambia con un código al correo: «${avClave.slice(0, 70)}»`);
+        else anota('seguridad', 'flujo', 'cambiar la contraseña con el código del correo no dejó aviso de éxito');
+      }
+    } else {
+      anota('seguridad', 'flujo', 'el panel no tiene #btnClaveSinActual');
+    }
+  } else {
+    anota('seguridad', 'flujo', 'sin sesión del particular: no se probó la contraseña con código');
+  }
+
   /* ═══ DEALER ═══ */
   console.log('\n═══ Dealer ═══');
   await p.goto(`${BASE}/api/cuenta/salir`, { waitUntil: 'networkidle0' }).catch(() => {});
@@ -528,6 +622,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await escribir(p, '#ent-clave', CLAVE_DEMO);
   await p.click('#formEntrar button[type="submit"]');
   await esperar(1500);
+  await sinElegirVia(p, 'dealer-demo');
   if (await p.$eval('#formCodigo', (el) => !el.hidden).catch(() => false)) {
     const c = codigoDe(CORREO_DEMO.split('@')[0]);
     if (c) { await p.type('#cod-codigo', c); await esperar(1800); }
@@ -582,9 +677,15 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
        sin recargar y sin cambiar nada. */
     await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
     await esperar(800);
-    const bloques = await p.$$eval('#panelSeguridad #segCorreo, #panelSeguridad #segClave, #panelSeguridad #segSesiones', (n) => n.length).catch(() => 0);
-    if (bloques === 3) ok('panel.html trae «Seguridad de la cuenta» con correo, contraseña y sesiones');
-    else anota('seguridad', 'flujo', `#panelSeguridad no trae los tres bloques (hay ${bloques})`);
+    const bloques = await p.$$eval('#panelSeguridad #segCorreo, #panelSeguridad #segTelefono, #panelSeguridad #segClave, #panelSeguridad #segSesiones', (n) => n.length).catch(() => 0);
+    if (bloques === 4) ok('panel.html trae «Seguridad de la cuenta» con correo, celular, contraseña y sesiones');
+    else anota('seguridad', 'flujo', `#panelSeguridad no trae los cuatro bloques (hay ${bloques})`);
+    const estadoTel = await p.$eval('#segTelefonoEstado', (el) => el.textContent.trim()).catch(() => '');
+    if (estadoTel) ok(`#segTelefonoEstado dice: «${estadoTel.slice(0, 70)}»`);
+    else anota('seguridad', 'flujo', '#segTelefonoEstado está vacío');
+    const verifOculto = await p.$eval('#btnVerificarTelefono', (el) => el.hidden || el.offsetParent === null).catch(() => true);
+    if (verifOculto) ok('#btnVerificarTelefono oculto con el SMS apagado');
+    else anota('seguridad', 'flujo', '#btnVerificarTelefono visible con el SMS apagado');
 
     if (await p.$('#btnCambiarCorreo')) {
       await p.evaluate(() => { window.__sinRecarga = true; });
@@ -645,6 +746,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await escribir(p, '#ent-clave', CLAVE);
   await p.click('#formEntrar button[type="submit"]');
   await esperar(1200);
+  await sinElegirVia(p, 'admin');
 
   if (await p.$eval('#formCodigo', (el) => !el.hidden).catch(() => false)) {
     const c = codigoDe(CORREO_ADMIN.split('@')[0]);

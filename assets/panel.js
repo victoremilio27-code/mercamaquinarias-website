@@ -2317,6 +2317,77 @@ function montarSeguridad() {
     }
   });
 
+  // ── Contraseña sin recordar la actual (10.2, D-05) ──
+  // Un código al correo o, con el SMS encendido y el celular verificado,
+  // al celular. El servidor comprueba el código y el tope;
+  // aquí solo se piden y se enseñan. Nada se envía hasta pulsar «Enviar».
+  const formClaveCodigo = $('#formClaveCodigo');
+  const botonSinActual = $('#btnClaveSinActual');
+  const viaElegida = () => {
+    const r = formClaveCodigo.querySelector('input[name="segClaveVia"]:checked');
+    return r ? r.value : 'correo';
+  };
+  const cerrarClaveCodigo = () => {
+    formClaveCodigo.reset();
+    formClaveCodigo.hidden = true;
+    $('#segClaveCodigoCampos').hidden = true;
+    botonSinActual.setAttribute('aria-expanded', 'false');
+    $('#segClaveAcciones').hidden = false;
+  };
+  botonSinActual.addEventListener('click', () => {
+    aviso('#avisoSegClave', '');
+    const t = SESION.telefono || {};
+    $('#segClaveViaSms').hidden = !(SESION.sms && t.verificado);
+    formClaveCodigo.hidden = false;
+    botonSinActual.setAttribute('aria-expanded', 'true');
+    $('#segClaveAcciones').hidden = true;
+  });
+  $('#btnCancelarClaveCodigo').addEventListener('click', () => {
+    cerrarClaveCodigo();
+    aviso('#avisoSegClave', '');
+  });
+  $('#seg-clave-codigo').addEventListener('input', (ev) => {
+    ev.target.value = ev.target.value.replace(/\D/g, '').slice(0, 6);
+  });
+  $('#btnClavePedirCodigo').addEventListener('click', async (ev) => {
+    aviso('#avisoSegClave', '');
+    try {
+      const r = await conEspera(ev.currentTarget, () =>
+        api('/cuenta/clave/codigo', { metodo: 'POST', cuerpo: { via: viaElegida() } }));
+      if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+      $('#segClaveCodigoIntro').textContent =
+        `Le enviamos un código a ${r.destino}. Vence en ${r.minutos} minutos.`;
+      $('#segClaveCodigoCampos').hidden = false;
+      $('#seg-clave-codigo').value = '';
+      $('#seg-clave-codigo').focus();
+    } catch (e) {
+      aviso('#avisoSegClave', e.message);
+    }
+  });
+  formClaveCodigo.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const codigo = $('#seg-clave-codigo').value.trim();
+    const nueva = $('#seg-clave-codigo-nueva').value;
+    if (codigo.length !== 6) return aviso('#avisoSegClave', 'El código tiene 6 dígitos.');
+    if (nueva.length < 10) return aviso('#avisoSegClave', 'La contraseña nueva debe tener al menos 10 caracteres.');
+    if ($('#seg-clave-codigo-nueva2').value !== nueva) {
+      $('#seg-clave-codigo-nueva2').focus();
+      return aviso('#avisoSegClave', 'Las dos contraseñas nuevas no coinciden.');
+    }
+    aviso('#avisoSegClave', '');
+    try {
+      const r = await conEspera(formClaveCodigo.querySelector('button[type="submit"]'), () =>
+        api('/cuenta/clave', { metodo: 'POST', cuerpo: { via: viaElegida(), codigo, nueva } }));
+      if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+      cerrarClaveCodigo();
+      aviso('#avisoSegClave', r.mensaje || 'Su contraseña cambió y se cerraron las demás sesiones.', true);
+    } catch (e) {
+      aviso('#avisoSegClave', e.message);
+    }
+  });
+
+  montarTelefono(aviso, conEspera);
+
   // ── Otras sesiones ──
   $('#btnCerrarOtras').addEventListener('click', async (ev) => {
     if (!confirm('Se cerrará la sesión en todos los demás equipos. Esta sesión sigue abierta. ¿Continuar?')) return;
@@ -2332,6 +2403,166 @@ function montarSeguridad() {
       aviso('#avisoSegSesiones', e.message);
     }
   });
+}
+
+/* Celular de la cuenta (10.2). Es el que recibe los códigos de seguridad,
+   no el de los anuncios. Jamás se manda un SMS al cargar la página: cada
+   uno cuesta créditos, así que los envíos salen solo de un clic. El
+   servidor decide todo (topes, contraseña, código); aquí
+   solo se enseña. Cada llamada va en su try/catch porque api() lanza.
+   La contraseña del cambio vive solo en `enCurso` mientras se espera el
+   código: nunca en el DOM, el almacenamiento ni la URL. */
+function montarTelefono(aviso, conEspera) {
+  if (!$('#segTelefono')) return;
+  const A = '#avisoSegTelefono';
+  const formNuevo = $('#formTelefonoNuevo');
+  const formCodigo = $('#formTelefonoCodigo');
+  const botonCambiar = $('#btnCambiarTelefono');
+  const botonVerificar = $('#btnVerificarTelefono');
+  let enCurso = null;   // { proposito: 'verificar' } o { proposito: 'cambio', telefono, clave }
+
+  function pintar() {
+    const t = SESION.telefono || {};
+    let estado;
+    if (!t.mascara) estado = 'Aún no ha indicado su celular. Lo usamos para enviarle códigos de seguridad.';
+    else if (t.verificado) estado = `Su celular es ${t.mascara} · verificado.`;
+    else if (t.sms) estado = `Su celular es ${t.mascara} · sin verificar.`;
+    else estado = `Su celular es ${t.mascara}. Lo verificaremos cuando activemos los códigos por SMS.`;
+    $('#segTelefonoEstado').textContent = estado;
+    botonVerificar.hidden = !(t.sms && t.mascara && !t.verificado);
+    botonCambiar.textContent = t.mascara ? 'Cambiar celular' : 'Añadir celular';
+
+    const pedir = $('#avisoCelular');
+    if (pedir) {
+      pedir.hidden = !t.pedir;
+      if (t.pedir) {
+        const texto = t.sms
+          ? 'Confirme su celular: lo usamos para proteger su cuenta.'
+          : 'Añada su celular: pronto lo usaremos para proteger su cuenta.';
+        pedir.innerHTML = `${esc(texto)} <a href="#segTelefono">Ir a Seguridad de la cuenta</a>`;
+      }
+    }
+  }
+
+  function cerrar() {
+    enCurso = null;
+    formNuevo.reset();
+    formCodigo.reset();
+    formNuevo.hidden = true;
+    formCodigo.hidden = true;
+    botonCambiar.setAttribute('aria-expanded', 'false');
+    $('#segTelefonoAcciones').hidden = false;
+  }
+
+  function pasarACodigo(r) {
+    $('#segTelCodigoIntro').textContent =
+      `Le enviamos un código por SMS al ${r.destino}. Vence en ${r.minutos} minutos.`;
+    formNuevo.hidden = true;
+    formCodigo.hidden = false;
+    $('#segTelefonoAcciones').hidden = true;
+    $('#seg-tel-codigo').value = '';
+    $('#seg-tel-codigo').focus();
+  }
+
+  /* Pide el código que corresponda a `enCurso`; devuelve la respuesta
+     o la sesión nueva (SMS apagado: el celular quedó guardado sin más). */
+  async function enviar(boton) {
+    const r = await conEspera(boton, () => (enCurso.proposito === 'verificar'
+      ? api('/cuenta/telefono/verificar', { metodo: 'POST', cuerpo: {} })
+      : api('/cuenta/telefono', { metodo: 'POST', cuerpo: { clave: enCurso.clave, telefono: enCurso.telefono } })));
+    if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+    return r;
+  }
+
+  botonVerificar.addEventListener('click', async () => {
+    aviso(A, '');
+    enCurso = { proposito: 'verificar' };
+    try {
+      pasarACodigo(await enviar(botonVerificar));
+    } catch (e) {
+      enCurso = null;
+      aviso(A, e.message);
+    }
+  });
+
+  botonCambiar.addEventListener('click', () => {
+    aviso(A, '');
+    formNuevo.hidden = false;
+    botonCambiar.setAttribute('aria-expanded', 'true');
+    $('#segTelefonoAcciones').hidden = true;
+    $('#seg-tel-nuevo').focus();
+  });
+  $('#btnCancelarTelefono').addEventListener('click', cerrar);
+  $('#btnCancelarCodigoTel').addEventListener('click', () => { cerrar(); aviso(A, ''); });
+
+  formNuevo.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const telefono = $('#seg-tel-nuevo').value.trim();
+    const clave = $('#seg-tel-clave').value;
+    const digitos = telefono.replace(/\D/g, '');
+    const local = digitos.length === 11 && digitos[0] === '1' ? digitos.slice(1) : digitos;
+    if (local.length !== 10 || !/^(809|829|849)/.test(local)) {
+      $('#seg-tel-nuevo').focus();
+      return aviso(A, 'Escriba un celular de 10 dígitos que empiece por 809, 829 o 849.');
+    }
+    if (!clave) return aviso(A, 'Escriba su contraseña actual.');
+    aviso(A, '');
+    enCurso = { proposito: 'cambio', telefono, clave };
+    try {
+      const r = await enviar(formNuevo.querySelector('button[type="submit"]'));
+      if (r.destino) return pasarACodigo(r);
+      // SMS apagado: el servidor lo guardó sin verificar. La sesión se
+      // rehace desde el servidor, que es quien sabe el estado real.
+      await cargarSesion();
+      cerrar();
+      pintar();
+      aviso(A, 'Guardamos su celular. Le avisamos por correo.', true);
+    } catch (e) {
+      enCurso = null;
+      aviso(A, e.message);
+    }
+  });
+
+  $('#btnOtroCodigoTel').addEventListener('click', async () => {
+    if (!enCurso) return;
+    aviso(A, '');
+    try {
+      pasarACodigo(await enviar($('#btnOtroCodigoTel')));
+      aviso(A, 'Le enviamos un código nuevo. El anterior dejó de servir.', true);
+    } catch (e) {
+      aviso(A, e.message);
+    }
+  });
+
+  $('#seg-tel-codigo').addEventListener('input', (ev) => {
+    ev.target.value = ev.target.value.replace(/\D/g, '').slice(0, 6);
+    if (ev.target.value.length === 6) formCodigo.requestSubmit();
+  });
+
+  formCodigo.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!enCurso) return;
+    const codigo = $('#seg-tel-codigo').value.trim();
+    if (codigo.length !== 6) return aviso(A, 'El código tiene 6 dígitos.');
+    aviso(A, '');
+    const cuerpo = enCurso.proposito === 'verificar'
+      ? { proposito: 'verificar', codigo }
+      : { proposito: 'cambio', telefono: enCurso.telefono, codigo };
+    try {
+      const r = await conEspera(formCodigo.querySelector('button[type="submit"]'), () =>
+        api('/cuenta/telefono/confirmar', { metodo: 'POST', cuerpo }));
+      if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+      if (r.usuario) SESION.usuario = r.usuario;
+      if (r.telefono) SESION.telefono = r.telefono; else await cargarSesion();
+      cerrar();
+      pintar();
+      aviso(A, 'Listo: su celular quedó verificado.', true);
+    } catch (e) {
+      aviso(A, e.message);
+    }
+  });
+
+  pintar();
 }
 
 document.addEventListener('DOMContentLoaded', montarPanel);

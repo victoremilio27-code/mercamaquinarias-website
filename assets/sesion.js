@@ -14,7 +14,7 @@
    que sí tiene la sesión abierta. */
 let SESION = {
   cargando: true, usuario: null, organizacion: null, suscripcion: null,
-  sucursales: [], verificado: false,
+  sucursales: [], verificado: false, telefono: null, sms: false,
 };
 
 /* Envoltura de fetch contra /api.
@@ -58,6 +58,11 @@ async function cargarSesion() {
     // el equipo, sin una segunda llamada.
     sucursales: (datos && datos.sucursales) || [],
     verificado: !!(datos && datos.verificado),
+    // El estado del celular y si el SMS está encendido lo decide el
+    // servidor en cada carga; el navegador solo oculta o enseña las
+    // opciones de SMS.
+    telefono: (datos && datos.telefono) || null,
+    sms: !!(datos && (datos.sms || (datos.telefono && datos.telefono.sms))),
     // Qué condiciones tiene aceptadas y cuáles le faltan para publicar
     // o para pagar. Lo decide el servidor; aquí solo se enseña.
     legales: (datos && datos.legales) || { aceptado: {}, faltan: { publicar: [], pagar: [] } },

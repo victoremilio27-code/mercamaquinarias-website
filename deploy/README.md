@@ -126,14 +126,22 @@ Repetirlo no duplica nada: si la flota ya está, no la toca.
 Se crean desde el servidor, con el correo ya verificado:
 
 ```bash
-cd /var/www/mercamaquinarias
-
-sudo -u mercamaquinarias node tools/admin.js crear principal@mercamaquinarias.com \
+sudo -u mercamaquinarias MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db \
+  node /var/www/mercamaquinarias/tools/admin.js crear principal@mercamaquinarias.com \
   "Administración MercaMaquinarias" --admin --exenta --empresa "MercaMaquinarias"
 
-sudo -u mercamaquinarias node tools/admin.js crear <tu-correo> "<Tu nombre>" --exenta
-sudo -u mercamaquinarias node tools/admin.js crear <correo-socio> "<Nombre>" --exenta
+sudo -u mercamaquinarias MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db \
+  node /var/www/mercamaquinarias/tools/admin.js crear <tu-correo> "<Tu nombre>" --exenta
+
+sudo -u mercamaquinarias MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db \
+  node /var/www/mercamaquinarias/tools/admin.js crear <correo-socio> "<Nombre>" --exenta
 ```
+
+`MERCA_DB` no es decorativo: sin él, una herramienta lanzada a mano
+podía abrir la base vacía de la carpeta del código y crear la cuenta
+donde el sitio no la ve. `tools/entorno.js` la lee de la unidad de
+systemd si está instalada, pero el comando tiene que ser correcto
+también sin ella.
 
 Cada comando imprime la contraseña generada **una sola vez**. Anótalas
 antes de cerrar la terminal.
@@ -141,7 +149,12 @@ antes de cerrar la terminal.
 `--admin` da acceso a `/admin.html`; `--exenta` permite publicar sin
 pagar. Ninguna de las dos se puede conceder desde el sitio.
 
-Para ver quién tiene permisos internos: `node tools/admin.js listar`.
+Para ver quién tiene permisos internos:
+
+```bash
+sudo -u mercamaquinarias MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db \
+  node /var/www/mercamaquinarias/tools/admin.js listar
+```
 
 ## 5. Nginx (arranque, sin certificado todavía)
 
@@ -262,6 +275,68 @@ una cuenta. Es el paso que más se olvida y el que más rápido se nota.
 El plan gratuito son 300 correos al día. Con el volumen inicial sobra;
 si se queda corto, se nota porque la API empieza a devolver 402 y el
 registro del servicio lo anota.
+
+## 9b. Códigos por SMS (Brevo, apagado hasta pagar los créditos)
+
+Con el SMS encendido, las cuentas verifican su celular; al entrar desde
+un equipo nuevo, tras la contraseña, se elige recibir el código por
+correo o por SMS; con sesión, la contraseña se puede cambiar con un
+código por SMS; y los teléfonos de contacto de los anuncios se pueden
+verificar por SMS (fase 9). El SMS nunca abre una cuenta por sí solo
+(siempre va con la contraseña o con una sesión); «Olvidé mi contraseña»
+va solo por correo. Apagado (hoy), todo va por correo y las opciones de
+SMS no se ven.
+
+**Antes de encender (lo único que solo puede hacer Victor):**
+
+- Comprar créditos SMS en Brevo (Transactional → SMS).
+- Registrar y validar el remitente alfanumérico `MercaMaq` para
+  República Dominicana (11 caracteres como mucho, solo letras y
+  dígitos).
+- Decidir el tope diario de SMS (300 por defecto).
+
+La base no cambia al encender: la migración `2026-10-telefono-cuenta`
+llega con el despliegue de la fase, y esa fusión exige el respaldo
+verificado de «Respaldo verificado antes de fusionar una migración».
+
+1. Añade las variables al archivo de secretos (`BREVO_API_KEY` ya está
+   de la sección 9):
+
+   ```bash
+   cat >> /etc/mercamaquinarias.env <<'FIN'
+   MERCA_SMS=brevo
+   MERCA_SMS_REMITENTE=MercaMaq
+   MERCA_SMS_TOPE_DIA=300
+   FIN
+   chmod 600 /etc/mercamaquinarias.env
+   systemctl restart mercamaquinarias
+   ```
+
+2. **La ruta.** Por defecto se usa `POST /v3/transactionalSMS/send`, la
+   vigente según el SDK oficial de Brevo; la antigua
+   `/v3/transactionalSMS/sms` está marcada como obsoleta. Solo si Brevo
+   respondiera 404 a la nueva, añade `MERCA_SMS_RUTA=/v3/transactionalSMS/sms`
+   al archivo de secretos y reinicia.
+
+3. **Pruébalo de verdad:** entra con una cuenta propia, Panel →
+   «Seguridad de la cuenta» → «Verificar celular», recibe el SMS y
+   confírmalo. Para ver el registro:
+
+   ```bash
+   journalctl -u mercamaquinarias --since "10 min ago" | grep -i sms
+   ```
+
+   Sin créditos aparece «sms: Brevo devolvió 402».
+
+**El tope.** `MERCA_SMS_TOPE_DIA` vale para todo SMS (también el de los
+contactos de los anuncios, y solo a celulares 809, 829 y 849). Al pasar
+de ese número de SMS en 24 horas, dejan de salir, las pantallas con
+sesión dicen «Hoy no podemos enviar más SMS…» y soporte recibe un aviso
+«Tope diario de SMS alcanzado».
+
+**Apagar.** Borra la línea `MERCA_SMS=brevo` de
+`/etc/mercamaquinarias.env` y reinicia. Las cuentas conservan su
+celular verificado; solo dejan de ofrecerse los códigos por SMS.
 
 ## 10. El asistente del sitio (Anthropic)
 
