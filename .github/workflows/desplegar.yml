@@ -82,6 +82,8 @@ jobs:
         run: npm run lote:puro
       - name: Formato 607
         run: npm run f607:puro
+      - name: Especificaciones
+        run: npm run especificaciones:puro
       - name: Consultas del lote mensual
         run: npm run lote:probar
       - name: Paquete mensual para el contador
