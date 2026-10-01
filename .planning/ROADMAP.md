@@ -49,7 +49,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana (completed 2026-09-25)
 - [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
 - [x] **Phase 10.1: Recuperar la cuenta y cambiar el correo** (INSERTED) - Cambio de correo y de contraseña con sesión, «No fui yo» y recuperación revisada para quien perdió el correo (completed 2026-09-30)
-- [ ] **Phase 10.2: Teléfono verificado y códigos por SMS** (INSERTED) - Celular obligatorio y verificable, recuperación y contraseña por SMS con mitigaciones del duplicado de SIM, todo el SMS apagado tras `MERCA_SMS`
+- [ ] **Phase 10.2: Teléfono verificado y códigos por SMS** (INSERTED) - Celular obligatorio y verificable, código de acceso por correo o SMS desde un equipo nuevo, «No fui yo» también en la contraseña, todo el SMS apagado tras `MERCA_SMS`
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
 
@@ -329,26 +329,34 @@ Plans:
 - [x] 10.1-03-PLAN.md — Consola «Recuperación de cuentas» con expediente para cotejar, y el asistente
 
 ### Phase 10.2: Teléfono verificado y códigos por SMS (INSERTED)
-**Goal:** Toda cuenta tiene un celular dominicano, verificable por SMS cuando se encienda, que sirve para recuperar la cuenta sin el correo y para elegir por dónde llega el código de la contraseña, sin que un duplicado de SIM baste para quedarse con ella
+**Goal:** Toda cuenta tiene un celular dominicano, verificable por SMS cuando se encienda, que acompaña siempre a la contraseña o a la sesión (nunca abre la cuenta por sí solo): sirve para elegir por dónde llega el código al entrar desde un equipo nuevo y al cambiar la contraseña, y un duplicado de SIM no basta para quedarse con la cuenta
 **Requirements**: TEL-01, TEL-02, TEL-03, TEL-04, TEL-05, TEL-06, TEL-07, TEL-08
 **Depends on:** Phase 10.1
 **Success Criteria** (what must be TRUE):
   1. Nadie crea una cuenta sin un celular 809/829/849; con el SMS apagado el sitio funciona como hoy y la única novedad visible es el celular, Privacidad 2.2 y cambiar la contraseña con un código al correo.
-  2. Con `MERCA_SMS=archivo`, un titular verifica su celular, restablece la contraseña eligiendo el SMS y, sin acceso al correo, pasa su cuenta a un correo nuevo con un código SMS y otro al correo nuevo; el correo anterior recibe «No fui yo».
-  3. Las respuestas públicas del SMS son idénticas exista o no la cuenta, y los topes, el tope diario, las 72 h y «No fui yo» quitando el celular se comprueban en `npm run telefono:probar`.
+  2. Con `MERCA_SMS=archivo`, un titular verifica su celular, entra desde un equipo nuevo con contraseña + código SMS (o al correo, a su elección) y deshace un cambio de contraseña ajeno con «No fui yo» (cierra sesiones, anula la contraseña, quita el celular y manda un código al correo).
+  3. Las respuestas públicas del SMS son idénticas exista o no la cuenta, y los topes, el tope diario de 300, el solo 809/829/849 (también en contactos) y los «No fui yo» (correo y contraseña) y la aprobación revisada quitando el celular se comprueban en `npm run telefono:probar`.
   4. `npm run auditar` recorre las pantallas con el SMS apagado (flujos y permisos) y encendido (`auditar-telefono`, servidor propio en el puerto 8091).
-**Plans:** 8 plans
+**Plans:** 16 plans
 Plans:
-- [ ] 10.2-01-PLAN.md — Base: migración `2026-10-telefono-cuenta`, códigos SMS de cuenta, testigo de la recuperación, unicidad, enfriamiento, «No fui yo» ampliado; arnés `telefono:probar` en CI
-- [ ] 10.2-02-PLAN.md — Correos: texto del SMS, máscara, tope diario, avisos del celular y de la contraseña por SMS, ruta nueva de Brevo (pruebas en `contactos:probar`)
-- [ ] 10.2-03-PLAN.md — Privacidad 2.2, el asistente y `deploy/README.md` (encender el SMS y `MERCA_DB` en «Cuentas del equipo»)
-- [ ] 10.2-04-PLAN.md — API I: celular en el registro, `telefono` en la sesión, verificar y cambiar el celular, topes y tope diario (también el SMS de contactos), guardas de las 72 h (con sucursales)
-- [ ] 10.2-05-PLAN.md — API II: olvidé y cambiar contraseña por correo o SMS, y la recuperación sin correo por SMS en cuatro pasos
-- [ ] 10.2-06-PLAN.md — Panel «Celular de la cuenta», contraseña sin la actual, aviso de las 72 h y el celular en el expediente de la consola
-- [ ] 10.2-07-PLAN.md — Acceso: celular en el registro, «Confirme su celular», selector correo/celular y la recuperación por SMS
-- [ ] 10.2-08-PLAN.md — Auditorías del navegador: flujos y permisos con el SMS apagado y `auditar-telefono` con el SMS encendido
+- [x] 10.2-01-PLAN.md — Base: migración `2026-10-telefono-cuenta`, códigos SMS de cuenta, testigo de la recuperación, unicidad, enfriamiento, «No fui yo» ampliado; arnés `telefono:probar` en CI (corregido por D-16)
+- [x] 10.2-02-PLAN.md — Correos: texto del SMS, máscara, tope diario, avisos del celular y de la contraseña por SMS, ruta nueva de Brevo (corregido por D-16)
+- [x] 10.2-03-PLAN.md — Privacidad 2.2, el asistente y `deploy/README.md` (corregido por D-16 en el plan 11)
+- [x] 10.2-04-PLAN.md — API I: celular en el registro, `telefono` en la sesión, verificar y cambiar el celular, topes y tope diario (corregido por D-16)
+- [x] 10.2-05-PLAN.md — API II: olvidé y cambiar contraseña, recuperación por SMS (corregido por D-16: lo de SMS sin correo se quitó en el plan 09)
+- [x] 10.2-06-PLAN.md — Panel «Celular de la cuenta» y el celular en el expediente de la consola (corregido por D-16)
+- [x] 10.2-07-PLAN.md — Acceso: celular en el registro y «Confirme su celular» (corregido por D-16 en el plan 13)
+- [x] 10.2-08-PLAN.md — Auditorías del navegador (puestas al día por D-16 en el plan 15)
+- [x] 10.2-09-PLAN.md — API: fuera «Olvidé mi contraseña» por SMS, la recuperación sin correo por SMS, el enfriamiento de 72 h y la ventana de 10 días
+- [x] 10.2-10-PLAN.md — Correos: SMS de acceso, aviso de contraseña con «No fui yo» y aviso de entrada con contraseña + SMS
+- [x] 10.2-11-PLAN.md — Privacidad 2.2, asistente y manual de despliegue según D-16
+- [x] 10.2-12-PLAN.md — `tools/db.js`: migración corregida (ya no rehace `cambios_correo`), sin enfriamiento, propósitos cerrados y base del «No fui yo» de la contraseña
+- [x] 10.2-13-PLAN.md — Interfaz: fuera las vías solo-SMS y el enfriamiento; elegir correo o celular al entrar y pantalla del «No fui yo» de la contraseña
+- [x] 10.2-14-PLAN.md — API: código de acceso por correo o celular verificado desde un equipo nuevo, y «No fui yo» de un uso en todo cambio de contraseña
+- [x] 10.2-15-PLAN.md — Auditorías de navegador al día con D-16, con el SMS apagado y encendido
+- [x] 10.2-16-PLAN.md — Cierre: todas las baterías en verde, validación, requisitos y ROADMAP según D-16, `main` traído y punto de retoma
 **UI hint**: yes
-**Notas**: La migración rehace `cambios_correo` (su CHECK no admite `'sms'`) y añade columnas a `usuarios`: **respaldo verificado de Victor antes de fusionar**. Decisiones D-08..D-15 por defecto, a confirmar por Victor (`10.2-CONTEXT.md`).
+**Notas**: La migración `2026-10-telefono-cuenta` ya no rehace `cambios_correo`; añade una columna a `usuarios` y las tablas `codigos_telefono`, `cambios_telefono` y `cambios_clave`: **respaldo verificado de Victor antes de fusionar** (nombre sugerido `antes-telefono`, `deploy/README.md`). D-16 (`10.2-CONTEXT.md`) sustituye a D-03, D-05 (Olvidé), D-08, D-09, D-11, D-12 y al enfriamiento de 72 h. El día de la fusión hay que poner la fecha real en `vigenteDesde` de Privacidad 2.2, en `assets/legales.js` y `legal.html` a la vez.
 
 ### Phase 11: Transporte y financiamiento encendidos
 **Goal**: Que los dos servicios que están escritos y apagados entren en operación con contenido dominicano real.
@@ -384,6 +392,9 @@ Plans:
   4. Las dos personas pueden editar el acceso a datos y la API en la misma semana sin encontrarse en el mismo archivo.
   5. Existe una copia de la base fuera del VPS y se ha restaurado al menos una vez para comprobar que sirve.
 **Plans**: TBD
+**Ideas de Victor del 2026-10-01 (pendientes de esta fase):**
+  - Botón «Eliminar mi cuenta»: anonimiza la cuenta (datos personales, celular, correo) y conserva los comprobantes y NCF emitidos, que la DGII exige guardar y que nunca se borran ni se reescriben.
+  - Revisar el texto alternativo (`alt`) de las fotos de anuncios que se generan por JavaScript.
 **Notas**: `codigos.codigo_hash` ya guarda un HMAC en vez del código crudo, con el comentario que explica por qué — DEUDA-01 aplica el mismo criterio a `sesiones.testigo` y `dispositivos.testigo`. Al partir `tools/db.js` (3.353 líneas) y `tools/api.js` (2.677) se conservan las secciones `── Nombre ──` ya existentes, el array plano `RUTAS` con la ruta específica antes de la genérica, y el `MIGRACIONES` append-only. Antes de tocar la base de producción, respaldo verificado (`VACUUM INTO` + `integrity_check`).
 
 ### Phase 14: Inspección propia con informe publicado
