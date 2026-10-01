@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: "05.3 en producción. 05.4 y 12 con CONTEXT y RESEARCH listos; siguiente: planificar la 05.4."
-last_updated: "2026-09-29T22:00:00.000Z"
+last_updated: "2026-10-01T12:00:00.000Z"
 last_activity: "2026-09-29 — 05.2-05: asistente de publicar con paso del plan, borrador en el servidor, pago y espera de la transferencia; auditar y check en verde en local con Chrome. Antes, 05.2-03: POST /api/borradores/:id/pago con el importe del servidor, activación solo por confirmarPago (al instante, transferencia desde la consola o importe cero), correo «ya está publicado» una sola vez, PUBLICACION_HUERFANA; npm run publicacion:probar en verde con las secciones 9-12 (rama claude/fase-05.2-publicar-equipo)."
 progress:
   total_phases: 16
@@ -34,40 +34,28 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
   conservarlo unos días. Victor revisó la 10.1 en claro y oscuro: «se ven bien» (su `human_needed` queda cumplido).
   El papeleo del ROADMAP (fases 3, 4, 8 y 9 verificadas y marcadas) está en `main` (PR #49).
 
-- **FASE EN CURSO: 10.2 «Teléfono verificado y códigos por SMS»** — rama **`claude/fase-10.2-telefono`** (subida,
-  SIN PR todavía). Pedida por Victor el 2026-09-30. Los 8 planes de la primera versión están EJECUTADOS (con SUMMARY),
-  con todas las baterías y `npm run auditar` en verde, pero **Victor cambió el diseño al final (D-16 en
-  `10.2-CONTEXT.md`, LEERLO PRIMERO): el SMS nunca abre la cuenta por sí solo.** Hay que REHACER parte de lo
-  construido antes de abrir el PR:
-  - **Quitar:** «Olvidé mi contraseña» por SMS (`recuperar`/`restablecer` con `via:'sms'`, `recuperarPorSms`,
-    `restablecerPorSms`); la recuperación sin correo por SMS en 4 pasos (`/api/cuenta/recuperacion-sms*` en
-    `tools/api.js`, `#formRecuperacionSms` y `#recVia` en `cuenta.html`/`assets/cuenta.js`); **todo el enfriamiento
-    de 72 h** (`enfriado`, `ponerEnfriamiento`, `quitarEnfriamiento`, `enEnfriamiento`, las guardas en correo,
-    celular, contactos, página del dealer y sucursales, `#avisoEnfriamiento` del panel, `enfriamientoHasta` de
-    `GET /api/sesion`); la ventana de 10 días (`accionSmsReciente`, `DIAS_ACCION_SMS_RECIENTE`, el texto «en los
-    próximos 10 días…» de `enviarAvisoCambioClave` en `tools/correo.js`); y sus secciones en `tools/probar-telefono.js`
-    y `tools/auditar-telefono.js`. La migración `2026-10-telefono-cuenta` NO está en producción: se puede quitar
-    `usuarios.enfriamiento_hasta` de ella en la rama (una vez fusionada, ya no se reescribe).
-  - **Añadir:** (1) al entrar desde un equipo nuevo (contraseña + código tipo `acceso`, `dispositivos`), elegir que el
-    código llegue **al correo o al celular verificado** (solo con `MERCA_SMS` encendido; apagado, como hoy); (2)
-    **«No fui yo» en el aviso de cambio de contraseña** (por cualquier vía): enlace de un uso como el de la 10.1
-    (POST al pulsar, nunca en el GET) que quita la verificación del celular, cierra todas las sesiones, anula la
-    contraseña y manda código al correo para crear otra.
-  - **Se queda:** celular obligatorio en el registro (809/829/849) y verificable; verificar/cambiar el celular desde
-    el panel; cambiar la contraseña CON sesión con código por correo o SMS; tope diario de SMS
-    (`MERCA_SMS_TOPE_DIA`, 300) y solo 809/829/849 también en el SMS de contactos; «No fui yo» del cambio de correo
-    y la aprobación revisada quitan el celular; unicidad del número verificado (se lo queda quien lo demuestra, la
-    otra cuenta pierde la verificación y recibe correo); Privacidad 2.2 (`vigenteDesde` 2026-10-01 en
-    `assets/legales.js` y `legal.html`: **cambiarla a la fecha real de la fusión en los dos sitios**); asistente;
-    `deploy/README.md` (§9b SMS y `MERCA_DB` en «Cuentas del equipo»). La tarjeta guardada de CardNet NO se bloquea.
-  - **Cómo seguir:** planificar los cambios de D-16 como planes nuevos `10.2-09..` (gsd-planner con Opus; pasarlos por
-    gsd-plan-checker, que en esta fase encontró bloqueantes reales dos veces), ejecutar con Sonnet, correr TODAS las
-    baterías y `npm run auditar` (envoltorio de Chrome, abajo), re-verificar (`10.2-VERIFICATION.md` hoy dice
-    `gaps_found` por el segundo WhatsApp durante las 72 h: desaparece al quitar el enfriamiento), marcar ROADMAP y
-    REQUIREMENTS (TEL-01..08: revisar su texto, algunos describen el diseño viejo), abrir el PR, y **pedir a Victor el
-    respaldo verificado antes de fusionar** (la migración rehace `cambios_correo` y añade columnas a `usuarios`).
-    Instrucciones del respaldo para Victor: `deploy/README.md`, «Respaldo verificado antes de fusionar una migración»
-    (nombre sugerido `antes-telefono`).
+- **FASE EN CURSO: 10.2 «Teléfono verificado y códigos por SMS» — LISTA PARA PR** — rama
+  **`claude/fase-10.2-telefono`** (SIN PR todavía; `origin/main` ya está fusionado en la rama). Pedida por Victor el
+  2026-09-30. Los planes 01-08 (primera versión) y 09-16 (corrección por D-16 de `10.2-CONTEXT.md`: el SMS nunca abre
+  la cuenta por sí solo) están EJECUTADOS, cada uno con su SUMMARY en `.planning/phases/10.2-telefono-verificado-y-codigos-por-sms/`.
+  - **Quitado (09, 12, 13):** «Olvidé mi contraseña» por SMS, la recuperación sin correo por SMS, el enfriamiento de
+    72 h y la ventana de 10 días; la migración `2026-10-telefono-cuenta` ya no rehace `cambios_correo`.
+  - **Añadido (10, 13, 14):** al entrar desde un equipo nuevo se elige que el código llegue al correo o al celular
+    verificado (`#formAccesoVia`, solo con `MERCA_SMS` encendido); «No fui yo» de un uso en todo aviso de cambio de
+    contraseña (cierra sesiones, anula la contraseña, quita el celular, código al correo).
+  - **Textos (11):** Privacidad 2.2, asistente y `deploy/README.md` según D-16. Auditorías de navegador al día (15).
+  - **Estado de las pruebas (plan 16, 2026-10-01, sobre 62c01cd + merge de `origin/main`):** todas las baterías del CI
+    en verde, `npm run auditar`, `npm run check` y `check:motion` en verde. `correo:probar` NO se corrió (manda correos
+    reales): está en «Solo manual» de `10.2-VALIDATION.md`. Detalle por batería en esa misma validación.
+  - **Lo que falta, en orden:** (1) re-verificar la fase con gsd-verifier (el `gaps_found` viejo del segundo WhatsApp
+    durante las 72 h queda sin objeto: ya no hay 72 h); (2) abrir el PR; (3) pedir a Victor el **respaldo verificado**
+    antes de fusionar (`deploy/README.md`, «Respaldo verificado antes de fusionar una migración», nombre sugerido
+    `antes-telefono`): la migración ya no rehace `cambios_correo`, pero añade una columna a `usuarios` y las tablas
+    `codigos_telefono`, `cambios_telefono` y `cambios_clave`; (4) **el día de la fusión, en un último commit del PR:
+    poner la fecha real en `vigenteDesde` de Privacidad 2.2, en `assets/legales.js` y en la línea `v2.2 · vigente
+    desde …` de `legal.html` a la vez**, correr `npm run renovacion:probar` y esperar el CI en verde; (5) fusionar y
+    comprobar el «Sitio arriba» del paso `desplegar`; (6) las bases LOCALES creadas con la versión vieja de la rama
+    hay que rehacerlas (`npm run db:reset && npm run db:demo`). La tarjeta guardada de CardNet NO se bloquea.
 
 - **Fase 12 (lote mensual de comprobantes) — PLANIFICADA, hay que REPLANIFICAR antes de ejecutar** — rama
   **`claude/fase-12-lote-comprobantes`** (subida, sin PR). Victor autorizó adelantarla a la 11 (bloqueada por
@@ -107,8 +95,8 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
 
 ### Lo que falta, en orden
 
-1. **Terminar la 10.2 con D-16** (arriba): planes nuevos → ejecutar → baterías y navegador → re-verificar → PR → respaldo
-   de Victor → fusionar → «Sitio arriba».
+1. **Cerrar la 10.2** (ejecutada con D-16; ver «FASE EN CURSO» arriba): re-verificar → PR → respaldo de Victor →
+   `vigenteDesde` de Privacidad 2.2 a la fecha de la fusión → fusionar → «Sitio arriba».
 2. **Replanificar y ejecutar la 12** con R-01..R-05 y los dos riesgos fiscales (arriba).
 3. **Antes de encender CardNet (no bloquea el lanzamiento, que va con transferencia):** que dos procesos no puedan
    consumir dos NCF para el mismo pago (`03-VERIFICATION.md`: `facturas` sin índice único sobre `pago_id`, y la
@@ -124,7 +112,9 @@ segundo en un worktree aparte). Lanzamiento: 2026-10-14. Detalle en «Decisions�
    390 px; `destino` sin validar en `assets/planes.js`; `tools/admin.js` cambia el sello sin bitácora; borrar
    `proximamente.html` y `vercel.json` (con el visto bueno de Victor); el despliegue no respalda la base antes de una
    migración; el temporizador de pagos no lo instala el despliegue; la tabla de facturas de la consola filtra por mes
-   UTC. (`fechaCorta` en UTC pasa a la 12 por ser fiscal.)
+   UTC. (`fechaCorta` en UTC pasa a la 12 por ser fiscal.) Ideas de Victor del 2026-10-01: botón «Eliminar mi cuenta»
+   (anonimiza la cuenta y conserva comprobantes y NCF por la DGII) y revisar el texto alternativo de las fotos de
+   anuncios generadas por JS (también en el ROADMAP, fase 13).
 
 ### Preguntas para Victor (se trabaja con el valor por defecto si no contesta)
 
