@@ -294,6 +294,13 @@ const rncEnmascarado = (rnc) => (rnc ? `•••••${String(rnc).slice(-4)}`
 
 const telefonoValido = (v) => String(v || '').replace(/\D/g, '').length === 10;
 
+/* El celular que se pide al registrarse es el de la PERSONA que abre la
+   cuenta: es el que recibe los códigos por SMS. En el país el prefijo no
+   distingue un celular de un fijo, así que aquí solo se exige un número
+   dominicano de 10 dígitos; que de verdad sea un celular lo prueba la
+   verificación por código. */
+const MENSAJE_CELULAR = 'Indique su celular: 10 dígitos que empiecen por 809, 829 o 849';
+
 /* ── Rutas: cuenta ──────────────────────────────────────── */
 
 /* Fuerza mínima de la contraseña. No se exigen símbolos raros —eso
@@ -353,17 +360,24 @@ async function registro(req, res) {
   const debil = claveDebil(c.clave, c.correo);
   if (debil) return fallo(res, 400, debil);
   if (!texto(c.nombre, 120)) return fallo(res, 400, 'Escriba su nombre');
+  const celular = db.celularRd(c.telefono);
+  if (!celular) return fallo(res, 400, MENSAJE_CELULAR);
 
   const esDealer = c.tipo === 'dealer';
   let rnc = null;
   let solicitud = null;
   if (esDealer) {
     // Una cuenta de empresa sin dirección ni teléfono no sirve: su
-    // página pública quedaría sin forma de visitarla ni de llamar.
+    // página pública quedaría sin forma de visitarla ni de llamar. El
+    // teléfono de la empresa es opcional (si falta, la base usa el celular
+    // de quien abre la cuenta); puede ser un fijo de cualquier área, por
+    // eso aquí basta con que tenga 10 dígitos.
     if (!texto(c.empresa, 160)) return fallo(res, 400, 'Escriba la razón social de la empresa');
     rnc = rncValido(c.rnc);
     if (!rnc) return fallo(res, 400, 'El RNC de la empresa tiene 9 dígitos');
-    if (!telefonoValido(c.telefono)) return fallo(res, 400, 'Indique el teléfono principal de la empresa, de 10 dígitos');
+    if (c.telefonoEmpresa && !telefonoValido(c.telefonoEmpresa)) {
+      return fallo(res, 400, 'El teléfono principal de la empresa debe tener 10 dígitos');
+    }
     if (!texto(c.direccion, 200) || String(c.direccion).trim().length < 8) {
       return fallo(res, 400, 'Indique la dirección de la oficina principal');
     }
@@ -412,7 +426,8 @@ async function registro(req, res) {
       correo: c.correo,
       clave: c.clave,
       nombre: texto(c.nombre, 120),
-      telefono: texto(c.telefono, 40),
+      telefono: celular,
+      telefonoEmpresa: esDealer ? (texto(c.telefonoEmpresa, 40) || null) : null,
       tipo: esDealer ? 'dealer' : 'particular',
       empresa: texto(c.empresa, 160),
       rnc,
@@ -908,6 +923,24 @@ function sesionPublica(idUsuario) {
     sucursales: org ? db.sucursalesDe(org.id) : [],
     verificado: !!u.correo_verificado,
 
+    /* El celular de la cuenta. Solo viaja la máscara. `pedir` con el SMS
+       apagado sirve para que las cuentas viejas añadan su celular; con él
+       encendido, para pedir la verificación, nunca durante un enfriamiento
+       (en ese tiempo no se puede verificar). */
+    telefono: (() => {
+      const numero = db.normalizarNumero(u.telefono);
+      const sms = correo.smsActivo();
+      const verificado = !!u.telefono_verificado;
+      const enfriado = db.enEnfriamiento(u);
+      return {
+        mascara: numero ? ocultarNumero(numero) : null,
+        verificado,
+        sms,
+        pedir: sms ? (!verificado && !enfriado) : !numero,
+        enfriamientoHasta: enfriado ? u.enfriamiento_hasta : null,
+      };
+    })(),
+
     /* Qué condiciones tiene aceptadas y cuáles le faltan.
      *
      * Viaja con la sesión para que el sitio pueda avisar en cuanto
@@ -960,7 +993,7 @@ const aceptarLegales = conSesion(async (req, res, ctx) => {
 });
 
 const verSesion = (req, res, ctx) =>
-  ctx ? responder(res, 200, sesionPublica(ctx.usuario.id)) : responder(res, 200, { usuario: null });
+  ctx ? responder(res, 200, sesionPublica(ctx.usuario.id)) : responder(res, 200, { usuario: null, sms: correo.smsActivo() });
 
 /* ── Rutas: dealer ──────────────────────────────────────── */
 

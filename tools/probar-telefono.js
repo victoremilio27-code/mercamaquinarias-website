@@ -37,8 +37,12 @@ for (const v of ['MERCA_SMS', 'MERCA_SMS_TOPE_DIA', 'MERCA_SMS_RUTA', 'MERCA_SMS
   delete process.env[v];
 }
 
+const { EventEmitter } = require('events');
+
 const db = require('./db.js');
 const correo = require('./correo.js');
+const api = require('./api.js');
+const legales = require('../assets/legales.js');
 
 let bien = 0;
 let mal = 0;
@@ -493,7 +497,151 @@ seccion('8. purgar');
   comprobar(!!fila("SELECT 1 FROM codigos_telefono WHERE id = 'purga-vigente'"), 'purgar deja el código vigente');
 }
 
-/* ── Aquí siguen los bloques de los planes 04 y 05 ── */
+/* ── Arnés de la API (plan 04) ───────────────────────────────── */
 
-console.log(`\n${bien} bien, ${mal} mal`);
-process.exit(mal ? 1 : 0);
+/* Una petición de verdad contra el enrutador, con req y res fingidos.
+   Copia del arnés de probar-cuenta.js (cada prueba lleva el suyo, a
+   propósito), guardando además las cabeceras de la respuesta. */
+function pedir({ metodo = 'GET', url, cuerpo, cabeceras = {} }) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = metodo;
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-telefono', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      cabeceras: {},
+      setHeader() {},
+      writeHead(c, cab) { res.codigo = c; res.cabeceras = cab || {}; return res; },
+      destroy() {},
+      end(d) {
+        let datos = null;
+        try { datos = d ? JSON.parse(d) : null; } catch { datos = null; }
+        resolver({ codigo: res.codigo, datos, cabeceras: res.cabeceras });
+      },
+    };
+
+    const ruta = new URL(url, 'http://localhost').pathname;
+    api.manejar(req, res, ruta);
+    setImmediate(() => {
+      if (cuerpo !== undefined) req.emit('data', Buffer.from(JSON.stringify(cuerpo), 'utf8'));
+      req.emit('end');
+    });
+  });
+}
+
+/* IP distinta por llamada salvo que se diga: los topes por IP no deben
+   mezclarse entre bloques. */
+let contadorIp = 0;
+const nuevaIp = () => `201.9.${Math.floor(++contadorIp / 250)}.${contadorIp % 250 + 1}`;
+const como = (testigo, ip) => ({
+  ...(testigo ? { cookie: `te_sesion=${testigo}` } : {}),
+  'cf-connecting-ip': ip || nuevaIp(),
+});
+const post = (url, cuerpo, cabeceras) => pedir({ metodo: 'POST', url, cuerpo, cabeceras });
+const patch = (url, cuerpo, cabeceras) => pedir({ metodo: 'PATCH', url, cuerpo, cabeceras });
+const put = (url, cuerpo, cabeceras) => pedir({ metodo: 'PUT', url, cuerpo, cabeceras });
+const obtener = (url, cabeceras) => pedir({ url, cabeceras });
+const acepta = () => Object.fromEntries(legales.OBLIGATORIOS.map((d) => [d.id, d.version]));
+const sesionDe = (idUsuario) => como(db.abrirSesion(idUsuario));
+
+const MENSAJE_CELULAR = 'Indique su celular: 10 dígitos que empiecen por 809, 829 o 849';
+const datosRegistro = (correoCuenta, extra = {}) => ({
+  correo: correoCuenta, clave: CLAVE, nombre: 'Persona de Prueba', acepta: acepta(), ...extra,
+});
+
+async function main() {
+/* ── 10. Registro con celular ────────────────────────────────── */
+seccion('10. Registro con celular');
+{
+  let r = await post('/api/cuenta/registro', datosRegistro('reg-10a@ejemplo.test'), como(null));
+  comprobar(r.codigo === 400 && r.datos.error === MENSAJE_CELULAR, 'sin celular: 400 con el texto del contrato');
+  r = await post('/api/cuenta/registro', datosRegistro('reg-10b@ejemplo.test', { telefono: '8005551234' }), como(null));
+  comprobar(r.codigo === 400 && r.datos.error === MENSAJE_CELULAR, 'celular 800: 400 con el texto del contrato');
+  comprobar(!db.usuarioPorCorreo('reg-10b@ejemplo.test'), 'el 400 no deja cuenta creada');
+
+  r = await post('/api/cuenta/registro', datosRegistro('reg-10c@ejemplo.test', { telefono: '(829) 555-0101' }), como(null));
+  comprobar(r.codigo === 201, 'celular válido con formato: 201');
+  const u = db.usuarioPorCorreo('reg-10c@ejemplo.test');
+  comprobar(u && u.telefono === '8295550101' && u.telefono_verificado === null, 'queda en 10 dígitos y sin verificar');
+
+  const dealer = (correoCuenta, extra) => datosRegistro(correoCuenta, {
+    tipo: 'dealer', empresa: 'Empresa de Prueba', rnc: String(133000000 + (++contador)),
+    direccion: 'Calle Principal No. 10', provincia: 'santo-domingo', encargado: 'Encargado Uno',
+    telefono: '8095550202', ...extra,
+  });
+  r = await post('/api/cuenta/registro', dealer('reg-10d@ejemplo.test', { telefonoEmpresa: '8095550303' }), como(null));
+  comprobar(r.codigo === 201, 'dealer con celular y teléfono de empresa: 201');
+  const ud = db.usuarioPorCorreo('reg-10d@ejemplo.test');
+  const od = db.organizacionDe(ud.id);
+  comprobar(ud.telefono === '8095550202', 'dealer: el usuario guarda su celular');
+  comprobar(od.telefono === '8095550303' && db.sucursalPrincipal(od.id).telefono === '8095550303',
+    'dealer: la organización y la sucursal principal guardan el teléfono de la empresa');
+
+  r = await post('/api/cuenta/registro', dealer('reg-10e@ejemplo.test', { telefonoEmpresa: '123' }), como(null));
+  comprobar(r.codigo === 400 && /empresa/.test(r.datos.error), 'dealer con teléfono de empresa de 3 dígitos: 400');
+  r = await post('/api/cuenta/registro', dealer('reg-10f@ejemplo.test'), como(null));
+  comprobar(r.codigo === 201, 'dealer sin teléfono de empresa: 201 (se usa el celular)');
+}
+
+/* ── 11. La sesión y telefono ────────────────────────────────── */
+seccion('11. La sesión y telefono');
+{
+  let r = await obtener('/api/sesion', como(null));
+  comprobar(r.codigo === 200 && JSON.stringify(r.datos) === '{"usuario":null,"sms":false}', 'sin sesión y SMS apagado: {"usuario":null,"sms":false}');
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    r = await obtener('/api/sesion', como(null));
+    comprobar(JSON.stringify(r.datos) === '{"usuario":null,"sms":true}', 'sin sesión y SMS encendido: sms true');
+  } finally { delete process.env.MERCA_SMS; }
+
+  const u = cuenta('sesion-11@ejemplo.test', 'Sesion', { telefono: '8295550101' });
+  const cab = sesionDe(u);
+  r = await obtener('/api/sesion', cab);
+  comprobar(r.codigo === 200 && JSON.stringify(Object.keys(r.datos.telefono).sort())
+    === '["enfriamientoHasta","mascara","pedir","sms","verificado"]', 'con sesión: telefono tiene las cinco claves');
+  comprobar(r.datos.telefono.mascara === '(829) •••-0101', 'la máscara es (829) •••-0101');
+  comprobar(!JSON.stringify(r.datos).includes('8295550101') || r.datos.usuario.telefono === '8295550101',
+    'el número entero solo viaja en usuario.telefono, que ya existía');
+  comprobar(r.datos.telefono.sms === false && r.datos.telefono.verificado === false && r.datos.telefono.enfriamientoHasta === null,
+    'apagado: sms false, verificado false, sin enfriamiento');
+  comprobar(r.datos.telefono.pedir === false, 'SMS apagado y celular guardado: pedir false');
+
+  db.abrir().prepare('UPDATE usuarios SET telefono = NULL WHERE id = ?').run(u);
+  r = await obtener('/api/sesion', cab);
+  comprobar(r.datos.telefono.pedir === true && r.datos.telefono.mascara === null, 'SMS apagado y sin celular: pedir true y máscara null');
+  db.abrir().prepare('UPDATE usuarios SET telefono = ? WHERE id = ?').run('8295550101', u);
+
+  process.env.MERCA_SMS = 'archivo';
+  try {
+    r = await obtener('/api/sesion', cab);
+    comprobar(r.datos.telefono.sms === true && r.datos.telefono.pedir === true, 'SMS encendido y sin verificar: pedir true');
+
+    db.abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = ? WHERE id = ?').run(FUTURO, u);
+    r = await obtener('/api/sesion', cab);
+    comprobar(r.datos.telefono.pedir === false && r.datos.telefono.enfriamientoHasta === FUTURO,
+      'encendido, sin verificar y en enfriamiento: pedir false con enfriamientoHasta');
+    db.abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = ? WHERE id = ?').run(PASADO, u);
+    r = await obtener('/api/sesion', cab);
+    comprobar(r.datos.telefono.pedir === true && r.datos.telefono.enfriamientoHasta === null,
+      'enfriamiento ya pasado: pedir true y enfriamientoHasta null');
+    db.quitarEnfriamiento(u);
+
+    db.verificarTelefonoCuenta({ idUsuario: u, numero: '8295550101', via: 'verificado' });
+    r = await obtener('/api/sesion', cab);
+    comprobar(r.datos.telefono.verificado === true && r.datos.telefono.pedir === false, 'encendido y verificado: pedir false');
+  } finally { delete process.env.MERCA_SMS; }
+}
+
+}
+
+main().then(() => {
+  console.log(`\n${bien} bien, ${mal} mal`);
+  process.exit(mal ? 1 : 0);
+}).catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
