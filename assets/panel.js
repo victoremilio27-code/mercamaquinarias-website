@@ -2319,7 +2319,7 @@ function montarSeguridad() {
 
   // ── Contraseña sin recordar la actual (10.2, D-05) ──
   // Un código al correo o, con el SMS encendido y el celular verificado,
-  // al celular. El servidor comprueba el código, el tope y el enfriamiento;
+  // al celular. El servidor comprueba el código y el tope;
   // aquí solo se piden y se enseñan. Nada se envía hasta pulsar «Enviar».
   const formClaveCodigo = $('#formClaveCodigo');
   const botonSinActual = $('#btnClaveSinActual');
@@ -2408,7 +2408,7 @@ function montarSeguridad() {
 /* Celular de la cuenta (10.2). Es el que recibe los códigos de seguridad,
    no el de los anuncios. Jamás se manda un SMS al cargar la página: cada
    uno cuesta créditos, así que los envíos salen solo de un clic. El
-   servidor decide todo (topes, enfriamiento, contraseña, código); aquí
+   servidor decide todo (topes, contraseña, código); aquí
    solo se enseña. Cada llamada va en su try/catch porque api() lanza.
    La contraseña del cambio vive solo en `enCurso` mientras se espera el
    código: nunca en el DOM, el almacenamiento ni la URL. */
@@ -2441,17 +2441,6 @@ function montarTelefono(aviso, conEspera) {
           : 'Añada su celular: pronto lo usaremos para proteger su cuenta.';
         pedir.innerHTML = `${esc(texto)} <a href="#segTelefono">Ir a Seguridad de la cuenta</a>`;
       }
-    }
-
-    const enf = $('#avisoEnfriamiento');
-    enf.hidden = !t.enfriamientoHasta;
-    if (t.enfriamientoHasta) {
-      const fecha = new Date(t.enfriamientoHasta).toLocaleString('es-DO', {
-        timeZone: 'America/Santo_Domingo', dateStyle: 'long', timeStyle: 'short',
-      });
-      enf.textContent = `Por seguridad, hasta el ${fecha} no se puede cambiar el correo ni el celular, `
-        + 'ni verificar teléfonos nuevos, ni cambiar el teléfono o el WhatsApp de su página: '
-        + 'se usó un código por SMS para entrar a su cuenta.';
     }
   }
 
