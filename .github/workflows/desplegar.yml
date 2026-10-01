@@ -84,6 +84,8 @@ jobs:
         run: npm run alertas:puro
       - name: API de busquedas guardadas
         run: npm run busquedas-api:probar
+      - name: Tarea diaria de alertas
+        run: npm run alertas:tarea
       - name: Formato 607
         run: npm run f607:puro
       - name: Especificaciones
