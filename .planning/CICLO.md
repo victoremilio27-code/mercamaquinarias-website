@@ -6,6 +6,10 @@ valiendo; aquí solo va lo propio del ciclo.
 
 Repositorio: `victoremilio27-code/mercamaquinarias-website`. Tablero de estado: **issue #82**.
 
+> **Ahora mismo la rutina está pausada y se trabaja en modo semimanual:** una vuelta por chat, cuando
+> Victor avisa de que Codex terminó. Los pasos están en «Para retomar» de `.planning/STATE.md`; todo lo
+> de abajo sobre aplicar, verificar, publicar y despachar vale igual.
+
 ## Etiquetas e hitos
 
 - `codex`: especificación cerrada, se encarga a Codex. `claude`: diseño, migraciones, riesgo
