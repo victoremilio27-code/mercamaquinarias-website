@@ -1435,12 +1435,40 @@ function cifrarClave(clave) {
   return { hash, sal };
 }
 
+/* DEUDA-02 (#71). `scryptSync` dejaba el proceso entero parado mientras
+   comprobaba una contraseña, y con un correo inexistente no se derivaba
+   nada: la respuesta llegaba antes y delataba qué correos tienen cuenta.
+   Ahora se deriva siempre, contra este relleno si no hay usuario. Las
+   versiones síncronas se quedan para las pruebas y `seed.js`. */
+const SAL_CLAVE_RELLENO = '00000000000000000000000000000000';
+const HASH_CLAVE_RELLENO = '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
+
+const derivarClave = (clave, sal) => new Promise((resolver, rechazar) => {
+  crypto.scrypt(clave, sal, 64, (error, hash) => {
+    if (error) rechazar(error);
+    else resolver(hash);
+  });
+});
+
+async function cifrarClaveAsync(clave) {
+  const sal = crypto.randomBytes(16).toString('hex');
+  const hash = (await derivarClave(clave, sal)).toString('hex');
+  return { hash, sal };
+}
+
 function claveCorrecta(clave, hash, sal) {
   const intento = crypto.scryptSync(clave, sal, 64);
   const guardado = Buffer.from(hash, 'hex');
   // Comparación en tiempo constante: una comparación normal filtra
   // cuántos caracteres coinciden por lo que tarda en fallar.
   return guardado.length === intento.length && crypto.timingSafeEqual(guardado, intento);
+}
+
+async function verificarClave(clave, hash, sal) {
+  const completa = Boolean(hash && sal);
+  const intento = await derivarClave(clave, completa ? sal : SAL_CLAVE_RELLENO);
+  const guardado = Buffer.from(completa ? hash : HASH_CLAVE_RELLENO, 'hex');
+  return completa && guardado.length === intento.length && crypto.timingSafeEqual(guardado, intento);
 }
 
 /* Identificador legible y estable para la URL del perfil. */
@@ -1509,7 +1537,7 @@ const usuarioPorId = (idUsuario) =>
    propietario. Va en una transacción porque una cuenta a medio crear
    (usuario sin organización) no podría publicar nada y habría que
    repararla a mano. */
-function crearCuenta({ correo, clave, nombre, telefono, telefonoEmpresa, tipo, empresa, rnc, direccion, provincia, municipio, solicitud }) {
+function crearCuenta({ correo, clave, claveCifrada, nombre, telefono, telefonoEmpresa, tipo, empresa, rnc, direccion, provincia, municipio, solicitud }) {
   const d = abrir();
   // El celular es de quien abre la cuenta y se guarda en 10 dígitos (el
   // índice del celular verificado compara números, no formatos). El
@@ -1517,7 +1545,7 @@ function crearCuenta({ correo, clave, nombre, telefono, telefonoEmpresa, tipo, e
   // como hasta ahora (D-14).
   const celular = normalizarNumero(telefono) || telefono || null;
   const telefonoOrg = telefonoEmpresa || telefono || null;
-  const { hash, sal } = cifrarClave(clave);
+  const { hash, sal } = claveCifrada || cifrarClave(clave);
   const idUsuario = id();
   const idOrg = id();
   const idSucursal = id();
@@ -5624,8 +5652,8 @@ function resumenOrganizacion(idOrg, dias = 30) {
 
 /* Cambio de contraseña. Rehace el hash con sal nueva; la anterior no
    se conserva en ningún sitio. */
-const cambiarClave = (idUsuario, clave) => {
-  const { hash, sal } = cifrarClave(clave);
+const cambiarClave = (idUsuario, clave, claveCifrada) => {
+  const { hash, sal } = claveCifrada || cifrarClave(clave);
   abrir().prepare('UPDATE usuarios SET clave_hash = ?, clave_sal = ? WHERE id = ?')
     .run(hash, sal, idUsuario);
 };
@@ -6537,7 +6565,7 @@ module.exports = {
   facturasDe, comprobantesDelPeriodo, sumaDelPeriodo, fechasIrregulares,
   facturas, validarMes, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
-  cifrarClave, claveCorrecta, cambiarClave,
+  cifrarClave, cifrarClaveAsync, claveCorrecta, verificarClave, cambiarClave,
   /* Fase 10.1: cambio de correo, reversión y recuperación de cuenta. */
   cerrarOtrasDe, cambiarCorreo, revertirCambioCorreo, anularClave,
   HORAS_ESPERA_RECUPERACION, crearSolicitudRecuperacion, solicitudRecuperacion,

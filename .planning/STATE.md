@@ -39,19 +39,51 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
 3. **Publicar:** un PR por tanda con `Closes #…`, fusionar con CI en verde, confirmar «Sitio arriba» con
    `mcp__github__get_job_logs` del job `desplegar` (la API de logs por `gh` no llega desde la nube).
 4. **Despachar la siguiente:** quitar `bloqueado` a lo desbloqueado, encargar con `@codex` todos los issues
-   `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de 4.
+   `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
-**Estado al cerrar el chat del 2026-10-01:** tanda 1 en producción (PR #84: #56, #63, #67, #68, #69, #70).
-**En Codex ahora:** #71 (scrypt; su parche era de 2.448 líneas y no cabía: se le pidió diff mínimo o por
-partes), #57 (consultas del periodo, desbloqueado por #56), #75 (recordatorios en días de calendario RD) y
-#77 (sello por la bitácora en `tools/admin.js`). **Trabajo de Claude para el próximo chat, en orden:** #64
-(escribir primero la prueba de `fechaCorta` en hora RD y luego encargarla con red), #58 (migración: guardar lo
-que dibuja el PDF), #60 (prueba del 607 con caso esperado), y con eso #59 pasa a `codex`. Notas: `db.validarMes`
-(de #69) duplica a `lote.validarMes` (de #56) a propósito hasta #57; Codex corre Node 24.21.
-Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`).
+**Estado al cerrar el chat del 2026-10-01 (vuelta de la tanda 2):** en producción la tanda 1 (PR #84) y la
+tanda 2 (PR #87, «Sitio arriba: 9e4f88e»: #57 consultas del periodo, #64 fecha RD del comprobante, #75
+recordatorios en días RD, #77 sello por la bitácora). También en producción el **PR #92** (#60 Formato 607 y #71 scrypt
+asíncrono); comprobar su «Sitio arriba» en el registro del job `desplegar` si no consta abajo. **PR #88 (#58, migración `2026-10-dibujo-factura`) está LISTO pero NO se
+fusiona hasta que Victor confirme el respaldo verificado** (pedido en #79).
+**También en producción #59** (PR #94, paquete mensual `armarPaquete`/`previa`; se arregló aquí que `previa`
+devolvía listas y un error de la propia prueba).
+**En Codex ahora (6, despachados a la vez por orden de Victor):** #61 (rutas del paquete: `tools/api.js`,
+`probar-lote.js`, `auditar-permisos.js`), #62 (selector de la consola, en paralelo con #61 contra el contrato que
+se le dio en el issue), #90 (interfaz de «Eliminar mi cuenta», en paralelo contra el contrato de #89), #91 (607
+dentro del paquete; la prueba está en la rama `claude/91-607-paquete` y, como Codex no puede bajar ramas, va pegada
+en el cuerpo del issue), #95 (fase 15: catálogo de especificaciones e implementos, módulo puro
+`assets/especificaciones.js`) y #96 (fase 16: `tools/alertas.js`, si un anuncio encaja con una búsqueda guardada,
+equivalente a `db.buscarAnuncios`). Choques esperables al aplicar: `package.json` y CI (#95, #96) y
+`tools/auditar-flujos.js` (#62, #90): se resuelven a mano conservando las dos partes.
+**De Claude:** **#89** (eliminar cuenta: base y API; Codex lo rechazó porque anonimiza datos en la base y
+`CLAUDE.md` no deja delegar eso; contrato ya fijado en #90: `POST /api/cuenta/eliminar`, 400/401/403/409/429),
+#72 (HMAC de testigos, migración), #73 (respaldo antes de migrar), #65/#66 (CardNet), #76 (partir `db.js`/`api.js`,
+el último). #74 quedó diseñado y partido en #89 y #90.
+**Lecciones de esta vuelta:** (1) mirar los comentarios de Codex otra vez justo antes de cerrar: el de #60 llegó
+minutos después de la primera lectura; (2) Codex a veces no puede hacer `git fetch` de la rama de pruebas (403 del
+proxy) e implementa a ciegas: por eso la prueba debe ser exhaustiva y el issue describir el contrato entero; (3)
+cuando un parche cambia una firma, comprobar a mano todos los llamadores (el primer #71 rompía ~40 y dejaba entrar
+con cualquier contraseña); (4) `destino` en `assets/planes.js` ya estaba validado (05.2), el desborde a 390 px y el
+filtro UTC de la consola se arreglaron en la tanda 1, R-04b (PDF en el respaldo diario) ya existía, y los `alt` de
+las fotos de anuncios están bien (los vacíos son decorativos y comentados): esas ideas de la deuda quedan cerradas.
+**Instrucción de Victor (2026-10-01): a Codex se le da la MAYOR cantidad posible de tareas en paralelo.** En cada
+vuelta, tras publicar: encargar todos los issues `codex` listos que no compartan archivos de código (los choques
+en `package.json` y en el flujo de CI se resuelven al aplicar); y si quedan menos de ~6 listos, hacer en ese mismo
+chat la tanda de planificación necesaria: convertir issues `claude` de diseño y fases del ROADMAP (13, y la 12 que
+quede) en issues `codex` autocontenidos con la plantilla de siempre, escribiendo antes las pruebas cuando sea
+fiscal. Las migraciones y lo que toca producción siguen siendo de Claude.
+**Trabajo de Claude para el próximo chat:** recoger los 6 de Codex (una rama `codex/tanda-3`; #91 sobre la rama
+de su prueba); hacer #89 para que #90 se pueda verificar; fusionar #88 si Victor ya dio el respaldo; y, cuando se
+publiquen #95 y #96, planificar sus pasos 2 (migración de Claude + interfaz para Codex). Si a Codex se le pega una
+rama, pegarle la prueba en el issue (no puede hacer `git fetch`). Notas: `db.validarMes` (de #69) duplica a
+`lote.validarMes` (de #56); unificarlos crea un `require` circular (`lote.js` carga `db.js`), así que se resuelve al
+partir los archivos en #76. Codex corre Node 24.21.
+Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`; nuevo: el respaldo para #88 y si «Eliminar mi
+cuenta» devuelve la parte proporcional de una membresía, por defecto no).
 
-Los issues: #56-#81, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
+Los issues: #56-#96, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
 Protocolo completo (también para cuando vuelva la rutina): `.planning/CICLO.md`; tablero #82.
 **Lo de abajo sobre GSD, planes y Sonnet ejecutor es historia:** el orden ahora lo dan los hitos y los issues.
 
