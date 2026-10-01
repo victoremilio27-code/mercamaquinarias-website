@@ -551,6 +551,41 @@ const textoSmsContacto = ({ codigo, minutos }) =>
   `MercaMaquinarias: su codigo para verificar este telefono es ${codigo}. `
   + `Vence en ${minutos} min. No lo comparta: nunca se lo pediremos.`;
 
+/* El SMS de los códigos de la cuenta (fase 10.2). Sin tildes por lo mismo
+   que `textoSmsContacto`, y cada propósito cabe en un solo SMS de 160. */
+const PARA_SMS = Object.freeze({
+  verificar: 'confirmar su celular',
+  cambio: 'confirmar su celular nuevo',
+  restablecer: 'cambiar su contrasena',
+  clave: 'cambiar su contrasena',
+  recuperar: 'recuperar su cuenta',
+});
+
+function textoSmsCuenta({ codigo, minutos, proposito }) {
+  if (!Object.prototype.hasOwnProperty.call(PARA_SMS, proposito)) {
+    throw new Error(`textoSmsCuenta: propósito desconocido "${proposito}"`);
+  }
+  return `MercaMaquinarias: ${codigo} es su codigo para ${PARA_SMS[proposito]}. `
+    + `Vence en ${minutos} min. No lo comparta: nunca se lo pediremos.`;
+}
+
+/* (809) •••-1234: lo bastante para reconocer el número y no para
+   regalarlo. Mismo aspecto que `ocultarNumero` de tools/api.js. */
+function enmascararNumero(valor) {
+  let d = String(valor == null ? '' : valor).replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '1') d = d.slice(1);
+  if (d.length !== 10) return null;
+  return `(${d.slice(0, 3)}) •••-${d.slice(6)}`;
+}
+
+/* Tope diario de SMS de TODA la plataforma. Se lee en cada llamada, como
+   `MERCA_SMS`: acota el gasto de créditos si todo lo demás falla. Lo aplica
+   la API a cualquier SMS, también al de los contactos de la fase 9. */
+function topeSmsDia() {
+  const n = Number.parseInt(process.env.MERCA_SMS_TOPE_DIA, 10);
+  return Number.isInteger(n) && n > 0 ? n : 300;
+}
+
 /* EL INTERRUPTOR. `MERCA_SMS` se lee en cada llamada y no al cargar el
    módulo: encender los SMS es poner MERCA_SMS=brevo en el entorno del
    VPS y reiniciar, sin tocar código ni el flujo de verificación, y la
@@ -575,9 +610,12 @@ function smsPorArchivo({ numero, texto }) {
 
 /* Brevo, SMS transaccional. Remitente alfanumérico de hasta once
    caracteres; el destinatario en formato internacional sin «+». La ruta
-   es configurable porque la documentación de Brevo no se pudo consultar
-   al escribir esto: el día de encender se comprueba y, si cambió, se
-   corrige con MERCA_SMS_RUTA sin tocar código. */
+   vigente es `/v3/transactionalSMS/send`: el SDK oficial @getbrevo/brevo
+   6.0.3 (leído del registro de npm el 2026-09-30, sin instalarlo) marca
+   `/v3/transactionalSMS/sms` como obsoleta y usa `/send` con el mismo
+   cuerpo y la respuesta `{ messageId }`. La documentación de Brevo no se
+   pudo consultar, así que MERCA_SMS_RUTA permite volver a la vieja sin
+   tocar código si el día de encender `/send` respondiera 404. */
 function smsPorBrevo({ numero, texto }) {
   const clave = process.env.BREVO_API_KEY;
   if (!clave) throw new Error('Falta BREVO_API_KEY');
@@ -593,7 +631,7 @@ function smsPorBrevo({ numero, texto }) {
   return new Promise((resolver) => {
     const req = https.request({
       hostname: 'api.brevo.com',
-      path: process.env.MERCA_SMS_RUTA || '/v3/transactionalSMS/sms',
+      path: process.env.MERCA_SMS_RUTA || '/v3/transactionalSMS/send',
       method: 'POST',
       headers: {
         'api-key': clave,
@@ -652,17 +690,34 @@ function enviarSms({ numero, texto }) {
 }
 
 /* Aviso de que la contraseña cambió. No lleva código ni enlace: su
-   único fin es que el dueño se entere si el cambio no fue suyo. */
-function enviarAvisoCambioClave({ para, nombre }) {
+   único fin es que el dueño se entere si el cambio no fue suyo.
+
+   Con `via: 'sms'` (la contraseña cambió con un código enviado al celular)
+   dice además qué hacer si no fue el titular, y es EXACTAMENTE lo que hace
+   el código: en los próximos 10 días, pedir el código de «Olvidé mi
+   contraseña» por correo quita ese celular de la cuenta. Los 10 días son
+   las 72 h del enfriamiento más los 7 de `db.accionSmsReciente` (plan 01),
+   que es lo que mira el restablecimiento por correo (plan 05): si se
+   cambia uno, se cambia el otro. */
+function enviarAvisoCambioClave({ para, nombre, via, numero }) {
   const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const porSms = via === 'sms';
+  const masc = porSms ? (enmascararNumero(numero) || 'su celular') : null;
+  const p1 = porSms
+    ? `La contraseña de su cuenta de MercaMaquinarias acaba de cambiar con un código enviado por SMS al ${masc} y se cerraron todas las sesiones abiertas.`
+    : 'La contraseña de su cuenta de MercaMaquinarias acaba de cambiar y se cerraron todas las sesiones abiertas.';
+  const noFue = porSms
+    ? 'Si no fue usted, en los próximos 10 días entre por «Olvidé mi contraseña» y pida el código por correo: '
+      + 'al usarlo quitamos ese celular de su cuenta. Después escríbanos a '
+    : 'Si no fue usted, escriba de inmediato a ';
   return enviar({
     para,
     asunto: 'Su contraseña de MercaMaquinarias cambió',
     texto: [
       saludo, '',
-      'La contraseña de su cuenta de MercaMaquinarias acaba de cambiar y se cerraron todas las sesiones abiertas.', '',
+      p1, '',
       'Si fue usted, no hay nada que hacer.',
-      `Si no fue usted, escriba de inmediato a ${SOPORTE}.`, '',
+      `${noFue}${SOPORTE}.`, '',
       'MercaMaquinarias',
     ].join('\n'),
     responderA: BUZONES.soporte,
@@ -671,11 +726,83 @@ function enviarAvisoCambioClave({ para, nombre }) {
       saludo,
       responderA: BUZONES.soporte,
       parrafos: [
-        'La contraseña de su cuenta acaba de cambiar y se cerraron todas las sesiones abiertas.',
+        porSms
+          ? esc(`La contraseña de su cuenta acaba de cambiar con un código enviado por SMS al ${masc} y se cerraron todas las sesiones abiertas.`)
+          : 'La contraseña de su cuenta acaba de cambiar y se cerraron todas las sesiones abiertas.',
         'Si fue usted, no hay nada que hacer.',
       ],
-      nota: `Si <b style="color:${AZUL}">no</b> fue usted, escríbanos de inmediato a `
-        + `<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`,
+      nota: porSms
+        ? `Si <b style="color:${AZUL}">no</b> fue usted, en los próximos 10 días entre por «Olvidé mi contraseña» y pida el código por correo: `
+          + 'al usarlo quitamos ese celular de su cuenta. Después escríbanos a '
+          + `<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`
+        : `Si <b style="color:${AZUL}">no</b> fue usted, escríbanos de inmediato a `
+          + `<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`,
+    }),
+  });
+}
+
+/* Al correo de la cuenta cuando su celular verificado pasa a otra cuenta
+   (D-13: se lo queda quien demuestra tenerlo). Número siempre enmascarado. */
+function enviarAvisoTelefonoLiberado({ para, nombre, numero }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const masc = enmascararNumero(numero) || 'su celular';
+  const p1 = `El celular ${masc} dejó de estar vinculado a su cuenta de MercaMaquinarias porque otra cuenta demostró tenerlo.`;
+  const p2 = 'Ya no sirve para recuperar su cuenta por SMS.';
+  const p3 = 'Si no lo esperaba, entre a su Panel, «Seguridad de la cuenta», verifique otro celular y escríbanos a ';
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: 'Su celular dejó de estar vinculado a su cuenta de MercaMaquinarias',
+    texto: [saludo, '', p1, '', p2, '', `${p3}${SOPORTE}.`, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'Su celular dejó de estar vinculado',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      nota: `${esc(p3)}<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`,
+    }),
+  });
+}
+
+/* Al correo de la cuenta cuando cambia su celular. Los dos números van
+   enmascarados; sin celular anterior dice «sin celular». */
+function enviarAvisoTelefonoCambiado({ para, nombre, anterior, nuevo, verificado }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const antes = enmascararNumero(anterior) || 'sin celular';
+  const ahora = enmascararNumero(nuevo) || 'sin celular';
+  const p1 = `El celular de su cuenta de MercaMaquinarias cambió de ${antes} a ${ahora}.`;
+  const p2 = verificado ? 'El celular nuevo quedó verificado.' : 'El celular nuevo todavía no está verificado.';
+  const p3 = 'Si no fue usted, cambie su contraseña y escríbanos de inmediato a ';
+  return enviar({
+    para,
+    responderA: BUZONES.soporte,
+    asunto: 'El celular de su cuenta de MercaMaquinarias cambió',
+    texto: [saludo, '', p1, '', p2, '', `${p3}${SOPORTE}.`, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'El celular de su cuenta cambió',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      nota: `${esc(p3)}<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`,
+    }),
+  });
+}
+
+/* A soporte: se llegó al tope diario de SMS de la plataforma. Sin tope
+   nadie se entera de que los códigos dejaron de salir. */
+function avisarTopeSms({ tope }) {
+  const p1 = `En las últimas 24 horas se llegó al tope de ${tope} SMS.`;
+  const p2 = 'Los códigos por SMS no saldrán hasta que baje la cuenta de esa ventana.';
+  const p3 = 'Para subirlo, cambie MERCA_SMS_TOPE_DIA en el entorno del servidor y reinicie.';
+  return avisarInternamente({
+    buzon: 'soporte',
+    asunto: `Tope diario de SMS alcanzado (${tope})`,
+    texto: [p1, '', p2, p3, '', 'MercaMaquinarias'].join('\n'),
+    html: envoltura({
+      titulo: 'Tope diario de SMS alcanzado',
+      saludo: 'Equipo:',
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2), esc(p3)],
     }),
   });
 }
@@ -1605,6 +1732,9 @@ module.exports = {
   avisarInternamente,
   // Verificación de teléfonos: el SMS va apagado tras MERCA_SMS.
   enviarCodigoContacto, textoSmsContacto, enviarSms, smsActivo, BANDEJA_SMS,
+  // Fase 10.2: SMS de la cuenta, máscara del número y tope diario.
+  textoSmsCuenta, enmascararNumero, topeSmsDia,
+  enviarAvisoTelefonoLiberado, enviarAvisoTelefonoCambiado, avisarTopeSms,
   BANDEJA, SITIO, BUZONES, EMPRESA, avisarInternamente,
   // Nombres sueltos que ya usaba otro código. BUZONES es lo que hay que
   // usar a partir de ahora.
