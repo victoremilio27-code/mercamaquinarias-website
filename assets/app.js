@@ -187,7 +187,7 @@ const icono = (id, clase = 'ico') =>
   `<svg class="${clase}" aria-hidden="true"><use href="#${id}"/></svg>`;
 
 const foto = (e, claseFantasma = 'fantasma') => e.foto
-  ? `<img src="${esc(e.foto)}" alt="${esc(nombreEquipo(e))}" loading="lazy">`
+  ? `<img src="${esc(e.foto)}" alt="${esc(`Foto de ${nombreEquipo(e)}`)}" loading="lazy">`
   : icono('i-hex-doble', claseFantasma);
 
 /* Tarjeta del catálogo. Lleva lo que decide un clic en este mercado:
@@ -364,10 +364,11 @@ function montarMosaicoCategorias() {
     const fotoVisible = fotosEditoriales[c.id] || (foto && foto.foto)
       || 'brand_assets/generated/categoria-cargadores-v2.webp';
 
+    /* El render repite la categoría escrita justo debajo: es decorativo. */
     return `<li>
       <a class="mosaico__pieza${hay ? '' : ' mosaico__pieza--vacia'}" href="equipos.html?categoria=${encodeURIComponent(c.id)}">
         ${fotoVisible
-          ? `<img src="${esc(fotoVisible)}" alt="${esc(c.nombre)}" loading="${esMovil && i < 4 ? 'eager' : 'lazy'}" decoding="async">`
+          ? `<img src="${esc(fotoVisible)}" alt="" loading="${esMovil && i < 4 ? 'eager' : 'lazy'}" decoding="async">`
           : `<span class="mosaico__ico">${icono(c.icono)}</span>`}
         <span class="mosaico__cuerpo">
           <span class="mosaico__nombre">${esc(c.nombre)}</span>
@@ -856,7 +857,7 @@ function galeriaHTML(e) {
   return `<ul class="galeria" id="galeria">
     ${e.fotos.map((f, i) => `<li>
       <button type="button" class="galeria__it${i === 0 ? ' galeria__it--activa' : ''}" data-foto="${esc(f)}">
-        <img src="${esc(f)}" alt="Fotografía ${i + 1} del equipo" loading="lazy">
+        <img src="${esc(f)}" alt="${esc(`Foto ${i + 1} de ${nombreEquipo(e)}`)}" loading="lazy">
       </button></li>`).join('')}
   </ul>`;
 }
@@ -1960,6 +1961,7 @@ async function montarAlquiler() {
     if (fotos.length) {
       galeria = fotos.map((f) => `<img src="${esc(f.url)}" alt="${esc(f.alt || a.nombre)}" loading="lazy" decoding="async">`).join('');
     } else if (render) {
+      /* El render representa una categoría, no un equipo concreto: es decorativo. */
       galeria = `<img src="brand_assets/categorias/${esc(render)}" alt="" width="1280" height="720" loading="lazy" decoding="async">`;
     }
 

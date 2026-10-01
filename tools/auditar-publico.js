@@ -101,6 +101,10 @@ async function vigilar(p, pagina) {
   const total = await p.$$eval('.rejilla > li, .aviso', (n) => n.length);
   console.log(`  resultados iniciales: ${total}`);
   if (!total) anota('Catálogo', 'lógica', 'el catálogo no muestra ningún equipo');
+  const fotosSinAlt = await p.$$eval('.rejilla .aviso img', (imgs) =>
+    imgs.filter((img) => !img.getAttribute('alt')?.trim()).length);
+  console.log(`  fotos de equipos sin texto alternativo: ${fotosSinAlt}`);
+  if (fotosSinAlt) anota('Catálogo', 'a11y', `${fotosSinAlt} foto(s) de equipos tienen alt vacío`);
 
   // Búsqueda por texto
   const busca = await p.$('#buscar, [type="search"], input[name="q"]');
@@ -132,6 +136,10 @@ async function vigilar(p, pagina) {
     await new Promise((r) => setTimeout(r, 700));
     const nombre = await p.$eval('h1', (el) => el.textContent.trim()).catch(() => '(sin h1)');
     console.log(`  ficha: ${nombre.slice(0, 50)}`);
+    const fotosFichaSinAlt = await p.$$eval('.detalle__foto img, .galeria img', (imgs) =>
+      imgs.filter((img) => !img.getAttribute('alt')?.trim()).length);
+    console.log(`  fotos de la ficha sin texto alternativo: ${fotosFichaSinAlt}`);
+    if (fotosFichaSinAlt) anota('Ficha de equipo', 'a11y', `${fotosFichaSinAlt} foto(s) tienen alt vacío`);
     const tel = await p.$('a[href^="tel:"], [data-telefono], .contacto__tel');
     console.log(`  contacto visible: ${tel ? 'sí' : 'NO'}`);
     if (!tel) anota('Ficha de equipo', 'ux', 'no se ve forma de contactar al vendedor');

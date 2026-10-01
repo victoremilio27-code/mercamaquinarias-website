@@ -88,6 +88,7 @@ function bloqueHTML(bloque, datos) {
   if (bloque.tipo === 'galeria') {
     const fotos = datos.galeria || [];
     if (!fotos.length) return '';
+    // Sin texto guardado, la foto de la galería se considera decorativa.
     return envolver(`<ul class="perfil-galeria">${fotos.map((f) => `
       <li><img src="${esc(f.url)}" alt="${esc(f.alt || '')}" loading="lazy"></li>`).join('')}</ul>`);
   }
@@ -140,6 +141,7 @@ function pintarPerfil(datos) {
       <a href="index.html">Inicio</a> &rsaquo; <a href="dealers.html">Directorio</a> &rsaquo; <span>${esc(d.nombre)}</span>
     </nav>
 
+    <!-- El banner ambienta el perfil y es decorativo; el nombre está en el encabezado. -->
     ${d.banner ? `<div class="perfil__banner"><img src="${esc(d.banner)}" alt=""></div>` : ''}
 
     <header class="perfil">

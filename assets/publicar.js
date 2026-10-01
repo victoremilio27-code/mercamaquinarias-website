@@ -833,10 +833,12 @@ function pintarFotos() {
 
   const tope = limiteFotos();
   const sobran = estado.fotos.length - tope;
+  const equipo = estado.equipo;
+  const nombre = [equipo.anio, equipo.marca, equipo.modelo].filter(Boolean).join(' ') || 'tu equipo';
 
   lista.innerHTML = estado.fotos.map((f, i) => `
     <li class="foto${i === 0 ? ' foto--portada' : ''}${i >= tope ? ' foto--excedida' : ''}" data-id="${esc(f.id)}">
-      <img src="${esc(f.url)}" alt="${esc(f.nombre)}">
+      <img src="${esc(f.url)}" alt="${esc(`Foto ${i + 1} de ${nombre}`)}">
       ${i === 0 ? '<span class="foto__sello">Portada</span>' : ''}
       ${i >= tope ? '<span class="foto__sello foto__sello--aviso">Fuera del plan</span>' : ''}
       <span class="foto__mandos">
@@ -2462,7 +2464,7 @@ function pintarVistaPrevia() {
       <span class="aviso__foto">
         ${destacado ? '<span class="marca-esq">Destacado</span>' : ''}
         ${estado.fotos.length
-          ? `<img src="${esc(estado.fotos[0].url)}" alt="Portada del anuncio">`
+          ? `<img src="${esc(estado.fotos[0].url)}" alt="${esc(`Foto de ${titulo}`)}">`
           : icono('i-hex-doble', 'fantasma')}
       </span>
       <span class="aviso__nombre">${esc(titulo)}</span>
