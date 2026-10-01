@@ -421,10 +421,12 @@ async function registro(req, res) {
 
   let idUsuario;
   let idOrg;
+  const claveCifrada = await db.cifrarClaveAsync(c.clave);
   try {
     ({ idUsuario, idOrg } = db.crearCuenta({
       correo: c.correo,
       clave: c.clave,
+      claveCifrada,
       nombre: texto(c.nombre, 120),
       telefono: celular,
       telefonoEmpresa: esDealer ? (texto(c.telefonoEmpresa, 40) || null) : null,
@@ -482,11 +484,13 @@ async function entrar(req, res) {
   }
 
   const u = db.usuarioPorCorreo(c.correo);
+  const claveValida = await db.verificarClave(
+    String(c.clave || ''), u && u.clave_hash, u && u.clave_sal);
 
   // Mismo mensaje para correo inexistente y contraseña incorrecta: si
   // se distinguen, la pantalla se convierte en un detector de qué
   // correos tienen cuenta.
-  if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
+  if (!u || !claveValida) {
     return fallo(res, 401, 'Correo o contraseña incorrectos');
   }
 
@@ -510,7 +514,7 @@ async function entrar(req, res) {
   }
 
   /* Equipo nuevo (D-16): el código puede ir al correo o al celular verificado.
-     Todo esto está DESPUÉS de `claveCorrecta`: el SMS sale solo con la
+     Todo esto está DESPUÉS de `verificarClave`: el SMS sale solo con la
      contraseña correcta (hace falta la contraseña Y la SIM, nunca la SIM sola)
      y las máscaras solo se enseñan a quien ya demostró la contraseña. La
      respuesta `elegir` no envía nada, porque cada SMS cuesta créditos. */
@@ -679,7 +683,8 @@ async function restablecer(req, res) {
   const u = db.usuarioPorId(r.usuario_id);
   if (!u) return fallo(res, 400, 'La cuenta ya no existe');
 
-  db.cambiarClave(u.id, c.clave);
+  const claveCifrada = await db.cifrarClaveAsync(c.clave);
+  db.cambiarClave(u.id, c.clave, claveCifrada);
   // Cambiar la contraseña echa fuera a todo el mundo, incluido quien
   // hubiera entrado sin permiso. Es el sentido de recuperarla.
   db.cerrarTodoDe(u.id);
@@ -712,7 +717,9 @@ const pedirCambioCorreo = conSesion(async (req, res, ctx) => {
   }
 
   const u = db.usuarioPorId(ctx.usuario.id);
-  if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
+  const claveValida = await db.verificarClave(
+    String(c.clave || ''), u && u.clave_hash, u && u.clave_sal);
+  if (!u || !claveValida) {
     return fallo(res, 401, 'La contraseña no es correcta');
   }
   if (!correoValido(c.correo)) return fallo(res, 400, 'Escriba un correo válido');
@@ -874,7 +881,8 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
       if (r.usuario_id !== u.id) return fallo(res, 400, 'Código incorrecto');
     }
 
-    db.cambiarClave(u.id, c.nueva);
+    const claveCifrada = await db.cifrarClaveAsync(c.nueva);
+    db.cambiarClave(u.id, c.nueva, claveCifrada);
     db.cerrarOtrasDe(u.id, ctx.testigo);
     const { testigoRevertir } = db.anotarCambioClave({
       idUsuario: u.id, via: porSms ? 'sms' : 'correo', ip: origen(req),
@@ -886,13 +894,16 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
     return responder(res, 200, { ok: true, mensaje: 'Su contraseña cambió y se cerraron las demás sesiones.' });
   }
 
-  if (!u || !db.claveCorrecta(String(c.actual || ''), u.clave_hash, u.clave_sal)) {
+  const claveValida = await db.verificarClave(
+    String(c.actual || ''), u && u.clave_hash, u && u.clave_sal);
+  if (!u || !claveValida) {
     return fallo(res, 401, 'La contraseña actual no es correcta');
   }
   const debil = claveDebil(c.nueva, u.correo);
   if (debil) return fallo(res, 400, debil);
 
-  db.cambiarClave(u.id, c.nueva);
+  const claveCifrada = await db.cifrarClaveAsync(c.nueva);
+  db.cambiarClave(u.id, c.nueva, claveCifrada);
   db.cerrarOtrasDe(u.id, ctx.testigo);
   const { testigoRevertir } = db.anotarCambioClave({ idUsuario: u.id, via: 'actual', ip: origen(req) });
   correo.enviarAvisoCambioClave({
@@ -1028,7 +1039,9 @@ const pedirCambioTelefono = conSesion(async (req, res, ctx) => {
   }
 
   const u = db.usuarioPorId(ctx.usuario.id);
-  if (!u || !db.claveCorrecta(String(c.clave || ''), u.clave_hash, u.clave_sal)) {
+  const claveValida = await db.verificarClave(
+    String(c.clave || ''), u && u.clave_hash, u && u.clave_sal);
+  if (!u || !claveValida) {
     return fallo(res, 401, 'La contraseña no es correcta');
   }
   const nuevo = db.celularRd(c.telefono);
