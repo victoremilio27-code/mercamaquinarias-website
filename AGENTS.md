@@ -19,6 +19,11 @@ trabajar como Codex.
   otro PR: como mucho, comenta lo que veas.
 - Node tiene que ser ≥ 22.5. Si el entorno trae otro, dilo en el PR: las pruebas de base
   fallan sin `node:sqlite`.
+- **Tu entorno no puede hacer push a GitHub.** Por eso, al terminar cada tarea, termina tu
+  respuesta con la salida completa y sin resumir de `git format-patch <base>..HEAD --stdout`
+  (todos tus commits de la tarea) en un único bloque de código con la etiqueta `diff`.
+  Claude lo aplica con `git am` y lo sube. No digas que abriste un PR o una rama: no
+  llegan a GitHub.
 - Antes de terminar, corre las pruebas que pida la tarea (`npm run ...`) y pega en el PR
   el resultado real. Si una falla, dilo; nunca la silencies ni la saltes.
 - Preparación del entorno: `bash tools/preparar-nube.sh` (Node ≥ 22.5 y `npm ci`).
