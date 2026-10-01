@@ -132,7 +132,6 @@ function normalizarDdl(s) {
   return String(s)
     .replace(/"/g, '')
     .replace(/IF NOT EXISTS /g, '')
-    .replace(/cambios_correo_nueva/g, 'cambios_correo')
     .replace(/\s+/g, ' ')
     .replace(/\s*([(),])\s*/g, '$1')
     .trim();
@@ -149,22 +148,26 @@ seccion('1. La migración 2026-10-telefono-cuenta');
   comprobar(anotadas.filter((x) => x === '2026-10-telefono-cuenta').length === 1, 'anotada una sola vez');
 
   const colsUsuarios = d.prepare('PRAGMA table_info(usuarios)').all().map((c) => c.name);
-  comprobar(colsUsuarios.includes('telefono_verificado') && colsUsuarios.includes('enfriamiento_hasta'),
-    'usuarios tiene telefono_verificado y enfriamiento_hasta');
+  comprobar(colsUsuarios.includes('telefono_verificado') && !colsUsuarios.includes('enfriamiento_hasta'),
+    'usuarios tiene telefono_verificado y NO enfriamiento_hasta');
+  const colsCodigos = d.prepare('PRAGMA table_info(codigos_telefono)').all().map((c) => c.name);
+  comprobar(!colsCodigos.some((c) => c.startsWith('autoriza_')), 'codigos_telefono no tiene columnas autoriza_*');
   const indice = fila("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'ux_usuarios_telefono_verificado'");
   comprobar(!!indice && /WHERE telefono_verificado IS NOT NULL/.test(indice.sql), 'el índice único de celular verificado es parcial');
-  for (const t of ['codigos_telefono', 'cambios_telefono']) {
+  for (const t of ['codigos_telefono', 'cambios_telefono', 'cambios_clave']) {
     comprobar(!!fila("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", t), `existe la tabla ${t}`);
   }
-  for (const i of ['ix_codigos_telefono_vigentes', 'ux_codigos_telefono_autoriza', 'ix_cambios_telefono_usuario']) {
+  for (const i of ['ix_codigos_telefono_vigentes', 'ix_cambios_telefono_usuario', 'ix_cambios_clave_usuario', 'ux_cambios_clave_revertir']) {
     comprobar(!!fila("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", i), `existe el índice ${i}`);
   }
+  comprobar(!fila("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'ux_codigos_telefono_autoriza'"),
+    'no existe ux_codigos_telefono_autoriza');
 
   const esquema = fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8');
-  comprobar(!esquema.includes('telefono_verificado') && !esquema.includes('codigos_telefono'),
+  comprobar(!esquema.includes('telefono_verificado') && !esquema.includes('codigos_telefono') && !esquema.includes('cambios_clave'),
     'db/schema.sql no contiene nada de la migración (abrir() lo ejecuta antes que migrar())');
 
-  /* La DDL de cambios_correo, igual a la de la 10.1 salvo el CHECK. */
+  /* La DDL de cambios_correo, idéntica a la de la 10.1: esta migración ya no la toca. */
   const fuente = fs.readFileSync(path.join(__dirname, 'db.js'), 'utf8');
   const desde = fuente.indexOf("['2026-10-cuenta-recuperacion'");
   const ini = fuente.indexOf('CREATE TABLE IF NOT EXISTS cambios_correo (', desde);
@@ -172,9 +175,8 @@ seccion('1. La migración 2026-10-telefono-cuenta');
   const ddl101 = desde > 0 && ini > desde && fin > ini ? fuente.slice(ini, fin + 1) : '';
   const actual = fila("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cambios_correo'").sql;
   comprobar(ddl101.length > 100, 'se encontró la DDL de cambios_correo de la 10.1 en tools/db.js');
-  comprobar(normalizarDdl(actual).replace(",'sms'", '') === normalizarDdl(ddl101),
-    'cambios_correo: la DDL es la de la 10.1 salvo el CHECK de via');
-  comprobar(/,'sms'/.test(normalizarDdl(actual)), 'el CHECK de via admite sms');
+  comprobar(normalizarDdl(actual) === normalizarDdl(ddl101), 'cambios_correo: la DDL es exactamente la de la 10.1');
+  comprobar(!/'sms'/.test(normalizarDdl(actual)), 'el CHECK de via de cambios_correo no admite sms');
 
   /* Base vieja: la copia con la migración deshecha, abierta en un hijo. */
   const copia = path.join(BANCO, 'vieja.db');
@@ -184,11 +186,7 @@ seccion('1. La migración 2026-10-telefono-cuenta');
   v.exec('DROP INDEX ux_usuarios_telefono_verificado');
   v.exec('DROP TABLE codigos_telefono');
   v.exec('DROP TABLE cambios_telefono');
-  v.exec('DROP TABLE cambios_correo');
-  v.exec(ddl101);
-  v.exec('CREATE INDEX IF NOT EXISTS ix_cambios_correo_usuario ON cambios_correo (usuario_id)');
-  v.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_cambios_correo_revertir ON cambios_correo (revertir_hash)');
-  v.exec('ALTER TABLE usuarios DROP COLUMN enfriamiento_hasta');
+  v.exec('DROP TABLE cambios_clave');
   v.exec('ALTER TABLE usuarios DROP COLUMN telefono_verificado');
   v.exec(`INSERT INTO usuarios (id, correo, nombre, clave_hash, clave_sal, creado)
           VALUES ('u-vieja', 'vieja@ejemplo.test', 'Vieja', 'h', 's', '${PASADO}')`);
@@ -210,17 +208,18 @@ seccion('1. La migración 2026-10-telefono-cuenta');
     console.log(JSON.stringify({
       usuarios: cols('usuarios'), cambios_correo: cols('cambios_correo'),
       codigos_telefono: cols('codigos_telefono'), cambios_telefono: cols('cambios_telefono'),
+      cambios_clave: cols('cambios_clave'),
       veces, via: vieja && vieja.via, sms,
     }));
   `], { env: { ...process.env, MERCA_DB: copia }, encoding: 'utf8' });
   const vieja = JSON.parse(salida.trim().split('\n').pop());
   const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => `${c.name}:${c.type}:${c.notnull}:${c.dflt_value}`).sort();
-  for (const t of ['usuarios', 'cambios_correo', 'codigos_telefono', 'cambios_telefono']) {
+  for (const t of ['usuarios', 'cambios_correo', 'codigos_telefono', 'cambios_telefono', 'cambios_clave']) {
     comprobar(JSON.stringify(vieja[t]) === JSON.stringify(cols(t)), `${t}: la base vieja migrada y la nueva tienen las mismas columnas`);
   }
   comprobar(vieja.veces === 1, 'la migración corrió una vez sobre la base vieja');
   comprobar(vieja.via === 'usuario', 'la fila vieja de cambios_correo se conservó');
-  comprobar(vieja.sms === true, 'la base vieja migrada admite una fila con via sms');
+  comprobar(typeof vieja.sms === 'string' && /CHECK/i.test(vieja.sms), 'la base vieja migrada sigue sin admitir via sms en cambios_correo (CHECK)');
 }
 
 /* Un código que no es el que se emitió. */
@@ -241,7 +240,7 @@ seccion('2. celularRd y crearCuenta');
   const p = cuenta('particular-2@ejemplo.test', 'Particular', { telefono: '(829) 555-0101' });
   const up = db.usuarioPorId(p);
   comprobar(up.telefono === '8295550101', 'particular: usuarios.telefono queda en 10 dígitos');
-  comprobar(up.telefono_verificado === null && up.enfriamiento_hasta === null, 'particular: nace sin verificar y sin enfriamiento');
+  comprobar(up.telefono_verificado === null && !('enfriamiento_hasta' in up), 'particular: nace sin verificar y sin la columna de enfriamiento');
 
   const d1 = cuenta('dealer-2a@ejemplo.test', 'Dealer A', { telefono: '8095550202', telefonoEmpresa: '8095550303', dealer: 'Empresa A' });
   const o1 = db.organizacionDe(d1);
@@ -266,13 +265,20 @@ seccion('3. Códigos SMS');
   const f = fila('SELECT * FROM codigos_telefono WHERE id = ?', c.id);
   comprobar(Date.parse(f.expira) - Date.parse(f.creado) === 900000, 'vence exactamente a los 15 minutos');
   comprobar(!JSON.stringify(f).includes(c.codigo), 'el código no queda en la base, solo su firma');
-  comprobar(db.MINUTOS_SMS.restablecer === 20 && db.MINUTOS_SMS.clave === 20 && db.MINUTOS_SMS.recuperar === 15 && db.MINUTOS_SMS.cambio === 15,
-    'vencimientos por propósito');
-  comprobar(JSON.stringify(db.PROPOSITOS_SMS) === '["verificar","cambio","restablecer","clave","recuperar"]'
+  comprobar(JSON.stringify(db.MINUTOS_SMS) === '{"verificar":15,"cambio":15,"clave":20,"acceso":10}' && Object.isFrozen(db.MINUTOS_SMS),
+    'MINUTOS_SMS congelado y según el contrato');
+  comprobar(JSON.stringify(db.PROPOSITOS_SMS) === '["verificar","cambio","clave","acceso"]'
     && Object.isFrozen(db.PROPOSITOS_SMS), 'PROPOSITOS_SMS congelada y completa');
+  const ac = db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'acceso' });
+  const fa = fila('SELECT * FROM codigos_telefono WHERE id = ?', ac.id);
+  comprobar(ac.minutos === 10 && Date.parse(fa.expira) - Date.parse(fa.creado) === 600000, 'un código acceso vence exactamente a los 10 minutos');
 
   const e1 = lanza(() => db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'otro' }));
   comprobar(e1 && e1.codigo === 400, 'un propósito fuera de la lista lanza 400');
+  for (const p of ['restablecer', 'recuperar']) {
+    const ep = lanza(() => db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: p }));
+    comprobar(ep && ep.codigo === 400, `el propósito ${p} ya no existe: lanza 400`);
+  }
   const e2 = lanza(() => db.crearCodigoTelefono({ idUsuario: u, numero: '8005551234', proposito: 'verificar' }));
   comprobar(e2 && e2.codigo === 400, 'un número fuera de 809/829/849 lanza 400');
 
@@ -296,14 +302,14 @@ seccion('3. Códigos SMS');
   comprobar(fila('SELECT consumido FROM codigos_telefono WHERE id = ?', a.id).consumido === 1, 'agotado queda consumido');
 
   /* Vencido. */
-  const v = db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'restablecer' });
+  const v = db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'acceso' });
   db.abrir().prepare('UPDATE codigos_telefono SET expira = ? WHERE id = ?').run(PASADO, v.id);
-  const rv = db.verificarCodigoTelefono({ idUsuario: u, numero: N, proposito: 'restablecer', codigo: v.codigo });
+  const rv = db.verificarCodigoTelefono({ idUsuario: u, numero: N, proposito: 'acceso', codigo: v.codigo });
   comprobar(!rv.ok && rv.motivo === 'vencido', 'un código con expira en el pasado da vencido');
 
   /* Propósito y número cuentan. */
   const x = db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'clave' });
-  comprobar(db.verificarCodigoTelefono({ idUsuario: u, numero: N, proposito: 'recuperar', codigo: x.codigo }).motivo === 'inexistente',
+  comprobar(db.verificarCodigoTelefono({ idUsuario: u, numero: N, proposito: 'cambio', codigo: x.codigo }).motivo === 'inexistente',
     'el código de un propósito no vale para otro');
   comprobar(db.verificarCodigoTelefono({ idUsuario: u, numero: '8295559999', proposito: 'clave', codigo: x.codigo }).motivo === 'inexistente',
     'el código de un número no vale para otro');
@@ -314,45 +320,6 @@ seccion('3. Códigos SMS');
   comprobar(bien1.ok === true && bien1.id === x.id, 'el código correcto acierta (con espacios alrededor)');
   comprobar(db.verificarCodigoTelefono({ idUsuario: u, numero: N, proposito: 'clave', codigo: x.codigo }).motivo === 'inexistente',
     'repetido: ya no existe');
-}
-
-/* ── 4. Testigo de la recuperación ───────────────────────────── */
-seccion('4. Testigo de la recuperación');
-{
-  const u = cuenta('testigo-4@ejemplo.test', 'Testigo', { telefono: '8295550101' });
-  const N = '8295550101';
-  const sacar = () => {
-    const c = db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'recuperar' });
-    const r = db.verificarCodigoTelefono({ idUsuario: u, numero: N, proposito: 'recuperar', codigo: c.codigo });
-    return r.id;
-  };
-  const idOk = sacar();
-  const testigo = db.autorizarRecuperacion(idOk);
-  comprobar(/^[0-9a-f]{64}$/.test(testigo), 'el testigo son 64 hex');
-  comprobar(!JSON.stringify(fila('SELECT * FROM codigos_telefono WHERE id = ?', idOk)).includes(testigo),
-    'el testigo no está en la base, solo su firma');
-  const l = db.leerAutorizacion(testigo);
-  comprobar(l.ok === true && l.id === idOk && l.idUsuario === u && l.numero === N, 'leerAutorizacion devuelve id, usuario y número');
-  comprobar(db.gastarAutorizacion(testigo) === true, 'gastar: la primera vez true');
-  comprobar(db.gastarAutorizacion(testigo) === false, 'gastar: la segunda false');
-  comprobar(db.leerAutorizacion(testigo).motivo === 'usado', 'leer tras gastar da usado');
-  comprobar(lanza(() => db.autorizarRecuperacion(idOk)) !== null, 'una fila ya autorizada no se autoriza otra vez');
-
-  const idVenc = sacar();
-  const tVenc = db.autorizarRecuperacion(idVenc);
-  db.abrir().prepare('UPDATE codigos_telefono SET autoriza_expira = ? WHERE id = ?').run(PASADO, idVenc);
-  comprobar(db.leerAutorizacion(tVenc).motivo === 'vencido', 'autoriza_expira en el pasado da vencido');
-  comprobar(db.leerAutorizacion('ab'.repeat(32)).motivo === 'inexistente', 'un testigo al azar da inexistente');
-  comprobar(db.leerAutorizacion(undefined).motivo === 'inexistente', 'sin testigo da inexistente');
-
-  const sinConsumir = db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'recuperar' });
-  const e1 = lanza(() => db.autorizarRecuperacion(sinConsumir.id));
-  comprobar(e1 && e1.codigo === 400, 'autorizar una fila no consumida lanza 400');
-  const otroProp = db.crearCodigoTelefono({ idUsuario: u, numero: N, proposito: 'verificar' });
-  db.verificarCodigoTelefono({ idUsuario: u, numero: N, proposito: 'verificar', codigo: otroProp.codigo });
-  const e2 = lanza(() => db.autorizarRecuperacion(otroProp.id));
-  comprobar(e2 && e2.codigo === 400, 'autorizar una fila de otro propósito lanza 400');
-  comprobar(lanza(() => db.autorizarRecuperacion('no-existe')) !== null, 'autorizar una fila inexistente lanza');
 }
 
 /* ── 5. Unicidad, guardar sin verificar y quitar ─────────────── */
@@ -408,73 +375,101 @@ seccion('5. Unicidad, guardar sin verificar y quitar');
 }
 
 /* ── 6. Enfriamiento y acción por SMS reciente ───────────────── */
-seccion('6. Enfriamiento y acción por SMS reciente');
+seccion('6. Cambios de contraseña y «No fui yo» (base)');
 {
-  const H = '2030-01-01T00:00:00.000Z';
-  comprobar(db.enEnfriamiento({ enfriamiento_hasta: H }, '2029-12-31T23:59:59.999Z') === true, 'enEnfriamiento: un milisegundo antes del final');
-  comprobar(db.enEnfriamiento({ enfriamiento_hasta: H }, H) === false, 'enEnfriamiento: en el instante exacto ya no');
-  comprobar(db.enEnfriamiento({ enfriamiento_hasta: null }, H) === false, 'enEnfriamiento: null es false');
-  comprobar(db.enEnfriamiento(undefined) === false, 'enEnfriamiento: sin usuario es false');
+  comprobar(JSON.stringify(db.VIAS_CAMBIO_CLAVE) === '["actual","correo","sms","restablecer"]' && Object.isFrozen(db.VIAS_CAMBIO_CLAVE),
+    'VIAS_CAMBIO_CLAVE congelada y completa');
 
-  comprobar(db.accionSmsReciente({ enfriamiento_hasta: H }, '2030-01-07T23:59:59.999Z') === true, 'accionSmsReciente: dentro de los 7 días siguientes');
-  comprobar(db.accionSmsReciente({ enfriamiento_hasta: H }, '2030-01-08T00:00:00.000Z') === false, 'accionSmsReciente: a los 7 días exactos ya no');
-  comprobar(db.accionSmsReciente({ enfriamiento_hasta: null }, H) === false, 'accionSmsReciente: sin enfriamiento es false');
-  comprobar(db.accionSmsReciente(null) === false, 'accionSmsReciente: sin usuario es false');
-  comprobar(db.HORAS_ENFRIAMIENTO_SMS === 72 && db.DIAS_ACCION_SMS_RECIENTE === 7, 'constantes: 72 h y 7 días');
+  const u = cuenta('clave-6a@ejemplo.test', 'Clave A', { telefono: '8295550601' });
+  const hashAntes = db.usuarioPorId(u).clave_hash;
+  const e0 = lanza(() => db.anotarCambioClave({ idUsuario: u, via: 'otra' }));
+  comprobar(e0 && e0.codigo === 400, 'anotarCambioClave con una vía fuera de la lista lanza 400');
 
-  const u = cuenta('enfria-6@ejemplo.test', 'Enfria');
-  const hasta = db.ponerEnfriamiento(u, { desde: DESDE_FIJO });
-  comprobar(hasta === '2026-01-04T00:00:00.000Z', 'ponerEnfriamiento devuelve desde + 72 h');
-  comprobar(db.usuarioPorId(u).enfriamiento_hasta === '2026-01-04T00:00:00.000Z', 'ponerEnfriamiento lo guarda');
-  db.abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = ? WHERE id = ?').run(FUTURO, u);
-  comprobar(db.ponerEnfriamiento(u, { desde: DESDE_FIJO }) === FUTURO && db.usuarioPorId(u).enfriamiento_hasta === FUTURO,
-    'ponerEnfriamiento no acorta uno más largo');
-  db.quitarEnfriamiento(u);
-  comprobar(db.usuarioPorId(u).enfriamiento_hasta === null, 'quitarEnfriamiento lo deja en NULL');
+  const c = db.anotarCambioClave({ idUsuario: u, via: 'sms', ip: '201.3.3.1' });
+  comprobar(/^[0-9a-f]{64}$/.test(c.testigoRevertir) && !!c.id, 'devuelve id y un testigo de 64 hex');
+  const f = fila('SELECT * FROM cambios_clave WHERE id = ?', c.id);
+  comprobar(f.via === 'sms' && f.ip === '201.3.3.1' && f.revertido === null, 'la fila guarda vía e ip y no nace revertida');
+  comprobar(f.revertir_hash !== c.testigoRevertir && !JSON.stringify(f).includes(c.testigoRevertir),
+    'el testigo no está en la base, solo su HMAC');
+  comprobar(f.revertir_expira === db.sumarDias(7, f.creado), 'vence a los 7 días exactos desde el mismo instante');
+
+  db.verificarTelefonoCuenta({ idUsuario: u, numero: '8295550601', via: 'verificado' });
+  const pend = db.crearCodigoTelefono({ idUsuario: u, numero: '8295550601', proposito: 'clave' });
+  const r = db.revertirCambioClave(c.testigoRevertir, '201.3.3.2');
+  comprobar(r.ok === true && r.idUsuario === u && r.telefonoQuitado === true, 'revertir devuelve ok, usuario y telefonoQuitado');
+  comprobar(db.usuarioPorId(u).telefono_verificado === null, 'revertir quita la verificación del celular');
+  comprobar(fila('SELECT consumido FROM codigos_telefono WHERE id = ?', pend.id).consumido === 1, 'revertir anula los códigos SMS pendientes');
+  comprobar(todas('SELECT 1 FROM cambios_telefono WHERE usuario_id = ? AND via = ?', u, 'reversion').length === 1,
+    'revertir anota reversion en la bitácora del celular');
+  comprobar(fila('SELECT revertido FROM cambios_clave WHERE id = ?', c.id).revertido !== null, 'la fila queda marcada como revertida');
+  comprobar(db.usuarioPorId(u).clave_hash === hashAntes, 'no toca la contraseña (lo hace la API)');
+  comprobar(db.revertirCambioClave(c.testigoRevertir).motivo === 'usado', 'repetir el mismo testigo da usado');
+  comprobar(db.revertirCambioClave('a'.repeat(64)).motivo === 'inexistente', 'un testigo inventado da inexistente');
+  comprobar(db.revertirCambioClave(undefined).motivo === 'inexistente', 'sin testigo da inexistente');
+
+  /* Vencido: la cuenta no cambia. */
+  const v = cuenta('clave-6b@ejemplo.test', 'Clave B', { telefono: '8295550602' });
+  db.verificarTelefonoCuenta({ idUsuario: v, numero: '8295550602', via: 'verificado' });
+  const cv = db.anotarCambioClave({ idUsuario: v, via: 'actual' });
+  db.abrir().prepare('UPDATE cambios_clave SET revertir_expira = ? WHERE id = ?').run(PASADO, cv.id);
+  comprobar(db.revertirCambioClave(cv.testigoRevertir).motivo === 'vencido', 'un testigo con revertir_expira en el pasado da vencido');
+  comprobar(!!db.usuarioPorId(v).telefono_verificado && fila('SELECT revertido FROM cambios_clave WHERE id = ?', cv.id).revertido === null,
+    'vencido: la cuenta no cambia');
+
+  /* Dos cambios seguidos: usar el segundo anula el primero. */
+  const w = cuenta('clave-6c@ejemplo.test', 'Clave C', { telefono: '8295550603' });
+  const t1 = db.anotarCambioClave({ idUsuario: w, via: 'correo' });
+  const t2 = db.anotarCambioClave({ idUsuario: w, via: 'restablecer' });
+  comprobar(db.revertirCambioClave(t2.testigoRevertir).ok === true, 'usar el segundo testigo funciona');
+  comprobar(db.revertirCambioClave(t1.testigoRevertir).motivo === 'inexistente', 'el primero queda sin efecto (inexistente)');
+
+  /* Sin celular verificado. */
+  const n = cuenta('clave-6d@ejemplo.test', 'Clave D', { telefono: '8295550604' });
+  const cn = db.anotarCambioClave({ idUsuario: n, via: 'actual' });
+  const rn = db.revertirCambioClave(cn.testigoRevertir);
+  comprobar(rn.ok === true && rn.telefonoQuitado === false, 'sin celular verificado: ok y telefonoQuitado false');
+  comprobar(todas('SELECT 1 FROM cambios_telefono WHERE usuario_id = ? AND via = ?', n, 'reversion').length === 0,
+    'sin celular verificado: no anota reversion');
 }
 
 /* ── 7. «No fui yo» ampliado y expediente ────────────────────── */
-seccion('7. «No fui yo» ampliado y expediente');
+seccion('7. «No fui yo» del cambio de correo y expediente');
 {
   const probarVia = (via, correoCuenta, telefono, verificar) => {
     const u = cuenta(correoCuenta, `Via ${via}`, { telefono });
     if (verificar) db.verificarTelefonoCuenta({ idUsuario: u, numero: telefono, via: 'verificado' });
-    db.ponerEnfriamiento(u, { desde: DESDE_FIJO });
-    db.abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = ? WHERE id = ?').run(FUTURO, u);
-    const pend = db.crearCodigoTelefono({ idUsuario: u, numero: telefono, proposito: 'recuperar' });
+    const pend = db.crearCodigoTelefono({ idUsuario: u, numero: telefono, proposito: 'clave' });
     const cambio = db.cambiarCorreo({ idUsuario: u, nuevo: `nuevo-${via}-${correoCuenta}`, via, ip: '201.2.2.2',
       verificado: true, conReversion: true });
     const r = db.revertirCambioCorreo(cambio.testigoRevertir, '201.2.2.3');
     return { u, pend, r };
   };
 
-  const s = probarVia('sms', 'noyo-7a@ejemplo.test', '8295550701', true);
-  comprobar(s.r.ok === true && s.r.telefonoQuitado === true, 'via sms: revertir quita el celular verificado');
-  comprobar(db.usuarioPorId(s.u).telefono_verificado === null, 'via sms: telefono_verificado NULL');
-  comprobar(db.usuarioPorId(s.u).enfriamiento_hasta === null, 'via sms: el enfriamiento se borra');
-  comprobar(fila('SELECT consumido FROM codigos_telefono WHERE id = ?', s.pend.id).consumido === 1, 'via sms: los códigos SMS pendientes quedan anulados');
-  comprobar(db.usuarioPorId(s.u).correo === 'noyo-7a@ejemplo.test', 'via sms: el correo vuelve al anterior');
+  const s = probarVia('usuario', 'noyo-7a@ejemplo.test', '8295550701', true);
+  comprobar(s.r.ok === true && s.r.telefonoQuitado === true, 'via usuario: revertir quita el celular verificado');
+  comprobar(db.usuarioPorId(s.u).telefono_verificado === null, 'via usuario: telefono_verificado NULL');
+  comprobar(fila('SELECT consumido FROM codigos_telefono WHERE id = ?', s.pend.id).consumido === 1, 'via usuario: los códigos SMS pendientes quedan anulados');
+  comprobar(db.usuarioPorId(s.u).correo === 'noyo-7a@ejemplo.test', 'via usuario: el correo vuelve al anterior');
   comprobar(todas('SELECT 1 FROM cambios_telefono WHERE usuario_id = ? AND via = ?', s.u, 'reversion').length === 1,
-    'via sms: la bitácora anota reversion');
+    'via usuario: la bitácora anota reversion');
 
-  const w = probarVia('usuario', 'noyo-7b@ejemplo.test', '8295550702', true);
+  const w = probarVia('recuperacion', 'noyo-7b@ejemplo.test', '8295550702', true);
   comprobar(w.r.ok === true && w.r.telefonoQuitado === true && db.usuarioPorId(w.u).telefono_verificado === null,
-    'via usuario: también quita el celular verificado');
+    'via recuperacion: también quita el celular verificado');
 
   const n = probarVia('usuario', 'noyo-7c@ejemplo.test', '8295550703', false);
   comprobar(n.r.ok === true && n.r.telefonoQuitado === false, 'sin celular verificado: telefonoQuitado false');
-  comprobar(db.usuarioPorId(n.u).enfriamiento_hasta === null && fila('SELECT consumido FROM codigos_telefono WHERE id = ?', n.pend.id).consumido === 1,
-    'sin celular verificado: igual borra enfriamiento y anula códigos');
+  comprobar(fila('SELECT consumido FROM codigos_telefono WHERE id = ?', n.pend.id).consumido === 1,
+    'sin celular verificado: igual anula los códigos pendientes');
 
   /* Expediente. */
   const u = cuenta('expediente-7@ejemplo.test', 'Expediente', { telefono: '8295550704' });
   db.verificarTelefonoCuenta({ idUsuario: u, numero: '8295550704', via: 'verificado' });
-  db.abrir().prepare('UPDATE usuarios SET enfriamiento_hasta = ? WHERE id = ?').run(FUTURO, u);
   const sol = db.crearSolicitudRecuperacion({ correoCuenta: 'expediente-7@ejemplo.test', correoContacto: 'contacto-7@ejemplo.test',
     nombre: 'Expediente', telefono: '8295550704', detalle: 'Perdí el acceso a mi correo', ip: '201.2.2.4' });
   const exp = db.expedienteRecuperacion(sol.id);
   comprobar(!!exp.cuenta.telefono_verificado, 'expediente: cuenta.telefono_verificado');
-  comprobar(exp.cuenta.enfriamiento_hasta === FUTURO, 'expediente: cuenta.enfriamiento_hasta');
+  comprobar(!('enfriamiento_hasta' in exp.cuenta), 'expediente: cuenta ya no trae enfriamiento_hasta');
   comprobar(Array.isArray(exp.cambiosTelefono) && exp.cambiosTelefono.length >= 1
     && exp.cambiosTelefono[0].via === 'verificado', 'expediente: cambiosTelefono trae la bitácora');
   const sinCuenta = db.crearSolicitudRecuperacion({ correoCuenta: 'no-existe-7@ejemplo.test', correoContacto: 'otro-7@ejemplo.test',
