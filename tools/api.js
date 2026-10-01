@@ -914,6 +914,50 @@ const cambiarClaveConSesion = conSesion(async (req, res, ctx) => {
   return responder(res, 200, { ok: true, mensaje: 'Su contraseña cambió y se cerraron las demás sesiones.' });
 });
 
+/* «Eliminar mi cuenta» (#89). La clave mala da 403 y no el 401 del cambio
+   de contraseña: con sesión abierta, un 401 se lee como «sesión caída» y
+   la interfaz (#90) mandaría a entrar otra vez en vez de decir que la
+   contraseña no es esa. */
+const MENSAJES_BLOQUEO_ELIMINAR = {
+  admin: 'Una cuenta de administrador no se elimina desde el panel. Quítele antes el permiso con tools/admin.js.',
+  'otros-miembros': 'Su empresa tiene otras personas en la cuenta. Para eliminarla escríbanos a ayuda@mercamaquinarias.com.',
+  'pago-pendiente': 'Tiene un pago en espera de confirmar. Espere a que se confirme o se anule y vuelva a intentarlo.',
+};
+
+const eliminarCuentaConSesion = conSesion(async (req, res, ctx) => {
+  const c = await leerCuerpo(req);
+  if (!db.permitir(`eliminar-cuenta:${ctx.usuario.id}`, 5, 60)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere un rato.');
+  }
+  if (c.confirmacion !== 'ELIMINAR') {
+    return fallo(res, 400, 'Escriba ELIMINAR para confirmar.');
+  }
+  const u = db.usuarioPorId(ctx.usuario.id);
+  const claveValida = await db.verificarClave(
+    String(c.clave || ''), u && u.clave_hash, u && u.clave_sal);
+  if (!u) return fallo(res, 401, 'La cuenta ya no existe');
+  if (!claveValida) return fallo(res, 403, 'La contraseña actual no es correcta');
+
+  const bloqueo = db.bloqueoEliminarCuenta(u.id);
+  if (bloqueo) return fallo(res, 409, MENSAJES_BLOQUEO_ELIMINAR[bloqueo] || 'No se puede eliminar esta cuenta.');
+
+  /* Antes de anonimizar: después ya no queda dirección a la que escribir.
+     Si el correo falla, la persona pidió borrar y se borra igual. */
+  try {
+    await correo.enviarAvisoCuentaEliminada({ para: u.correo, nombre: u.nombre });
+  } catch (e) {
+    console.error('cuenta: no salió el aviso de cuenta eliminada', e.message);
+  }
+
+  const r = db.eliminarCuenta(u.id);
+  if (r.bloqueo) return fallo(res, 409, MENSAJES_BLOQUEO_ELIMINAR[r.bloqueo] || 'No se puede eliminar esta cuenta.');
+  r.fotos.forEach((ruta) => { try { fotos.borrar(ruta); } catch (_) { /* ya no estaba */ } });
+  r.videos.forEach((ruta) => { try { videos.borrar(ruta); } catch (_) { /* ya no estaba */ } });
+
+  // Las sesiones ya se borraron con la cuenta; solo falta vaciar la cookie.
+  return responder(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Max-Age=0` });
+});
+
 const MENSAJE_CELULAR_SIN_VERIFICAR = 'Su celular no está verificado. Pida el código al correo.';
 
 /* Pide el código para cambiar la contraseña SIN la actual (D-05). El tipo
@@ -5498,6 +5542,7 @@ const RUTAS = [
   ['POST', /^\/api\/cuenta\/clave\/revertir$/,    revertirClave],
   ['POST', /^\/api\/cuenta\/clave\/codigo$/,      pedirCodigoClave],
   ['POST', /^\/api\/cuenta\/clave$/,             cambiarClaveConSesion],
+  ['POST', /^\/api\/cuenta\/eliminar$/,          eliminarCuentaConSesion],
   ['POST', /^\/api\/cuenta\/cerrar-otras$/,      cerrarOtrasSesiones],
   ['POST', /^\/api\/cuenta\/recuperacion$/,      pedirRecuperacion],
   ['GET',  /^\/api\/admin\/recuperaciones$/,                   listarRecuperaciones],
