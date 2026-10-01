@@ -4738,6 +4738,26 @@ function filtrosCatalogo(f = {}) {
   rango('a.anio', 'anioMin', f.anioMin, '>=');
   rango('a.anio', 'anioMax', f.anioMax, '<=');
 
+  /* El id termina dentro de una ruta JSON y por eso solo se interpola
+     después de comprobarlo contra el catálogo compartido. Los límites,
+     como todos los valores de la petición, siguen siendo parámetros. */
+  if (f.categoria && taxonomia.categoria(f.categoria)) {
+    const { especificacionesDe, implementosDe } = require('../assets/especificaciones.js');
+    const permitidas = new Set(especificacionesDe(f.categoria, f.subcategoria).map((item) => item.id));
+    let indiceEspecificacion = 0;
+    for (const idEspecificacion of permitidas) {
+      rango(`json_extract(a.especificaciones, '$."${idEspecificacion}"')`,
+        `especificacionMin${indiceEspecificacion}`, f[`e_${idEspecificacion}_min`], '>=');
+      rango(`json_extract(a.especificaciones, '$."${idEspecificacion}"')`,
+        `especificacionMax${indiceEspecificacion}`, f[`e_${idEspecificacion}_max`], '<=');
+      indiceEspecificacion += 1;
+    }
+    if (implementosDe(f.categoria).some((item) => item.id === f.implemento)) {
+      donde.push('EXISTS (SELECT 1 FROM json_each(a.implementos_lista) WHERE value = :implemento)');
+      p.implemento = f.implemento;
+    }
+  }
+
   // El tope de horas solo aplica a lo que se mide en horas: si no,
   // filtrar por "menos de 3.000" escondería todos los camiones.
   if (Number(f.horasMax)) {
