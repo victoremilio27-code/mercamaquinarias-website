@@ -77,9 +77,17 @@ const fechaLarga = (iso) => new Date(iso).toLocaleDateString('es-DO', {
   day: '2-digit', month: 'long', year: 'numeric',
 });
 
+// Desde este corte el 606 usa la fecha dominicana; lo ya emitido no se reescribe.
+const FECHA_HORA_RD = '2026-10-02T04:00:00.000Z';
+
 const fechaCorta = (iso) => {
+  const soloFecha = typeof iso === 'string' && /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (soloFecha) return `${soloFecha[3]}/${soloFecha[2]}/${soloFecha[1]}`;
+  if (typeof iso !== 'string') return '';
+
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
+  if (d.getTime() >= Date.parse(FECHA_HORA_RD)) d.setUTCHours(d.getUTCHours() - 4);
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 };
 
@@ -838,7 +846,7 @@ function pendientesDeRegularizar({ limite = 500 } = {}) {
 }
 
 module.exports = {
-  CARPETA, TITULOS,
+  CARPETA, TITULOS, FECHA_HORA_RD, fechaCorta,
   dibujar, comoHtml, guardarPdf, leerPdf, rutaAbsoluta,
   emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, pendientesDeRegularizar, decidirTipo,
   reponerPdfsDe, regenerarPdfsPendientes,
