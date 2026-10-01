@@ -83,6 +83,17 @@ Autorizado por Victor el 2026-09-25 (`research/modelo-comercial.md`); auditado e
 - **CTA-05**: El personal **coteja y resuelve** cada solicitud desde la consola, no antes de 72 horas y con motivo obligatorio; aprobar cambia el correo y queda en la bitácora.
 - **CTA-06**: El asistente explica los tres caminos y nunca recupera una cuenta ni pide contraseñas o códigos por el chat.
 
+### Teléfono de la cuenta (TEL)
+
+- **TEL-01**: Toda cuenta nueva da **un celular dominicano de 10 dígitos (809, 829 o 849)**; el dealer indica aparte, si es otro, el teléfono principal de la empresa. Con el SMS apagado, el celular queda sin verificar.
+- **TEL-02**: Con `MERCA_SMS` encendido, el titular **verifica su celular con un código SMS** al registrarse y, las cuentas que ya existían, al entrar; puede posponerlo («Ahora no») y nada queda bloqueado. Con el SMS apagado, el panel pide el celular a quien no lo tiene, sin bloquear.
+- **TEL-03**: Un número solo es el celular verificado de **una** cuenta: quien lo demuestra se lo queda, y la cuenta anterior pierde la verificación y recibe un correo.
+- **TEL-04**: Quien perdió el acceso a su correo y tiene el celular verificado da **su correo y su celular completos** (la respuesta es idéntica siempre), confirma el código SMS, escribe un correo nuevo, lo confirma con otro código y crea una contraseña nueva; se cierran todas las sesiones y el correo anterior recibe el aviso con «No fui yo».
+- **TEL-05**: «Olvidé mi contraseña» y «Cambiar contraseña» dejan **elegir correo o celular** cuando el SMS está encendido; con él apagado, todo va por correo, y cambiar la contraseña sin recordar la actual se hace con un código al correo. Restablecer por SMS abre sesión y no da el correo por verificado.
+- **TEL-06**: **Cambiar el celular** de la cuenta pide sesión, contraseña y un código al número nuevo, y avisa al correo.
+- **TEL-07**: Mitigaciones del duplicado de SIM: topes por número, IP y cuenta; tope diario global configurable (300 por defecto); solo 809/829/849; «No fui yo» quita la verificación del celular; **72 horas** tras una acción hecha solo con SMS sin cambiar correo ni celular, sin verificar contactos nuevos y sin cambiar el teléfono o el WhatsApp de la página del dealer. Todo el SMS se entrega apagado tras `MERCA_SMS`.
+- **TEL-08**: **Privacidad 2.2** dice que el celular es obligatorio y se usa para códigos de seguridad por SMS, cuenta el SMS entre los encargados y dice «capacidad de publicaciones activas» en vez de «cupos»; el asistente conoce los caminos nuevos y solo ofrece el SMS si está encendido; `deploy/README.md` explica cómo encenderlo.
+
 ### Interfaz (UI)
 
 - **UI-01**: Tema claro y oscuro coherentes en **todo** el sitio: ningún elemento se queda con un color fijo cuando el fondo cambia.
@@ -198,6 +209,14 @@ huérfanos y sin duplicados.
 | CTA-04 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
 | CTA-05 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
 | CTA-06 | Phase 10.1 — Recuperar la cuenta y cambiar el correo | Hecho 2026-09-30 (sin fusionar: espera el respaldo) | Petición de Victor del 2026-09-30, `10.1-CONTEXT.md` |
+| TEL-01 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
+| TEL-02 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
+| TEL-03 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
+| TEL-04 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
+| TEL-05 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
+| TEL-06 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
+| TEL-07 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
+| TEL-08 | Phase 10.2 — Teléfono verificado y códigos por SMS | Planificado 2026-09-30 | Petición de Victor del 2026-09-30, `10.2-CONTEXT.md` |
 | UI-01 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-05` y `02-06`: los literales congelados pasan a sus tokens y la única pieza fija deliberada que quedaba, la cuenta de fotos sobre la imagen, entra en las excepciones con su razón. `check-contraste` en 0 en las 17 rutas y los dos temas |
 | UI-02 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `02-04`: los dieciséis controles de D-01 más seis que el inventario no tenía usan `--app-borde-control`. El comprobador pasa de 271 hallazgos de tipo `control` a **cero**, en las 17 rutas y en los dos temas |
 | UI-03 | Phase 2 — Tema claro y oscuro coherentes | Hecho 2026-09-25 | `tools/check-contraste.js` recorre 17 rutas en los dos temas, mide texto, controles y dinamismo, y sale 1 con hallazgos; colgado del final de `npm run auditar`. Desde el `02-06` sale 0 y `npm run auditar` pasa entero con él dentro |

@@ -49,6 +49,7 @@ Las fases decimales aparecen entre sus enteros vecinos, en orden numérico.
 - [x] **Phase 9: Contactos verificados y señales de estafa** - Ningún anuncio muestra un contacto sin verificar, y el aviso de la ficha lleva a una guía dominicana (completed 2026-09-25)
 - [x] **Phase 10: Alcance y métricas del vendedor** - Favoritos, compartir, atribución de cada contacto de WhatsApp y duplicar un anuncio (completed 2026-09-25)
 - [x] **Phase 10.1: Recuperar la cuenta y cambiar el correo** (INSERTED) - Cambio de correo y de contraseña con sesión, «No fui yo» y recuperación revisada para quien perdió el correo (completed 2026-09-30)
+- [ ] **Phase 10.2: Teléfono verificado y códigos por SMS** (INSERTED) - Celular obligatorio y verificable, recuperación y contraseña por SMS con mitigaciones del duplicado de SIM, todo el SMS apagado tras `MERCA_SMS`
 
 **v2 — Después del lanzamiento, en el orden fijado por Victor**
 
@@ -326,6 +327,27 @@ Plans:
 - [x] 10.1-01-PLAN.md — Núcleo: migración, correos, rutas de cambio de correo, reversión, contraseña con sesión y recuperación revisada; arnés `cuenta:probar` en CI
 - [x] 10.1-02-PLAN.md — Panel «Seguridad de la cuenta» y acceso: «No fui yo» y «¿Ya no tiene acceso a su correo?»
 - [x] 10.1-03-PLAN.md — Consola «Recuperación de cuentas» con expediente para cotejar, y el asistente
+
+### Phase 10.2: Teléfono verificado y códigos por SMS (INSERTED)
+**Goal:** Toda cuenta tiene un celular dominicano, verificable por SMS cuando se encienda, que sirve para recuperar la cuenta sin el correo y para elegir por dónde llega el código de la contraseña, sin que un duplicado de SIM baste para quedarse con ella
+**Requirements**: TEL-01, TEL-02, TEL-03, TEL-04, TEL-05, TEL-06, TEL-07, TEL-08
+**Depends on:** Phase 10.1
+**Success Criteria** (what must be TRUE):
+  1. Nadie crea una cuenta sin un celular 809/829/849; con el SMS apagado el sitio funciona como hoy y la única novedad visible es el celular, Privacidad 2.2 y cambiar la contraseña con un código al correo.
+  2. Con `MERCA_SMS=archivo`, un titular verifica su celular, restablece la contraseña eligiendo el SMS y, sin acceso al correo, pasa su cuenta a un correo nuevo con un código SMS y otro al correo nuevo; el correo anterior recibe «No fui yo».
+  3. Las respuestas públicas del SMS son idénticas exista o no la cuenta, y los topes, el tope diario, las 72 h y «No fui yo» quitando el celular se comprueban en `npm run telefono:probar`.
+  4. `npm run auditar` recorre las pantallas con el SMS apagado (flujos y permisos) y encendido (`auditar-telefono`, servidor propio en el puerto 8091).
+**Plans:** 7 plans
+Plans:
+- [ ] 10.2-01-PLAN.md — Base y correos: migración `2026-10-telefono-cuenta`, códigos SMS de cuenta, unicidad, enfriamiento, «No fui yo» ampliado, textos y avisos, ruta nueva de Brevo; arnés `telefono:probar` en CI
+- [ ] 10.2-02-PLAN.md — Privacidad 2.2, el asistente y `deploy/README.md` (encender el SMS y `MERCA_DB` en «Cuentas del equipo»)
+- [ ] 10.2-03-PLAN.md — API I: celular en el registro, `telefono` en la sesión, verificar y cambiar el celular, topes y tope diario, guardas de las 72 h
+- [ ] 10.2-04-PLAN.md — API II: olvidé y cambiar contraseña por correo o SMS, y la recuperación sin correo por SMS en cuatro pasos
+- [ ] 10.2-05-PLAN.md — Panel «Celular de la cuenta», contraseña sin la actual, aviso de las 72 h y el celular en el expediente de la consola
+- [ ] 10.2-06-PLAN.md — Acceso: celular en el registro, «Confirme su celular», selector correo/celular y la recuperación por SMS
+- [ ] 10.2-07-PLAN.md — Auditorías del navegador: flujos y permisos con el SMS apagado y `auditar-telefono` con el SMS encendido
+**UI hint**: yes
+**Notas**: La migración rehace `cambios_correo` (su CHECK no admite `'sms'`) y añade columnas a `usuarios`: **respaldo verificado de Victor antes de fusionar**. Decisiones D-08..D-15 por defecto, a confirmar por Victor (`10.2-CONTEXT.md`).
 
 ### Phase 11: Transporte y financiamiento encendidos
 **Goal**: Que los dos servicios que están escritos y apagados entren en operación con contenido dominicano real.
