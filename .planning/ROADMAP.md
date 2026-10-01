@@ -337,15 +337,16 @@ Plans:
   2. Con `MERCA_SMS=archivo`, un titular verifica su celular, restablece la contraseña eligiendo el SMS y, sin acceso al correo, pasa su cuenta a un correo nuevo con un código SMS y otro al correo nuevo; el correo anterior recibe «No fui yo».
   3. Las respuestas públicas del SMS son idénticas exista o no la cuenta, y los topes, el tope diario, las 72 h y «No fui yo» quitando el celular se comprueban en `npm run telefono:probar`.
   4. `npm run auditar` recorre las pantallas con el SMS apagado (flujos y permisos) y encendido (`auditar-telefono`, servidor propio en el puerto 8091).
-**Plans:** 7 plans
+**Plans:** 8 plans
 Plans:
-- [ ] 10.2-01-PLAN.md — Base y correos: migración `2026-10-telefono-cuenta`, códigos SMS de cuenta, unicidad, enfriamiento, «No fui yo» ampliado, textos y avisos, ruta nueva de Brevo; arnés `telefono:probar` en CI
-- [ ] 10.2-02-PLAN.md — Privacidad 2.2, el asistente y `deploy/README.md` (encender el SMS y `MERCA_DB` en «Cuentas del equipo»)
-- [ ] 10.2-03-PLAN.md — API I: celular en el registro, `telefono` en la sesión, verificar y cambiar el celular, topes y tope diario, guardas de las 72 h
-- [ ] 10.2-04-PLAN.md — API II: olvidé y cambiar contraseña por correo o SMS, y la recuperación sin correo por SMS en cuatro pasos
-- [ ] 10.2-05-PLAN.md — Panel «Celular de la cuenta», contraseña sin la actual, aviso de las 72 h y el celular en el expediente de la consola
-- [ ] 10.2-06-PLAN.md — Acceso: celular en el registro, «Confirme su celular», selector correo/celular y la recuperación por SMS
-- [ ] 10.2-07-PLAN.md — Auditorías del navegador: flujos y permisos con el SMS apagado y `auditar-telefono` con el SMS encendido
+- [ ] 10.2-01-PLAN.md — Base: migración `2026-10-telefono-cuenta`, códigos SMS de cuenta, testigo de la recuperación, unicidad, enfriamiento, «No fui yo» ampliado; arnés `telefono:probar` en CI
+- [ ] 10.2-02-PLAN.md — Correos: texto del SMS, máscara, tope diario, avisos del celular y de la contraseña por SMS, ruta nueva de Brevo (pruebas en `contactos:probar`)
+- [ ] 10.2-03-PLAN.md — Privacidad 2.2, el asistente y `deploy/README.md` (encender el SMS y `MERCA_DB` en «Cuentas del equipo»)
+- [ ] 10.2-04-PLAN.md — API I: celular en el registro, `telefono` en la sesión, verificar y cambiar el celular, topes y tope diario (también el SMS de contactos), guardas de las 72 h (con sucursales)
+- [ ] 10.2-05-PLAN.md — API II: olvidé y cambiar contraseña por correo o SMS, y la recuperación sin correo por SMS en cuatro pasos
+- [ ] 10.2-06-PLAN.md — Panel «Celular de la cuenta», contraseña sin la actual, aviso de las 72 h y el celular en el expediente de la consola
+- [ ] 10.2-07-PLAN.md — Acceso: celular en el registro, «Confirme su celular», selector correo/celular y la recuperación por SMS
+- [ ] 10.2-08-PLAN.md — Auditorías del navegador: flujos y permisos con el SMS apagado y `auditar-telefono` con el SMS encendido
 **UI hint**: yes
 **Notas**: La migración rehace `cambios_correo` (su CHECK no admite `'sms'`) y añade columnas a `usuarios`: **respaldo verificado de Victor antes de fusionar**. Decisiones D-08..D-15 por defecto, a confirmar por Victor (`10.2-CONTEXT.md`).
 
