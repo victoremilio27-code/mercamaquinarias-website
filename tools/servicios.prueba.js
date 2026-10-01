@@ -12,6 +12,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const servicios = require('../assets/servicios.js');
 const { SERVICIOS, seOfrece, paginasApagadas, serviciosQueAdmitenSolicitud } = servicios;
@@ -50,5 +52,13 @@ test('coherencia: todo servicio apagado tiene su página apagada y ninguno encen
   const apagadas = paginasApagadas();
   for (const [clave, s] of Object.entries(SERVICIOS)) {
     assert.equal(apagadas.includes(`/${s.pagina}`), !s.activo, clave);
+  }
+});
+
+test('cada servicio tiene nombre y una página HTML que existe', () => {
+  for (const [clave, { nombre, pagina }] of Object.entries(SERVICIOS)) {
+    assert.ok(nombre.trim(), clave);
+    assert.ok(pagina.endsWith('.html'), clave);
+    assert.ok(fs.existsSync(path.join(__dirname, '..', pagina)), clave);
   }
 });
