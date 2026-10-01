@@ -227,7 +227,7 @@ let entradas;
   const esperados = [
     ...CON_NCF.map((f) => `con-ncf/${f.numero}.pdf`), 'con-ncf/resumen.csv',
     ...SIN_NCF.map((f) => `sin-ncf/${f.numero}.pdf`), 'sin-ncf/resumen.csv',
-    'resumen.pdf', 'LEEME.txt',
+    'resumen.pdf', 'LEEME.txt', '607-202509.txt',
   ].sort();
   ok(JSON.stringify(nombres) === JSON.stringify(esperados),
     `las dos carpetas y la raíz, sin nada de agosto ni de octubre · ${nombres.length} entradas`);
@@ -369,8 +369,10 @@ console.log('\n9 · Mes vacío, mes en curso, mes futuro y sin emisor');
 {
   const vacio = leerZip(lote.armarPaquete('2025-03', { emisor: EMISOR, ahora: AHORA }).zip);
   ok(JSON.stringify(vacio.map((e) => e.nombre).sort())
-    === JSON.stringify(['LEEME.txt', 'con-ncf/resumen.csv', 'resumen.pdf', 'sin-ncf/resumen.csv']),
-  'un mes vacío da las dos hojas con solo la cabecera, el resumen y el LEEME');
+    === JSON.stringify(['607-202503.txt', 'LEEME.txt', 'con-ncf/resumen.csv', 'resumen.pdf', 'sin-ncf/resumen.csv']),
+  'un mes vacío da las dos hojas con solo la cabecera, el 607, el resumen y el LEEME');
+  ok((vacio.find((e) => e.nombre === '607-202503.txt') || { datos: Buffer.alloc(0) }).datos.toString('latin1') === '607|131279759|202503|0\r\n',
+    'el 607 de un mes vacío es solo el encabezado con 0 líneas');
   ok(leerCsv(vacio.find((e) => e.nombre === 'con-ncf/resumen.csv').datos).filas.length === 0, 'sin filas');
 
   const enCurso = lote.armarPaquete('2025-10', { emisor: EMISOR, ahora: Date.parse('2025-10-15T12:00:00.000Z') });
@@ -386,6 +388,28 @@ console.log('\n9 · Mes vacío, mes en curso, mes futuro y sin emisor');
   ok(futuro && futuro.codigo === 400, 'un mes futuro es un 400');
   const sinEmisor = lanza(() => lote.armarPaquete('2025-09', { ahora: AHORA }));
   ok(sinEmisor && !sinEmisor.codigo, 'sin emisor lanza un error de programación (sin código HTTP)');
+}
+
+/* #91 (R-01) — El Formato 607 va en la raíz del paquete como BORRADOR para
+   el contador: lo revisa y lo sube él. Es exactamente lo que da
+   `formato607` con las filas del mes; el paquete no lo reescribe. */
+console.log('\n9b · El Formato 607 dentro del paquete (#91)');
+{
+  const { formato607 } = require('./formato607');
+  const r = lote.armarPaquete('2025-09', { emisor: EMISOR, ahora: AHORA });
+  const z = leerZip(r.zip);
+  const p = lote.validarMes('2025-09', AHORA);
+  const esperado = formato607(db.comprobantesDelPeriodo(p.desde, p.hasta), { rncEmisor: EMISOR.rnc, mes: '2025-09' });
+  const txt = z.find((e) => e.nombre === '607-202509.txt');
+  ok(txt && txt.datos.equals(Buffer.from(esperado.texto, 'latin1')), '607-202509.txt es byte a byte lo que da formato607');
+  ok(txt && !txt.datos.slice(0, 3).equals(BOM), 'sin BOM: es el TXT de la DGII');
+  const leeme = z.find((e) => e.nombre === 'LEEME.txt').datos.toString('utf8');
+  ok(leeme.includes('607-202509.txt') && /borrador/i.test(leeme) && leeme.includes('el contador'),
+    'el LEEME dice que el 607 es un borrador para el contador');
+  ok(/retenci/i.test(leeme), 'y que las retenciones van vacías');
+  ok(esperado.avisos.length > 0 && esperado.avisos.every((a) => leeme.includes(a)),
+    `el LEEME copia los avisos del 607 · ${esperado.avisos.length}`);
+  ok(z.filter((e) => e.nombre.startsWith('607-')).length === 1, 'un solo 607, en la raíz');
 }
 
 console.log('\n10 · Nada de esto sale solo');
