@@ -41,6 +41,7 @@
     "precios:probar": "node --test tools/precios.prueba.js",
     "lote:puro": "node --test tools/lote.prueba.js",
     "alertas:puro": "node --test tools/alertas.prueba.js",
+    "busquedas-api:probar": "node tools/probar-busquedas-api.js",
     "f607:puro": "node --test tools/formato607.prueba.js",
     "especificaciones:puro": "node --test tools/especificaciones.prueba.js",
     "especificaciones:probar": "node tools/probar-especificaciones.js",

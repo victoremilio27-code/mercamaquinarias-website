@@ -35,6 +35,7 @@ const pagos = require('./pagos');
 const transferencia = require('./transferencia');
 const cardnet = require('./cardnet');
 const lote = require('./lote');
+const alertas = require('./alertas');
 const crypto = require('crypto');
 
 /* CardNet, igual que la transferencia: si alguien lo pidió (`lab` o
@@ -958,6 +959,46 @@ const eliminarCuentaConSesion = conSesion(async (req, res, ctx) => {
   // Las sesiones ya se borraron con la cuenta; solo falta vaciar la cookie.
   return responder(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Max-Age=0` });
 });
+
+/* ── Búsquedas guardadas (fase 16) ────────────────────────── */
+
+const guardarBusquedaApi = conSesion(async (req, res, ctx) => {
+  if (!db.permitir(`guardar-busqueda:${ctx.usuario.id}`, 20, 15)) {
+    return fallo(res, 429, 'Ha guardado demasiadas búsquedas. Espere un rato.');
+  }
+  const filtros = alertas.normalizarBusqueda(await leerCuerpo(req));
+  if (!filtros) return fallo(res, 400, 'Elija al menos un filtro antes de guardar la búsqueda.');
+
+  const resumen = alertas.resumenBusqueda(filtros);
+  const resultado = db.guardarBusqueda({ idUsuario: ctx.usuario.id, filtros, resumen });
+  if (resultado.error === 'tope') {
+    return fallo(res, 409, `Puede guardar hasta ${resultado.tope} búsquedas.`);
+  }
+  return responder(res, resultado.repetida ? 200 : 201, {
+    id: resultado.id, resumen, repetida: resultado.repetida,
+  });
+});
+
+const listarBusquedas = conSesion((req, res, ctx) =>
+  responder(res, 200, { busquedas: db.busquedasDe(ctx.usuario.id) }));
+
+const borrarBusquedaApi = conSesion((req, res, ctx, idBusqueda) => {
+  if (!db.borrarBusqueda(idBusqueda, ctx.usuario.id)) {
+    return fallo(res, 404, 'La búsqueda no existe.');
+  }
+  return responder(res, 200, { ok: true });
+});
+
+const darDeBajaBusquedaApi = async (req, res) => {
+  const ip = origen(req);
+  if (!db.permitir(`baja-busqueda:${ip}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere un rato.');
+  }
+  const cuerpo = await leerCuerpo(req);
+  const busqueda = db.darDeBajaBusqueda(cuerpo && cuerpo.testigo);
+  if (!busqueda) return fallo(res, 400, 'El enlace no es válido.');
+  return responder(res, 200, { ok: true, resumen: busqueda.resumen });
+};
 
 const MENSAJE_CELULAR_SIN_VERIFICAR = 'Su celular no está verificado. Pida el código al correo.';
 
@@ -5598,6 +5639,12 @@ const RUTAS = [
   ['POST', /^\/api\/admin\/recuperaciones\/([\w-]+)\/rechazar$/, rechazarRecuperacion],
   ['GET',  /^\/api\/admin\/recuperaciones\/([\w-]+)$/,           verRecuperacion],
   ['GET',  /^\/api\/sesion$/,               verSesion],
+  ['POST', /^\/api\/busquedas$/,             guardarBusquedaApi],
+  ['GET',  /^\/api\/busquedas$/,             listarBusquedas],
+  /* La baja es pública y específica: debe ganar a `/:id`. Es POST
+     para que el rastreador que abre enlaces de un correo no la ejecute. */
+  ['POST', /^\/api\/busquedas\/baja$/,        darDeBajaBusquedaApi],
+  ['DELETE', /^\/api\/busquedas\/([\w-]+)$/,  borrarBusquedaApi],
   ['POST', /^\/api\/legales\/aceptar$/,     aceptarLegales],
   ['GET',  /^\/api\/facturas$/,             misFacturas],
   ['GET',  /^\/api\/facturas\/([\w-]+)\.pdf$/, descargarFactura],

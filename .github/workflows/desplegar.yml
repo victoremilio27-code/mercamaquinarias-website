@@ -82,6 +82,8 @@ jobs:
         run: npm run lote:puro
       - name: Alertas
         run: npm run alertas:puro
+      - name: API de busquedas guardadas
+        run: npm run busquedas-api:probar
       - name: Formato 607
         run: npm run f607:puro
       - name: Especificaciones
