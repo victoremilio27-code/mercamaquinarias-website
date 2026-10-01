@@ -232,14 +232,18 @@ async function bloqueSmsCuenta() {
   const solicitudRealOriginal = https.request;
   try {
     console.log('\nEl texto del SMS de cuenta');
-    for (const proposito of ['verificar', 'cambio', 'restablecer', 'clave', 'recuperar']) {
+    for (const proposito of ['verificar', 'cambio', 'clave', 'acceso']) {
       const t = correo.textoSmsCuenta({ codigo: '123456', minutos: 20, proposito });
       comprobar(t.includes('123456') && t.includes('20 min') && t.length <= 160 && !/[^\x20-\x7E]/.test(t),
         `«${proposito}»: lleva código y minutos, cabe en 160 y va en ASCII (${t.length})`);
     }
-    let lanzo = false;
-    try { correo.textoSmsCuenta({ codigo: '123456', minutos: 20, proposito: 'otro' }); } catch (_) { lanzo = true; }
-    comprobar(lanzo, 'un propósito desconocido lanza');
+    comprobar(correo.textoSmsCuenta({ codigo: '123456', minutos: 20, proposito: 'acceso' }).includes('entrar a su cuenta'),
+      '«acceso» dice «entrar a su cuenta»');
+    for (const malo of ['restablecer', 'recuperar', 'otro']) {
+      let lanzo = false;
+      try { correo.textoSmsCuenta({ codigo: '123456', minutos: 20, proposito: malo }); } catch (_) { lanzo = true; }
+      comprobar(lanzo, `«${malo}» lanza (D-16: el SMS no abre la cuenta solo)`);
+    }
 
     console.log('\nLa máscara del número');
     comprobar(correo.enmascararNumero('8095551234') === '(809) •••-1234', '10 dígitos');
@@ -273,12 +277,25 @@ async function bloqueSmsCuenta() {
       para: 'b@ejemplo.test', nombre: 'B', anterior: null, nuevo: '8295550002', verificado: false,
     }));
     comprobar(sinAnterior.includes('sin celular'), 'celular cambiado sin anterior dice «sin celular»');
-    const porSms = leer(correo.enviarAvisoCambioClave({ para: 'c@ejemplo.test', nombre: 'C', via: 'sms', numero: '8495550003' }));
-    comprobar(['SMS', '•••-0003', '10 días', 'por correo', 'quitamos ese celular'].every((t) => porSms.includes(t))
-      && !porSms.includes('8495550003'),
-    'contraseña por SMS: promete los 10 días y quitar el celular, sin el número entero');
+    comprobar(!liberado.includes('recuperar su cuenta'), 'celular liberado: ya no dice «recuperar su cuenta»');
+    const enlace = 'https://mercamaquinarias.com/cuenta.html?revertir-clave=' + 'a'.repeat(64);
+    const porSms = leer(correo.enviarAvisoCambioClave({
+      para: 'c@ejemplo.test', nombre: 'C', via: 'sms', numero: '8495550003', enlaceNoFuiYo: enlace,
+    }));
+    comprobar(['SMS', '•••-0003', `No fui yo: ${enlace}`, 'cierra todas las sesiones', 'celular'].every((t) => porSms.includes(t))
+      && !porSms.includes('10 días') && !porSms.includes('8495550003'),
+    'contraseña por SMS con enlace: «No fui yo» con la URL entera, sin los 10 días ni el número entero');
+    const sinViaEnlace = leer(correo.enviarAvisoCambioClave({ para: 'c@ejemplo.test', nombre: 'C', enlaceNoFuiYo: enlace }));
+    comprobar(sinViaEnlace.includes('acaba de cambiar') && sinViaEnlace.includes('No fui yo:') && !sinViaEnlace.includes('SMS'),
+      'contraseña sin via y con enlace: «No fui yo» y sin SMS');
     const sinVia = leer(correo.enviarAvisoCambioClave({ para: 'c@ejemplo.test', nombre: 'C' }));
-    comprobar(sinVia.includes('acaba de cambiar') && !sinVia.includes('SMS'), 'contraseña sin via: el texto de siempre');
+    comprobar(sinVia.includes('acaba de cambiar') && !sinVia.includes('SMS') && !sinVia.includes('No fui yo')
+      && !sinVia.includes('10 días'),
+    'contraseña sin via y sin enlace: el texto de siempre');
+    const acceso = leer(correo.enviarAvisoAccesoSms({ para: 'd@ejemplo.test', nombre: 'D', numero: '8095550004' }));
+    comprobar(acceso.includes('Para: d@ejemplo.test') && ['SMS', 'equipo nuevo', '•••-0004', 'Olvidé mi contraseña'].every((t) => acceso.includes(t))
+      && !acceso.includes('8095550004'),
+    'acceso con SMS: avisa al correo con la máscara y qué hacer, sin el número entero');
     const tope = leer(correo.avisarTopeSms({ tope: 2 }));
     comprobar(tope.includes(`Para: ${correo.BUZONES.soporte}`) && tope.includes('Tope diario de SMS'),
       'el tope diario avisa a soporte');
