@@ -183,6 +183,14 @@
             <label class="campo-v"><span>Peso operativo</span>
               <input type="text" id="e-peso" placeholder="Ej. 21,500 kg">
             </label>
+            <fieldset class="campo-grupo campo-v--ancho" id="bloqueEspecificaciones" hidden>
+              <legend class="etiqueta etiqueta--bloque">Especificaciones del equipo</legend>
+              <div class="campos" id="camposEspecificaciones"></div>
+            </fieldset>
+            <fieldset class="campo-grupo campo-v--ancho" id="bloqueImplementos" hidden>
+              <legend class="etiqueta etiqueta--bloque">Implementos incluidos</legend>
+              <div class="casillas" id="casillasImplementos"></div>
+            </fieldset>
             <label class="campo-v"><span>Provincia donde se encuentra *</span>
               <select id="e-provincia" data-provincias><option value="">Elija una provincia</option></select>
             </label>
@@ -199,7 +207,7 @@
               </select>
             </label>
 
-            <label class="campo-v campo-v--ancho"><span>Implementos y accesorios incluidos</span>
+            <label class="campo-v campo-v--ancho"><span>Otros implementos o notas</span>
               <input type="text" id="e-implementos" placeholder="Ej. Cucharón de 1.2 m³, martillo hidráulico, zapatas nuevas">
             </label>
 
@@ -495,6 +503,7 @@
 <script src="assets/app.js"></script>
 <script src="assets/contactos.js"></script>
 <script src="assets/cardnet.js"></script>
+<script src="assets/especificaciones.js"></script>
 <script src="assets/publicar.js"></script>
 <script src="assets/chat.js" defer></script>
 </body>

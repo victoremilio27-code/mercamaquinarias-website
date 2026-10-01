@@ -359,6 +359,27 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     if (visitante === 404) ok('un visitante sin sesión recibe 404 al pedir el borrador');
     else anota('publicar', 'SEGURIDAD', `un visitante ve el borrador ${idBorrador} (HTTP ${visitante})`);
 
+    await p.select('#e-categoria', 'excavadoras');
+    await p.select('#e-subcategoria', 'exc-mini');
+    const camposExcavadora = await p.evaluate(() => ({
+      peso: !!document.querySelector('[data-especificacion="peso-operativo"]'),
+      martillo: !!document.querySelector('#casillasImplementos input[value="martillo-hidraulico"]'),
+    }));
+    if (camposExcavadora.peso && camposExcavadora.martillo) {
+      ok('excavadoras muestra peso operativo y martillo hidráulico');
+    } else {
+      anota('publicar', 'flujo', 'excavadoras no muestra peso-operativo y martillo-hidraulico');
+    }
+
+    await p.select('#e-categoria', 'generadores');
+    await p.select('#e-subcategoria', 'gen-diesel');
+    const quedaCucharon = await p.$('[data-especificacion="capacidad-cucharon"]');
+    if (!quedaCucharon) ok('al pasar a generadores desaparece el campo de cucharón');
+    else anota('publicar', 'flujo', 'al pasar a generadores sigue visible el campo de cucharón');
+
+    // Se deja la ficha como estaba para conservar la comprobación de validación vacía.
+    await p.select('#e-categoria', '');
+
     // El paso del equipo, vacío, sigue frenando el avance (la comprobación de siempre).
     await esperar(400);
     await p.click('#btnSiguiente').catch(() => {});
