@@ -236,6 +236,29 @@ async function entrar(correo, clave) {
       rr.estado === 401 || rr.estado === 404, `devolvió ${rr.estado}`);
   }
 
+  // Las cuatro rutas con sesión del celular y la contraseña por código (10.2):
+  // aquí exactamente 401, sin aceptar 404, porque deben existir.
+  for (const [ruta, metodo] of [['/cuenta/telefono', 'POST'], ['/cuenta/telefono/verificar', 'POST'],
+    ['/cuenta/telefono/confirmar', 'POST'], ['/cuenta/clave/codigo', 'POST']]) {
+    const rr = await pedir(ruta, { metodo, cuerpo: {} });
+    comprobar(`${metodo} ${ruta} sin sesión da 401`, rr.estado === 401, `devolvió ${rr.estado}`);
+  }
+
+  // El CI corre con el SMS apagado: estas rutas son públicas y no pueden
+  // ni enviar nada ni dar 500. Deben contestar 400 con el aviso de apagado.
+  for (const [ruta, cuerpo] of [
+    ['/cuenta/recuperar', { correo: 'x@auditoria.do', via: 'sms', telefono: '8095550000' }],
+    ['/cuenta/recuperacion-sms', { correo: 'x@auditoria.do', telefono: '8095550000' }],
+    ['/cuenta/recuperacion-sms/codigo', { correo: 'x@auditoria.do', telefono: '8095550000', codigo: '000000' }],
+    ['/cuenta/recuperacion-sms/correo', { autorizacion: 'ab'.repeat(32), correoNuevo: 'y@auditoria.do' }],
+    ['/cuenta/recuperacion-sms/confirmar', {
+      autorizacion: 'ab'.repeat(32), correoNuevo: 'y@auditoria.do', codigo: '000000', clave: 'UnaClaveLarga2026',
+    }],
+  ]) {
+    const rr = await pedir(ruta, { metodo: 'POST', cuerpo });
+    comprobar(`POST ${ruta} con el SMS apagado da 400`, rr.estado === 400, `devolvió ${rr.estado}`);
+  }
+
   // 6. Testigo de sesión inventado
   const r6 = await pedir('/mis-anuncios', { cookie: 'te_sesion=' + 'a'.repeat(64) });
   comprobar('testigo de sesión falso rechazado', r6.estado === 401, `devolvió ${r6.estado}`);
