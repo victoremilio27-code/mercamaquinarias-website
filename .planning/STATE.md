@@ -39,29 +39,46 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
 3. **Publicar:** un PR por tanda con `Closes #…`, fusionar con CI en verde, confirmar «Sitio arriba» con
    `mcp__github__get_job_logs` del job `desplegar` (la API de logs por `gh` no llega desde la nube).
 4. **Despachar la siguiente:** quitar `bloqueado` a lo desbloqueado, encargar con `@codex` todos los issues
-   `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de 4.
+   `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
-**Estado al cerrar el chat del 2026-10-01:** tanda 1 en producción (PR #84: #56, #63, #67, #68, #69, #70).
-**En Codex ahora (tanda 2, 6 tareas):** #57 (consultas del periodo), #71 (scrypt; su parche anterior era de
-2.448 líneas y no cabía: se le pidió diff mínimo o por partes), #75 (recordatorios en días de calendario RD), #77
-(sello por la bitácora en `tools/admin.js`), **#64** (fecha del comprobante en hora RD: la prueba ya está en la rama
-`claude/64-fecha-rd`; su parche va SOBRE esa rama) y **#60** (Formato 607: la prueba está en la rama
-`claude/60-formato607`, `tools/formato607.prueba.js`; parche sobre esa rama). #64 y #60 son fiscales: revisar su
-diff línea a línea y comprobar que no tocaron la prueba. Para publicarlos, fusionar `main` en esas ramas (o aplicar
-la prueba y el parche en la rama de la tanda).
+**Estado al cerrar el chat del 2026-10-01 (vuelta de la tanda 2):** en producción la tanda 1 (PR #84) y la
+tanda 2 (PR #87, «Sitio arriba: 9e4f88e»: #57 consultas del periodo, #64 fecha RD del comprobante, #75
+recordatorios en días RD, #77 sello por la bitácora). **PR #92** (resto de la tanda 2: #60 Formato 607 y #71 scrypt
+asíncrono): verificado entero en la nube; se fusiona con CI en verde (si este chat no llegó a hacerlo, hacerlo
+primero y confirmar «Sitio arriba»). **PR #88 (#58, migración `2026-10-dibujo-factura`) está LISTO pero NO se
+fusiona hasta que Victor confirme el respaldo verificado** (pedido en #79).
+**En Codex ahora:** **#59** (`armarPaquete`, fiscal: la prueba es `tools/probar-paquete.js` en la rama
+`claude/59-paquete`, que va encima de la tanda 2; el parche va SOBRE esa rama y solo puede tocar `tools/lote.js`).
+**Bloqueados y listos para despachar en cuanto se desbloqueen:** #89 (eliminar cuenta, base y API; por #71: al
+fusionar #92, quitar `bloqueado` y encargarlo), #90 (interfaz de eliminar cuenta; por #89), #61 (rutas del paquete;
+por #59) → #62 (selector de la consola; por #61). **De Claude:** #91 (607 dentro del paquete: escribir antes su
+prueba en `probar-paquete.js` cuando #59 y #60 estén en `main`, luego pasarlo a `codex`), #72 (HMAC de testigos,
+migración), #73 (respaldo antes de migrar, producción), #65/#66 (CardNet antes de encender), #76 (partir
+`db.js`/`api.js`: se despacha el último, con la cola vacía). Ya no quedan issues `claude` de diseño: #74 quedó
+diseñado (comentario en el issue) y partido en #89 y #90.
+**Lecciones de esta vuelta:** (1) mirar los comentarios de Codex otra vez justo antes de cerrar: el de #60 llegó
+minutos después de la primera lectura; (2) Codex a veces no puede hacer `git fetch` de la rama de pruebas (403 del
+proxy) e implementa a ciegas: por eso la prueba debe ser exhaustiva y el issue describir el contrato entero; (3)
+cuando un parche cambia una firma, comprobar a mano todos los llamadores (el primer #71 rompía ~40 y dejaba entrar
+con cualquier contraseña); (4) `destino` en `assets/planes.js` ya estaba validado (05.2), el desborde a 390 px y el
+filtro UTC de la consola se arreglaron en la tanda 1, R-04b (PDF en el respaldo diario) ya existía, y los `alt` de
+las fotos de anuncios están bien (los vacíos son decorativos y comentados): esas ideas de la deuda quedan cerradas.
 **Instrucción de Victor (2026-10-01): a Codex se le da la MAYOR cantidad posible de tareas en paralelo.** En cada
 vuelta, tras publicar: encargar todos los issues `codex` listos que no compartan archivos de código (los choques
 en `package.json` y en el flujo de CI se resuelven al aplicar); y si quedan menos de ~6 listos, hacer en ese mismo
 chat la tanda de planificación necesaria: convertir issues `claude` de diseño y fases del ROADMAP (13, y la 12 que
 quede) en issues `codex` autocontenidos con la plantilla de siempre, escribiendo antes las pruebas cuando sea
 fiscal. Las migraciones y lo que toca producción siguen siendo de Claude.
-**Trabajo de Claude para el próximo chat:** #58 (migración: guardar lo que dibuja el PDF; no se delega). Cuando
-#57, #58 y #60 estén en `main`, escribir las pruebas de #59 (`armarPaquete`) y pasarlo a `codex`. Notas:
-`db.validarMes` (de #69) duplica a `lote.validarMes` (de #56) a propósito hasta #57; Codex corre Node 24.21.
-Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`).
+**Trabajo de Claude para el próximo chat:** recoger #59 (revisarlo línea a línea, comprobar que no tocó
+`probar-paquete.js`); fusionar #88 si Victor ya dio el respaldo; escribir la prueba de #91; y, si la cola de Codex
+sigue corta, #73 (respaldo antes de migrar) o #72. Notas: `db.validarMes` (de #69) duplica a `lote.validarMes` (de
+#56); unificarlos crea un `require` circular (`lote.js` carga `db.js`), así que se resuelve al partir los archivos
+en #76. Codex corre Node 24.21.
+Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`; nuevo: el respaldo para #88 y si «Eliminar mi
+cuenta» devuelve la parte proporcional de una membresía, por defecto no).
 
-Los issues: #56-#81, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
+Los issues: #56-#91, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
 Protocolo completo (también para cuando vuelva la rutina): `.planning/CICLO.md`; tablero #82.
 **Lo de abajo sobre GSD, planes y Sonnet ejecutor es historia:** el orden ahora lo dan los hitos y los issues.
 
