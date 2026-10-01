@@ -242,6 +242,33 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
   verificacion.close();
   ok(JSON.stringify(despues) === JSON.stringify(antes), 'los dos filtros son de solo lectura');
 
+  /* #64 — La fecha impresa en el comprobante. `fechaCorta` usaba getUTC*, así
+     que lo cobrado de 20:00 a 24:00 en Santo Domingo salía con el día
+     siguiente, y el cliente lo cruza así en su 606. Desde FECHA_HORA_RD los
+     comprobantes imprimen la fecha dominicana; los anteriores conservan la
+     que ya se imprimió, para que un PDF repuesto salga idéntico al que
+     recibió el cliente (un comprobante emitido no se reescribe). */
+  console.log('\n── Fecha del comprobante en hora dominicana (#64) ──');
+  const { fechaCorta, FECHA_HORA_RD } = facturas;
+  ok(typeof fechaCorta === 'function', 'facturas exporta fechaCorta');
+  ok(FECHA_HORA_RD === '2026-10-02T04:00:00.000Z',
+    'el cambio rige desde el 2 de octubre de 2026 a las 00:00 de Santo Domingo');
+  if (typeof fechaCorta === 'function') {
+    ok(fechaCorta('2026-10-05T02:30:00.000Z') === '04/10/2026',
+      '22:30 del 4 de octubre en Santo Domingo se imprime 04/10/2026');
+    ok(fechaCorta('2026-10-05T03:59:59.999Z') === '04/10/2026', '23:59:59 sigue siendo el día 4');
+    ok(fechaCorta('2026-10-05T04:00:00.000Z') === '05/10/2026', '00:00 de Santo Domingo ya es el día 5');
+    ok(fechaCorta('2026-12-31T23:00:00.000Z') === '31/12/2026', 'fin de año sin desbordar');
+    ok(fechaCorta('2027-01-01T03:00:00.000Z') === '31/12/2026', 'Año Nuevo en UTC sigue siendo 31 en Santo Domingo');
+    ok(fechaCorta('2026-09-30T02:30:00.000Z') === '30/09/2026',
+      'un comprobante anterior al cambio conserva la fecha UTC que ya se imprimió');
+    ok(fechaCorta('2026-10-02T03:59:59.999Z') === '02/10/2026', 'el último instante antes del cambio sigue en UTC');
+    // El vencimiento de la secuencia se guarda sin hora (`2027-12-31`):
+    // convertirlo a hora dominicana lo imprimiría como el día 30.
+    ok(fechaCorta('2027-12-31') === '31/12/2027', 'una fecha sin hora se imprime tal cual');
+    ok(fechaCorta('no es fecha') === '' && fechaCorta(null) === '', 'lo que no es fecha da cadena vacía');
+  }
+
   console.log();
   console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
   console.log();

@@ -1068,6 +1068,11 @@ function enviarResolucionDealer({ para, nombre, empresa, aprobada, motivo, slug 
 const fecha = (iso) => (iso
   ? new Date(iso).toLocaleDateString('es-DO', { day: 'numeric', month: 'long', year: 'numeric' })
   : null);
+const fechaDominicana = (iso) => (iso
+  ? new Date(iso).toLocaleDateString('es-DO', {
+    timeZone: 'America/Santo_Domingo', day: 'numeric', month: 'long', year: 'numeric',
+  })
+  : null);
 
 /* Confirmación de publicación. Lleva el enlace a la ficha porque es lo
    primero que quiere hacer quien acaba de publicar: verla y
@@ -1107,20 +1112,18 @@ const enviarAnuncioPublicado = ({ para, nombre, equipo, idAnuncio, vence, plan }
    aviso único de 5 días (D-08); quien llama se encarga de mandarlos una sola
    vez por anuncio y ciclo con la tabla `recordatorios`. Van de tú para que
    casen con los asuntos fijados en D-09 (el resto de correos sigue en usted). */
-const ASUNTOS_RECORDATORIO = {
-  '7d': 'Tu anuncio vence en 7 días',
-  '3d': 'Tu anuncio vence en 3 días',
-  '1d': 'Tu anuncio vence mañana',
-};
-const asuntoRecordatorio = (tipo) => {
-  if (!Object.prototype.hasOwnProperty.call(ASUNTOS_RECORDATORIO, tipo)) {
+const asuntoRecordatorio = (tipo, dias) => {
+  if (!['7d', '3d', '1d'].includes(tipo)) {
     throw new Error(`Tipo de recordatorio desconocido: ${tipo}`);
   }
-  return ASUNTOS_RECORDATORIO[tipo];
+  if (tipo === '1d') return 'Tu anuncio vence mañana';
+  const diasReales = Number.isInteger(dias) ? dias : Number.parseInt(tipo, 10);
+  return `Tu anuncio vence en ${diasReales} días`;
 };
 
-const enviarRecordatorioVencimiento = ({ para, nombre, equipo, idAnuncio, vence, tipo, plan }) => {
-  const asunto = asuntoRecordatorio(tipo);
+const enviarRecordatorioVencimiento = ({ para, nombre, equipo, idAnuncio, vence, tipo, dias, plan }) => {
+  const asunto = asuntoRecordatorio(tipo, dias);
+  const fechaVence = fechaDominicana(vence);
   const enlace = `${SITIO}/panel.html?renovar=${encodeURIComponent(idAnuncio)}`;
   return enviar({
     para,
@@ -1128,7 +1131,7 @@ const enviarRecordatorioVencimiento = ({ para, nombre, equipo, idAnuncio, vence,
     asunto: `${asunto} · MercaMaquinarias`,
     texto: [
       nombre ? `Hola, ${nombre}:` : 'Hola:', '',
-      `Tu anuncio de ${equipo} deja de publicarse el ${fecha(vence)}.`,
+      `Tu anuncio de ${equipo} vence el ${fechaVence}.`,
       plan ? `Plan: ${plan}` : null,
       '',
       'Renuévalo y sigue en el catálogo con las mismas fotos, el mismo anuncio y sus',
@@ -1144,7 +1147,7 @@ const enviarRecordatorioVencimiento = ({ para, nombre, equipo, idAnuncio, vence,
       extra: tarjeta(`
       <div style="font-family:${TIPO};font-size:18px;font-weight:700;color:${AZUL};line-height:1.3">${esc(equipo)}</div>
       <div style="margin-top:10px;font-family:${TIPO};font-size:13px;color:${GRIS_CLARO}">Deja de publicarse el</div>
-      <div style="margin-top:2px;font-family:${TIPO};font-size:20px;font-weight:800;color:${AMBAR}">${esc(fecha(vence))}</div>
+      <div style="margin-top:2px;font-family:${TIPO};font-size:20px;font-weight:800;color:${AMBAR}">${esc(fechaVence)}</div>
       ${filas([['Plan', plan]])}`),
       accion: { texto: 'Renovar anuncio', url: enlace },
       nota: 'Si ya lo vendiste, márcalo como vendido en el panel y no te volvemos a escribir por este equipo.',

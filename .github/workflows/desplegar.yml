@@ -80,6 +80,8 @@ jobs:
         run: npm run precios:probar
       - name: Lote mensual puro
         run: npm run lote:puro
+      - name: Consultas del lote mensual
+        run: npm run lote:probar
       - name: Interruptor de servicios
         run: npm run servicios:probar
       - name: Seguridad

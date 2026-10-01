@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
+const { spawnSync } = require('child_process');
 
 /* Antes de cargar db.js: la ruta del archivo se resuelve al importarlo. */
 const BANCO = path.join(__dirname, '..', '.tmp', 'prueba-bitacora');
@@ -86,6 +87,48 @@ function sembrar() {
   sembrado.normal = cuenta('normal@ejemplo.test', 'Usuario Normal');
   sembrado.dealerA = cuenta('dealer-a@ejemplo.test', 'Encargada A', 'Maquinarias A, S.R.L.');
   sembrado.dealerB = cuenta('dealer-b@ejemplo.test', 'Encargado B', 'Equipos B, S.R.L.');
+}
+
+/* ── Bloque «Alta por línea de comandos» ────────────────── */
+function bloqueAdmin() {
+  const ejecutar = (...argumentos) => spawnSync(process.execPath,
+    [path.join(__dirname, 'admin.js'), 'crear', ...argumentos],
+    { env: process.env, encoding: 'utf8' });
+  const organizacionDeCorreo = (correo) => db.abrir().prepare(`
+    SELECT o.* FROM organizaciones o
+    JOIN miembros m ON m.organizacion_id = o.id
+    JOIN usuarios u ON u.id = m.usuario_id
+    WHERE u.correo = ?`).get(correo);
+
+  console.log('\nEl alta por línea de comandos');
+  let n = filas();
+  let r = ejecutar('sin-sello@ejemplo.test', 'Sin Sello', '--empresa', 'Empresa Sin Sello', '--rnc', '131000101');
+  let org = organizacionDeCorreo('sin-sello@ejemplo.test');
+  comprobar(r.status === 0 && org && !org.verificada && org.estado_revision === 'aprobada',
+    'sin --verificar-por crea la empresa aprobada y sin sello');
+  comprobar(filas() === n && /consola, sección «Empresas»/.test(r.stdout),
+    'no deja fila y avisa que el sello se da desde la consola');
+
+  n = filas();
+  r = ejecutar('con-sello@ejemplo.test', 'Con Sello', '--empresa', 'Empresa Con Sello', '--rnc', '131000102',
+    '--verificar-por', 'admin@ejemplo.test');
+  org = organizacionDeCorreo('con-sello@ejemplo.test');
+  const entradas = org ? db.bitacora({ organizacion: org.id }) : [];
+  comprobar(r.status === 0 && org && !!org.verificada && filas() === n + 1,
+    'con --verificar-por de un administrador crea la empresa con sello y una sola fila');
+  comprobar(entradas.length === 1 && entradas[0].accion === 'organizacion.verificar'
+    && entradas[0].admin_id === sembrado.admin.idUsuario
+    && entradas[0].motivo === 'Alta por línea de comandos (tools/admin.js)',
+  'la fila identifica al administrador, la acción y el motivo');
+
+  const organizacionesAntes = db.abrir().prepare('SELECT COUNT(*) AS n FROM organizaciones').get().n;
+  n = filas();
+  r = ejecutar('rechazada@ejemplo.test', 'Rechazada', '--empresa', 'Empresa Rechazada', '--rnc', '131000103',
+    '--verificar-por', 'normal@ejemplo.test');
+  comprobar(r.status !== 0 && !organizacionDeCorreo('rechazada@ejemplo.test'),
+    'un correo que no es administrador termina con error antes de crear la cuenta');
+  comprobar(db.abrir().prepare('SELECT COUNT(*) AS n FROM organizaciones').get().n === organizacionesAntes
+    && filas() === n, 'y no crea organización ni fila en la bitácora');
 }
 
 /* ── Bloque «La base» ────────────────────────────────────── */
@@ -535,6 +578,8 @@ async function bloqueSeries() {
 
   console.log('\nNúmero de serie');
   await bloqueSeries();
+
+  bloqueAdmin();
 
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
