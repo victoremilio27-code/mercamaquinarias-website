@@ -47,14 +47,20 @@ tanda 2 (PR #87, «Sitio arriba: 9e4f88e»: #57 consultas del periodo, #64 fecha
 recordatorios en días RD, #77 sello por la bitácora). También en producción el **PR #92** (#60 Formato 607 y #71 scrypt
 asíncrono); comprobar su «Sitio arriba» en el registro del job `desplegar` si no consta abajo. **PR #88 (#58, migración `2026-10-dibujo-factura`) está LISTO pero NO se
 fusiona hasta que Victor confirme el respaldo verificado** (pedido en #79).
-**En Codex ahora (2, sin archivos en común):** **#89** (eliminar cuenta: base y API) y **#59** (`armarPaquete`, fiscal: la prueba es `tools/probar-paquete.js` en la rama
-`claude/59-paquete`, que va encima de la tanda 2; el parche va SOBRE esa rama y solo puede tocar `tools/lote.js`).
-**Bloqueados y listos para despachar en cuanto se desbloqueen:** #90 (interfaz de eliminar cuenta; por #89), #61 (rutas del paquete;
-por #59) → #62 (selector de la consola; por #61). **De Claude:** #91 (607 dentro del paquete: escribir antes su
-prueba en `probar-paquete.js` cuando #59 y #60 estén en `main`, luego pasarlo a `codex`), #72 (HMAC de testigos,
-migración), #73 (respaldo antes de migrar, producción), #65/#66 (CardNet antes de encender), #76 (partir
-`db.js`/`api.js`: se despacha el último, con la cola vacía). Ya no quedan issues `claude` de diseño: #74 quedó
-diseñado (comentario en el issue) y partido en #89 y #90.
+**También en producción #59** (PR #94, paquete mensual `armarPaquete`/`previa`; se arregló aquí que `previa`
+devolvía listas y un error de la propia prueba).
+**En Codex ahora (6, despachados a la vez por orden de Victor):** #61 (rutas del paquete: `tools/api.js`,
+`probar-lote.js`, `auditar-permisos.js`), #62 (selector de la consola, en paralelo con #61 contra el contrato que
+se le dio en el issue), #90 (interfaz de «Eliminar mi cuenta», en paralelo contra el contrato de #89), #91 (607
+dentro del paquete; la prueba está en la rama `claude/91-607-paquete` y, como Codex no puede bajar ramas, va pegada
+en el cuerpo del issue), #95 (fase 15: catálogo de especificaciones e implementos, módulo puro
+`assets/especificaciones.js`) y #96 (fase 16: `tools/alertas.js`, si un anuncio encaja con una búsqueda guardada,
+equivalente a `db.buscarAnuncios`). Choques esperables al aplicar: `package.json` y CI (#95, #96) y
+`tools/auditar-flujos.js` (#62, #90): se resuelven a mano conservando las dos partes.
+**De Claude:** **#89** (eliminar cuenta: base y API; Codex lo rechazó porque anonimiza datos en la base y
+`CLAUDE.md` no deja delegar eso; contrato ya fijado en #90: `POST /api/cuenta/eliminar`, 400/401/403/409/429),
+#72 (HMAC de testigos, migración), #73 (respaldo antes de migrar), #65/#66 (CardNet), #76 (partir `db.js`/`api.js`,
+el último). #74 quedó diseñado y partido en #89 y #90.
 **Lecciones de esta vuelta:** (1) mirar los comentarios de Codex otra vez justo antes de cerrar: el de #60 llegó
 minutos después de la primera lectura; (2) Codex a veces no puede hacer `git fetch` de la rama de pruebas (403 del
 proxy) e implementa a ciegas: por eso la prueba debe ser exhaustiva y el issue describir el contrato entero; (3)
@@ -68,15 +74,16 @@ en `package.json` y en el flujo de CI se resuelven al aplicar); y si quedan meno
 chat la tanda de planificación necesaria: convertir issues `claude` de diseño y fases del ROADMAP (13, y la 12 que
 quede) en issues `codex` autocontenidos con la plantilla de siempre, escribiendo antes las pruebas cuando sea
 fiscal. Las migraciones y lo que toca producción siguen siendo de Claude.
-**Trabajo de Claude para el próximo chat:** recoger #59 (revisarlo línea a línea, comprobar que no tocó
-`probar-paquete.js`); fusionar #88 si Victor ya dio el respaldo; escribir la prueba de #91; y, si la cola de Codex
-sigue corta, #73 (respaldo antes de migrar) o #72. Notas: `db.validarMes` (de #69) duplica a `lote.validarMes` (de
-#56); unificarlos crea un `require` circular (`lote.js` carga `db.js`), así que se resuelve al partir los archivos
-en #76. Codex corre Node 24.21.
+**Trabajo de Claude para el próximo chat:** recoger los 6 de Codex (una rama `codex/tanda-3`; #91 sobre la rama
+de su prueba); hacer #89 para que #90 se pueda verificar; fusionar #88 si Victor ya dio el respaldo; y, cuando se
+publiquen #95 y #96, planificar sus pasos 2 (migración de Claude + interfaz para Codex). Si a Codex se le pega una
+rama, pegarle la prueba en el issue (no puede hacer `git fetch`). Notas: `db.validarMes` (de #69) duplica a
+`lote.validarMes` (de #56); unificarlos crea un `require` circular (`lote.js` carga `db.js`), así que se resuelve al
+partir los archivos en #76. Codex corre Node 24.21.
 Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`; nuevo: el respaldo para #88 y si «Eliminar mi
 cuenta» devuelve la parte proporcional de una membresía, por defecto no).
 
-Los issues: #56-#91, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
+Los issues: #56-#96, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
 Protocolo completo (también para cuando vuelva la rutina): `.planning/CICLO.md`; tablero #82.
 **Lo de abajo sobre GSD, planes y Sonnet ejecutor es historia:** el orden ahora lo dan los hitos y los issues.
 
