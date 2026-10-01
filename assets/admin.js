@@ -713,7 +713,7 @@ function serieHTML(s) {
     <p class="sol__meta">Serie declarada: <code class="num">${esc(s.serie)}</code>${s.estado !== 'activo' ? ` · anuncio ${esc(s.estado)}` : ''}</p>
     ${repetidos ? `<p class="sol__meta sol__meta--aviso"><b>La misma placa aparece en ${miles(repetidos)} ${repetidos === 1 ? 'anuncio más' : 'anuncios más'}.</b> Mire de quién es antes de darla por buena.</p>` : ''}
     ${fotos.length
-      ? `<div class="flota-fotos">${fotos.map((f, i) => `<a href="${esc(f.url)}" target="_blank" rel="noopener" aria-label="Foto ${i + 1} a tamaño completo"><img src="${esc(f.miniatura)}" alt=""></a>`).join('')}</div>`
+      ? `<div class="flota-fotos">${fotos.map((f, i) => `<a href="${esc(f.url)}" target="_blank" rel="noopener" aria-label="Foto ${i + 1} a tamaño completo"><img src="${esc(f.miniatura)}" alt="${esc(`Foto ${i + 1} de ${nombre}`)}"></a>`).join('')}</div>`
       : '<p class="sol__meta sol__meta--aviso">El anuncio no tiene fotos: no hay placa que leer.</p>'}
     ${rev ? `<p class="sol__meta">Revisada el ${cuando(s.serie_revisada)}${s.serie_revisada_por ? ` por ${esc(s.serie_revisada_por)}` : ''}${s.serie_nota ? ` · <b>Nota:</b> ${esc(s.serie_nota)}` : ''}</p>` : ''}
     <div class="sol__acciones">

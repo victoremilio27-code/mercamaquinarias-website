@@ -128,6 +128,37 @@ async function escribir(p, sel, valor) {
   await p.type(sel, valor);
 }
 
+async function destinoHostilNoSale(p, destinoHostil) {
+  const pagina = `${BASE}/planes.html?destino=${encodeURIComponent(destinoHostil)}`;
+  await p.goto(pagina, { waitUntil: 'networkidle0' });
+  await esperar(500);
+  const enlaces = await p.$$eval('a[href]', (n) => n.map((a) => a.getAttribute('href')));
+  const apuntaAlDestino = enlaces.some((href) => href === destinoHostil);
+  const sigueEnPlanes = p.url().startsWith(`${BASE}/planes.html?destino=`);
+  if (!apuntaAlDestino && sigueEnPlanes) {
+    ok(`planes.html rechaza el destino ajeno «${destinoHostil}» en enlaces y navegación`);
+  } else {
+    anota('planes', 'SEGURIDAD', `planes.html acepta el destino ajeno «${destinoHostil}» (enlace=${apuntaAlDestino}, url=${p.url()})`);
+  }
+}
+
+/* El panel reúne tablas, filtros y datos que solo existen con sesión.
+   Por eso el recorrido público no puede detectar este desborde. */
+async function sinDesbordeMovil(p, tipoCuenta) {
+  await p.setViewport({ width: 390, height: 844 });
+  await esperar(300);
+  const medida = await p.evaluate(() => ({
+    ancho: document.documentElement.scrollWidth,
+    elementos: [...document.querySelectorAll('body *')]
+      .filter((el) => el.getBoundingClientRect().right > 390.5)
+      .slice(0, 5)
+      .map((el) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${[...el.classList].map((c) => `.${c}`).join('')}`),
+  }));
+  if (medida.ancho <= 390) ok(`panel.html no tiene scroll horizontal a 390 px para ${tipoCuenta}`);
+  else anota(tipoCuenta, 'responsive', `panel.html mide ${medida.ancho} px a 390 px; se salen: ${medida.elementos.join(', ')}`);
+  await p.setViewport({ width: 1440, height: 950 });
+}
+
 /* Registro + verificación del correo. Devuelve true si acabó con sesión. */
 async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await p.goto(`${BASE}/cuenta.html?crear=1`, { waitUntil: 'networkidle0' });
@@ -529,6 +560,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   } else {
     ok(`el particular conserva sus filtros (${filtrosParticular.join(' / ')}) y no ve «Pausados» ni «Vencidos»`);
   }
+  await sinDesbordeMovil(p, 'particular');
   const panelJs = await p.evaluate(() => fetch('/assets/panel.js').then((r) => r.text())).catch(() => '');
   if (panelJs.includes(TEXTO_VENDIDO_D07)) ok('assets/panel.js trae el aviso de vendido de D-07 para el dealer');
   else anota('dealer', 'ux', 'assets/panel.js no trae el texto exacto de D-07 al marcar vendido');
@@ -649,6 +681,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     } else {
       anota('dealer', 'ux', 'el panel del dealer no muestra .resumen-dealer');
     }
+    await sinDesbordeMovil(p, 'dealer');
     const filtros = await p.$$eval('#filtrosPanel .filtro-panel', (n) => n.map((b) => b.textContent.trim())).catch(() => []);
     if (filtros.some((t) => /^Vendidos/.test(t)) && filtros.some((t) => /^Vencidos/.test(t))) ok(`los filtros del dealer incluyen Vendidos y Vencidos (${filtros.join(' / ')})`);
     else anota('dealer', 'ux', `los filtros del dealer no incluyen Vendidos y Vencidos: ${filtros.join(' / ')}`);
@@ -708,6 +741,9 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
   await esperar(400);
   vigilar(p, 'visitante');
+  for (const destinoHostil of ['https://ejemplo.com', 'javascript:alert(1)']) {
+    await destinoHostilNoSale(p, destinoHostil);
+  }
   for (const pagina of ['index.html', 'dealers.html', 'planes.html']) {
     await p.goto(`${BASE}/${pagina}`, { waitUntil: 'networkidle0' });
     await esperar(800);

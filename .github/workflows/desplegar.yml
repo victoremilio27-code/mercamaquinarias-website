@@ -78,6 +78,8 @@ jobs:
         run: npm run facturas:letras
       - name: Formula del precio
         run: npm run precios:probar
+      - name: Lote mensual puro
+        run: npm run lote:puro
       - name: Interruptor de servicios
         run: npm run servicios:probar
       - name: Seguridad
@@ -96,6 +98,8 @@ jobs:
         run: npm run catalogo:probar
       - name: Facturas y NCF
         run: npm run facturas:probar
+      - name: Respaldo de comprobantes
+        run: npm run respaldo:probar
       - name: Pagos
         run: npm run pagos:probar
       - name: Metricas del vendedor

@@ -28,6 +28,7 @@ const RAIZ = path.resolve(__dirname, '..');
 
 const SECO = process.argv.includes('--seco');
 const RESPALDOS = process.env.MERCA_RESPALDOS || path.join(RAIZ, '.tmp', 'respaldos');
+const CARPETA_FACTURAS = process.env.MERCA_FACTURAS || path.join(RAIZ, '.tmp', 'facturas');
 const RESPALDOS_MAX = Number(process.env.MERCA_RESPALDOS_MAX) || 14;
 
 const registro = [];
@@ -232,7 +233,42 @@ function limpiar() {
   anotar('limpiar', 'purgadas sesiones, códigos e intentos caducados');
 }
 
-/* Respaldo de la base.
+function copiarFacturas(origen, destino) {
+  let total = 0;
+  let copiadas = 0;
+
+  const recorrer = (carpeta, relativa = '') => {
+    if (!fs.existsSync(carpeta)) return;
+    for (const entrada of fs.readdirSync(carpeta, { withFileTypes: true })) {
+      const rutaOrigen = path.join(carpeta, entrada.name);
+      const rutaRelativa = path.join(relativa, entrada.name);
+      if (entrada.isDirectory()) {
+        recorrer(rutaOrigen, rutaRelativa);
+        continue;
+      }
+      if (!entrada.isFile() || path.extname(entrada.name).toLowerCase() !== '.pdf') continue;
+
+      total++;
+      const rutaDestino = path.join(destino, rutaRelativa);
+      const tamano = fs.statSync(rutaOrigen).size;
+      const yaCopiada = fs.existsSync(rutaDestino)
+        && fs.statSync(rutaDestino).isFile()
+        && fs.statSync(rutaDestino).size === tamano;
+      if (yaCopiada) continue;
+
+      copiadas++;
+      if (!SECO) {
+        fs.mkdirSync(path.dirname(rutaDestino), { recursive: true });
+        fs.copyFileSync(rutaOrigen, rutaDestino);
+      }
+    }
+  };
+
+  recorrer(origen);
+  return { copiadas, total };
+}
+
+/* Respaldo de la base y de los PDF de comprobantes.
  *
  * Se usa la API `.backup()` de SQLite y no `cp`: copiar el archivo
  * mientras hay una escritura en curso produce un respaldo corrupto que
@@ -243,8 +279,12 @@ function limpiar() {
 function respaldar() {
   const sello = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   const destino = path.join(RESPALDOS, `mercamaquinarias-${sello}.db`);
+  const destinoFacturas = path.join(RESPALDOS, 'facturas');
 
-  if (SECO) return anotar('respaldo', `escribiría ${destino}`);
+  if (SECO) {
+    const { copiadas, total } = copiarFacturas(CARPETA_FACTURAS, destinoFacturas);
+    return anotar('respaldo', `escribiría ${destino} · copiaría ${copiadas} de ${total} PDF`);
+  }
 
   fs.mkdirSync(RESPALDOS, { recursive: true });
   const d = db.abrir();
@@ -265,8 +305,10 @@ function respaldar() {
     throw new Error('el respaldo no pasó integrity_check y se descartó');
   }
 
+  const { copiadas, total } = copiarFacturas(CARPETA_FACTURAS, destinoFacturas);
   const kb = Math.round(fs.statSync(destino).size / 1024);
-  anotar('respaldo', `${path.basename(destino)} · ${kb} KB · ${n} anuncios · íntegro`);
+  anotar('respaldo', `${path.basename(destino)} · ${kb} KB · ${n} anuncios · íntegro`
+    + ` · ${copiadas} de ${total} PDF copiado(s)`);
 
   // Rotación: se conservan los últimos RESPALDOS_MAX.
   const viejos = fs.readdirSync(RESPALDOS)

@@ -2028,7 +2028,7 @@ const verFactura = conSesion((req, res, ctx, idFactura) => {
 
 /* Administración: el listado, con filtro por mes. */
 const listarFacturas = conAdmin((req, res, ctx, consulta) => {
-  const mes = /^\d{4}-\d{2}$/.test(consulta?.get('mes') || '') ? consulta.get('mes') : null;
+  const mes = db.validarMes(consulta?.get('mes'))?.mes || null;
   return responder(res, 200, {
     mes,
     secuencias: db.secuenciasNcf(),
@@ -2071,7 +2071,7 @@ const cargarSecuencia = conAdmin(async (req, res) => {
 /* Exportación para el contador. Se entrega como CSV y no como JSON
    porque quien lo abre lo abre en una hoja de cálculo. */
 const exportarFacturas = conAdmin((req, res, ctx, consulta) => {
-  const mes = /^\d{4}-\d{2}$/.test(consulta?.get('mes') || '') ? consulta.get('mes') : null;
+  const mes = db.validarMes(consulta?.get('mes'))?.mes || null;
   const filas = db.facturas({ mes, limite: 5000 });
 
   /* Separador de PUNTO Y COMA, no coma: Excel en configuración regional

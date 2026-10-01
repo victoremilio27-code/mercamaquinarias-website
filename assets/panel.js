@@ -719,7 +719,7 @@ function filaBorrador(a) {
   return `<tr data-id="${esc(a.id)}">
     <th scope="row" class="celda-equipo">
       <span class="celda-equipo__foto">${a.foto
-        ? `<img src="${esc(a.foto)}" alt="">`
+        ? `<img src="${esc(a.foto)}" alt="${esc(`Foto de ${nombreDe(a)}`)}">`
         : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
       <span>
         <a class="celda-equipo__nombre" href="publicar.html?borrador=${encodeURIComponent(a.id)}">${nombre}</a>
@@ -746,7 +746,7 @@ function filaAnuncio(a) {
   return `<tr data-id="${esc(a.id)}">
     <th scope="row" class="celda-equipo">
       <span class="celda-equipo__foto">${a.foto
-        ? `<img src="${esc(a.foto)}" alt="">`
+        ? `<img src="${esc(a.foto)}" alt="${esc(`Foto de ${nombreDe(a)}`)}">`
         : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
       <span>
         <a class="celda-equipo__nombre" href="equipo.html?id=${encodeURIComponent(a.id)}">${esc(nombreDe(a))}</a>

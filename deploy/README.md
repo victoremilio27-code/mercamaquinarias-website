@@ -573,7 +573,8 @@ Soporte de cobros: solo por correo o por el asistente del sitio.
 
 ## 11. Mantenimiento automático
 
-Caducar anuncios, avisar de vencimientos, purgar y respaldar la base:
+Caducar anuncios, avisar de vencimientos, purgar y respaldar la base y los
+PDF de comprobantes:
 
 ```bash
 mkdir -p /var/backups/mercamaquinarias
@@ -624,12 +625,19 @@ y no habría forma de cuadrar el mes.
 
 Cada tarea es idempotente: repetirla no manda dos veces el mismo aviso.
 
+La base queda en `/var/backups/mercamaquinarias/mercamaquinarias-*.db` y
+los comprobantes en `/var/backups/mercamaquinarias/facturas/`. La copia de
+PDF es incremental y no borra del respaldo un comprobante que ya no esté en
+la carpeta de origen.
+
 **Saca los respaldos del servidor.** Un respaldo en la misma máquina no
-protege del fallo que más importa, que es perder la máquina. Con
-`rclone` a cualquier almacenamiento remoto:
+protege del fallo que más importa, que es perder la máquina. Victor activa
+**Backups de DigitalOcean** en el panel del droplet para mantener esa copia
+fuera del servidor.
+
+Las fotos siguen necesitando una copia aparte, por ejemplo con `rclone`:
 
 ```bash
-rclone sync /var/backups/mercamaquinarias remoto:mercamaquinarias-respaldos
 rclone sync /var/lib/mercamaquinarias/fotos remoto:mercamaquinarias-fotos
 ```
 

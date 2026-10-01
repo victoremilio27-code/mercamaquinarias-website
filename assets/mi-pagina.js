@@ -228,6 +228,7 @@
     const caja = el(cual === 'logo' ? 'previaLogo' : 'previaBanner');
     const quitar = el(cual === 'logo' ? 'quitarLogo' : 'quitarBanner');
     if (ruta) {
+      // La imagen es decorativa en el editor: los controles contiguos ya dicen qué es.
       caja.innerHTML = `<img src="${esc(ruta)}" alt="">`;
       quitar.hidden = false;
     } else {
@@ -247,6 +248,7 @@
 
   function pintarGaleria() {
     const fotos = estado.pagina.galeria;
+    // El texto alternativo es opcional porque la galería también admite fotos decorativas.
     el('galeriaEditor').innerHTML = fotos.length
       ? fotos.map((f) => `
         <li class="galeria-editor__foto">
