@@ -80,6 +80,18 @@ const ok = (t) => console.log(`    ✓ ${t}`);
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* D-16: con el SMS apagado, entrar desde un equipo nuevo va directo al
+   código del correo y nunca enseña la elección de vía (#formAccesoVia). */
+let viaComprobada = false;
+async function sinElegirVia(p, donde) {
+  const visibleVia = await p.$eval('#formAccesoVia', (el) => !el.hidden && el.offsetParent !== null).catch(() => false);
+  if (visibleVia) anota(donde, 'flujo', '#formAccesoVia visible con el SMS apagado');
+  else if (!viaComprobada) {
+    viaComprobada = true;
+    ok('con el SMS apagado, entrar desde un equipo nuevo va directo al código del correo');
+  }
+}
+
 /* 06-10: con CardNet apagado (el CI no enciende MERCA_CARDNET) ninguna
    pantalla enseña el selector de tarjeta, el modal de captura ni la
    lista de tarjetas guardadas. Si aparecen, el interruptor no manda. */
@@ -204,17 +216,19 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await esperar(500);
   await p.click('#irRecuperar');
   await esperar(400);
-  const recViaVisible = await p.$eval('#recVia', (el) => !el.hidden && el.offsetParent !== null).catch(() => false);
-  if (!recViaVisible) ok('«Olvidé mi contraseña» no ofrece SMS con el SMS apagado (#recVia oculto)');
-  else anota('recuperar', 'flujo', '#recVia visible con el SMS apagado');
+  // D-16: «Olvidé mi contraseña» solo pide el correo, con el SMS apagado o encendido.
+  const recSoloCorreo = await p.evaluate(() => document.getElementById('recVia') === null
+    && !document.querySelector('#formRecuperar input[type=tel]'));
+  if (recSoloCorreo) ok('«Olvidé mi contraseña» solo pide el correo (sin selector de vía ni campo de celular)');
+  else anota('recuperar', 'flujo', '«Olvidé mi contraseña» ofrece vía SMS o pide un celular');
   await p.click('#btnCancelarRec').catch(() => {});
   await esperar(300);
   await p.click('#irRecuperacion').catch(() => {});
   await esperar(400);
   const rcpVisible = await p.$eval('#formRecuperacion', (el) => !el.hidden).catch(() => false);
-  const rsVisible = await p.$eval('#formRecuperacionSms', (el) => !el.hidden).catch(() => true);
-  if (rcpVisible && !rsVisible) ok('«¿Ya no tiene acceso a su correo?» abre la revisión por persona (#formRecuperacion), no la de SMS');
-  else anota('recuperar', 'flujo', `la recuperación sin correo no abre #formRecuperacion con el SMS apagado (rcp=${rcpVisible}, sms=${rsVisible})`);
+  const rsExiste = await p.evaluate(() => document.getElementById('formRecuperacionSms') !== null);
+  if (rcpVisible && !rsExiste) ok('«¿Ya no tiene acceso a su correo?» abre la revisión por persona (#formRecuperacion); #formRecuperacionSms no existe');
+  else anota('recuperar', 'flujo', `la recuperación sin correo no abre solo #formRecuperacion (rcp=${rcpVisible}, #formRecuperacionSms existe=${rsExiste})`);
 
   const entro = await registrar(p, {
     tipo: 'particular', correo: CORREO_PARTICULAR, nombre: 'José Almonte',
@@ -608,6 +622,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await escribir(p, '#ent-clave', CLAVE_DEMO);
   await p.click('#formEntrar button[type="submit"]');
   await esperar(1500);
+  await sinElegirVia(p, 'dealer-demo');
   if (await p.$eval('#formCodigo', (el) => !el.hidden).catch(() => false)) {
     const c = codigoDe(CORREO_DEMO.split('@')[0]);
     if (c) { await p.type('#cod-codigo', c); await esperar(1800); }
@@ -731,6 +746,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   await escribir(p, '#ent-clave', CLAVE);
   await p.click('#formEntrar button[type="submit"]');
   await esperar(1200);
+  await sinElegirVia(p, 'admin');
 
   if (await p.$eval('#formCodigo', (el) => !el.hidden).catch(() => false)) {
     const c = codigoDe(CORREO_ADMIN.split('@')[0]);

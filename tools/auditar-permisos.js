@@ -244,20 +244,26 @@ async function entrar(correo, clave) {
     comprobar(`${metodo} ${ruta} sin sesión da 401`, rr.estado === 401, `devolvió ${rr.estado}`);
   }
 
-  // El CI corre con el SMS apagado: estas rutas son públicas y no pueden
-  // ni enviar nada ni dar 500. Deben contestar 400 con el aviso de apagado.
-  for (const [ruta, cuerpo] of [
-    ['/cuenta/recuperar', { correo: 'x@auditoria.do', via: 'sms', telefono: '8095550000' }],
-    ['/cuenta/recuperacion-sms', { correo: 'x@auditoria.do', telefono: '8095550000' }],
-    ['/cuenta/recuperacion-sms/codigo', { correo: 'x@auditoria.do', telefono: '8095550000', codigo: '000000' }],
-    ['/cuenta/recuperacion-sms/correo', { autorizacion: 'ab'.repeat(32), correoNuevo: 'y@auditoria.do' }],
-    ['/cuenta/recuperacion-sms/confirmar', {
-      autorizacion: 'ab'.repeat(32), correoNuevo: 'y@auditoria.do', codigo: '000000', clave: 'UnaClaveLarga2026',
-    }],
-  ]) {
-    const rr = await pedir(ruta, { metodo: 'POST', cuerpo });
-    comprobar(`POST ${ruta} con el SMS apagado da 400`, rr.estado === 400, `devolvió ${rr.estado}`);
+  // D-16: la recuperación por SMS (y sus cuatro rutas) ya no existe. Antes
+  // daban 400 con el SMS apagado; ahora la ruta misma no está: 404 exacto.
+  for (const ruta of ['/cuenta/recuperacion-sms', '/cuenta/recuperacion-sms/codigo',
+    '/cuenta/recuperacion-sms/correo', '/cuenta/recuperacion-sms/confirmar']) {
+    const rr = await pedir(ruta, { metodo: 'POST', cuerpo: { correo: 'x@auditoria.do', telefono: '8095550000' } });
+    comprobar(`POST ${ruta}: la ruta quitada por D-16 ya no existe (404)`, rr.estado === 404, `devolvió ${rr.estado}`);
   }
+
+  // «No fui yo» del cambio de contraseña: es pública (el testigo llega por
+  // correo) y con un testigo inventado o mal formado solo puede dar 400.
+  const rRev1 = await pedir('/cuenta/clave/revertir', { metodo: 'POST', cuerpo: { testigo: 'ab'.repeat(32) } });
+  comprobar('POST /cuenta/clave/revertir con un testigo inventado da 400', rRev1.estado === 400, `devolvió ${rRev1.estado}`);
+  const rRev2 = await pedir('/cuenta/clave/revertir', { metodo: 'POST', cuerpo: { testigo: 'zz' } });
+  comprobar('POST /cuenta/clave/revertir con un testigo mal formado da 400', rRev2.estado === 400, `devolvió ${rRev2.estado}`);
+
+  // Entrar con contraseña mala: elegir la vía SMS no cambia nada.
+  const rVia = await pedir('/cuenta/entrar', {
+    metodo: 'POST', cuerpo: { correo: 'nadie@auditoria.do', clave: 'Incorrecta12345', via: 'sms' },
+  });
+  comprobar('POST /cuenta/entrar con contraseña mala y via:sms da 401', rVia.estado === 401, `devolvió ${rVia.estado}`);
 
   // 6. Testigo de sesión inventado
   const r6 = await pedir('/mis-anuncios', { cookie: 'te_sesion=' + 'a'.repeat(64) });
