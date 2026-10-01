@@ -50,6 +50,12 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
 `claude/60-formato607`, `tools/formato607.prueba.js`; parche sobre esa rama). #64 y #60 son fiscales: revisar su
 diff línea a línea y comprobar que no tocaron la prueba. Para publicarlos, fusionar `main` en esas ramas (o aplicar
 la prueba y el parche en la rama de la tanda).
+**Instrucción de Victor (2026-10-01): a Codex se le da la MAYOR cantidad posible de tareas en paralelo.** En cada
+vuelta, tras publicar: encargar todos los issues `codex` listos que no compartan archivos de código (los choques
+en `package.json` y en el flujo de CI se resuelven al aplicar); y si quedan menos de ~6 listos, hacer en ese mismo
+chat la tanda de planificación necesaria: convertir issues `claude` de diseño y fases del ROADMAP (13, y la 12 que
+quede) en issues `codex` autocontenidos con la plantilla de siempre, escribiendo antes las pruebas cuando sea
+fiscal. Las migraciones y lo que toca producción siguen siendo de Claude.
 **Trabajo de Claude para el próximo chat:** #58 (migración: guardar lo que dibuja el PDF; no se delega). Cuando
 #57, #58 y #60 estén en `main`, escribir las pruebas de #59 (`armarPaquete`) y pasarlo a `codex`. Notas:
 `db.validarMes` (de #69) duplica a `lote.validarMes` (de #56) a propósito hasta #57; Codex corre Node 24.21.
