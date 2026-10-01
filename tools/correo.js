@@ -740,6 +740,37 @@ function enviarAvisoCambioClave({ para, nombre, via, numero, enlaceNoFuiYo }) {
   });
 }
 
+/* #89. Va a la dirección REAL justo antes de anonimizarla: después la
+   cuenta ya no tiene correo al que escribir. Sin enlace de «No fui yo»:
+   lo borrado no se puede reponer, así que lo único útil es avisar a
+   soporte cuanto antes. */
+function enviarAvisoCuentaEliminada({ para, nombre }) {
+  const saludo = nombre ? `Hola, ${nombre}:` : 'Hola:';
+  const p1 = 'Su cuenta de MercaMaquinarias fue eliminada. Borramos sus datos personales, sus anuncios con sus fotos y videos, y su página de empresa si era el único miembro.';
+  const p2 = 'Los comprobantes fiscales y los pagos se conservan porque la ley obliga a guardarlos.';
+  return enviar({
+    para,
+    asunto: 'Su cuenta de MercaMaquinarias fue eliminada',
+    texto: [
+      saludo, '',
+      p1, '',
+      p2, '',
+      `Si no fue usted, escriba de inmediato a ${SOPORTE}.`,
+      '',
+      'MercaMaquinarias',
+    ].join('\n'),
+    responderA: BUZONES.soporte,
+    html: envoltura({
+      titulo: 'Su cuenta fue eliminada',
+      saludo,
+      responderA: BUZONES.soporte,
+      parrafos: [esc(p1), esc(p2)],
+      nota: `Si <b style="color:${AZUL}">no</b> fue usted, escríbanos de inmediato a `
+        + `<a href="mailto:${esc(SOPORTE)}" style="color:${AMBAR}">${esc(SOPORTE)}</a>.`,
+    }),
+  });
+}
+
 /* Al correo de la cuenta cuando su celular verificado pasa a otra cuenta
    (D-13: se lo queda quien demuestra tenerlo). Número siempre enmascarado. */
 function enviarAvisoTelefonoLiberado({ para, nombre, numero }) {
@@ -1752,7 +1783,7 @@ module.exports = {
   enviarRecuperacionRecibida, enviarAvisoRecuperacionAlTitular, avisarRecuperacionInterna,
   enviarRecuperacionAprobada, enviarRecuperacionRechazada,
   enviarRenovacionProxima, enviarRenovacionRechazada, enviarTarjetaPorVencer,
-  enviar, enviarCodigo, enviarAvisoCambioClave,
+  enviar, enviarCodigo, enviarAvisoCambioClave, enviarAvisoCuentaEliminada,
   enviarSolicitudDealer, enviarResolucionDealer, enviarSolicitudServicio,
   enviarAnuncioPublicado, asuntoRecordatorio, enviarRecordatorioVencimiento, enviarAnuncioVencido,
   enviarComprobante, enviarContactoRecibido, enviarBienvenida,

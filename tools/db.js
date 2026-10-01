@@ -4932,6 +4932,144 @@ function borrarAnuncio(idAnuncio, idOrg) {
   };
 }
 
+/* «Eliminar mi cuenta» (#89, diseño en #74). Eliminar aquí es ANONIMIZAR:
+   la fila de `usuarios` se queda, porque de ella cuelgan el historial de
+   seguridad y las aceptaciones legales, y la organización se queda porque
+   de ella cuelgan los comprobantes y los pagos, que la DGII obliga a
+   guardar y que nunca se borran ni se reescriben. Por eso `facturas`,
+   `pagos`, `pagos_eventos`, `bitacora_admin` y `secuencias_ncf` no
+   aparecen aquí, ni siquiera para leerlos.
+
+   Devuelve `{ bloqueo }` sin tocar nada si no se puede, o las rutas de
+   fotos y videos que quedaron sin uso para que quien llama borre los
+   archivos, como `borrarAnuncio`. */
+function bloqueoEliminarCuenta(idUsuario) {
+  const d = abrir();
+  const u = d.prepare('SELECT id, es_admin FROM usuarios WHERE id = ?').get(idUsuario);
+  if (!u) return 'no-existe';
+  if (u.es_admin) return 'admin';
+  const propias = d.prepare(
+    "SELECT organizacion_id FROM miembros WHERE usuario_id = ? AND rol = 'propietario'").all(idUsuario);
+  for (const { organizacion_id: idOrg } of propias) {
+    const otros = d.prepare('SELECT COUNT(*) AS n FROM miembros WHERE organizacion_id = ? AND usuario_id <> ?')
+      .get(idOrg, idUsuario).n;
+    if (otros) return 'otros-miembros';
+    /* Una transferencia por confirmar acabaría en un comprobante emitido
+       a nombre de una cuenta que ya no existe. */
+    const pendiente = d.prepare("SELECT 1 FROM pagos WHERE organizacion_id = ? AND estado = 'pendiente' LIMIT 1")
+      .get(idOrg);
+    if (pendiente) return 'pago-pendiente';
+  }
+  return null;
+}
+
+function eliminarCuenta(idUsuario) {
+  const bloqueo = bloqueoEliminarCuenta(idUsuario);
+  if (bloqueo) return { bloqueo };
+
+  const d = abrir();
+  const t = ahora();
+  /* Solo las organizaciones que se quedan sin nadie. Si era vendedor o
+     administrador de un dealer, la empresa y su inventario siguen. */
+  const propias = d.prepare(
+    "SELECT organizacion_id FROM miembros WHERE usuario_id = ? AND rol = 'propietario'")
+    .all(idUsuario).map((f) => f.organizacion_id);
+
+  const rutasFotos = new Set();
+  const rutasVideos = new Set();
+  for (const idOrg of propias) {
+    d.prepare(`SELECT f.url, f.miniatura FROM anuncio_fotos f JOIN anuncios a ON a.id = f.anuncio_id
+               WHERE a.organizacion_id = ?`).all(idOrg)
+      .forEach((f) => { if (f.url) rutasFotos.add(f.url); if (f.miniatura) rutasFotos.add(f.miniatura); });
+    d.prepare(`SELECT v.url, v.poster FROM anuncio_videos v JOIN anuncios a ON a.id = v.anuncio_id
+               WHERE a.organizacion_id = ?`).all(idOrg)
+      .forEach((v) => { if (v.url) rutasVideos.add(v.url); if (v.poster) rutasFotos.add(v.poster); });
+    const org = d.prepare('SELECT logo, banner FROM organizaciones WHERE id = ?').get(idOrg) || {};
+    if (org.logo) rutasFotos.add(org.logo);
+    if (org.banner) rutasFotos.add(org.banner);
+    d.prepare('SELECT url FROM organizacion_galeria WHERE organizacion_id = ?').all(idOrg)
+      .forEach((g) => { if (g.url) rutasFotos.add(g.url); });
+  }
+
+  /* Valores aleatorios con la forma de un hash y una sal reales: no
+     corresponden a ninguna contraseña, y `verificarClave` sigue
+     derivando lo mismo que con cualquier cuenta, sin atajos que
+     delaten por el tiempo que esta ya no existe. */
+  const hashMuerto = crypto.randomBytes(64).toString('hex');
+  const salMuerta = crypto.randomBytes(16).toString('hex');
+
+  d.prepare('BEGIN').run();
+  try {
+    for (const idOrg of propias) {
+      const anuncios = d.prepare('SELECT id FROM anuncios WHERE organizacion_id = ?').all(idOrg);
+      for (const { id } of anuncios) {
+        for (const tabla of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio', 'recordatorios']) {
+          d.prepare(`DELETE FROM ${tabla} WHERE anuncio_id = ?`).run(id);
+        }
+      }
+      d.prepare('DELETE FROM anuncios WHERE organizacion_id = ?').run(idOrg);
+      d.prepare(`UPDATE suscripciones SET estado = 'cancelada', renovacion_automatica = 0,
+                   cancelada = COALESCE(cancelada, ?)
+                 WHERE organizacion_id = ? AND estado IN ('activa', 'vencida')`).run(t, idOrg);
+      /* Como `borrarMetodoPago` (`borrado` es la fecha), y además sin el
+         token del procesador: `token` es NOT NULL, así que va vacío. Con
+         eso ya no se le puede cobrar a esa tarjeta. */
+      d.prepare(`UPDATE metodos_pago SET borrado = COALESCE(borrado, ?), activo = 0, predeterminado = 0, token = ''
+                 WHERE organizacion_id = ?`).run(t, idOrg);
+      for (const tabla of ['sucursales', 'organizacion_enlaces', 'organizacion_galeria', 'organizacion_secciones', 'contactos_verificados', 'solicitudes_dealer']) {
+        d.prepare(`DELETE FROM ${tabla} WHERE organizacion_id = ?`).run(idOrg);
+      }
+      /* El RNC se queda: lo citan los comprobantes y la conciliación. La
+         página vuelve al estado de una que nunca se publicó. */
+      d.prepare(`UPDATE organizaciones SET nombre = 'Cuenta eliminada', correo = NULL, telefono = NULL,
+                   web = NULL, descripcion = NULL, logo = NULL, banner = NULL, lema = NULL,
+                   correo_publico = NULL, telefono_publico = NULL, slug = NULL,
+                   perfil_publico = 0, verificada = 0, estado_pagina = 'borrador', publicada_en = NULL,
+                   actualizada = ?
+                 WHERE id = ?`).run(t, idOrg);
+    }
+    /* Lo que publicó dentro de un dealer sigue siendo del dealer. */
+    d.prepare('UPDATE anuncios SET usuario_id = NULL WHERE usuario_id = ?').run(idUsuario);
+
+    for (const tabla of ['sesiones', 'dispositivos', 'codigos', 'codigos_telefono', 'miembros']) {
+      d.prepare(`DELETE FROM ${tabla} WHERE usuario_id = ?`).run(idUsuario);
+    }
+    /* El historial de seguridad y lo aceptado se conservan como prueba,
+       sin los datos que identifican a la persona. */
+    /* `anterior`, `nuevo`, `correo_contacto`, `nombre` y `detalle` son NOT
+       NULL en el esquema y esto no lleva migración: van vacíos, que borra
+       el dato igual. Los enlaces «No fui yo» pendientes se anulan: el de
+       un cambio de correo devolvería la dirección real a la cuenta. */
+    d.prepare(`UPDATE cambios_correo SET anterior = '', nuevo = '', ip = NULL,
+                 revertir_hash = NULL, revertir_expira = NULL
+               WHERE usuario_id = ?`).run(idUsuario);
+    d.prepare('UPDATE cambios_telefono SET anterior = NULL, nuevo = NULL, ip = NULL WHERE usuario_id = ?').run(idUsuario);
+    d.prepare(`UPDATE cambios_clave SET ip = NULL, revertir_hash = NULL, revertir_expira = NULL
+               WHERE usuario_id = ?`).run(idUsuario);
+    d.prepare('UPDATE aceptaciones_legales SET ip = NULL, user_agent = NULL WHERE usuario_id = ?').run(idUsuario);
+    /* `.invalid` es un dominio reservado (RFC 2606): nunca recibe correo,
+       y el real queda libre para registrarse otra vez. */
+    const correoMuerto = `eliminada-${idUsuario}@cuentas.invalid`;
+    d.prepare(`UPDATE solicitudes_recuperacion SET correo_cuenta = ?, correo_contacto = '', nombre = '',
+                 telefono = NULL, rnc = NULL, detalle = '', ip = NULL
+               WHERE usuario_id = ?`).run(correoMuerto, idUsuario);
+    d.prepare(`UPDATE usuarios SET correo = ?, nombre = 'Cuenta eliminada', telefono = NULL,
+                 telefono_verificado = NULL, correo_verificado = 0, clave_hash = ?, clave_sal = ?
+               WHERE id = ?`).run(correoMuerto, hashMuerto, salMuerta, idUsuario);
+    d.prepare('COMMIT').run();
+  } catch (e) {
+    d.prepare('ROLLBACK').run();
+    throw e;
+  }
+
+  // Después del COMMIT, como en `borrarAnuncio`: solo lo que ya no usa nadie.
+  const enUso = rutasEnUso();
+  return {
+    fotos: [...rutasFotos].filter((r) => !enUso.has(r)),
+    videos: [...rutasVideos].filter((r) => !enUso.has(r)),
+  };
+}
+
 /* Todo lo que hace falta para publicar otro anuncio igual (MET-04). Solo
    al dueño: el precio mínimo es privado, y un id ajeno recibe lo mismo
    que uno que no existe. */
@@ -6554,6 +6692,7 @@ const marcarAnulada = (idFactura, idNota) => abrir().prepare(
 
 module.exports = {
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
+  eliminarCuenta, bloqueoEliminarCuenta,
   tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,

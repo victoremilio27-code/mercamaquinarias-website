@@ -51,6 +51,7 @@ function limpiarLimitador() {
 const CORREO_PARTICULAR = `vendedor-${SELLO}@auditoria.do`;
 const CORREO_DEALER = `dealer-${SELLO}@auditoria.do`;
 const CORREO_ADMIN = `admin-${SELLO}@auditoria.do`;
+const CORREO_ELIMINAR = `eliminar-${SELLO}@auditoria.do`;
 const EMPRESA_DEALER = `Auditoría Equipos ${SELLO} SRL`;
 const RNC_DEALER = `1${SELLO}909`.slice(0, 9).padEnd(9, '0');
 
@@ -736,6 +737,51 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     }
   }
 
+  /* Eliminar cuenta usa una cuenta particular creada solo para este
+     recorrido: nunca la cuenta de demostración que necesitan las demás
+     auditorías ni una de las cuentas que todavía se comprueban abajo. */
+  console.log('\n═══ Eliminar cuenta ═══');
+  await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
+  limpiarLimitador();
+  const entroEliminar = await registrar(p, {
+    tipo: 'particular', correo: CORREO_ELIMINAR, nombre: 'Cuenta para eliminar',
+  });
+  if (!entroEliminar) {
+    anota('eliminar cuenta', 'flujo', 'no se pudo crear la cuenta exclusiva de la auditoría');
+  } else {
+    await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+    await esperar(700);
+    const existe = await p.$('#segEliminar');
+    if (existe) ok('el panel trae #segEliminar');
+    else anota('eliminar cuenta', 'flujo', 'el panel no trae #segEliminar');
+
+    await p.click('#btnEliminarCuenta');
+    await escribir(p, '#eliminar-clave', CLAVE);
+    await escribir(p, '#eliminar-confirmacion', 'eliminar');
+    const deshabilitado = await p.$eval('#btnConfirmarEliminar', (el) => el.disabled).catch(() => false);
+    if (deshabilitado) ok('«eliminar» en minúsculas mantiene deshabilitado el envío');
+    else anota('eliminar cuenta', 'flujo', '«eliminar» en minúsculas habilita el envío');
+
+    /* Vaciar a mano: el triple clic (`clickCount: 3`) no selecciona el
+       texto en este puppeteer, el campo quedaba en «eliminarELIMINAR» y
+       el envío seguía deshabilitado sin que la auditoría lo notara. */
+    await p.$eval('#eliminar-confirmacion', (el) => { el.value = ''; });
+    await p.type('#eliminar-confirmacion', 'ELIMINAR');
+    await p.click('#btnConfirmarEliminar');
+    await p.waitForFunction(() => location.pathname.endsWith('/index.html') && location.search === '?cuenta=eliminada', { timeout: 5000 }).catch(() => {});
+    if (p.url().endsWith('/index.html?cuenta=eliminada')) ok('eliminar la cuenta termina en index.html?cuenta=eliminada');
+    else anota('eliminar cuenta', 'flujo', `la eliminación terminó en ${p.url()}`);
+
+    await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
+    await escribir(p, '#ent-correo', CORREO_ELIMINAR);
+    await escribir(p, '#ent-clave', CLAVE);
+    await p.click('#formEntrar button[type="submit"]');
+    await esperar(1000);
+    const sigueFuera = p.url().includes('cuenta.html');
+    if (sigueFuera) ok('la cuenta eliminada ya no puede entrar');
+    else anota('eliminar cuenta', 'SEGURIDAD', 'la cuenta eliminada pudo volver a entrar');
+  }
+
   /* Visitante sin sesión: ni el cuerpo ni el pie dicen «cupo». */
   console.log('\n═══ Visitante ═══');
   await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
@@ -806,6 +852,47 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
   else anota('admin', 'flujo', 'la consola no enseña «Renovaciones»');
   if (/se otorgan los cupos/i.test(textoAdmin)) anota('admin', 'ux', 'admin.html todavía dice «se otorgan los cupos»');
   else ok('admin.html no dice «se otorgan los cupos»');
+
+  // R-05: el paquete usa su propio mes y nunca promete enviarlo por el sitio.
+  const lote = await p.evaluate(async () => {
+    const selector = document.querySelector('#mesLote');
+    const boton = document.querySelector('#btnLote');
+    const linea = document.querySelector('#lineaLote');
+    if (!selector || !boton || !linea) return { existe: false };
+    const respuesta = await fetch(`/api/admin/lote-contador/${selector.value}`);
+    return {
+      existe: true,
+      mes: selector.value,
+      estado: respuesta.status,
+      aviso: linea.textContent.includes('el sitio no lo envía a nadie'),
+      botonVisible: !boton.hidden,
+    };
+  });
+  if (lote.existe && lote.estado === 200 && lote.aviso && lote.botonVisible) {
+    ok(`paquete del contador: selector propio, vista previa de ${lote.mes}, botón y aviso`);
+  } else {
+    anota('admin', 'flujo', `paquete del contador incompleto (${JSON.stringify(lote)})`);
+  }
+
+  const futuroLote = await p.evaluate(async () => {
+    const d = new Date();
+    d.setUTCFullYear(d.getUTCFullYear() + 2);
+    const valor = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    const respuesta = await fetch(`/api/admin/lote-contador/${valor}`);
+    const datos = await respuesta.json();
+    const selector = document.querySelector('#mesLote');
+    selector.value = valor;
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    return { valor, error: datos.error };
+  });
+  await p.waitForFunction(() => {
+    const linea = document.querySelector('#lineaLote');
+    return linea && linea.textContent && !linea.textContent.includes('Consultando');
+  });
+  const errorLote = await p.$eval('#lineaLote', (el) => el.textContent.trim());
+  const loteOculto = await p.$eval('#btnLote', (el) => el.hidden);
+  if (errorLote === futuroLote.error && loteOculto) ok(`el mes futuro ${futuroLote.valor} deja el error del servidor y oculta la descarga`);
+  else anota('admin', 'flujo', `el mes futuro no deja el error o mantiene la descarga (mensaje=${errorLote}, oculto=${loteOculto})`);
 
   /* Acotado a #listaSolicitudes. La clase `.sol` la usan DOS listas de
      esta página: la cola de revisión y la flota propia. Sin acotar, se

@@ -2017,6 +2017,33 @@ async function montarTasa() {
 
 let MES_FACTURAS = null;
 
+function mesAnteriorSantoDomingo() {
+  const partes = new Intl.DateTimeFormat('en', {
+    timeZone: 'America/Santo_Domingo', year: 'numeric', month: '2-digit',
+  }).formatToParts(new Date());
+  const ano = Number(partes.find((p) => p.type === 'year').value);
+  const mes = Number(partes.find((p) => p.type === 'month').value);
+  const anterior = mes === 1 ? { ano: ano - 1, mes: 12 } : { ano, mes: mes - 1 };
+  return `${anterior.ano}-${String(anterior.mes).padStart(2, '0')}`;
+}
+
+async function cargarLoteContador() {
+  const mes = $('#mesLote').value;
+  const boton = $('#btnLote');
+  const linea = $('#lineaLote');
+  boton.hidden = true;
+  boton.removeAttribute('href');
+  linea.textContent = 'Consultando el paquete del mes…';
+  try {
+    const { previa } = await api(`/admin/lote-contador/${mes}`);
+    linea.textContent = `${previa.mes}: ${previa.cantidad} comprobantes · valor fiscal RD$${Number(previa.fiscal.total).toLocaleString('en-US')} · recibos RD$${Number(previa.sinValorFiscal.total).toLocaleString('en-US')}. Descárgalo y envíalo tú: el sitio no lo envía a nadie.`;
+    boton.href = `/api/admin/lote-contador/${mes}.zip`;
+    boton.hidden = false;
+  } catch (e) {
+    linea.textContent = e.message;
+  }
+}
+
 const TIPO_CORTO = {
   recibo: 'Recibo',
   factura_consumo: 'Consumo',
@@ -2107,6 +2134,11 @@ async function cargarFacturasAdmin() {
 
 async function montarFacturasAdmin() {
   if (!$('#listaFacturasAdmin')) return;
+  const mesLote = $('#mesLote');
+  mesLote.value = mesAnteriorSantoDomingo();
+  mesLote.addEventListener('change', cargarLoteContador);
+  await cargarLoteContador();
+
   if (!await cargarFacturasAdmin()) return;
 
   $('#mesFacturas').addEventListener('change', (ev) => {

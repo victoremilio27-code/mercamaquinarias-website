@@ -1,6 +1,7 @@
 const DESFASE_SANTO_DOMINGO_MS = 4 * 60 * 60 * 1000;
 const db = require('./db');
 const facturas = require('./facturas');
+const { formato607 } = require('./formato607');
 const pdf = require('./pdf');
 
 function mesDe(isoUtc) {
@@ -234,7 +235,7 @@ function listaCorta(numeros) {
   return numeros.length > 15 ? `${visibles} y ${numeros.length - 15} más (ver resumen.csv)` : visibles;
 }
 
-function resumenPdf(datos, emisor, cantidadRepuestos) {
+function resumenPdf(datos, emisor, cantidadRepuestos, cantidadLineas607) {
   const d = pdf.documento();
   d.texto(emisor.razonSocial, 42, 45, { tamano: 13, tipo: 'negrita' });
   d.texto(`RNC ${emisor.rnc}`, 42, 62, { tamano: 9 });
@@ -259,11 +260,12 @@ function resumenPdf(datos, emisor, cantidadRepuestos) {
   d.texto(`Comprobantes: ${datos.cantidad}`, 42, y, { tamano: 9 }); y += 15;
   d.texto(`Anulados: ${datos.anulados}`, 42, y, { tamano: 9 }); y += 15;
   d.texto(`No cuadran: ${datos.noCuadran.length} (${listaCorta(datos.noCuadran)})`, 42, y, { tamano: 9 }); y += 15;
-  d.texto(`PDF repuestos: ${cantidadRepuestos}`, 42, y, { tamano: 9 });
+  d.texto(`PDF repuestos: ${cantidadRepuestos}`, 42, y, { tamano: 9 }); y += 15;
+  d.texto(`Formato 607: ${cantidadLineas607} líneas (borrador)`, 42, y, { tamano: 9 });
   return d.terminar();
 }
 
-function leeme(datos, emisor) {
+function leeme(datos, emisor, avisos607) {
   const parcial = datos.parcial ? ' Este paquete es parcial porque el mes está en curso.' : '';
   const texto = [
     `Este paquete contiene los comprobantes de ${mesEnPalabras(datos.mes)} de ${emisor.razonSocial}, RNC ${emisor.rnc}.${parcial}`,
@@ -277,6 +279,9 @@ function leeme(datos, emisor) {
     'Las notas de crédito sobre comprobantes fiscales restan. Las «Notas de crédito sobre recibos sin NCF» van aparte y no restan del neto fiscal.',
     '«guardado» significa que se usó el PDF conservado al emitir; «repuesto al generar» significa que el sitio reconstruyó el PDF que faltaba.',
     'El CSV antepone una comilla simple a las celdas que podrían interpretarse como fórmulas.',
+    '',
+    `607-${datos.mes.replace('-', '')}.txt es un borrador del Formato 607 para que el contador lo revise y lo suba él. El sitio no lo envía. Las retenciones y los datos que la base no sabe van vacíos. Las facturas de consumo (B02) no van línea a línea sino resumidas.`,
+    ...avisos607,
     '',
     'Este paquete lo genera el sitio solo cuando alguien lo descarga desde la consola. El sitio no lo envía a nadie: lo envía quien lo descargó.',
   ].join('\r\n');
@@ -334,13 +339,16 @@ function armarPaquete(mes, { emisor, ahora = Date.now(), reponer = facturas.repo
 
   const conNcf = filas.filter((fila) => !!fila.ncf);
   const sinNcf = filas.filter((fila) => !fila.ncf);
+  const resultado607 = formato607(filas, { rncEmisor: emisor.rnc, mes });
+  const cantidadLineas607 = resultado607.texto.split('\r\n').length - 2;
   const entradas = [];
   for (const fila of conNcf) entradas.push({ nombre: `con-ncf/${fila.numero}.pdf`, datos: pdfDe(fila) });
   entradas.push({ nombre: 'con-ncf/resumen.csv', datos: resumenCsv(conNcf, repuestos) });
   for (const fila of sinNcf) entradas.push({ nombre: `sin-ncf/${fila.numero}.pdf`, datos: pdfDe(fila) });
   entradas.push({ nombre: 'sin-ncf/resumen.csv', datos: resumenCsv(sinNcf, repuestos) });
-  entradas.push({ nombre: 'resumen.pdf', datos: resumenPdf(datos, emisor, repuestos.size) });
-  entradas.push({ nombre: 'LEEME.txt', datos: leeme(datos, emisor) });
+  entradas.push({ nombre: 'resumen.pdf', datos: resumenPdf(datos, emisor, repuestos.size, cantidadLineas607) });
+  entradas.push({ nombre: 'LEEME.txt', datos: leeme(datos, emisor, resultado607.avisos) });
+  entradas.push({ nombre: `607-${mes.replace('-', '')}.txt`, datos: Buffer.from(resultado607.texto, 'latin1') });
   return { nombre: datos.archivo, zip: zip(entradas), previa: conteos(datos) };
 }
 

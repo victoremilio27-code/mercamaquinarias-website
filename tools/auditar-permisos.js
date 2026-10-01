@@ -293,6 +293,15 @@ async function entrar(correo, clave) {
   comprobar('la sesión solo lleva el RNC enmascarado',
     !/"rnc":/.test(JSON.stringify(ses.json)), 'la sesión lleva el RNC completo');
 
+  // El paquete del contador contiene todos los comprobantes del negocio,
+  // no solo los de la cuenta conectada. Ocultamos ambas rutas con el mismo
+  // 404 que el resto de la consola administrativa.
+  for (const ruta of ['/admin/lote-contador/2025-09', '/admin/lote-contador/2025-09.zip']) {
+    const rLote = await pedir(ruta, { cookie: caribe });
+    comprobar(`GET ${ruta} sin permiso de administrador da 404`,
+      rLote.estado === 404, `devolvió ${rLote.estado}`);
+  }
+
   /* 9. Archivos que no deben servirse nunca.
      El servidor llegó a publicar el proyecto entero: /.env con la
      clave de Brevo, /db/mercamaquinarias.db con los hashes y los RNC, y

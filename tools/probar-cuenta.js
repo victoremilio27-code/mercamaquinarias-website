@@ -544,6 +544,155 @@ async function bloqueAdmin() {
     'y no escribe en la bitácora de acciones sobre organizaciones');
 }
 
+/* ── 7. Eliminar mi cuenta (#89) ─────────────────────────── */
+/* Eliminar es anonimizar. Lo que de verdad importa aquí es lo que NO se
+   toca: los comprobantes y los pagos son fiscales y no se reescriben
+   nunca, así que se compara una huella de todas sus filas antes y
+   después, no un par de columnas. */
+async function bloqueEliminar() {
+  console.log('\nEliminar mi cuenta (#89)');
+  const crypto = require('crypto');
+  const fotos = require('./fotos.js');
+  const ejecuta = (sql, ...args) => db.abrir().prepare(sql).run(...args);
+  const t = new Date().toISOString();
+  const huella = () => crypto.createHash('sha256').update(JSON.stringify([
+    todas('SELECT * FROM facturas ORDER BY id'),
+    todas('SELECT * FROM pagos ORDER BY id'),
+    todas('SELECT * FROM pagos_eventos ORDER BY id'),
+  ])).digest('hex');
+  const entrarCon = (correoCuenta) => post('/api/cuenta/entrar', { correo: correoCuenta, clave: CLAVE }, como(null));
+  const eliminar = (testigo, cuerpo) => post('/api/cuenta/eliminar', cuerpo, como(testigo));
+  const sinCambios = (idUsuario) => JSON.stringify([
+    fila('SELECT * FROM usuarios WHERE id = ?', idUsuario),
+    todas('SELECT * FROM miembros WHERE usuario_id = ? ORDER BY id', idUsuario),
+    todas(`SELECT a.id, a.estado FROM anuncios a JOIN miembros m ON m.organizacion_id = a.organizacion_id
+           WHERE m.usuario_id = ? ORDER BY a.id`, idUsuario),
+  ]);
+
+  // (a) Particular con anuncio, foto en disco, membresía, pago y comprobante.
+  const pia = cuenta('pia@ejemplo.test', 'Pía Borrable');
+  const idAnuncio = db.crearBorrador({ idOrg: pia.org.id, idPlan: 'destacado', dias: 30 });
+  ejecuta("UPDATE anuncios SET estado = 'activo', anio = 2015 WHERE id = ?", idAnuncio);
+  const rutaFoto = `${fotos.RUTA_PUBLICA}/prueba-eliminar-cuenta.jpg`;
+  fs.mkdirSync(fotos.CARPETA, { recursive: true });
+  fs.writeFileSync(fotos.archivoDe(rutaFoto), 'jpg');
+  ejecuta('INSERT INTO anuncio_fotos (id, anuncio_id, url, miniatura, orden, creada) VALUES (?, ?, ?, NULL, 0, ?)',
+    'foto-eliminar', idAnuncio, rutaFoto, t);
+  ejecuta(`INSERT INTO suscripciones (id, organizacion_id, plan_id, modalidad, ciclo, estado, precio_pactado,
+             anuncios_incluidos, dias_ciclo, inicio, fin, proximo_cargo, creada, renovacion_automatica)
+           VALUES ('susc-eliminar', ?, 'destacado', 'vigencia', NULL, 'activa', 3500, 1, 30, ?, ?, NULL, ?, 1)`,
+  pia.org.id, t, new Date(Date.now() + 20 * 86400000).toISOString(), t);
+  ejecuta(`INSERT INTO pagos (id, organizacion_id, suscripcion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
+           VALUES ('pago-eliminar', ?, 'susc-eliminar', 3500, 630, 4130, 'aprobado', 'REF-ELIMINAR', 'demo', ?)`, pia.org.id, t);
+  ejecuta(`INSERT INTO facturas (id, pago_id, organizacion_id, numero, tipo, concepto, subtotal, itbis, total, moneda, fecha, creada)
+           VALUES ('factura-eliminar', 'pago-eliminar', ?, 'MM-2026-009901', 'recibo', 'Membresía', 3500, 630, 4130, 'DOP', ?, ?)`,
+  pia.org.id, t.slice(0, 10), t);
+  ejecuta(`INSERT INTO metodos_pago (id, organizacion_id, procesador, token, marca, ultimos4, creado)
+           VALUES ('tarjeta-eliminar', ?, 'demo', 'tok-secreto', 'visa', '4242', ?)`, pia.org.id, t);
+  db.registrarAceptacion({ usuarioId: pia.idUsuario, documento: 'terminos', version: '1', ip: '201.1.1.1', userAgent: 'Navegador' });
+
+  let r = await pedir({ url: `/api/anuncios/${idAnuncio}`, cabeceras: como(null) });
+  comprobar(r.codigo === 200, `antes, la ficha pública del anuncio se ve (${r.codigo})`);
+
+  const sesionPia = db.abrirSesion(pia.idUsuario);
+  r = await eliminar(null, { clave: CLAVE, confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 401, `(d) sin sesión: 401 (${r.codigo})`);
+  r = await eliminar(sesionPia, { clave: CLAVE, confirmacion: 'eliminar' });
+  comprobar(r.codigo === 400, `(d) confirmación en minúsculas: 400 (${r.codigo})`);
+  r = await eliminar(sesionPia, { clave: 'NoEsLaClave123', confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 403 && r.datos.error === 'La contraseña actual no es correcta',
+    `(d) clave mala: 403 con el texto del cambio de contraseña (${r.codigo})`);
+  comprobar(db.usuarioPorId(pia.idUsuario).correo === 'pia@ejemplo.test', '(d) y nada de eso tocó la cuenta');
+
+  const antes = huella();
+  nuevos();
+  r = await eliminar(sesionPia, { clave: CLAVE, confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 200 && r.datos && r.datos.ok === true, `con ELIMINAR y la clave: 200 (${r.codigo})`);
+  comprobar(huella() === antes, '(b) la huella SHA-256 de facturas, pagos y sus eventos es idéntica');
+
+  const aviso = paraDe(nuevos(), 'pia@ejemplo.test').find((m) => /fue eliminada/.test(m.asunto || ''));
+  comprobar(!!aviso, '(f) el aviso sale a la dirección real');
+  comprobar(!!aviso && aviso.texto.includes(SOPORTE) && /comprobantes/.test(aviso.texto),
+    '(f) dice que los comprobantes se conservan y a quién escribir');
+
+  const u = db.usuarioPorId(pia.idUsuario);
+  comprobar(u.correo === `eliminada-${pia.idUsuario}@cuentas.invalid` && u.nombre === 'Cuenta eliminada'
+    && u.telefono === null && !u.correo_verificado, 'la fila del usuario queda anonimizada');
+  comprobar(fila('SELECT COUNT(*) AS n FROM sesiones WHERE usuario_id = ?', pia.idUsuario).n === 0
+    && fila('SELECT COUNT(*) AS n FROM miembros WHERE usuario_id = ?', pia.idUsuario).n === 0,
+  'sin sesiones ni membresía de organización');
+  r = await entrarCon('pia@ejemplo.test');
+  comprobar(r.codigo === 401, `(a) el correo y la clave viejos ya no entran (${r.codigo})`);
+  r = await entrarCon(u.correo);
+  comprobar(r.codigo === 401, `(a) tampoco con el correo anonimizado (${r.codigo})`);
+  r = await pedir({ url: '/api/sesion', cabeceras: como(sesionPia) });
+  comprobar(r.codigo === 200 && r.datos && r.datos.usuario === null, '(a) la sesión que pidió el borrado ya no vale');
+
+  comprobar(!fila('SELECT id FROM anuncios WHERE id = ?', idAnuncio)
+    && !fila("SELECT id FROM anuncio_fotos WHERE id = 'foto-eliminar'"), '(a) el anuncio y su foto ya no existen');
+  comprobar(!fs.existsSync(fotos.archivoDe(rutaFoto)), '(a) el archivo de la foto se borró del disco');
+  r = await pedir({ url: `/api/anuncios/${idAnuncio}`, cabeceras: como(null) });
+  comprobar(r.codigo === 404, `(a) la ficha pública da 404 (${r.codigo})`);
+  const s = fila("SELECT estado, renovacion_automatica FROM suscripciones WHERE id = 'susc-eliminar'");
+  comprobar(s.estado === 'cancelada' && s.renovacion_automatica === 0, '(a) la membresía queda cancelada y sin renovar');
+  const mp = fila("SELECT borrado, activo, token FROM metodos_pago WHERE id = 'tarjeta-eliminar'");
+  comprobar(!!mp.borrado && mp.activo === 0 && mp.token === '', 'la tarjeta guardada queda borrada y sin token');
+  const org = fila('SELECT * FROM organizaciones WHERE id = ?', pia.org.id);
+  comprobar(org && org.nombre === 'Cuenta eliminada' && org.correo === null && org.slug === null
+    && org.perfil_publico === 0 && org.estado_pagina === 'borrador', 'la organización queda vacía y despublicada');
+  const al = fila('SELECT ip, user_agent FROM aceptaciones_legales WHERE usuario_id = ?', pia.idUsuario);
+  comprobar(al && al.ip === null && al.user_agent === null, 'lo aceptado se conserva sin IP ni navegador');
+
+  const otra = db.crearCuenta({ correo: 'pia@ejemplo.test', clave: CLAVE, nombre: 'Pía Otra Vez', telefono: '8095550001', tipo: 'particular' });
+  comprobar(!!otra && !!otra.idUsuario && otra.idUsuario !== pia.idUsuario, '(a) el correo real queda libre para registrarse otra vez');
+
+  // Dealer con RNC: el RNC se conserva para los comprobantes.
+  const dora = cuenta('dora@ejemplo.test', 'Dora Sola', 'Equipos Dora SRL');
+  const rncDora = fila('SELECT rnc FROM organizaciones WHERE id = ?', dora.org.id).rnc;
+  r = await eliminar(db.abrirSesion(dora.idUsuario), { clave: CLAVE, confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 200 && fila('SELECT rnc FROM organizaciones WHERE id = ?', dora.org.id).rnc === rncDora
+    && !fila('SELECT id FROM solicitudes_dealer WHERE organizacion_id = ?', dora.org.id),
+  'un dealer único miembro: se borra su solicitud y se conserva el RNC');
+
+  // (c) Los tres 409 no cambian nada.
+  const admin = cuenta('admin-elim@ejemplo.test', 'Admin No Borrable');
+  ejecuta('UPDATE usuarios SET es_admin = 1 WHERE id = ?', admin.idUsuario);
+  const sesionAdmin = db.abrirSesion(admin.idUsuario);
+  let foto = sinCambios(admin.idUsuario);
+  r = await eliminar(sesionAdmin, { clave: CLAVE, confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 409 && sinCambios(admin.idUsuario) === foto, `(c) administrador: 409 sin tocar nada (${r.codigo})`);
+
+  const jefe = cuenta('jefe@ejemplo.test', 'Jefe Con Equipo', 'Maquinarias Jefe SRL');
+  const vende = cuenta('vende@ejemplo.test', 'Vende Miembro');
+  ejecuta("INSERT INTO miembros (id, organizacion_id, usuario_id, rol, creado) VALUES ('miembro-vende', ?, ?, 'vendedor', ?)",
+    jefe.org.id, vende.idUsuario, t);
+  const idAnuncioJefe = db.crearBorrador({ idOrg: jefe.org.id, idUsuario: vende.idUsuario, idPlan: 'destacado', dias: 30 });
+  const sesionJefe = db.abrirSesion(jefe.idUsuario);
+  foto = sinCambios(jefe.idUsuario);
+  r = await eliminar(sesionJefe, { clave: CLAVE, confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 409 && /ayuda@mercamaquinarias\.com/.test(r.datos.error) && sinCambios(jefe.idUsuario) === foto,
+    `(c) propietario con más miembros: 409 que manda a ayuda@ sin tocar nada (${r.codigo})`);
+
+  const paco = cuenta('paco@ejemplo.test', 'Paco Pendiente');
+  ejecuta(`INSERT INTO pagos (id, organizacion_id, subtotal, itbis, total, estado, referencia, procesador, creado)
+           VALUES ('pago-pendiente-eliminar', ?, 3500, 630, 4130, 'pendiente', 'REF-PEND-ELIM', 'transferencia', ?)`, paco.org.id, t);
+  const sesionPaco = db.abrirSesion(paco.idUsuario);
+  foto = sinCambios(paco.idUsuario);
+  r = await eliminar(sesionPaco, { clave: CLAVE, confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 409 && sinCambios(paco.idUsuario) === foto, `(c) pago pendiente: 409 sin tocar nada (${r.codigo})`);
+
+  // (e) Un miembro que no es propietario: la empresa y su inventario siguen.
+  const antesVende = huella();
+  r = await eliminar(db.abrirSesion(vende.idUsuario), { clave: CLAVE, confirmacion: 'ELIMINAR' });
+  const orgJefe = fila('SELECT nombre FROM organizaciones WHERE id = ?', jefe.org.id);
+  const anuncioJefe = fila('SELECT usuario_id FROM anuncios WHERE id = ?', idAnuncioJefe);
+  comprobar(r.codigo === 200 && orgJefe.nombre === 'Maquinarias Jefe SRL' && !!anuncioJefe && anuncioJefe.usuario_id === null,
+    '(e) miembro no propietario: la organización y sus anuncios siguen, sin su autor');
+  comprobar(huella() === antesVende, '(e) tampoco cambia ningún comprobante ni pago');
+  r = await eliminar(sesionJefe, { clave: 'otra-mala-1', confirmacion: 'ELIMINAR' });
+  comprobar(r.codigo === 403, 'y al propietario ya solo le falta su contraseña (403 con una mala)');
+}
+
 async function principal() {
   await bloqueCambioCorreo();
   await bloqueDealer();
@@ -551,6 +700,7 @@ async function principal() {
   await bloqueClave();
   await bloqueRecuperacion();
   await bloqueAdmin();
+  await bloqueEliminar();
 
   console.log(`\n${bien} ok, ${mal} MAL`);
   process.exit(mal ? 1 : 0);

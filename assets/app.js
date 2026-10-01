@@ -2626,6 +2626,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   montarEnlaceGuardados();
   montarNavMovil();
   montarSaludoUsuario();
+  if (location.pathname.endsWith('/index.html') && params().get('cuenta') === 'eliminada') {
+    const aviso = document.createElement('p');
+    aviso.className = 'acceso__aviso acceso__aviso--ok envoltura';
+    aviso.setAttribute('role', 'status');
+    aviso.textContent = 'Su cuenta se eliminó.';
+    document.querySelector('main').prepend(aviso);
+  }
   montarSelects();
   montarAlquiler();
   /* Los servicios apagados. El código se queda entero y sin correr: el
