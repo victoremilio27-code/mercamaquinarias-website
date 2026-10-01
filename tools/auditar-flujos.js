@@ -51,6 +51,7 @@ function limpiarLimitador() {
 const CORREO_PARTICULAR = `vendedor-${SELLO}@auditoria.do`;
 const CORREO_DEALER = `dealer-${SELLO}@auditoria.do`;
 const CORREO_ADMIN = `admin-${SELLO}@auditoria.do`;
+const CORREO_ELIMINAR = `eliminar-${SELLO}@auditoria.do`;
 const EMPRESA_DEALER = `Auditoría Equipos ${SELLO} SRL`;
 const RNC_DEALER = `1${SELLO}909`.slice(0, 9).padEnd(9, '0');
 
@@ -734,6 +735,48 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
     } else {
       anota('seguridad', 'flujo', 'el panel no tiene el botón «Cambiar correo»');
     }
+  }
+
+  /* Eliminar cuenta usa una cuenta particular creada solo para este
+     recorrido: nunca la cuenta de demostración que necesitan las demás
+     auditorías ni una de las cuentas que todavía se comprueban abajo. */
+  console.log('\n═══ Eliminar cuenta ═══');
+  await p.evaluate(() => fetch('/api/cuenta/salir', { method: 'POST', credentials: 'same-origin' })).catch(() => {});
+  limpiarLimitador();
+  const entroEliminar = await registrar(p, {
+    tipo: 'particular', correo: CORREO_ELIMINAR, nombre: 'Cuenta para eliminar',
+  });
+  if (!entroEliminar) {
+    anota('eliminar cuenta', 'flujo', 'no se pudo crear la cuenta exclusiva de la auditoría');
+  } else {
+    await p.goto(`${BASE}/panel.html`, { waitUntil: 'networkidle0' });
+    await esperar(700);
+    const existe = await p.$('#segEliminar');
+    if (existe) ok('el panel trae #segEliminar');
+    else anota('eliminar cuenta', 'flujo', 'el panel no trae #segEliminar');
+
+    await p.click('#btnEliminarCuenta');
+    await escribir(p, '#eliminar-clave', CLAVE);
+    await escribir(p, '#eliminar-confirmacion', 'eliminar');
+    const deshabilitado = await p.$eval('#btnConfirmarEliminar', (el) => el.disabled).catch(() => false);
+    if (deshabilitado) ok('«eliminar» en minúsculas mantiene deshabilitado el envío');
+    else anota('eliminar cuenta', 'flujo', '«eliminar» en minúsculas habilita el envío');
+
+    await p.click('#eliminar-confirmacion', { clickCount: 3 });
+    await p.type('#eliminar-confirmacion', 'ELIMINAR');
+    await p.click('#btnConfirmarEliminar');
+    await p.waitForFunction(() => location.pathname.endsWith('/index.html') && location.search === '?cuenta=eliminada', { timeout: 5000 }).catch(() => {});
+    if (p.url().endsWith('/index.html?cuenta=eliminada')) ok('eliminar la cuenta termina en index.html?cuenta=eliminada');
+    else anota('eliminar cuenta', 'flujo', `la eliminación terminó en ${p.url()}`);
+
+    await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
+    await escribir(p, '#ent-correo', CORREO_ELIMINAR);
+    await escribir(p, '#ent-clave', CLAVE);
+    await p.click('#formEntrar button[type="submit"]');
+    await esperar(1000);
+    const sigueFuera = p.url().includes('cuenta.html');
+    if (sigueFuera) ok('la cuenta eliminada ya no puede entrar');
+    else anota('eliminar cuenta', 'SEGURIDAD', 'la cuenta eliminada pudo volver a entrar');
   }
 
   /* Visitante sin sesión: ni el cuerpo ni el pie dicen «cupo». */

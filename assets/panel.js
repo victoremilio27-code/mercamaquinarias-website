@@ -2388,6 +2388,55 @@ function montarSeguridad() {
 
   montarTelefono(aviso, conEspera);
 
+  // ── Eliminar la cuenta ──
+  const formEliminar = $('#formEliminarCuenta');
+  const botonEliminar = $('#btnEliminarCuenta');
+  const confirmarEliminar = $('#btnConfirmarEliminar');
+  const campoConfirmacion = $('#eliminar-confirmacion');
+  $('#segEliminarMembresia').hidden = !MEMBRESIAS.length;
+
+  const cerrarEliminar = () => {
+    formEliminar.reset();
+    formEliminar.hidden = true;
+    confirmarEliminar.disabled = true;
+    botonEliminar.setAttribute('aria-expanded', 'false');
+    $('#segEliminarAcciones').hidden = false;
+  };
+  botonEliminar.addEventListener('click', () => {
+    aviso('#avisoSegEliminar', '');
+    formEliminar.hidden = false;
+    botonEliminar.setAttribute('aria-expanded', 'true');
+    $('#segEliminarAcciones').hidden = true;
+    $('#eliminar-clave').focus();
+  });
+  $('#btnCancelarEliminar').addEventListener('click', cerrarEliminar);
+  campoConfirmacion.addEventListener('input', () => {
+    confirmarEliminar.disabled = campoConfirmacion.value !== 'ELIMINAR';
+  });
+  formEliminar.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    cerrarEliminar();
+    botonEliminar.focus();
+  });
+  formEliminar.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (campoConfirmacion.value !== 'ELIMINAR') return;
+    aviso('#avisoSegEliminar', '');
+    const clave = $('#eliminar-clave').value;
+    try {
+      const r = await conEspera(confirmarEliminar, () => api('/cuenta/eliminar', {
+        metodo: 'POST', cuerpo: { clave, confirmacion: campoConfirmacion.value },
+      }));
+      if (!r) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
+      location.href = 'index.html?cuenta=eliminada';
+    } catch (e) {
+      $('#eliminar-clave').value = '';
+      $('#eliminar-clave').focus();
+      aviso('#avisoSegEliminar', e.message);
+    }
+  });
+
   // ── Otras sesiones ──
   $('#btnCerrarOtras').addEventListener('click', async (ev) => {
     if (!confirm('Se cerrará la sesión en todos los demás equipos. Esta sesión sigue abierta. ¿Continuar?')) return;

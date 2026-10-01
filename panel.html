@@ -461,6 +461,33 @@
         </div>
       </div>
 
+      <!-- 4. Eliminar cuenta -->
+      <div class="seguridad__bloque" id="segEliminar">
+        <h3 class="form-sucursal__titulo">Eliminar mi cuenta</h3>
+        <p class="panel__texto">Se borrarán sus datos, sus anuncios con sus fotos y videos, y su página de empresa si es el único miembro.</p>
+        <p class="panel__texto">Los comprobantes fiscales y los pagos se conservan porque la ley lo exige.</p>
+        <p class="panel__texto" id="segEliminarMembresia" hidden>Perderá los días que le quedan de su plan.</p>
+        <p class="panel__texto"><b>Esta acción no se puede deshacer.</b></p>
+        <p class="acceso__aviso" id="avisoSegEliminar" role="alert" hidden></p>
+        <div class="acciones" id="segEliminarAcciones">
+          <button type="button" class="btn btn--linea btn-tabla--borrar" id="btnEliminarCuenta" aria-expanded="false" aria-controls="formEliminarCuenta">Eliminar mi cuenta</button>
+        </div>
+        <form class="form-sucursal" id="formEliminarCuenta" hidden novalidate>
+          <div class="campos campos--uno">
+            <label class="campo-v"><span>Contraseña actual</span>
+              <input type="password" id="eliminar-clave" autocomplete="current-password" required>
+            </label>
+            <label class="campo-v"><span>Escriba ELIMINAR para confirmar</span>
+              <input type="text" id="eliminar-confirmacion" autocomplete="off" required>
+            </label>
+          </div>
+          <div class="acciones">
+            <button class="btn btn--linea btn-tabla--borrar" type="submit" id="btnConfirmarEliminar" disabled>Eliminar mi cuenta</button>
+            <button class="btn btn--linea" type="button" id="btnCancelarEliminar">Cancelar</button>
+          </div>
+        </form>
+      </div>
+
       <p class="panel__nota">¿Ve algo que no reconoce? Cambie la contraseña y escríbanos a <a href="mailto:ayuda@mercamaquinarias.com">ayuda@mercamaquinarias.com</a>.</p>
     </section>
 
