@@ -288,6 +288,10 @@ async function bloqueSmsCuenta() {
     const sinViaEnlace = leer(correo.enviarAvisoCambioClave({ para: 'c@ejemplo.test', nombre: 'C', enlaceNoFuiYo: enlace }));
     comprobar(sinViaEnlace.includes('acaba de cambiar') && sinViaEnlace.includes('No fui yo:') && !sinViaEnlace.includes('SMS'),
       'contraseña sin via y con enlace: «No fui yo» y sin SMS');
+    /* Si el intruso cambió también el correo, el código de este «No fui yo» le
+       llegaría a él: el dueño tiene que pulsar antes el del aviso de correo. */
+    comprobar(sinViaEnlace.includes('use primero el enlace de ese aviso'),
+      'contraseña con enlace: dice que se use primero el «No fui yo» del cambio de correo');
     const sinVia = leer(correo.enviarAvisoCambioClave({ para: 'c@ejemplo.test', nombre: 'C' }));
     comprobar(sinVia.includes('acaba de cambiar') && !sinVia.includes('SMS') && !sinVia.includes('No fui yo')
       && !sinVia.includes('10 días'),
