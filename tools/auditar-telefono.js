@@ -2,9 +2,11 @@
 
    Por qué existe aparte de auditar-flujos.js: el CI (y producción, hasta
    que se paguen los créditos) corren el sitio con el SMS APAGADO, y las
-   pantallas del SMS —«Confirme su celular», el selector de «Olvidé mi
-   contraseña», la recuperación sin correo— solo existen con el
-   interruptor encendido. Esas se prueban aquí, en un servidor propio con
+   pantallas del SMS según D-16 —«Confirme su celular», verificar el
+   celular desde el panel, elegir el SMS al entrar desde un equipo nuevo y
+   el «No fui yo» de un cambio de contraseña— solo existen con el
+   interruptor encendido (la recuperación por SMS y las 72 h se quitaron,
+   y aquí se comprueba que no queda rastro). Se prueban aquí, en un servidor propio con
    MERCA_SMS=archivo, que escribe cada SMS en .tmp/sms/ en vez de enviarlo.
 
    Puerto propio (8091) para no chocar con el sitio del 8080 que el CI
@@ -32,7 +34,10 @@ const CELULAR_1 = `8295${SELLO}`;
 const CELULAR_2 = `8495${SELLO}`;
 const CORREO_A = `tela-${SELLO}@auditoria.do`;
 const CORREO_B = `telb-${SELLO}@auditoria.do`;
-const CORREO_NUEVO = `nuevo-${SELLO}@auditoria.do`;
+// Tercera cuenta y tercer número: CELULAR_1 ya recibe 2 SMS (A y D) y el
+// tope por número es de 3 por hora.
+const CELULAR_3 = `8095${SELLO}`;
+const CORREO_C = `telc-${SELLO}@auditoria.do`;
 
 const fallos = [];
 const anota = (donde, tipo, detalle) => {
@@ -57,6 +62,24 @@ function codigoCorreo(fragmento) {
   const texto = fs.readFileSync(`${BUZON}/${archivos[archivos.length - 1]}`, 'utf8');
   const m = /Código: (\d+)/.exec(texto);
   return m && m[1];
+}
+
+/* Texto del último correo .txt del buzón para ese fragmento (sin exigir «Código:»). */
+function ultimoCorreo(fragmento) {
+  const archivos = fs.existsSync(BUZON)
+    ? fs.readdirSync(BUZON).filter((f) => f.endsWith('.txt') && f.includes(fragmento)).sort()
+    : [];
+  return archivos.length ? fs.readFileSync(`${BUZON}/${archivos[archivos.length - 1]}`, 'utf8') : null;
+}
+/* ¿Hay algún correo .txt a ese fragmento cuyo texto case con todas las expresiones? */
+function textoAvisoCorreo(fragmento, ...expresiones) {
+  const archivos = fs.existsSync(BUZON)
+    ? fs.readdirSync(BUZON).filter((f) => f.endsWith('.txt') && f.includes(fragmento))
+    : [];
+  return archivos.some((f) => {
+    const t = fs.readFileSync(`${BUZON}/${f}`, 'utf8');
+    return expresiones.every((e) => e.test(t));
+  });
 }
 
 /* Último SMS enviado a ese número en ESTA pasada: la bandeja guarda los
@@ -197,58 +220,9 @@ async function recorrido(nav) {
     else anota('B', 'SEGURIDAD', 'cargar el panel pidió un SMS sin pulsar «Verificar celular»');
   }
 
-  /* ── C. «Olvidé mi contraseña» por SMS ── */
-  console.log('\n  ── C. Olvidé mi contraseña por SMS ──');
+  /* ── C. Verificar el celular desde el panel ── */
+  console.log('\n  ── C. Verificar el celular desde el panel ──');
   await salir(p);
-  await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
-  await esperar(500);
-  await p.click('#irRecuperar');
-  await esperar(500);
-  if (await visible(p, '#recVia')) ok('#recVia visible con el SMS encendido');
-  else anota('C', 'flujo', '#recVia no se ve con el SMS encendido');
-  await escribir(p, '#rec-correo', CORREO_A);
-  await p.click('input[name="recVia"][value="sms"]');
-  await esperar(300);
-  await escribir(p, '#rec-telefono', CELULAR_1);
-  const smsAntesC = archivoSms(CELULAR_1);
-  await p.click('#formRecuperar button[type="submit"]');
-  const codC = await esperarSms(CELULAR_1, smsAntesC);
-  if (!codC) {
-    anota('C', 'sms', `no llegó SMS de recuperación al ${CELULAR_1}: ${await textoDe(p, '#avisoAcceso')}`);
-  } else {
-    ok('llegó un SMS con el código de recuperación');
-    await cambiarClaveConCodigo(p, codC, CLAVE_NUEVA).catch((e) => anota('C', 'flujo', `#formNuevaClave: ${e.message}`));
-    if (p.url().includes('panel.html')) ok('el código del SMS y la contraseña nueva entran al panel');
-    else anota('C', 'flujo', `no se entró al panel tras restablecer por SMS (url=${p.url()}, aviso=«${await textoDe(p, '#avisoAcceso')}»)`);
-    await esperar(800);
-    if (await visible(p, '#avisoEnfriamiento')) ok('el panel avisa del enfriamiento de 72 h tras restablecer por SMS');
-    else anota('C', 'flujo', '#avisoEnfriamiento no se ve tras restablecer la contraseña por SMS');
-  }
-
-  /* ── D. Recuperación sin correo por SMS ── */
-  console.log('\n  ── D. Recuperación sin acceso al correo ──');
-  // D1. La cuenta A está en enfriamiento por C: el paso 1 responde igual
-  // pero no sale ningún SMS.
-  await salir(p);
-  await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
-  await esperar(500);
-  await p.click('#irRecuperacion');
-  await esperar(500);
-  if (await visible(p, '#formRecuperacionSms')) ok('«¿Ya no tiene acceso a su correo?» abre #formRecuperacionSms con el SMS encendido');
-  else anota('D', 'flujo', '#formRecuperacionSms no se ve con el SMS encendido');
-  await escribir(p, '#rs-correo', CORREO_A);
-  await escribir(p, '#rs-telefono', CELULAR_1);
-  const smsAntesD1 = archivoSms(CELULAR_1);
-  await p.click('#btnRs');
-  await esperar(3000);
-  if (archivoSms(CELULAR_1) === smsAntesD1) ok('la recuperación por SMS no envía nada durante las 72 h');
-  else anota('D', 'lógica', 'la cuenta en enfriamiento recibió un SMS de recuperación');
-  if (await visible(p, '#rsPaso2')) ok('el paso 1 responde igual (pasa al paso del código) aunque no envíe nada');
-  else anota('D', 'flujo', 'el paso 1 no pasó al paso del código en una cuenta en enfriamiento');
-
-  // D2. Los cuatro pasos de verdad con B, tras verificar su celular.
-  await salir(p);
-  await escribir(p, '#ent-correo', '').catch(() => {});
   await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
   await esperar(500);
   await escribir(p, '#ent-correo', CORREO_B);
@@ -271,9 +245,9 @@ async function recorrido(nav) {
     await p.click('#btnVerificarTelefono');
     const codV = await esperarSms(CELULAR_2, smsAntesV);
     if (verificarPost.length === antesPost + 1) ok('«Verificar celular» pide exactamente un SMS');
-    else anota('B', 'flujo', `«Verificar celular» hizo ${verificarPost.length - antesPost} peticiones de SMS`);
+    else anota('C', 'flujo', `«Verificar celular» hizo ${verificarPost.length - antesPost} peticiones de SMS`);
     if (!codV) {
-      anota('D', 'sms', `no llegó SMS de verificación al ${CELULAR_2}`);
+      anota('C', 'sms', `no llegó SMS de verificación al ${CELULAR_2}`);
     } else {
       await p.waitForSelector('#formTelefonoCodigo:not([hidden])', { timeout: 5000 }).catch(() => {});
       // Se envía solo al completar los 6 dígitos.
@@ -281,62 +255,203 @@ async function recorrido(nav) {
       await esperar(1800);
       const est = await textoDe(p, '#segTelefonoEstado');
       if (/verificado/i.test(est) && !/sin verificar/i.test(est)) ok(`el panel verifica el celular de B: «${est}»`);
-      else anota('D', 'flujo', `el panel no pasó a verificado tras confirmar el SMS: «${est}»`);
+      else anota('C', 'flujo', `el panel no pasó a verificado tras confirmar el SMS: «${est}»`);
     }
   } else {
-    anota('D', 'flujo', 'B no tiene #btnVerificarTelefono en el panel');
+    anota('C', 'flujo', 'B no tiene #btnVerificarTelefono en el panel');
   }
 
+  /* ── D. Entrar desde un equipo nuevo eligiendo el SMS ── */
+  console.log('\n  ── D. Entrar desde un equipo nuevo con el SMS ──');
+  const ctxD = await nav.createBrowserContext();
+  try {
+    const q = await ctxD.newPage();
+    await q.setViewport({ width: 1440, height: 950 });
+    q.on('pageerror', (e) => anota('página D', 'excepción', String(e.message).slice(0, 140)));
+    q.on('response', (r) => {
+      if (r.status() >= 500) anota('página D', `HTTP ${r.status()}`, r.url().replace(BASE, ''));
+    });
+    await q.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
+    await esperar(500);
+    const smsAntesD = archivoSms(CELULAR_1);
+    await escribir(q, '#ent-correo', CORREO_A);
+    await escribir(q, '#ent-clave', CLAVE);
+    await q.click('#formEntrar button[type="submit"]');
+    await esperar(1500);
+    if (await visible(q, '#formAccesoVia')) {
+      ok('con el SMS encendido y el celular verificado, un equipo nuevo ve #formAccesoVia');
+      const detalleSms = await textoDe(q, '#accesoViaSms');
+      if (detalleSms.includes('•••-') && detalleSms.includes(CELULAR_1.slice(-4))) ok(`#accesoViaSms enseña el celular enmascarado: «${detalleSms}»`);
+      else anota('D', 'flujo', `#accesoViaSms no trae «•••-» y los 4 últimos dígitos: «${detalleSms}»`);
+      if (archivoSms(CELULAR_1) === smsAntesD) ok('antes de pulsar «Enviar código» no sale ningún SMS');
+      else anota('D', 'SEGURIDAD', 'salió un SMS al mostrar #formAccesoVia sin pulsar nada');
+      // El radio puede estar tapado por su etiqueta: se marca por su valor.
+      await q.evaluate(() => {
+        const r = document.querySelector('input[name="accesoVia"][value="sms"]');
+        r.click();
+      });
+      await q.click('#formAccesoVia button[type="submit"]');
+      const codD = await esperarSms(CELULAR_1, smsAntesD);
+      if (!codD) {
+        anota('D', 'sms', `no llegó SMS de acceso al ${CELULAR_1}: ${await textoDe(q, '#avisoAcceso')}`);
+      } else {
+        ok('al elegir el SMS llega el código al celular');
+        await q.waitForSelector('#formCodigo:not([hidden])', { timeout: 5000 }).catch(() => {});
+        const intro = await textoDe(q, '#codigoIntro');
+        if (/SMS/.test(intro)) ok(`#codigoIntro habla del SMS: «${intro.slice(0, 80)}»`);
+        else anota('D', 'flujo', `#codigoIntro no menciona el SMS: «${intro}»`);
+        await q.type('#cod-codigo', codD);
+        await q.waitForFunction(() => location.pathname.endsWith('panel.html'), { timeout: 8000 }).catch(() => {});
+        await esperar(1000);
+        if (q.url().includes('panel.html')) ok('el código del SMS entra al panel desde el equipo nuevo');
+        else anota('D', 'flujo', `el código del SMS no llegó al panel (url=${q.url()}, aviso=«${await textoDe(q, '#avisoAcceso')}»)`);
+      }
+      const aviso = textoAvisoCorreo(CORREO_A.split('@')[0], /SMS/, /equipo nuevo/i);
+      if (aviso) ok('a CORREO_A le llegó el aviso de acceso desde un equipo nuevo por SMS');
+      else anota('D', 'correo', 'no llegó a CORREO_A un correo que mencione «SMS» y «equipo nuevo»');
+    } else {
+      anota('D', 'flujo', `un equipo nuevo con celular verificado no ve #formAccesoVia (url=${q.url()})`);
+    }
+  } finally {
+    await ctxD.close().catch(() => {});
+  }
+
+  /* ── E. «No fui yo» de un cambio de contraseña ── */
+  console.log('\n  ── E. «No fui yo» de un cambio de contraseña ──');
+  await salir(p);
+  const veTelC = await registrar(p, CORREO_C, CELULAR_3, 'Carla Telefónica');
+  if (!veTelC) {
+    anota('E', 'flujo', 'la tercera cuenta no ve #formTelefono');
+  } else {
+    await p.click('#btnTelPrincipal');
+    const codC1 = await esperarSms(CELULAR_3, null);
+    if (!codC1) {
+      anota('E', 'sms', `no llegó SMS de confirmación al ${CELULAR_3}`);
+    } else {
+      await p.waitForSelector('#telPasoCodigo:not([hidden])', { timeout: 5000 }).catch(() => {});
+      await escribir(p, '#tel-codigo', codC1);
+      await p.waitForFunction(() => location.pathname.endsWith('panel.html'), { timeout: 8000 }).catch(() => {});
+      await esperar(1000);
+    }
+  }
+  if (!p.url().includes('panel.html')) {
+    anota('E', 'flujo', `C no llegó al panel con el celular confirmado (url=${p.url()})`);
+    return;
+  }
+  // Cambio de contraseña por SMS con fetch same-origin (2.º SMS al número).
+  const antesSmsC = archivoSms(CELULAR_3);
+  const pedido = await p.evaluate(() => fetch('/api/cuenta/clave/codigo', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ via: 'sms' }),
+  }).then((r) => r.status)).catch(() => 0);
+  const codC2 = await esperarSms(CELULAR_3, antesSmsC);
+  // La API contesta 202 (aceptado: el código sale por SMS), no 200.
+  if (pedido !== 202 || !codC2) {
+    anota('E', 'sms', `el código por SMS para cambiar la contraseña no llegó (estado ${pedido})`);
+    return;
+  }
+  const cambio = await p.evaluate((codigo, nueva) => fetch('/api/cuenta/clave', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ via: 'sms', codigo, nueva }),
+  }).then((r) => r.status), codC2, CLAVE_NUEVA).catch(() => 0);
+  if (cambio === 200) ok('cambiar la contraseña con el código por SMS responde 200');
+  else { anota('E', 'flujo', `cambiar la contraseña por SMS respondió ${cambio}`); return; }
+  await esperar(800);
+
+  const testigo = (/revertir-clave=([0-9a-f]{64})/.exec(ultimoCorreo(CORREO_C.split('@')[0]) || '') || [])[1];
+  if (!testigo) {
+    anota('E', 'correo', 'el aviso de contraseña cambiada no trae revertir-clave=<64 hex>');
+    return;
+  }
+  ok('el aviso de contraseña cambiada trae el enlace «No fui yo»');
+
+  const leerVerificado = () => {
+    const bd = new (require('node:sqlite').DatabaseSync)(DB, { readOnly: true });
+    try {
+      const f = bd.prepare('SELECT telefono_verificado AS v FROM usuarios WHERE correo = ?').get(CORREO_C);
+      return f ? f.v : undefined;
+    } finally { bd.close(); }
+  };
+  const antesRev = leerVerificado();
+  if (antesRev) ok('antes de abrir el enlace, el celular de C está verificado en la base');
+  else anota('E', 'lógica', `C no tenía el celular verificado antes del enlace (valor=${antesRev})`);
+
+  const ctxE = await nav.createBrowserContext();
+  try {
+    const q = await ctxE.newPage();
+    await q.setViewport({ width: 1440, height: 950 });
+    q.on('pageerror', (e) => anota('página E', 'excepción', String(e.message).slice(0, 140)));
+    q.on('response', (r) => {
+      if (r.status() >= 500) anota('página E', `HTTP ${r.status()}`, r.url().replace(BASE, ''));
+    });
+    await q.goto(`${BASE}/cuenta.html?revertir-clave=${testigo}`, { waitUntil: 'networkidle0' });
+    await esperar(1500);
+    if (await visible(q, '#formRevertir')) ok('el enlace muestra #formRevertir');
+    else anota('E', 'flujo', '#formRevertir no se ve con ?revertir-clave=');
+    const tit = await textoDe(q, '#revertirTitulo');
+    if (/contraseña/i.test(tit)) ok(`#revertirTitulo habla de la contraseña: «${tit.slice(0, 70)}»`);
+    else anota('E', 'flujo', `#revertirTitulo no menciona la contraseña: «${tit}»`);
+    // T-10.2-60: abrir el enlace (un GET) no puede cambiar nada.
+    if (leerVerificado() === antesRev) ok('abrir el enlace no cambia nada en la base hasta pulsar el botón');
+    else anota('E', 'SEGURIDAD', 'la base cambió solo por abrir ?revertir-clave= (un GET no puede hacer nada)');
+
+    await q.click('#btnRevertir');
+    await q.waitForSelector('#formNuevaClave:not([hidden])', { timeout: 6000 }).catch(() => {});
+    await esperar(500);
+    if (await visible(q, '#formNuevaClave')) ok('pulsar «Recuperar mi cuenta» abre #formNuevaClave');
+    else anota('E', 'flujo', '#formNuevaClave no se ve tras pulsar #btnRevertir');
+    const nIntro = await textoDe(q, '#nuevaIntro');
+    if (/celular/i.test(nIntro)) ok(`#nuevaIntro menciona el celular: «${nIntro.slice(0, 80)}»`);
+    else anota('E', 'flujo', `#nuevaIntro no menciona el celular: «${nIntro}»`);
+    if (leerVerificado() === null) ok('tras pulsar, el celular de C queda sin verificar en la base');
+    else anota('E', 'lógica', `tras pulsar, telefono_verificado sigue valiendo ${leerVerificado()}`);
+    if (!q.url().includes('revertir-clave')) ok('la URL ya no lleva el testigo');
+    else anota('E', 'SEGURIDAD', `la URL conserva el testigo: ${q.url()}`);
+
+    await esperar(800);
+    const codR = codigoCorreo(CORREO_C.split('@')[0]);
+    if (!codR) {
+      anota('E', 'correo', 'no llegó el código de «restablecer» al correo de C');
+    } else {
+      await cambiarClaveConCodigo(q, codR, `${CLAVE_NUEVA}9`).catch((e) => anota('E', 'flujo', `#formNuevaClave: ${e.message}`));
+      await esperar(500);
+      // El celular de C ya no está verificado y el SMS está encendido:
+      // seguir() enseña «Confirme su celular» en vez de ir al panel.
+      if (await visible(q, '#formTelefono')) {
+        ok('tras la contraseña nueva se ofrece «Confirme su celular» (ya no está verificado)');
+        await q.click('#btnTelAhoraNo');
+        await q.waitForFunction(() => location.pathname.endsWith('panel.html'), { timeout: 8000 }).catch(() => {});
+        await esperar(1200);
+        const est = await textoDe(q, '#segTelefonoEstado');
+        if (q.url().includes('panel.html') && !(/verificado/i.test(est) && !/sin verificar/i.test(est))) ok(`el panel no da el celular por verificado: «${est}»`);
+        else anota('E', 'flujo', `tras «Ahora no» el panel no quedó con el celular sin verificar (url=${q.url()}, estado=«${est}»)`);
+      } else {
+        anota('E', 'flujo', `tras la contraseña nueva no aparece #formTelefono (url=${q.url()})`);
+      }
+    }
+  } finally {
+    await ctxE.close().catch(() => {});
+  }
+
+  /* ── F. Sin SMS para recuperar ── */
+  console.log('\n  ── F. Sin SMS para recuperar ──');
   await salir(p);
   await p.goto(`${BASE}/cuenta.html`, { waitUntil: 'networkidle0' });
   await esperar(500);
-  await p.click('#irRecuperacion');
+  await p.click('#irRecuperar');
   await esperar(500);
-  await escribir(p, '#rs-correo', CORREO_B);
-  await escribir(p, '#rs-telefono', CELULAR_2);
-  const smsAntesRs = archivoSms(CELULAR_2);
-  await p.click('#btnRs');
-  const codRs = await esperarSms(CELULAR_2, smsAntesRs);
-  if (!codRs) {
-    anota('D', 'sms', `no llegó SMS de recuperación al ${CELULAR_2}: ${await textoDe(p, '#avisoAcceso')}`);
-    return;
-  }
-  ok('paso 1: llegó el SMS de recuperación');
-  await p.waitForSelector('#rsPaso2:not([hidden])', { timeout: 5000 }).catch(() => {});
-  await escribir(p, '#rs-codigo', codRs);
-  // El código del paso 2 se envía solo al completar los 6 dígitos.
-  await p.waitForSelector('#rsPaso3:not([hidden])', { timeout: 6000 })
-    .then(() => ok('paso 2: el código del SMS abre el paso del correo nuevo'))
-    .catch(async () => {
-      // Por si no se envía solo: se pulsa el botón y se anota.
-      await p.click('#btnRs');
-      await esperar(1500);
-      anota('D', 'flujo', 'el código del paso 2 no se envió solo al escribir los 6 dígitos');
-    });
-  await escribir(p, '#rs-correo-nuevo', CORREO_NUEVO);
-  await p.click('#btnRs');
-  await p.waitForSelector('#rsPaso4:not([hidden])', { timeout: 6000 }).catch(() => {});
-  const codCorreo = codigoCorreo(CORREO_NUEVO.split('@')[0]);
-  if (!codCorreo) {
-    anota('D', 'correo', `no llegó el código al correo nuevo ${CORREO_NUEVO}: ${await textoDe(p, '#avisoAcceso')}`);
-    return;
-  }
-  ok('paso 3: llegó el código al correo nuevo');
-  await escribir(p, '#rs-codigo-correo', codCorreo);
-  await escribir(p, '#rs-clave', CLAVE_NUEVA);
-  await escribir(p, '#rs-clave2', CLAVE_NUEVA);
-  await p.click('#btnRs');
-  await p.waitForFunction(() => location.pathname.endsWith('panel.html'), { timeout: 8000 }).catch(() => {});
-  await esperar(1200);
-  if (p.url().includes('panel.html')) ok('paso 4: entra al panel con el correo nuevo');
-  else anota('D', 'flujo', `la recuperación por SMS no llegó al panel (url=${p.url()}, aviso=«${await textoDe(p, '#avisoAcceso')}»)`);
-  const sub = await p.$eval('#panelSub', (el) => el.textContent).catch(() => '');
-  const sesion = await p.evaluate(() => fetch('/api/sesion', { credentials: 'same-origin' }).then((r) => r.json())).catch(() => null);
-  const correoSesion = sesion && sesion.usuario && sesion.usuario.correo;
-  if (sub.includes(CORREO_NUEVO)) ok('#panelSub muestra el correo nuevo');
-  else if (correoSesion === CORREO_NUEVO) {
-    anota('D', 'ux', `la sesión es del correo nuevo pero #panelSub no lo nombra (dice «${sub.trim().slice(0, 60)}»)`);
-  } else anota('D', 'flujo', `la sesión no es del correo nuevo (sesión=${correoSesion}, #panelSub=«${sub.trim().slice(0, 60)}»)`);
+  const soloCorreo = await p.evaluate(() => document.getElementById('recVia') === null
+    && !document.querySelector('#formRecuperar input[type=tel]'));
+  if (soloCorreo) ok('«Olvidé mi contraseña» solo pide el correo, también con el SMS encendido');
+  else anota('F', 'flujo', '«Olvidé mi contraseña» ofrece SMS o pide un celular');
+  await p.click('#btnCancelarRec').catch(() => {});
+  await esperar(300);
+  await p.click('#irRecuperacion').catch(() => {});
+  await esperar(500);
+  const rcp = await visible(p, '#formRecuperacion');
+  const rsExiste = await p.evaluate(() => document.getElementById('formRecuperacionSms') !== null);
+  if (rcp && !rsExiste) ok('«¿Ya no tiene acceso a su correo?» abre la solicitud revisada y #formRecuperacionSms no existe');
+  else anota('F', 'flujo', `la recuperación sin correo no abre solo #formRecuperacion (visible=${rcp}, #formRecuperacionSms existe=${rsExiste})`);
 }
 
 (async () => {
