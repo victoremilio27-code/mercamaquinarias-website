@@ -592,11 +592,11 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
  * Los busca por `ruta_pdf` nulo o por archivo que ya no está en disco.
  * Un comprobante emitido hay que poder recuperarlo, y el número y los
  * importes no se tocan: se redibuja exactamente lo que dice la fila. */
-function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {}) {
+function reponerPdfsDe(filas, { emisor = correo.EMPRESA } = {}) {
   const hechos = [];
   const fallos = [];
 
-  for (const f of db.facturas({ limite })) {
+  for (const f of filas) {
     /* `ruta_pdf` se guarda RELATIVA a la carpeta de comprobantes, así
        que hay que resolverla antes de preguntar si el archivo está.
        Comprobarla tal cual daba siempre que no, y esta función pasaba
@@ -614,6 +614,10 @@ function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {})
   }
 
   return { hechos, fallos };
+}
+
+function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {}) {
+  return reponerPdfsDe(db.facturas({ limite }), { emisor });
 }
 
 /* Nota de crédito que anula un comprobante. El original no se toca:
@@ -837,7 +841,7 @@ module.exports = {
   CARPETA, TITULOS,
   dibujar, comoHtml, guardarPdf, leerPdf, rutaAbsoluta,
   emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, pendientesDeRegularizar, decidirTipo,
-  regenerarPdfsPendientes,
+  reponerPdfsDe, regenerarPdfsPendientes,
 };
 
 /* ── Línea de comandos ──────────────────────────────────── */

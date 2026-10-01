@@ -6356,6 +6356,30 @@ const facturaDePago = (idPago) => abrir().prepare(
 const facturasDe = (idOrg) => abrir().prepare(
   'SELECT * FROM facturas WHERE organizacion_id = ? ORDER BY fecha DESC').all(idOrg);
 
+const comprobantesDelPeriodo = (desde, hasta) => abrir().prepare(`
+  SELECT * FROM facturas
+   WHERE fecha >= ? AND fecha < ?
+   ORDER BY fecha, numero`).all(desde, hasta);
+
+const sumaDelPeriodo = (desde, hasta) => abrir().prepare(`
+  SELECT tipo, moneda, COUNT(*) AS cantidad,
+         SUM(subtotal) AS subtotal, SUM(itbis) AS itbis, SUM(total) AS total
+    FROM facturas
+   WHERE fecha >= ? AND fecha < ?
+   GROUP BY tipo, moneda
+   ORDER BY tipo, moneda`).all(desde, hasta);
+
+function fechasIrregulares(meses) {
+  if (!Array.isArray(meses) || meses.length === 0) return [];
+  const unicos = [...new Set(meses.map((mes) => String(mes)))];
+  const filas = abrir().prepare(`
+    SELECT * FROM facturas
+     WHERE substr(fecha, 1, 7) IN (${unicos.map(() => '?').join(', ')})
+     ORDER BY fecha, numero`).all(...unicos);
+  const isoCompleto = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+  return filas.filter((fila) => !isoCompleto.test(fila.fecha));
+}
+
 /* Para administración: por mes y, si se pide, por estado de envío. */
 /* Todas las rutas de imagen y video que alguien está usando.
  *
@@ -6478,7 +6502,8 @@ module.exports = {
   reprogramarRenovacion, suscripcionesPorRenovar, anotarIntentoRenovacion, clienteDeRenovacion,
   anuncioUnicoDeSuscripcion, suscripcionesPorAvisar, anotarAvisoRenovacion, tarjetasPorVencer,
   anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
-  facturasDe, facturas, validarMes, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
+  facturasDe, comprobantesDelPeriodo, sumaDelPeriodo, fechasIrregulares,
+  facturas, validarMes, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
   cifrarClave, claveCorrecta, cambiarClave,
   /* Fase 10.1: cambio de correo, reversión y recuperación de cuenta. */

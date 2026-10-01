@@ -40,6 +40,7 @@
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
     "precios:probar": "node --test tools/precios.prueba.js",
     "lote:puro": "node --test tools/lote.prueba.js",
+    "lote:probar": "node tools/probar-lote.js",
     "servicios:probar": "node --test tools/servicios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
