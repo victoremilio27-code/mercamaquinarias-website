@@ -78,6 +78,8 @@ jobs:
         run: npm run facturas:letras
       - name: Formula del precio
         run: npm run precios:probar
+      - name: Lote mensual puro
+        run: npm run lote:puro
       - name: Interruptor de servicios
         run: npm run servicios:probar
       - name: Seguridad
