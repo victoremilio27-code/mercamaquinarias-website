@@ -1101,12 +1101,13 @@ db.cargarSecuencia({
     /* La 05.4 sube la contratación a 2.3 (cláusulas de «cupos» pasan a
        capacidad de publicaciones activas). Esta prueba vigila que la
        versión no baje de la 2.2 y que la página enseñe la vigente, no un
-       número fijo. Términos, privacidad y política de publicación NO se
-       tocan en la 05.4: subirlos obligaría a reaceptar antes de publicar. */
+       número fijo. La 05.4 no tocó Términos ni Privacidad; la 10.2 subió
+       Privacidad a 2.2 (celular y SMS, D-15). Términos y política de
+       publicación siguen igual. */
     ok(Number(legales.versionDe('contratacion')) >= 2.2, `versionDe('contratacion') = ${legales.versionDe('contratacion')}`);
-    ok(legales.versionDe('anuncios') === '2.0' && legales.versionDe('privacidad') === '2.1'
+    ok(legales.versionDe('anuncios') === '2.0' && legales.versionDe('privacidad') === '2.2'
       && legales.versionDe('terminos') === '2.1',
-    `anuncios/privacidad/términos intactos: ${legales.versionDe('anuncios')}/${legales.versionDe('privacidad')}/${legales.versionDe('terminos')}`);
+    `anuncios intacto, privacidad 2.2, términos intactos: ${legales.versionDe('anuncios')}/${legales.versionDe('privacidad')}/${legales.versionDe('terminos')}`);
 
     const html = fs.readFileSync(path.join(__dirname, '..', 'legal.html'), 'utf8');
     const seccion = html.slice(html.indexOf('id="contratacion"'), html.indexOf('id="t-contratacion"') + 400);
