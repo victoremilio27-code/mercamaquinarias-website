@@ -25,13 +25,34 @@ Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y 
 revisa y verifica; Codex implementa vía `@codex` en issues y PR (ver «Delegación a Codex» en
 `CLAUDE.md`). Donde lo de abajo diga GSD, Sonnet ejecutor o `.planning/config.json`, queda sustituido.
 
-**Ciclo autónomo montado el 2026-10-01** (protocolo en `.planning/CICLO.md`). Lo pendiente del ROADMAP está en
-issues #56-#81 con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`; lo de
-Victor en #78 (pasos manuales) y #79 (decisiones). La rutina «MercaMaquinarias · ciclo horario» abre cada hora
-una sesión nueva que hace la salida rápida contra el tablero #82 y, si hay algo, revisa parches de Codex,
-fusiona en verde, despacha hasta 3 tareas sin archivos en común y trabaja un issue `claude`. Codex responde
-con `git format-patch` en el issue y Claude lo aplica y abre el PR (Codex no puede hacer push). Sin comprobar
-todavía: que el entorno de Codex corra Node >= 22.5.
+**MODO SEMIMANUAL (desde 2026-10-01, Victor).** La rutina horaria está PAUSADA (`trig_01LFZXbkzYZKDeh7unVLFPff`,
+se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio:
+1. **Recoger:** Victor avisa de que Codex terminó. Para cada issue `en-curso`, bajar la última respuesta de
+   `chatgpt-codex-connector[bot]` por la API, sacar el bloque `diff` (si solo trae el comando o «parte 1 de N»,
+   pedir lo que falte con `@codex`) y aplicar todos en una rama `codex/tanda-N` desde `main` con
+   `git am --keep-cr -3`; los conflictos entre parches de la misma tanda se resuelven a mano.
+2. **Verificar:** revisar el diff contra el issue y `CLAUDE.md`; correr TODA la batería, y las auditorías con
+   el sitio arrancado como en el job `navegador` (`MERCA_DB=/tmp/ci-merca.db MERCA_CORREO=archivo
+   MERCA_SECRETO=x MERCA_HTTPS=0`, `npm run db:demo`, `npm start` en segundo plano, `tools/esperar-servidor.js`,
+   `npm run auditar && npm run check && npm run check:motion`). **Codex no tiene navegador:** lo visual se
+   comprueba aquí (en la tanda 1 su CSS del panel no bastaba y hubo que terminarlo).
+3. **Publicar:** un PR por tanda con `Closes #…`, fusionar con CI en verde, confirmar «Sitio arriba» con
+   `mcp__github__get_job_logs` del job `desplegar` (la API de logs por `gh` no llega desde la nube).
+4. **Despachar la siguiente:** quitar `bloqueado` a lo desbloqueado, encargar con `@codex` todos los issues
+   `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de 4.
+5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
+
+**Estado al cerrar el chat del 2026-10-01:** tanda 1 en producción (PR #84: #56, #63, #67, #68, #69, #70).
+**En Codex ahora:** #71 (scrypt; su parche era de 2.448 líneas y no cabía: se le pidió diff mínimo o por
+partes), #57 (consultas del periodo, desbloqueado por #56), #75 (recordatorios en días de calendario RD) y
+#77 (sello por la bitácora en `tools/admin.js`). **Trabajo de Claude para el próximo chat, en orden:** #64
+(escribir primero la prueba de `fechaCorta` en hora RD y luego encargarla con red), #58 (migración: guardar lo
+que dibuja el PDF), #60 (prueba del 607 con caso esperado), y con eso #59 pasa a `codex`. Notas: `db.validarMes`
+(de #69) duplica a `lote.validarMes` (de #56) a propósito hasta #57; Codex corre Node 24.21.
+Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`).
+
+Los issues: #56-#81, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
+Protocolo completo (también para cuando vuelva la rutina): `.planning/CICLO.md`; tablero #82.
 **Lo de abajo sobre GSD, planes y Sonnet ejecutor es historia:** el orden ahora lo dan los hitos y los issues.
 
 **Forma de trabajar:** una rama y un PR por fase; se fusiona y despliega al cerrar la fase (verificación
