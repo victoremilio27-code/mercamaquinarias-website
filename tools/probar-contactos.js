@@ -226,6 +226,76 @@ function bloqueSms() {
     'lleva el código y el número');
 }
 
+/* ── Bloque «SMS y avisos de la cuenta (fase 10.2)» ───────── */
+async function bloqueSmsCuenta() {
+  const https = require('https');
+  const solicitudRealOriginal = https.request;
+  try {
+    console.log('\nEl texto del SMS de cuenta');
+    for (const proposito of ['verificar', 'cambio', 'restablecer', 'clave', 'recuperar']) {
+      const t = correo.textoSmsCuenta({ codigo: '123456', minutos: 20, proposito });
+      comprobar(t.includes('123456') && t.includes('20 min') && t.length <= 160 && !/[^\x20-\x7E]/.test(t),
+        `«${proposito}»: lleva código y minutos, cabe en 160 y va en ASCII (${t.length})`);
+    }
+    let lanzo = false;
+    try { correo.textoSmsCuenta({ codigo: '123456', minutos: 20, proposito: 'otro' }); } catch (_) { lanzo = true; }
+    comprobar(lanzo, 'un propósito desconocido lanza');
+
+    console.log('\nLa máscara del número');
+    comprobar(correo.enmascararNumero('8095551234') === '(809) •••-1234', '10 dígitos');
+    comprobar(correo.enmascararNumero('(809) 555-1234') === '(809) •••-1234', 'con formato');
+    comprobar(correo.enmascararNumero('18095551234') === '(809) •••-1234', 'con el 1 delante');
+    comprobar(correo.enmascararNumero('abc') === null, 'sin dígitos da null');
+
+    console.log('\nEl tope diario');
+    delete process.env.MERCA_SMS_TOPE_DIA;
+    comprobar(correo.topeSmsDia() === 300, 'sin variable, 300');
+    process.env.MERCA_SMS_TOPE_DIA = '50';
+    comprobar(correo.topeSmsDia() === 50, '«50» da 50');
+    for (const malo of ['abc', '0', '-5']) {
+      process.env.MERCA_SMS_TOPE_DIA = malo;
+      comprobar(correo.topeSmsDia() === 300, `«${malo}» vuelve a 300`);
+    }
+    delete process.env.MERCA_SMS_TOPE_DIA;
+
+    console.log('\nLa ruta de Brevo');
+    process.env.MERCA_SMS = 'brevo';
+    process.env.BREVO_API_KEY = 'clave-de-prueba';
+    let visto = null;
+    https.request = (opciones, devolucion) => {
+      visto = { opciones, escrito: '' };
+      const req = new EventEmitter();
+      req.write = (c) => { visto.escrito += c; };
+      req.destroy = () => {};
+      req.end = () => {
+        const res = new EventEmitter();
+        res.statusCode = 201;
+        devolucion(res);
+        res.emit('data', '{"messageId":123}');
+        res.emit('end');
+      };
+      return req;
+    };
+    const r = await correo.enviarSms({ numero: '8095551234', texto: 'x' });
+    const cuerpo = visto ? JSON.parse(visto.escrito) : {};
+    comprobar(visto && visto.opciones.hostname === 'api.brevo.com', 'llama a api.brevo.com');
+    comprobar(visto && visto.opciones.path === '/v3/transactionalSMS/send', 'por defecto usa /v3/transactionalSMS/send');
+    comprobar(cuerpo.recipient === '18095551234' && cuerpo.sender === 'MercaMaq'
+      && cuerpo.type === 'transactional' && cuerpo.unicodeEnabled === false,
+    'el cuerpo lleva recipient con el 1, sender, type y unicodeEnabled falso');
+    comprobar(r && r.entregado === true && r.id === 123, 'un 201 con messageId da entregado e id');
+    process.env.MERCA_SMS_RUTA = '/v3/transactionalSMS/sms';
+    await correo.enviarSms({ numero: '8095551234', texto: 'x' });
+    comprobar(visto.opciones.path === '/v3/transactionalSMS/sms', 'MERCA_SMS_RUTA sigue cambiando la ruta');
+  } finally {
+    https.request = solicitudRealOriginal;
+    delete process.env.MERCA_SMS;
+    delete process.env.BREVO_API_KEY;
+    delete process.env.MERCA_SMS_RUTA;
+    delete process.env.MERCA_SMS_TOPE_DIA;
+  }
+}
+
 /* Una petición de verdad contra el enrutador, con req y res fingidos.
    Copia del arnés de probar-seguridad.js: cada archivo de prueba lleva
    el suyo, a propósito. */
@@ -421,6 +491,9 @@ function bloqueEstafas() {
 
   console.log('\nEl SMS');
   bloqueSms();
+
+  console.log('\nSMS y avisos de la cuenta (fase 10.2)');
+  await bloqueSmsCuenta();
 
   console.log('\nLa API');
   await bloqueApi();
