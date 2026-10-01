@@ -2,10 +2,12 @@
 # Prepara una sesión de Claude Code en la nube (claude.ai/code) para este repo.
 #
 # Va como "script de preparación" del entorno en claude.ai/code. Allí la máquina
-# es Linux y está vacía: no tiene el CLAUDE.md global de Victor, ni la memoria de
-# sesiones anteriores, ni GSD, que en su PC vive en ~/.claude. Por eso no sirve
-# copiar la instalación de GSD al repo: sus hooks quedan escritos con rutas de
-# Windows ("C:/Program Files/nodejs/node.exe") y en Linux no arrancan.
+# es Linux y está vacía: no tiene el CLAUDE.md global de Victor ni la memoria de
+# sesiones anteriores. Sirve igual como script de configuración del entorno de
+# Codex (chatgpt.com/codex), que también arranca vacío.
+#
+# Hasta el 2026-10-01 instalaba además GSD; se dejó de usar para gastar menos
+# tokens y se quitó de aquí.
 #
 # Se puede correr más de una vez sin daño.
 set -euo pipefail
@@ -33,13 +35,6 @@ if ! npm ci --no-audit --no-fund; then
   echo "npm ci falló; reintento sin descargar Chrome." >&2
   PUPPETEER_SKIP_DOWNLOAD=1 npm ci --no-audit --no-fund
   echo "AVISO: sin Chrome, 'npm run auditar' y 'npm run check' no corren aquí; los cubre el CI." >&2
-fi
-
-# 3. GSD, la misma versión que usa Victor en su PC. Versión fija a propósito:
-#    npm marca el paquete como "no longer supported", así que "latest" podría
-#    desaparecer o cambiar sin aviso.
-if [ ! -d "$HOME/.claude/get-shit-done" ]; then
-  npx -y get-shit-done-cc@1.42.3 --claude --global
 fi
 
 echo "Listo. Al empezar, lee .planning/STATE.md."

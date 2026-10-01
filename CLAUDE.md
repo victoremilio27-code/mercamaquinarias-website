@@ -16,7 +16,7 @@ léelo al empezar una sesión nueva, antes de explorar a ciegas.
   lo uses para nada nuevo.
 - Todo en español. Decide tú lo técnico y reversible; agrupa en una sola tanda las
   preguntas que solo él puede contestar (datos reales, pagos, algo irreversible).
-- **Se trabaja por fases GSD en orden fijo** (`.planning/ROADMAP.md`): lanzamiento →
+- **Se trabaja por fases en orden fijo** (`.planning/ROADMAP.md`): lanzamiento →
   transporte y financiamiento → lote del contador → deuda técnica. Lanzamiento el
   **2026-10-14**, fecha firme. Solo la afiliación de CardNet puede retrasarlo, nunca
   nuestro trabajo.
@@ -39,11 +39,40 @@ léelo al empezar una sesión nueva, antes de explorar a ciegas.
 ## En la nube (claude.ai/code)
 
 Victor trabaja también en sesiones en la nube, que gastan un crédito propio. Allí no hay
-nada de su PC: ni su `CLAUDE.md` global, ni la memoria de sesiones anteriores, ni GSD.
-`tools/preparar-nube.sh` los deja listos: Node ≥ 22.5, `npm ci` y GSD. Va configurado
-como script de preparación del entorno.
+nada de su PC: ni su `CLAUDE.md` global ni la memoria de sesiones anteriores.
+`tools/preparar-nube.sh` deja Node ≥ 22.5 y `npm ci`. Va configurado como script de
+preparación del entorno, y el mismo script sirve para el entorno de Codex.
 
 Una misma fase no se trabaja a la vez en la nube y en local: cada sesión en su rama.
+
+## Delegación a Codex (vía GitHub) — desde el 2026-10-01
+
+**GSD se dejó de usar el 2026-10-01** para gastar menos tokens: nada de `gsd-*`, de
+agentes planificadores ni de PLAN/VERIFICATION por fase. `.planning/ROADMAP.md` y
+`.planning/STATE.md` siguen siendo el orden y el relevo, como documentos normales; el
+resto de `.planning/` es historia y no se relee salvo que la tarea lo necesite.
+
+- **Claude planifica, decide el diseño, revisa y verifica. Codex implementa.**
+- Se delega: funciones con especificación clara, refactors mecánicos, pruebas, tareas
+  repetitivas. No se delega: tareas ambiguas ni decisiones de arquitectura.
+- **Lo fiscal y los precios (NCF, ITBIS, notas de crédito, `assets/precios.js`) se
+  delegan solo con red:** Claude escribe *antes* las pruebas que fijan el comportamiento
+  (y las sube en el mismo PR o en uno previo), Codex implementa hasta que pasen sin
+  tocarlas, y Claude revisa ese diff línea a línea. Migraciones de `tools/db.js` y
+  cualquier cosa que toque la base de producción no se delegan nunca.
+- Cómo: la tarea va en un issue o PR, en un comentario que empieza con `@codex`. Tiene que
+  ser autocontenida, porque Codex no ve esta conversación: objetivo, archivos, requisitos,
+  qué no tocar y el criterio de «terminado» (qué pruebas de `npm run` deben pasar).
+- Codex lee `AGENTS.md`, que lo manda a este archivo. Trabaja en ramas `codex/` y abre
+  PR como borrador.
+- **Nunca se edita una rama `codex/` mientras Codex trabaja en ella.**
+- La palabra `@codex` solo se escribe para encargar algo: con nombrarlo en la
+  descripción de un PR ya arranca una tarea (pasó en el PR #53).
+- Al terminar: Claude revisa el diff del PR y corre las pruebas que toque. Lo que Codex
+  diga que hizo es solo una afirmación hasta verificarlo. El PR de Codex sigue la misma
+  regla de publicar: CI en verde antes de fusionar.
+- Para ahorrar tokens: sin subagentes para lo que se resuelve con unas pocas búsquedas,
+  sin releer lo que ya está en contexto, y la revisión cubre solo lo que cambió.
 
 ## Reglas de negocio que no se negocian
 
