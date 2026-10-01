@@ -1415,6 +1415,11 @@ function cifrarClave(clave) {
   return { hash, sal };
 }
 
+/* DEUDA-02 (#71). `scryptSync` dejaba el proceso entero parado mientras
+   comprobaba una contraseña, y con un correo inexistente no se derivaba
+   nada: la respuesta llegaba antes y delataba qué correos tienen cuenta.
+   Ahora se deriva siempre, contra este relleno si no hay usuario. Las
+   versiones síncronas se quedan para las pruebas y `seed.js`. */
 const SAL_CLAVE_RELLENO = '00000000000000000000000000000000';
 const HASH_CLAVE_RELLENO = '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
 
