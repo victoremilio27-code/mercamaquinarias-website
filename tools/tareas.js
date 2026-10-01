@@ -106,6 +106,7 @@ async function avisarRecordatorios() {
         idAnuncio: a.id,
         vence: a.vence,
         tipo: a.tipo,
+        dias: a.dias,
         plan: a.plan_nombre,
       });
       entregado = !!(r && r.entregado);

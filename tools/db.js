@@ -5170,15 +5170,22 @@ const marcarAviso = (idAnuncio, cual) =>
    ciclo ni se reinicia al renovar (auditoría §1.15). Aquí cada aviso es
    una fila de `recordatorios` por anuncio + tipo + ciclo (el `vence`).
 
-   El tipo sale de los días que faltan, redondeados hacia arriba: 4-7 →
+   El tipo sale de los días de calendario dominicanos que faltan: 4-7 →
    '7d', 2-3 → '3d', 1 → '1d'. La tarea corre una vez al día a las
    05:00 (auditoría §1.14), así que cada ventana se pisa al menos una
    vez. No se rellenan avisos atrasados: si faltó una pasada, sale el
    del tramo actual, no los tres juntos. */
 const TIPOS_RECORDATORIO = ['7d', '3d', '1d'];
 
+const diasCalendarioRD = (vence, momento) => {
+  const zonaRD = 4 * 60 * 60 * 1000;
+  const diaVence = Math.floor((new Date(vence).getTime() - zonaRD) / 86400000);
+  const diaMomento = Math.floor((new Date(momento).getTime() - zonaRD) / 86400000);
+  return diaVence - diaMomento;
+};
+
 const tipoRecordatorio = (vence, momento) => {
-  const faltan = Math.ceil((new Date(vence).getTime() - new Date(momento).getTime()) / 86400000);
+  const faltan = diasCalendarioRD(vence, momento);
   if (faltan >= 4 && faltan <= 7) return '7d';
   if (faltan >= 2 && faltan <= 3) return '3d';
   if (faltan === 1) return '1d';
@@ -5219,8 +5226,12 @@ function recordatoriosPendientes(momento = ahora(), { omitirAutomaticas = false 
       AND a.vence IS NOT NULL
       AND a.vence > ?
       AND a.vence <= ?
-    ORDER BY a.vence`).all(momento, sumarDias(7, momento))
-    .map((a) => ({ ...conNombres(a), tipo: tipoRecordatorio(a.vence, momento) }))
+    ORDER BY a.vence`).all(momento, sumarDias(8, momento))
+    .map((a) => ({
+      ...conNombres(a),
+      tipo: tipoRecordatorio(a.vence, momento),
+      dias: diasCalendarioRD(a.vence, momento),
+    }))
     .filter((a) => a.tipo && !yaEsta.get(a.id, a.tipo, a.vence)
       && !(omitirAutomaticas && a.suscripcion_id && seRenuevaSola.get(a.suscripcion_id)));
 }
@@ -6558,7 +6569,7 @@ module.exports = {
   crearAnuncio, anuncio, anunciosPublicos, buscarAnuncios, estadisticas, anunciosDeOrganizacion,
   cambiarEstadoAnuncio, guardarTrenMotriz, borrarAnuncio, caducarAnuncios,
   anunciosVencidosSinAvisar, marcarAviso, duenoDeAnuncio,
-  recordatoriosPendientes, reservarRecordatorio, anotarRecordatorio, TIPOS_RECORDATORIO,
+  recordatoriosPendientes, reservarRecordatorio, anotarRecordatorio, tipoRecordatorio, TIPOS_RECORDATORIO,
   anotarEvento, resumenOrganizacion,
   /* Alcance y métricas del vendedor (fase 10). */
   registrarContacto, contactosDeOrganizacion, fotoParaCompartir, copiaDeAnuncio,
