@@ -8,3 +8,7 @@ deploy/*.service                 text eol=lf
 deploy/*.timer                   text eol=lf
 deploy/*.conf                    text eol=lf
 .github/workflows/*.yml          text eol=lf
+
+# Parches que Codex aplica con `git am`: ni un byte puede cambiar, asi
+# que no se tocan los finales de linea (Git en Windows los pasaria a CRLF).
+.planning/parches/*.patch         -text

@@ -1,0 +1,216 @@
+From 1912a7f88384ef047eaf32f0a5e62f4023c975fe Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 23:15:30 +0000
+Subject: [PATCH] =?UTF-8?q?base:=20migraciones=20de=20especificaciones=20y?=
+ =?UTF-8?q?=20b=C3=BAsquedas=20guardadas=20(fases=2015=20y=2016,=20paso=20?=
+ =?UTF-8?q?2)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 2026-10-especificaciones: anuncios.especificaciones (objeto JSON) e
+  implementos_lista (lista JSON), con disparadores que rechazan JSON
+  roto o del tipo equivocado, para que el catálogo pueda filtrar con
+  json_extract y json_each.
+- 2026-10-guardar-busquedas: busquedas_guardadas y alertas_enviadas
+  (idempotencia de la tarea diaria). El enlace de baja es el id firmado
+  con MERCA_SECRETO: no se guarda nada en claro.
+- Funciones de base de las búsquedas y prueba busquedas:probar, que es
+  el contrato de las tareas de Codex que vienen detrás.
+- eliminarCuenta borra también las búsquedas guardadas.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01HLUv4PeU8WwLUkmKcFgRMN
+---
+ tools/db.js | 160 +++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 159 insertions(+), 1 deletion(-)
+
+diff --git a/tools/db.js b/tools/db.js
+index 9bd8afc..09a77aa 100644
+--- a/tools/db.js
++++ b/tools/db.js
+@@ -1368,6 +1368,64 @@ const MIGRACIONES = [
+        BEFORE UPDATE OF dibujo ON facturas
+        BEGIN SELECT RAISE(ABORT, 'el dibujo de un comprobante emitido no se reescribe'); END`,
+   ]],
++
++  /* Fase 15, paso 2. Los números que deciden una compra (cucharón, peso,
++     ejes…) como datos y no como texto. Los ids salen de
++     `assets/especificaciones.js` (#95) y no cambian aunque se corrija un
++     nombre. `implementos` (texto libre) se queda: los anuncios viejos lo
++     usan y sigue siendo la nota del vendedor.
++
++     JSON en una columna y no una tabla por especificación: se filtran con
++     `json_extract` / `json_each` y la ficha los lee de una vez. Los
++     disparadores impiden guardar algo que no sea JSON del tipo esperado,
++     porque un texto roto haría fallar esas consultas del catálogo. */
++  ['2026-10-especificaciones', [
++    'ALTER TABLE anuncios ADD COLUMN especificaciones TEXT',
++    'ALTER TABLE anuncios ADD COLUMN implementos_lista TEXT',
++    `CREATE TRIGGER IF NOT EXISTS tr_anuncios_especificaciones_ins
++       BEFORE INSERT ON anuncios
++       WHEN (NEW.especificaciones IS NOT NULL
++             AND (json_valid(NEW.especificaciones) = 0 OR json_type(NEW.especificaciones) <> 'object'))
++         OR (NEW.implementos_lista IS NOT NULL
++             AND (json_valid(NEW.implementos_lista) = 0 OR json_type(NEW.implementos_lista) <> 'array'))
++       BEGIN SELECT RAISE(ABORT, 'especificaciones o implementos con un formato que no es el esperado'); END`,
++    `CREATE TRIGGER IF NOT EXISTS tr_anuncios_especificaciones_upd
++       BEFORE UPDATE OF especificaciones, implementos_lista ON anuncios
++       WHEN (NEW.especificaciones IS NOT NULL
++             AND (json_valid(NEW.especificaciones) = 0 OR json_type(NEW.especificaciones) <> 'object'))
++         OR (NEW.implementos_lista IS NOT NULL
++             AND (json_valid(NEW.implementos_lista) = 0 OR json_type(NEW.implementos_lista) <> 'array'))
++       BEGIN SELECT RAISE(ABORT, 'especificaciones o implementos con un formato que no es el esperado'); END`,
++  ]],
++
++  /* Fase 16, paso 2 (ALERT-01). Una búsqueda guardada es el resultado de
++     `alertas.normalizarBusqueda` (#96) en JSON. El enlace «Dejar de recibir»
++     del correo no se guarda: es el id firmado con MERCA_SECRETO
++     (`testigoBajaBusqueda`), así que quien lea una copia de la base no puede
++     fabricarlo, y la tarea diaria lo recalcula sin tener nada en claro.
++
++     `alertas_enviadas` hace la tarea idempotente: si corre dos veces, o se
++     cae a mitad, el mismo anuncio no se avisa dos veces a la misma
++     búsqueda. `anuncio_id` va sin clave foránea a propósito: si el anuncio
++     se borra, la constancia de que se avisó sigue valiendo. */
++  ['2026-10-guardar-busquedas', [
++    `CREATE TABLE IF NOT EXISTS busquedas_guardadas (
++       id             TEXT PRIMARY KEY,
++       usuario_id     TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
++       filtros        TEXT NOT NULL CHECK (json_valid(filtros) AND json_type(filtros) = 'object'),
++       resumen        TEXT NOT NULL,
++       activa         INTEGER NOT NULL DEFAULT 1 CHECK (activa IN (0, 1)),
++       creada         TEXT NOT NULL,
++       revisada_hasta TEXT NOT NULL
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_busquedas_usuario ON busquedas_guardadas (usuario_id)',
++    `CREATE TABLE IF NOT EXISTS alertas_enviadas (
++       busqueda_id TEXT NOT NULL REFERENCES busquedas_guardadas(id) ON DELETE CASCADE,
++       anuncio_id  TEXT NOT NULL,
++       enviada     TEXT NOT NULL,
++       PRIMARY KEY (busqueda_id, anuncio_id)
++     )`,
++  ]],
+ ];
+ 
+ function migrar() {
+@@ -5031,7 +5089,7 @@ function eliminarCuenta(idUsuario) {
+     /* Lo que publicó dentro de un dealer sigue siendo del dealer. */
+     d.prepare('UPDATE anuncios SET usuario_id = NULL WHERE usuario_id = ?').run(idUsuario);
+ 
+-    for (const tabla of ['sesiones', 'dispositivos', 'codigos', 'codigos_telefono', 'miembros']) {
++    for (const tabla of ['sesiones', 'dispositivos', 'codigos', 'codigos_telefono', 'miembros', 'busquedas_guardadas']) {
+       d.prepare(`DELETE FROM ${tabla} WHERE usuario_id = ?`).run(idUsuario);
+     }
+     /* El historial de seguridad y lo aceptado se conservan como prueba,
+@@ -6690,7 +6748,107 @@ const anotarPdf = (idFactura, ruta) => abrir().prepare(
+ const marcarAnulada = (idFactura, idNota) => abrir().prepare(
+   'UPDATE facturas SET anulado_por = ? WHERE id = ?').run(idNota, idFactura);
+ 
++/* ── Búsquedas guardadas y alertas (fase 16, paso 2) ─────────
++   Aquí solo se guarda y se consulta. Qué anuncio encaja con qué búsqueda
++   lo decide `tools/alertas.js` (#96), con el mismo criterio que el
++   catálogo; el correo y la tarea diaria van en sus módulos de siempre. */
++
++const TOPE_BUSQUEDAS = 20;
++
++/* El enlace de baja del correo: el id y su firma. Se recalcula cada vez
++   (no se guarda), y comprobarlo es volver a firmar y comparar en tiempo
++   constante. */
++const firmaBaja = (idBusqueda) =>
++  crypto.createHmac('sha256', SECRETO).update(`baja-busqueda|${idBusqueda}`).digest('base64url');
++const testigoBajaBusqueda = (idBusqueda) => `${idBusqueda}.${firmaBaja(idBusqueda)}`;
++
++const busquedaPublica = (f) => ({
++  id: f.id, filtros: JSON.parse(f.filtros), resumen: f.resumen, activa: !!f.activa, creada: f.creada,
++});
++
++/* `filtros` debe venir ya de `alertas.normalizarBusqueda`: aquí no se
++   valida su contenido, solo que sea un objeto. La misma búsqueda guardada
++   dos veces devuelve la que ya estaba (reactivándola), para que pulsar
++   dos veces no mande dos correos por cada anuncio. */
++function guardarBusqueda({ idUsuario, filtros, resumen }) {
++  if (!filtros || typeof filtros !== 'object' || Array.isArray(filtros)) {
++    throw new Error('La búsqueda guardada necesita sus filtros.');
++  }
++  const d = abrir();
++  const json = JSON.stringify(Object.fromEntries(Object.entries(filtros).sort(([a], [b]) => a.localeCompare(b))));
++  const t = ahora();
++
++  const igual = d.prepare('SELECT id FROM busquedas_guardadas WHERE usuario_id = ? AND filtros = ?').get(idUsuario, json);
++  if (igual) {
++    d.prepare('UPDATE busquedas_guardadas SET activa = 1, resumen = ? WHERE id = ?').run(resumen, igual.id);
++    return { id: igual.id, repetida: true };
++  }
++  const n = d.prepare('SELECT COUNT(*) AS n FROM busquedas_guardadas WHERE usuario_id = ?').get(idUsuario).n;
++  if (n >= TOPE_BUSQUEDAS) return { error: 'tope', tope: TOPE_BUSQUEDAS };
++
++  const idBusqueda = id();
++  /* `revisada_hasta` arranca en el momento de guardar: se avisa de lo que
++     entre a partir de ahora, no de lo que la persona ya estaba viendo. */
++  d.prepare(`INSERT INTO busquedas_guardadas (id, usuario_id, filtros, resumen, activa, creada, revisada_hasta)
++             VALUES (?, ?, ?, ?, 1, ?, ?)`).run(idBusqueda, idUsuario, json, resumen, t, t);
++  return { id: idBusqueda, repetida: false };
++}
++
++const busquedasDe = (idUsuario) => abrir()
++  .prepare('SELECT * FROM busquedas_guardadas WHERE usuario_id = ? ORDER BY creada DESC').all(idUsuario)
++  .map(busquedaPublica);
++
++const borrarBusqueda = (idBusqueda, idUsuario) => abrir()
++  .prepare('DELETE FROM busquedas_guardadas WHERE id = ? AND usuario_id = ?').run(idBusqueda, idUsuario).changes > 0;
++
++/* El enlace del correo: sin sesión, solo con el testigo. Apaga la alerta
++   pero no la borra, para que la persona la vea en su cuenta y pueda
++   reactivarla. Devuelve la búsqueda o null si el testigo no es de nadie. */
++function darDeBajaBusqueda(testigo) {
++  if (!testigo || typeof testigo !== 'string' || testigo.length > 200) return null;
++  const punto = testigo.lastIndexOf('.');
++  if (punto < 1) return null;
++  const idBusqueda = testigo.slice(0, punto);
++  const dada = Buffer.from(testigo.slice(punto + 1));
++  const buena = Buffer.from(firmaBaja(idBusqueda));
++  if (dada.length !== buena.length || !crypto.timingSafeEqual(dada, buena)) return null;
++  const d = abrir();
++  const f = d.prepare('SELECT * FROM busquedas_guardadas WHERE id = ?').get(idBusqueda);
++  if (!f) return null;
++  d.prepare('UPDATE busquedas_guardadas SET activa = 0 WHERE id = ?').run(f.id);
++  return busquedaPublica({ ...f, activa: 0 });
++}
++
++/* Para la tarea diaria: las búsquedas activas con el correo y el nombre de
++   su dueño. Las cuentas eliminadas no salen aunque quedara alguna fila
++   (`eliminarCuenta` ya las borra). */
++const busquedasActivas = () => abrir().prepare(`
++  SELECT b.id, b.usuario_id, b.filtros, b.resumen, b.revisada_hasta, u.correo, u.nombre
++  FROM busquedas_guardadas b JOIN usuarios u ON u.id = b.usuario_id
++  WHERE b.activa = 1 AND u.correo NOT LIKE '%@cuentas.invalid'
++  ORDER BY b.creada`).all().map((f) => ({ ...f, filtros: JSON.parse(f.filtros) }));
++
++/* Los anuncios activos publicados después de `desde`, con las columnas
++   que lee `alertas.coincide`. */
++const anunciosPublicadosDesde = (desde) => abrir().prepare(`
++  SELECT id, categoria, subcategoria, marca, modelo, descripcion, provincia, condicion, anio,
++         precio, moneda, uso_valor, uso_unidad, disponibilidad, permuta, itbis_incluido, estado,
++         especificaciones, implementos_lista, publicado
++  FROM anuncios WHERE estado = 'activo' AND publicado > ? ORDER BY publicado`).all(desde);
++
++/* true solo la primera vez para ese par: es lo que impide avisar dos
++   veces del mismo anuncio a la misma búsqueda. */
++const anotarAlertaEnviada = (idBusqueda, idAnuncio) => abrir()
++  .prepare('INSERT OR IGNORE INTO alertas_enviadas (busqueda_id, anuncio_id, enviada) VALUES (?, ?, ?)')
++  .run(idBusqueda, idAnuncio, ahora()).changes > 0;
++
++const avanzarRevisionBusqueda = (idBusqueda, hasta) => abrir()
++  .prepare('UPDATE busquedas_guardadas SET revisada_hasta = ? WHERE id = ? AND revisada_hasta < ?')
++  .run(hasta, idBusqueda, hasta).changes > 0;
++
+ module.exports = {
++  guardarBusqueda, busquedasDe, borrarBusqueda, darDeBajaBusqueda, testigoBajaBusqueda, busquedasActivas,
++  anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
+   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
+   eliminarCuenta, bloqueoEliminarCuenta,
+   tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago, ultimosDatosFiscales,
+-- 
+2.43.0
+
