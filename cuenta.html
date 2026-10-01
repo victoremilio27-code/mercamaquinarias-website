@@ -303,79 +303,12 @@
           <label class="campo-v"><span>Correo electrónico</span>
             <input type="email" id="rec-correo" autocomplete="email" required>
           </label>
-          <!-- Solo con el SMS encendido (lo decide cuenta.js con SESION.sms). -->
-          <fieldset class="campo-grupo" id="recVia" hidden>
-            <legend class="etiqueta etiqueta--bloque">¿Dónde quiere recibir el código?</legend>
-            <label class="opcion">
-              <input type="radio" name="recVia" value="correo" checked>
-              <span class="opcion__cuerpo"><b class="opcion__nombre">A mi correo</b></span>
-            </label>
-            <label class="opcion">
-              <input type="radio" name="recVia" value="sms">
-              <span class="opcion__cuerpo"><b class="opcion__nombre">Por SMS a mi celular</b></span>
-            </label>
-            <label class="campo-v" id="recTelefonoCampo" hidden><span>Su celular</span>
-              <input type="tel" id="rec-telefono" autocomplete="tel" inputmode="tel" placeholder="(809) 000-0000">
-              <small class="campo-v__ayuda">El celular verificado de su cuenta, completo.</small>
-            </label>
-          </fieldset>
         </div>
         <button class="btn btn--ambar btn--bloque btn--grande" type="submit">Enviar código</button>
         <p class="acceso__enlace">
           <button type="button" class="enlace-plano" id="irRecuperacion2">¿Ya no tiene acceso a su correo?</button>
           <span aria-hidden="true">·</span>
           <button type="button" class="enlace-plano" id="btnCancelarRec">Volver</button>
-        </p>
-      </form>
-
-      <!-- Recuperación sin correo por SMS (10.2): cuatro pasos, rellenada
-           más abajo. Existe desde la tarea del celular porque VISTAS la
-           nombra y vista() necesita el elemento. -->
-      <form id="formRecuperacionSms" novalidate hidden>
-        <p class="codigo__intro" id="rsIntro"></p>
-        <div id="rsPaso1">
-          <div class="campos campos--uno">
-            <label class="campo-v"><span>Correo de la cuenta</span>
-              <input type="email" id="rs-correo" autocomplete="email">
-            </label>
-            <label class="campo-v"><span>Su celular</span>
-              <input type="tel" id="rs-telefono" autocomplete="tel" inputmode="tel" placeholder="(809) 000-0000">
-            </label>
-          </div>
-        </div>
-        <div id="rsPaso2" hidden>
-          <label class="campo-v campo-v--codigo"><span>Código de 6 dígitos</span>
-            <input type="text" id="rs-codigo" inputmode="numeric" autocomplete="one-time-code"
-                   maxlength="6" placeholder="000000" aria-describedby="rsIntro">
-          </label>
-        </div>
-        <div id="rsPaso3" hidden>
-          <div class="campos campos--uno">
-            <label class="campo-v"><span>Correo nuevo</span>
-              <input type="email" id="rs-correo-nuevo" autocomplete="email">
-              <small class="campo-v__ayuda">Uno al que tenga acceso ahora.</small>
-            </label>
-          </div>
-        </div>
-        <div id="rsPaso4" hidden>
-          <div class="campos campos--uno">
-            <label class="campo-v campo-v--codigo"><span>Código que le enviamos al correo nuevo</span>
-              <input type="text" id="rs-codigo-correo" inputmode="numeric" autocomplete="one-time-code"
-                     maxlength="6" placeholder="000000">
-            </label>
-            <label class="campo-v"><span>Contraseña nueva</span>
-              <input type="password" id="rs-clave" autocomplete="new-password" placeholder="Mínimo 10 caracteres">
-            </label>
-            <label class="campo-v"><span>Repita la contraseña</span>
-              <input type="password" id="rs-clave2" autocomplete="new-password" placeholder="La misma de arriba">
-            </label>
-          </div>
-        </div>
-        <button class="btn btn--ambar btn--bloque btn--grande" type="submit" id="btnRs">Enviar código</button>
-        <p class="acceso__enlace">
-          <button type="button" class="enlace-plano" id="rsIrRevisada">No tengo ese celular: pedir revisión</button>
-          <span aria-hidden="true">·</span>
-          <button type="button" class="enlace-plano" id="rsVolver">Volver al acceso</button>
         </p>
       </form>
 

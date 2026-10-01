@@ -8,19 +8,22 @@
    El servidor nunca dice si un correo existe; estas pantallas
    tampoco, ni siquiera cambiando el texto entre un caso y otro.
 
-   10.2: dos vistas más. #formTelefono («Confirme su celular», al
-   entrar con el SMS encendido; se puede posponer) y
-   #formRecuperacionSms (recuperar la cuenta sin correo, en cuatro
-   pasos). La recuperación pide el celular COMPLETO y no enseña nunca
-   «•••-1234» del número guardado: esa máscara diría qué correos
-   tienen cuenta. Con el SMS apagado nada de esto se enseña y el
-   acceso se comporta como antes, salvo el celular obligatorio al
-   registrarse. Ningún SMS sale al mostrar una vista: cada uno cuesta
-   créditos y solo sale al pulsar un botón.
+   10.2 (D-16): el SMS nunca abre la cuenta por sí solo. Quedan
+   #formTelefono («Confirme su celular», al entrar con el SMS
+   encendido; se puede posponer), #formAccesoVia (al entrar desde un
+   equipo nuevo, elegir si el código va al correo o al celular; la
+   contraseña ya se escribió) y el «No fui yo» del cambio de
+   contraseña. «Olvidé mi contraseña» es solo por correo y la
+   recuperación sin correo es la solicitud revisada de la 10.1: la
+   recuperación por SMS en cuatro pasos y el selector de vía se
+   quitaron. Con el SMS apagado el acceso se comporta como antes,
+   salvo el celular obligatorio al registrarse. Ningún SMS sale al
+   mostrar una vista: cada uno cuesta créditos y solo sale al pulsar
+   un botón.
    ═══════════════════════════════════════════════════════════ */
 
 const VISTAS = ['formEntrar', 'formCrear', 'formCodigo', 'formTelefono', 'formRecuperar',
-  'formNuevaClave', 'formRecuperacionSms', 'formRecuperacion', 'formRevertir'];
+  'formNuevaClave', 'formRecuperacion', 'formRevertir'];
 
 /* Correo y tipo de la verificación en curso. Vive en memoria: si se
    recarga la página hay que empezar de nuevo, que es lo correcto para
@@ -116,16 +119,10 @@ function montarCuenta() {
   el('irRecuperar').addEventListener('click', () => vista('formRecuperar'));
   el('btnCancelarRec').addEventListener('click', () => vista('formEntrar'));
   el('btnVolverAcceso').addEventListener('click', () => vista('formEntrar'));
-  /* «¿Ya no tiene acceso a su correo?»: con el SMS encendido, primero
-     la recuperación por celular; sin él, la solicitud revisada de la
-     10.1, como siempre. */
-  const irSinCorreo = () => {
-    if (SESION.sms) { pasoRecuperacionSms(1); vista('formRecuperacionSms'); } else vista('formRecuperacion');
-  };
-  el('irRecuperacion').addEventListener('click', irSinCorreo);
-  el('irRecuperacion2').addEventListener('click', irSinCorreo);
-  el('rsIrRevisada').addEventListener('click', () => vista('formRecuperacion'));
-  el('rsVolver').addEventListener('click', () => vista('formEntrar'));
+  // «¿Ya no tiene acceso a su correo?»: siempre la solicitud revisada
+  // de la 10.1 (D-16: el SMS no recupera la cuenta por sí solo).
+  el('irRecuperacion').addEventListener('click', () => vista('formRecuperacion'));
+  el('irRecuperacion2').addEventListener('click', () => vista('formRecuperacion'));
   el('btnCancelarRecuperacion').addEventListener('click', () => vista('formEntrar'));
 
   if (new URLSearchParams(location.search).get('crear') === '1') vista('formCrear');
@@ -162,7 +159,7 @@ function montarCuenta() {
       : d.length <= 6 ? `(${d.slice(0, 3)}) ${d.slice(3)}`
         : `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
   };
-  ['new-telefono', 'new-telefono-empresa', 'tel-nuevo', 'rec-telefono', 'rs-telefono'].forEach((idCampo) => {
+  ['new-telefono', 'new-telefono-empresa', 'tel-nuevo'].forEach((idCampo) => {
     const campo = el(idCampo);
     if (campo) campo.addEventListener('input', () => formatearTelefono(campo));
   });
@@ -227,9 +224,6 @@ function montarCuenta() {
     try { localStorage.setItem('merca.telefono.ahoraNo', String(Date.now())); } catch (_) { /* sin almacenamiento */ }
   };
 
-  // Celular que escribió la persona en «Olvidé mi contraseña» por SMS.
-  let telefonoRecuperar = '';
-
   /* Una respuesta puede traer sesión abierta o pedir un código; es
      lo único que hay que distinguir. */
   function seguir(datos) {
@@ -245,12 +239,7 @@ function montarCuenta() {
     }
 
     if (datos.verificacion === 'restablecer') {
-      // Por SMS, el celular que viaja en el último paso es el que la
-      // persona escribió (el servidor nunca devuelve el guardado).
-      pendiente = {
-        correo: datos.correo, tipo: 'restablecer',
-        via: datos.via || 'correo', telefono: telefonoRecuperar,
-      };
+      pendiente = { correo: datos.correo, tipo: 'restablecer', via: 'correo', telefono: '' };
       el('nuevaIntro').textContent = datos.mensaje;
       vista('formNuevaClave');
       return;
@@ -473,29 +462,10 @@ function montarCuenta() {
   });
 
   // ── Recuperar la contraseña ──
-  /* El selector correo/celular solo existe con el SMS encendido. Se
-     decide en cada envío con SESION.sms, no con lo que haya quedado
-     marcado en el radio. */
-  const viaElegida = () => (SESION.sms && (document.querySelector('input[name="recVia"]:checked') || {}).value === 'sms'
-    ? 'sms' : 'correo');
-
-  document.querySelectorAll('input[name="recVia"]').forEach((radio) => {
-    radio.addEventListener('change', () => { el('recTelefonoCampo').hidden = viaElegida() !== 'sms'; });
-  });
-
+  // Solo por correo (D-16): el SMS no restablece contraseñas.
   el('formRecuperar').addEventListener('submit', (ev) => {
     ev.preventDefault();
     const correo = el('rec-correo').value.trim();
-    if (viaElegida() === 'sms') {
-      if (!celularValido(el('rec-telefono').value)) {
-        el('rec-telefono').focus();
-        return mostrarAviso(AVISO_CELULAR);
-      }
-      telefonoRecuperar = el('rec-telefono').value.trim();
-      return enviar(el('formRecuperar'), '/cuenta/recuperar',
-        { correo, via: 'sms', telefono: telefonoRecuperar }, seguir);
-    }
-    telefonoRecuperar = '';
     enviar(el('formRecuperar'), '/cuenta/recuperar', { correo }, seguir);
   });
 
@@ -506,139 +476,15 @@ function montarCuenta() {
     if (codigo.length !== 6) return mostrarAviso('El código tiene 6 dígitos.');
     if (clave.length < 10) return mostrarAviso('La contraseña debe tener al menos 10 caracteres.');
 
-    const cuerpo = { correo: pendiente.correo, codigo, clave };
-    if (pendiente.via === 'sms') Object.assign(cuerpo, { via: 'sms', telefono: pendiente.telefono });
-    enviar(el('formNuevaClave'), '/cuenta/restablecer', cuerpo, seguir);
+    enviar(el('formNuevaClave'), '/cuenta/restablecer', { correo: pendiente.correo, codigo, clave }, seguir);
   });
 
   el('btnReenviarRec').addEventListener('click', async () => {
-    // Por SMS se repite la petición original (un código nuevo por el
-    // mismo canal); por correo, el reenvío de siempre.
-    if (pendiente.via === 'sms') {
-      await api('/cuenta/recuperar', {
-        metodo: 'POST', silencioso: true,
-        cuerpo: { correo: pendiente.correo, via: 'sms', telefono: pendiente.telefono },
-      });
-    } else {
-      await api('/cuenta/reenviar', {
-        metodo: 'POST', cuerpo: { correo: pendiente.correo, tipo: 'restablecer' }, silencioso: true,
-      });
-    }
+    await api('/cuenta/reenviar', {
+      metodo: 'POST', cuerpo: { correo: pendiente.correo, tipo: 'restablecer' }, silencioso: true,
+    });
     el('nue-codigo').value = '';
     mostrarAviso('Le enviamos un código nuevo. El anterior dejó de servir.', 'acceso__aviso--bien');
-  });
-
-  // ── Recuperación sin correo por SMS (10.2): cuatro pasos ──
-  /* Lo que va entre pasos (correo, celular, testigo de autorización,
-     correo nuevo) vive SOLO en estas variables: nunca en localStorage
-     ni en la URL, porque la autorización equivale a poder cambiar el
-     correo de la cuenta durante quince minutos. Si se recarga la
-     página hay que empezar de nuevo, y es lo correcto. */
-  let rsPaso = 1;
-  let rsCorreoCuenta = '';
-  let rsTelefono = '';
-  let rsAutorizacion = '';
-  let rsCorreoNuevo = '';
-
-  const RS_ROTULOS = {
-    1: 'Enviar código', 2: 'Seguir', 3: 'Enviar código al correo', 4: 'Recuperar mi cuenta',
-  };
-
-  function pasoRecuperacionSms(n, texto) {
-    rsPaso = n;
-    for (let i = 1; i <= 4; i += 1) el(`rsPaso${i}`).hidden = i !== n;
-    el('btnRs').textContent = RS_ROTULOS[n];
-    el('rsIntro').textContent = texto || ({
-      1: 'Si el correo y el celular corresponden a una cuenta con ese celular verificado, le enviaremos un código por SMS.',
-      3: 'Escriba el correo nuevo de su cuenta. Le enviaremos otro código para confirmarlo.',
-    }[n] || '');
-    if (n === 1) {
-      rsAutorizacion = '';
-      el('rs-codigo').value = '';
-      el('rs-codigo-correo').value = '';
-      el('rs-clave').value = '';
-      el('rs-clave2').value = '';
-    }
-    const primero = el(`rsPaso${n}`).querySelector('input');
-    if (primero && !el('formRecuperacionSms').hidden) primero.focus();
-  }
-
-  codigoSolo(el('rs-codigo'), true);
-  // En el paso 4 NO se envía solo: falta escribir la contraseña.
-  codigoSolo(el('rs-codigo-correo'), false);
-
-  /* Como `enviar`, pero si el servidor dice que la autorización venció
-     o ya se usó (pasos 3 y 4) vuelve al paso 1 conservando el aviso. */
-  async function enviarRs(ruta, cuerpo, alTerminar) {
-    const boton = el('btnRs');
-    const rotulo = boton.textContent;
-    boton.disabled = true;
-    boton.textContent = 'Un momento…';
-    mostrarAviso('');
-    try {
-      const datos = await api(ruta, { metodo: 'POST', cuerpo });
-      if (!datos) throw new Error('No hay conexión con el servidor. Inténtelo de nuevo.');
-      alTerminar(datos);
-    } catch (e) {
-      if (rsPaso >= 3 && /autorizaci/i.test(e.message || '')) pasoRecuperacionSms(1);
-      mostrarAviso(e.message);
-    } finally {
-      boton.disabled = false;
-      if (boton.textContent === 'Un momento…') boton.textContent = rotulo;
-    }
-  }
-
-  el('formRecuperacionSms').addEventListener('submit', (ev) => {
-    ev.preventDefault();
-
-    if (rsPaso === 1) {
-      if (!el('rs-correo').value.trim()) return mostrarAviso('Escriba el correo de su cuenta.');
-      if (!celularValido(el('rs-telefono').value)) {
-        el('rs-telefono').focus();
-        return mostrarAviso(AVISO_CELULAR);
-      }
-      const correo = el('rs-correo').value.trim();
-      const telefono = el('rs-telefono').value.trim();
-      return enviarRs('/cuenta/recuperacion-sms', { correo, telefono }, (datos) => {
-        rsCorreoCuenta = correo;
-        rsTelefono = telefono;
-        // El mensaje del servidor, tal cual: no se añade nada que
-        // delate si la cuenta existe.
-        pasoRecuperacionSms(2, `${datos.mensaje} Vence en ${datos.minutos} minutos.`);
-      });
-    }
-
-    if (rsPaso === 2) {
-      const codigo = el('rs-codigo').value.trim();
-      if (codigo.length !== 6) return mostrarAviso('El código tiene 6 dígitos.');
-      return enviarRs('/cuenta/recuperacion-sms/codigo',
-        { correo: rsCorreoCuenta, telefono: rsTelefono, codigo }, (datos) => {
-          rsAutorizacion = datos.autorizacion;
-          pasoRecuperacionSms(3);
-        });
-    }
-
-    if (rsPaso === 3) {
-      const nuevo = el('rs-correo-nuevo').value.trim();
-      if (!nuevo) return mostrarAviso('Escriba el correo nuevo de su cuenta.');
-      return enviarRs('/cuenta/recuperacion-sms/correo',
-        { autorizacion: rsAutorizacion, correoNuevo: nuevo }, (datos) => {
-          rsCorreoNuevo = nuevo;
-          pasoRecuperacionSms(4, `Le enviamos un código a ${datos.correo}. Escríbalo y cree su contraseña nueva.`);
-        });
-    }
-
-    const codigo = el('rs-codigo-correo').value.trim();
-    const clave = el('rs-clave').value;
-    if (codigo.length !== 6) return mostrarAviso('El código tiene 6 dígitos.');
-    if (clave.length < 10) return mostrarAviso('La contraseña debe tener al menos 10 caracteres.');
-    if (el('rs-clave2').value !== clave) {
-      el('rs-clave2').focus();
-      return mostrarAviso('Las dos contraseñas no coinciden.');
-    }
-    // Abre sesión: `seguir` entra (o pide confirmar el celular).
-    enviarRs('/cuenta/recuperacion-sms/confirmar',
-      { autorizacion: rsAutorizacion, correoNuevo: rsCorreoNuevo, codigo, clave }, seguir);
   });
 
   // ── Recuperación sin acceso al correo (revisión humana) ──
@@ -710,9 +556,6 @@ function montarCuenta() {
   // ser justo quien tomó la cuenta, o el dueño desde otro equipo).
   cargarSesion().then(() => {
     if (haySesion() && testigoRevertir === null) { location.replace(destinoTrasEntrar()); return; }
-    // El selector de «Olvidé mi contraseña» solo se enseña con el SMS
-    // encendido: con él apagado la página es la de siempre.
-    el('recVia').hidden = !SESION.sms;
   });
 }
 

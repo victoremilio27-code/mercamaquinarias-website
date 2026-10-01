@@ -875,7 +875,6 @@ function expedienteRecuHTML(e) {
       ${recuLinea('Correo', c.correo)}
       ${recuLinea('Celular', c.telefono)}
       ${recuLinea('Celular verificado', c.telefono_verificado ? fechaHora(c.telefono_verificado) : 'no')}
-      ${c.enfriamiento_hasta ? recuLinea('Bloqueo de 72 h tras SMS hasta', fechaHora(c.enfriamiento_hasta)) : ''}
       ${recuLinea('Alta', c.creado ? fechaHora(c.creado) : '')}
       ${o ? recuLinea('Organización', `${o.nombre} (${o.tipo}${o.rnc ? `, RNC ${o.rnc}` : ''})`) : recuLinea('Organización', '')}
       ${recuLinea('Anuncios', `${e.anuncios ? e.anuncios.total : 0}${e.anuncios && e.anuncios.titulos.length ? ` · ${e.anuncios.titulos.join(', ')}` : ''}`)}
