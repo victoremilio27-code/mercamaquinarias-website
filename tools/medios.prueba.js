@@ -7,9 +7,11 @@ const path = require('node:path');
 const raizTemporal = fs.mkdtempSync(path.join(os.tmpdir(), 'merca-medios-'));
 process.env.MERCA_FOTOS = path.join(raizTemporal, 'fotos');
 process.env.MERCA_VIDEOS = path.join(raizTemporal, 'videos');
+process.env.MERCA_DOCUMENTOS = path.join(raizTemporal, 'documentos');
 
 const fotos = require('./fotos.js');
 const videos = require('./videos.js');
+const documentos = require('./documentos.js');
 
 test.after(() => fs.rmSync(raizTemporal, { recursive: true, force: true }));
 
@@ -78,7 +80,7 @@ function probarModulo(nombre, modulo, tipos) {
     }
   });
 
-  test(`${nombre}: rechaza nombres que no genera guardar`, { todo: 'archivoDe solo valida carpeta y extensión' }, () => {
+  test(`${nombre}: rechaza nombres que no genera guardar`, () => {
     const rutas = [
       `${modulo.RUTA_PUBLICA}/nombre${extensionAdmitida}`,
       `${modulo.RUTA_PUBLICA}/2026-10/nombre${extensionAdmitida}`,
@@ -90,7 +92,7 @@ function probarModulo(nombre, modulo, tipos) {
     );
   });
 
-  test(`${nombre}: rechaza barras invertidas y segmentos codificados`, { todo: 'archivoDe no normaliza estas entradas' }, () => {
+  test(`${nombre}: rechaza barras invertidas y segmentos codificados`, () => {
     const rutas = [
       `${modulo.RUTA_PUBLICA}/2026-10\\..\\secreto${extensionAdmitida}`,
       `${modulo.RUTA_PUBLICA}/%2e%2e/secreto${extensionAdmitida}`,
@@ -128,4 +130,24 @@ probarModulo('videos', videos, [
 test('videos: consulta el espacio libre sin llenar el disco', () => {
   const libres = videos.bytesLibres();
   assert.ok(libres === null || (Number.isFinite(libres) && libres >= 0));
+});
+
+test('documentos: archivoDe solo acepta las rutas que genera guardar', () => {
+  const guardado = documentos.guardar(Buffer.from('%PDF-contenido'));
+  assert.equal(documentos.archivoDe(guardado.ruta), path.join(documentos.CARPETA, guardado.ruta));
+
+  const uuid = '01234567-89ab-4cde-8fab-0123456789ab';
+  const rutasInvalidas = [
+    '',
+    `nombre.pdf`,
+    `2026-10/nombre.pdf`,
+    `2026-10/${uuid}.exe`,
+    `2026-10/${uuid.toUpperCase()}.pdf`,
+    `2026-10/01234567-89ab-3cde-8fab-0123456789ab.pdf`,
+    `2026-10/${uuid}.pdf/otro.pdf`,
+    `2026-10\\..\\${uuid}.pdf`,
+    `%2e%2e/${uuid}.pdf`,
+    `2026-10/${uuid}.pdf\0`,
+  ];
+  assert.deepEqual(rutasInvalidas.map((ruta) => documentos.archivoDe(ruta)), rutasInvalidas.map(() => null));
 });

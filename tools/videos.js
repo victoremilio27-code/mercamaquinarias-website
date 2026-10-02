@@ -184,7 +184,11 @@ function archivoDe(rutaPublica) {
   if (!cruda.startsWith(`${RUTA_PUBLICA}/`)) return null;
 
   const relativa = cruda.slice(RUTA_PUBLICA.length + 1);
-  if (!relativa) return null;
+  /* Solo se aceptan nombres que pudo producir guardar. La validación
+     explícita evita que una normalización posterior convierta barras,
+     segmentos codificados o controles en una ruta distinta. */
+  if (!relativa || /[\\%]|\.\.|[\x00-\x1F\x7F]/.test(relativa)) return null;
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])\/[0-9a-f]{32}\.(?:mp4|webm)$/.test(relativa)) return null;
 
   const completa = path.resolve(CARPETA, relativa);
   if (completa !== CARPETA && !completa.startsWith(CARPETA + path.sep)) return null;

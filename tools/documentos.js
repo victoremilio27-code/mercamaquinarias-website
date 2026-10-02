@@ -45,7 +45,11 @@ function guardar(buffer) {
 
 function archivoDe(ruta) {
   const relativa = String(ruta || '');
-  if (!relativa || path.isAbsolute(relativa) || relativa.includes('\\')) return null;
+  /* Un documento válido siempre conserva el nombre UUID v4 que creó
+     guardar. Se rechazan los caracteres ambiguos antes de resolver. */
+  if (!relativa || path.isAbsolute(relativa)
+    || /[\\%]|\.\.|[\x00-\x1F\x7F]/.test(relativa)
+    || !/^\d{4}-(?:0[1-9]|1[0-2])\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:pdf|jpg|png|webp)$/.test(relativa)) return null;
   const completa = path.resolve(CARPETA, relativa);
   if (!completa.startsWith(CARPETA + path.sep) || !fs.existsSync(completa)) return null;
 
