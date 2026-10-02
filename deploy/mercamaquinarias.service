@@ -22,6 +22,8 @@ Environment=MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db
 Environment=MERCA_FOTOS=/var/lib/mercamaquinarias/fotos
 Environment=MERCA_VIDEOS=/var/lib/mercamaquinarias/videos
 Environment=MERCA_FACTURAS=/var/lib/mercamaquinarias/facturas
+# FICHA-01: documentos adjuntos a los anuncios (fuera del repositorio, como las fotos).
+Environment=MERCA_DOCUMENTOS=/var/lib/mercamaquinarias/documentos
 
 # Secretos: NO ponerlos aquí. Van en /etc/mercamaquinarias.env, con
 # permisos 600 y propietario root. Ver deploy/README.md.
