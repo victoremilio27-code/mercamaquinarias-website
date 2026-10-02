@@ -138,7 +138,15 @@ function leerCuerpo(req) {
       if (!trozos.length) return resolver({});
       const datos = Buffer.concat(trozos).toString('utf8');
       if (!datos) return resolver({});
-      try { resolver(JSON.parse(datos)); } catch { rechazar(Object.assign(new Error('JSON inválido'), { codigo: 400 })); }
+      try {
+        const cuerpo = JSON.parse(datos);
+        if (!cuerpo || Array.isArray(cuerpo) || typeof cuerpo !== 'object') {
+          return rechazar(Object.assign(new Error('El cuerpo debe ser un objeto JSON'), { codigo: 400 }));
+        }
+        resolver(cuerpo);
+      } catch (e) {
+        rechazar(e.codigo ? e : Object.assign(new Error('JSON inválido'), { codigo: 400 }));
+      }
     });
     req.on('error', rechazar);
   });
@@ -1484,7 +1492,7 @@ const registrarDealer = conSesion(async (req, res, ctx) => {
       },
     });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
 
   avisarSolicitudDealer(ctx.organizacion.id);
@@ -1512,7 +1520,7 @@ const subirFoto = conSesion(async (req, res, ctx) => {
     const miniatura = c.miniatura ? fotos.guardar(c.miniatura) : completa;
     return responder(res, 201, { completa, miniatura });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
 });
 
@@ -1551,7 +1559,7 @@ const subirVideo = conSesion(async (req, res, ctx) => {
     }
     return responder(res, 201, { url, poster, duracion: Number(c.duracion) || null });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
 });
 
@@ -1933,7 +1941,7 @@ const editarPublicidad = conAdmin(async (req, res, ctx, idPub) => {
   try {
     return responder(res, 200, { anuncio: db.actualizarPublicidad(idPub, datos) });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
 });
 
@@ -2029,7 +2037,7 @@ const editarFlota = conAdmin(async (req, res, ctx, idFlota) => {
   try {
     return responder(res, 200, { elemento: db.actualizarFlota(idFlota, datos) });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
 });
 
@@ -2215,7 +2223,7 @@ const previaLoteContador = conAdmin((req, res, ctx, mes) => {
   try {
     return responder(res, 200, { previa: lote.previa(mes) });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
 });
 
@@ -2231,7 +2239,7 @@ const descargarLoteContador = conAdmin((req, res, ctx, mes) => {
     });
     return res.end(paquete.zip);
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message,
+    return falloDe(res, e, 'lote del contador',
       e.codigo === 409 && Array.isArray(e.faltan) ? { faltan: e.faltan } : undefined);
   }
 });
@@ -2345,13 +2353,15 @@ function pagoDeTransferencia(res, idPago) {
   return pago;
 }
 
-const falloInterno = (res, e) => {
-  if (!e.codigo || e.codigo >= 500) {
-    console.error('pagos: fallo en la consola', e);
-    return fallo(res, 500, 'Error del servidor');
+const falloDe = (res, e, contexto = 'API', extra) => {
+  if (e && Number.isInteger(e.codigo) && e.codigo >= 400 && e.codigo <= 499) {
+    return fallo(res, e.codigo, e.message, extra);
   }
-  return fallo(res, e.codigo, e.message);
+  console.error(`${contexto}: error interno`, e);
+  return fallo(res, 500, 'Error del servidor');
 };
+
+const falloInterno = (res, e) => falloDe(res, e, 'pagos');
 
 const marcarTransferenciaRecibida = conAdminEnNombreDe('pago.transferencia_recibida', async (req, res, ctx, idPago) => {
   const c = await leerCuerpo(req);
@@ -2551,7 +2561,7 @@ const resolverSolicitud = conAdminEnNombreDe('dealer.resolver', async (req, res,
         };
       });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
 
   correo.enviarResolucionDealer({
@@ -2703,7 +2713,7 @@ const verificarOrganizacion = conAdminEnNombreDe('organizacion.verificar', async
     });
   } catch (e) {
     if (e.codigo === 404) return fallo(res, 404, 'Esa empresa no existe');
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
   return responder(res, 200, { verificada });
 });
@@ -2756,7 +2766,7 @@ const revisarSerie = conAdminEnNombreDe('anuncio.serie', async (req, res, ctx, i
       };
     });
   } catch (e) {
-    return fallo(res, e.codigo || 500, e.message);
+    return falloDe(res, e, 'API');
   }
   return responder(res, 200, { ok: true, resultado });
 });
@@ -5705,7 +5715,18 @@ const ESCRITURAS_ADMIN_PROPIAS = new Set([
   rechazarRecuperacion,   // la manda un visitante, no una organización; guarda resuelta_por
 ]);
 
+const verSalud = (req, res) => {
+  try {
+    db.abrir().prepare('SELECT 1').get();
+    return responder(res, 200, { ok: true }, { 'Cache-Control': 'no-store' });
+  } catch (e) {
+    console.error('salud: base no disponible', e);
+    return responder(res, 503, { ok: false }, { 'Cache-Control': 'no-store' });
+  }
+};
+
 const RUTAS = [
+  ['GET',  /^\/api\/salud$/,              verSalud],
   ['POST', /^\/api\/cuenta\/registro$/,     registro],
   ['POST', /^\/api\/cuenta\/entrar$/,       entrar],
   ['POST', /^\/api\/cuenta\/verificar$/,    verificar],
@@ -5917,6 +5938,13 @@ async function manejar(req, res, ruta) {
       if (codigo >= 500) console.error('API', ruta, e);
       return fallo(res, codigo, codigo >= 500 ? 'Error del servidor' : e.message);
     }
+  }
+  const permitidos = RUTAS
+    .filter(([, patron]) => patron.test(ruta))
+    .map(([metodo]) => metodo);
+  if (permitidos.length) {
+    return responder(res, 405, { error: 'Método no permitido' },
+      { Allow: [...new Set(permitidos)].join(', ') });
   }
   return fallo(res, 404, 'Ruta inexistente');
 }
