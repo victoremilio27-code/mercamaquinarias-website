@@ -1426,6 +1426,58 @@ const MIGRACIONES = [
        PRIMARY KEY (busqueda_id, anuncio_id)
      )`,
   ]],
+
+  /* FICHA-01 (tanda 5). Documentos adjuntos a un anuncio: informes de
+     inspección, manuales, facturas de mantenimiento. Hasta ahora un
+     anuncio solo admitía fotos y video, y sin esto no hay dónde colgar el
+     informe de la fase 14.
+
+     El archivo vive en disco (`MERCA_DOCUMENTOS`), no en la base: la base
+     guarda solo `ruta`, RELATIVA a esa carpeta, con un nombre que genera
+     el servidor. Los CHECK impiden que una ruta con «..» o absoluta llegue
+     a guardarse aunque falle la comprobación de arriba.
+
+     No se sirven como /fotos (carpeta pública): un documento de un
+     anuncio en borrador no lo puede leer nadie más que su dueño, así que
+     se descargan por una ruta de la API que mira el estado del anuncio.
+
+     Los topes (por archivo, por anuncio y total) están en código, en
+     `TOPES_DOCUMENTOS`, y no en CHECK: el disco del droplet manda y
+     cambiarlos no debe exigir una migración. Contrato completo en
+     `.planning/tanda5-contrato.md`. */
+  ['2026-10-documentos-anuncio', [
+    `CREATE TABLE IF NOT EXISTS documentos_anuncio (
+       id         TEXT PRIMARY KEY,
+       anuncio_id TEXT NOT NULL REFERENCES anuncios(id) ON DELETE CASCADE,
+       nombre     TEXT NOT NULL CHECK (length(nombre) BETWEEN 1 AND 120),
+       tipo       TEXT NOT NULL CHECK (tipo IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')),
+       bytes      INTEGER NOT NULL CHECK (bytes > 0),
+       ruta       TEXT NOT NULL UNIQUE
+                  CHECK (length(ruta) BETWEEN 1 AND 200 AND instr(ruta, '..') = 0
+                         AND substr(ruta, 1, 1) <> '/' AND instr(ruta, '\\') = 0),
+       subido_por TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
+       creado     TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_documentos_anuncio ON documentos_anuncio (anuncio_id)',
+  ]],
+
+  /* DEUDA-01 (#72). `sesiones.testigo` y `dispositivos.testigo` pasan a
+     guardar el HMAC del testigo (`huellaTestigo`), como ya hacían los
+     códigos y los enlaces «No fui yo». Antes, quien leyera una copia de
+     la base (un respaldo olvidado, un volcado) tenía en la mano la cookie
+     de todas las sesiones abiertas.
+
+     Las filas viejas guardan el testigo en claro y SQLite no sabe hacer
+     un HMAC, así que no se convierten: se borran. Cuesta que todo el que
+     tenga sesión abierta vuelva a entrar una vez (y confirme el equipo
+     con un código), y antes del lanzamiento eso son unas pocas cuentas
+     de prueba. Dejarlas no abría nada —la cookie en claro ya no casaría
+     con ninguna huella— pero quedarían en la base hasta caducar, que es
+     justo lo que este cambio quiere evitar. */
+  ['2026-10-testigos-hmac', [
+    'DELETE FROM sesiones',
+    'DELETE FROM dispositivos',
+  ]],
 ];
 
 function migrar() {
@@ -1722,6 +1774,24 @@ if (!process.env.MERCA_SECRETO) {
 
 const firmarCodigo = (codigo, correo) =>
   crypto.createHmac('sha256', SECRETO).update(`${correo}|${codigo}`).digest('hex');
+
+/* DEUDA-01 (#72). Lo que se guarda en `sesiones.testigo` y
+   `dispositivos.testigo`: el HMAC del testigo, nunca el testigo. La
+   cookie sigue llevando el testigo en claro; el servidor calcula la
+   huella y busca por ella.
+
+   La clase va dentro del HMAC para que la huella de una sesión no sirva
+   como huella de un equipo de confianza aunque alguien copie una fila de
+   una tabla a la otra. Solo 'sesion' y 'dispositivo': cualquier otra
+   cosa es un error de programación y lanza.
+
+   Cambiar MERCA_SECRETO cierra todas las sesiones y olvida todos los
+   equipos, igual que ya invalidaba los códigos en vuelo. */
+const CLASES_TESTIGO = ['sesion', 'dispositivo'];
+function huellaTestigo(clase, testigo) {
+  if (!CLASES_TESTIGO.includes(clase)) throw new Error(`huellaTestigo: clase desconocida «${clase}»`);
+  return crypto.createHmac('sha256', SECRETO).update(`testigo-${clase}|${String(testigo)}`).digest('hex');
+}
 
 /* Seis dígitos, con generación uniforme. Math.random no sirve: es
    predecible y aquí protege el acceso a una cuenta. */
@@ -4976,10 +5046,14 @@ function borrarAnuncio(idAnuncio, idOrg) {
     .all(idAnuncio);
   const videos = d.prepare('SELECT url, poster FROM anuncio_videos WHERE anuncio_id = ?')
     .all(idAnuncio);
+  /* Los documentos (FICHA-01) no se comparten entre anuncios —duplicar no
+     los copia—, así que no hace falta mirar si otro los usa. */
+  const documentos = d.prepare('SELECT ruta FROM documentos_anuncio WHERE anuncio_id = ?')
+    .all(idAnuncio).map((f) => f.ruta);
 
   d.prepare('BEGIN').run();
   try {
-    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio']) {
+    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio', 'documentos_anuncio']) {
       try { d.prepare(`DELETE FROM ${t} WHERE anuncio_id = ?`).run(idAnuncio); } catch (_) { /* tabla sin esa columna */ }
     }
     d.prepare('DELETE FROM anuncios WHERE id = ? AND organizacion_id = ?').run(idAnuncio, idOrg);
@@ -5009,6 +5083,7 @@ function borrarAnuncio(idAnuncio, idOrg) {
   return {
     fotos: [...rutasFotos].filter((r) => !enUso.has(r)),
     videos: rutasVideos.filter((r) => !enUso.has(r)),
+    documentos,
   };
 }
 
@@ -5057,7 +5132,10 @@ function eliminarCuenta(idUsuario) {
 
   const rutasFotos = new Set();
   const rutasVideos = new Set();
+  const rutasDocumentos = [];
   for (const idOrg of propias) {
+    d.prepare(`SELECT x.ruta FROM documentos_anuncio x JOIN anuncios a ON a.id = x.anuncio_id
+               WHERE a.organizacion_id = ?`).all(idOrg).forEach((f) => rutasDocumentos.push(f.ruta));
     d.prepare(`SELECT f.url, f.miniatura FROM anuncio_fotos f JOIN anuncios a ON a.id = f.anuncio_id
                WHERE a.organizacion_id = ?`).all(idOrg)
       .forEach((f) => { if (f.url) rutasFotos.add(f.url); if (f.miniatura) rutasFotos.add(f.miniatura); });
@@ -5083,7 +5161,7 @@ function eliminarCuenta(idUsuario) {
     for (const idOrg of propias) {
       const anuncios = d.prepare('SELECT id FROM anuncios WHERE organizacion_id = ?').all(idOrg);
       for (const { id } of anuncios) {
-        for (const tabla of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio', 'recordatorios']) {
+        for (const tabla of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio', 'recordatorios', 'documentos_anuncio']) {
           d.prepare(`DELETE FROM ${tabla} WHERE anuncio_id = ?`).run(id);
         }
       }
@@ -5147,6 +5225,7 @@ function eliminarCuenta(idUsuario) {
   return {
     fotos: [...rutasFotos].filter((r) => !enUso.has(r)),
     videos: [...rutasVideos].filter((r) => !enUso.has(r)),
+    documentos: rutasDocumentos,
   };
 }
 
@@ -6870,7 +6949,130 @@ const avanzarRevisionBusqueda = (idBusqueda, hasta) => abrir()
   .prepare('UPDATE busquedas_guardadas SET revisada_hasta = ? WHERE id = ? AND revisada_hasta < ?')
   .run(hasta, idBusqueda, hasta).changes > 0;
 
+/* ── Documentos del anuncio (FICHA-01, tanda 5) ─────────────── */
+
+/* Topes pensados para el disco del droplet: 512 MB con el 60 % ocupado
+   al planificar la fase 14, y las fotos, la base, los PDF de facturas y
+   los respaldos comparten ese disco. Un informe de inspección o un manual
+   escaneado caben en 4 MB; cuatro por anuncio cubren informe, manual,
+   facturas de mantenimiento y algo más. El total corta antes de llenar
+   el disco: una subida que lo pase se rechaza para todos (la API responde
+   507), y se sube con MERCA_DOCUMENTOS_TOPE_MB el día que el disco crezca. */
+const MB = 1024 * 1024;
+const TOPES_DOCUMENTOS = Object.freeze({
+  bytesPorArchivo: 4 * MB,
+  porAnuncio: 4,
+  bytesPorAnuncio: 10 * MB,
+  bytesTotal: (Number(process.env.MERCA_DOCUMENTOS_TOPE_MB) > 0
+    ? Number(process.env.MERCA_DOCUMENTOS_TOPE_MB) : 100) * MB,
+});
+const TIPOS_DOCUMENTO = Object.freeze(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+
+/* Lo que ve cualquiera: nunca la ruta en disco ni quién lo subió. */
+const documentoPublico = (f) => ({ id: f.id, nombre: f.nombre, tipo: f.tipo, bytes: f.bytes, creado: f.creado });
+
+/* El nombre que se enseña, no el del archivo en disco. Sin barras ni
+   caracteres de control: acaba en un Content-Disposition. */
+function nombreDocumento(nombre) {
+  const limpio = String(nombre || '').replace(/[\u0000-\u001f\u007f/\\]/g, ' ').replace(/\s+/g, ' ').trim();
+  return limpio.slice(0, 120) || 'Documento';
+}
+
+const bytesDocumentos = (d, idAnuncio) => idAnuncio
+  ? d.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM documentos_anuncio WHERE anuncio_id = ?').get(idAnuncio)
+  : d.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM documentos_anuncio').get();
+
+/* ¿Se puede subir un documento de este tipo y tamaño a este anuncio?
+   null si sí; si no, el código del motivo. La API la llama ANTES de
+   escribir el archivo en disco, para no escribir algo que luego se
+   rechaza; `agregarDocumento` lo vuelve a comprobar al insertar.
+
+   'no-existe' sirve igual para un anuncio ajeno: no se confirma que
+   exista. Un anuncio vendido o retirado sigue admitiendo documentos (el
+   dueño puede querer completar el historial); un borrador también. */
+function motivoSinDocumento({ idAnuncio, idOrg, tipo, bytes }) {
+  const d = abrir();
+  const suyo = d.prepare('SELECT 1 FROM anuncios WHERE id = ? AND organizacion_id = ?').get(idAnuncio, idOrg);
+  if (!suyo) return 'no-existe';
+  if (!TIPOS_DOCUMENTO.includes(tipo)) return 'tipo';
+  const n = Number(bytes);
+  if (!Number.isInteger(n) || n <= 0) return 'vacio';
+  if (n > TOPES_DOCUMENTOS.bytesPorArchivo) return 'tope-archivo';
+  const delAnuncio = bytesDocumentos(d, idAnuncio);
+  if (delAnuncio.n >= TOPES_DOCUMENTOS.porAnuncio) return 'tope-cantidad';
+  if (delAnuncio.b + n > TOPES_DOCUMENTOS.bytesPorAnuncio) return 'tope-anuncio';
+  if (bytesDocumentos(d).b + n > TOPES_DOCUMENTOS.bytesTotal) return 'tope-total';
+  return null;
+}
+
+/* Anota un documento YA escrito en disco. `ruta` es la relativa a
+   MERCA_DOCUMENTOS que devolvió el módulo de almacenamiento, y `tipo` el
+   que ese módulo dedujo de los primeros bytes, nunca el que mandó el
+   navegador. Devuelve `{ documento }` o `{ error }` con los mismos
+   códigos que `motivoSinDocumento`; con error, quien llama borra el
+   archivo que acaba de escribir. */
+function agregarDocumento({ idAnuncio, idOrg, idUsuario = null, nombre, tipo, bytes, ruta }) {
+  const motivo = motivoSinDocumento({ idAnuncio, idOrg, tipo, bytes });
+  if (motivo) return { error: motivo };
+  const fila = {
+    id: id(), anuncio_id: idAnuncio, nombre: nombreDocumento(nombre), tipo,
+    bytes: Number(bytes), ruta: String(ruta || ''), subido_por: idUsuario, creado: ahora(),
+  };
+  abrir().prepare(`INSERT INTO documentos_anuncio (id, anuncio_id, nombre, tipo, bytes, ruta, subido_por, creado)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(fila.id, fila.anuncio_id, fila.nombre, fila.tipo, fila.bytes, fila.ruta, fila.subido_por, fila.creado);
+  return { documento: documentoPublico(fila) };
+}
+
+/* La lista que pinta la ficha o el formulario de publicar. Mismo criterio
+   que `verAnuncio`: un borrador no existe para quien no es su dueño, y
+   entonces devuelve null (la API responde 404). `idOrg` es la
+   organización de quien mira, o null sin sesión. */
+function documentosDe(idAnuncio, idOrg = null) {
+  const d = abrir();
+  const a = d.prepare('SELECT estado, organizacion_id FROM anuncios WHERE id = ?').get(idAnuncio);
+  if (!a) return null;
+  if (a.estado === 'borrador' && (!idOrg || a.organizacion_id !== idOrg)) return null;
+  return d.prepare('SELECT * FROM documentos_anuncio WHERE anuncio_id = ? ORDER BY creado, id')
+    .all(idAnuncio).map(documentoPublico);
+}
+
+/* Para descargar: la fila CON la ruta, o null si quien mira no puede
+   verlo (mismo criterio que `documentosDe`) o el documento no es de ese
+   anuncio. Solo para la ruta de descarga: la ruta no sale nunca en JSON. */
+function documentoParaDescargar(idAnuncio, idDocumento, idOrg = null) {
+  const d = abrir();
+  const f = d.prepare(`SELECT x.*, a.estado, a.organizacion_id FROM documentos_anuncio x
+                       JOIN anuncios a ON a.id = x.anuncio_id
+                       WHERE x.id = ? AND x.anuncio_id = ?`).get(idDocumento, idAnuncio);
+  if (!f) return null;
+  if (f.estado === 'borrador' && (!idOrg || f.organizacion_id !== idOrg)) return null;
+  return { id: f.id, nombre: f.nombre, tipo: f.tipo, bytes: f.bytes, ruta: f.ruta };
+}
+
+/* Solo el dueño. Devuelve la ruta para que quien llama borre el archivo,
+   o null si no había nada que borrar (o no es suyo). */
+function borrarDocumento(idAnuncio, idDocumento, idOrg) {
+  const d = abrir();
+  const f = d.prepare(`SELECT x.ruta FROM documentos_anuncio x JOIN anuncios a ON a.id = x.anuncio_id
+                       WHERE x.id = ? AND x.anuncio_id = ? AND a.organizacion_id = ?`)
+    .get(idDocumento, idAnuncio, idOrg);
+  if (!f) return null;
+  d.prepare('DELETE FROM documentos_anuncio WHERE id = ?').run(idDocumento);
+  return f.ruta;
+}
+
+/* Lo que ocupan todos los documentos, para la consola y para la tarea
+   que algún día limpie archivos huérfanos. */
+const espacioDocumentos = () => {
+  const r = bytesDocumentos(abrir());
+  return { documentos: r.n, bytes: r.b, tope: TOPES_DOCUMENTOS.bytesTotal };
+};
+
 module.exports = {
+  /* FICHA-01: documentos del anuncio. #72: huella de los testigos. */
+  TOPES_DOCUMENTOS, TIPOS_DOCUMENTO, motivoSinDocumento, agregarDocumento, documentosDe,
+  documentoParaDescargar, borrarDocumento, espacioDocumentos, huellaTestigo,
   guardarBusqueda, busquedasDe, borrarBusqueda, darDeBajaBusqueda, testigoBajaBusqueda, busquedasActivas,
   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,

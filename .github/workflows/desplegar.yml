@@ -108,6 +108,8 @@ jobs:
         run: npm run cuenta:probar
       - name: Busquedas guardadas
         run: npm run busquedas:probar
+      - name: Documentos del anuncio
+        run: npm run documentos:probar
       - name: Telefono y SMS
         run: npm run telefono:probar
       - name: Contactos verificados
