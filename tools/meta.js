@@ -19,18 +19,38 @@
  * de este anuncio, y se sirve. El JavaScript sigue pintando la página
  * igual que antes; esto solo cambia lo que ve el rastreador.
  *
- * SOLO SE TOCAN LAS PÁGINAS CON PARÁMETRO. `equipo.html` a secas se
- * sirve tal cual, desde la caché y con su ETag: quien entra sin id no
- * está compartiendo nada.
+ * Las fichas se componen por petición porque dependen de la base. Las
+ * páginas fijas también reciben aquí su canonical, pero el servidor
+ * conserva el resultado por versión del archivo y calcula su ETag sobre
+ * ese HTML compuesto.
  */
 
 const db = require('./db');
+const { categoria } = require('../assets/taxonomia');
 
 const SITIO = (process.env.MERCA_SITIO || 'https://mercamaquinarias.com').replace(/\/+$/, '');
 
 /* La imagen de respaldo, la del paquete de marca. Es la que había antes
    en todas las páginas y sigue siendo lo correcto cuando no hay foto. */
 const IMAGEN_MARCA = `${SITIO}/brand_assets/img/og-1200x630.jpg`;
+
+/* Esta lista también alimenta el sitemap. Tener dos listas separadas ya
+   hizo que páginas indexables quedaran sin declarar en uno de los dos
+   sitios, por eso la ruta, prioridad y frecuencia viven juntas. */
+const PAGINAS_FIJAS = [
+  ['/', '1.0', 'daily'],
+  ['/equipos.html', '0.9', 'daily'],
+  ['/categorias.html', '0.7', 'weekly'],
+  ['/dealers.html', '0.7', 'weekly'],
+  ['/alquiler.html', '0.6', 'monthly'],
+  ['/importar.html', '0.6', 'monthly'],
+  ['/planes.html', '0.6', 'monthly'],
+  ['/contacto.html', '0.4', 'monthly'],
+  ['/estafas.html', '0.4', 'monthly'],
+  ['/legal.html', '0.3', 'yearly'],
+];
+
+const RUTAS_FIJAS = new Set(PAGINAS_FIJAS.map(([ruta]) => ruta));
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;')
@@ -156,9 +176,57 @@ function delDealer(slug) {
   };
 }
 
+function deCategoria(id) {
+  const encontrada = categoria(id);
+  if (!encontrada) return null;
+
+  const titulo = `${encontrada.nombre} en venta en República Dominicana | MercaMaquinarias`;
+  const descripcion = `Encuentra ${encontrada.nombre.toLowerCase()} en venta en República Dominicana en MercaMaquinarias.`;
+  const url = `${SITIO}/equipos.html?categoria=${encodeURIComponent(id)}`;
+  return { titulo, descripcion, imagen: IMAGEN_MARCA, url, tipo: 'website' };
+}
+
+function dePaginaFija(ruta) {
+  const publica = ruta === '/index.html' ? '/' : ruta;
+  if (!RUTAS_FIJAS.has(publica)) return null;
+
+  const resultado = { url: `${SITIO}${publica}`, fijo: true };
+  if (publica === '/') {
+    resultado.jsonld = {
+      '@context': 'https://schema.org',
+      '@graph': [
+        {
+          '@type': 'Organization',
+          '@id': `${SITIO}/#organizacion`,
+          name: 'MercaMaquinarias',
+          url: `${SITIO}/`,
+          logo: IMAGEN_MARCA,
+          email: process.env.MERCA_SOPORTE || 'ayuda@mercamaquinarias.com',
+        },
+        {
+          '@type': 'WebSite',
+          '@id': `${SITIO}/#sitio`,
+          name: 'MercaMaquinarias',
+          url: `${SITIO}/`,
+          potentialAction: {
+            '@type': 'SearchAction',
+            target: `${SITIO}/equipos.html?q={search_term_string}`,
+            'query-input': 'required name=search_term_string',
+          },
+        },
+      ],
+    };
+  }
+  return resultado;
+}
+
 /* Qué metadatos le tocan a esta ruta, si es que le toca alguno. */
 function para(ruta, consulta) {
   try {
+    if ([...consulta.keys()].length === 0) return dePaginaFija(ruta);
+    if (ruta === '/equipos.html'
+      && [...consulta.keys()].length === 1
+      && consulta.has('categoria')) return deCategoria(consulta.get('categoria'));
     if (ruta === '/equipo.html' && consulta.get('id')) return delAnuncio(consulta.get('id'));
     if (ruta === '/dealer.html' && consulta.get('d')) return delDealer(consulta.get('d'));
   } catch (e) {
@@ -175,21 +243,30 @@ function para(ruta, consulta) {
 function aplicar(html, meta) {
   if (!meta) return html;
 
-  const reemplazos = [
+  const reemplazos = [];
+  if (meta.titulo) reemplazos.push(
     [/<title>[\s\S]*?<\/title>/i, `<title>${esc(meta.titulo)}</title>`],
-    [/<meta name="description" content="[^"]*">/i,
-      `<meta name="description" content="${esc(meta.descripcion)}">`],
     [/<meta property="og:title" content="[^"]*">/i,
       `<meta property="og:title" content="${esc(meta.titulo)}">`],
+  );
+  if (meta.descripcion) reemplazos.push(
+    [/<meta name="description" content="[^"]*">/i,
+      `<meta name="description" content="${esc(meta.descripcion)}">`],
     [/<meta property="og:description" content="[^"]*">/i,
       `<meta property="og:description" content="${esc(meta.descripcion)}">`],
+  );
+  if (meta.url) reemplazos.push(
     [/<meta property="og:url" content="[^"]*">/i,
       `<meta property="og:url" content="${esc(meta.url)}">`],
+  );
+  if (meta.imagen) reemplazos.push(
     [/<meta property="og:image" content="[^"]*">/i,
       `<meta property="og:image" content="${esc(meta.imagen)}">`],
+  );
+  if (meta.tipo) reemplazos.push(
     [/<meta property="og:type" content="[^"]*">/i,
       `<meta property="og:type" content="${esc(meta.tipo)}">`],
-  ];
+  );
 
   /* Las páginas declaran 1200×630, que es la medida de la imagen de
      marca. Con la foto de un equipo o el logotipo de un dealer esas
@@ -205,12 +282,21 @@ function aplicar(html, meta) {
   let salida = html;
   for (const [patron, con] of reemplazos) salida = salida.replace(patron, con);
 
+  /* aplicar() también se usa sobre HTML ya compuesto en pruebas y
+     herramientas. Retirar los insertados antes impide acumular etiquetas
+     aunque por error se componga la misma página dos veces. */
+  salida = salida
+    .replace(/<link rel="canonical" href="[^"]*">\s*/gi, '')
+    .replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>\s*/gi, '');
+
   /* El canonical y los datos estructurados se insertan antes de cerrar
      la cabecera, porque no existen en el archivo. */
   const extra = [
-    `<link rel="canonical" href="${esc(meta.url)}">`,
-    `<script type="application/ld+json">${jsonEnScript(meta.jsonld)}</script>`,
-  ].join('\n');
+    meta.url ? `<link rel="canonical" href="${esc(meta.url)}">` : null,
+    meta.jsonld
+      ? `<script type="application/ld+json">${jsonEnScript(meta.jsonld)}</script>`
+      : null,
+  ].filter(Boolean).join('\n');
 
   return salida.replace('</head>', `${extra}\n</head>`);
 }
@@ -225,20 +311,7 @@ function aplicar(html, meta) {
  * Solo entra lo que un visitante puede ver: anuncios activos y perfiles
  * de dealer publicados. Nada con sesión. */
 function sitemap() {
-  const paginas = [
-    ['/', '1.0', 'daily'],
-    ['/equipos.html', '0.9', 'daily'],
-    ['/categorias.html', '0.7', 'weekly'],
-    ['/dealers.html', '0.7', 'weekly'],
-    ['/alquiler.html', '0.6', 'monthly'],
-    ['/importar.html', '0.6', 'monthly'],
-    ['/planes.html', '0.6', 'monthly'],
-    ['/contacto.html', '0.4', 'monthly'],
-    ['/estafas.html', '0.4', 'monthly'],
-    ['/legal.html', '0.3', 'yearly'],
-  ];
-
-  const urls = paginas.map(([ruta, prioridad, frecuencia]) => ({
+  const urls = PAGINAS_FIJAS.map(([ruta, prioridad, frecuencia]) => ({
     loc: `${SITIO}${ruta}`, prioridad, frecuencia, fecha: null,
   }));
 
