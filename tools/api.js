@@ -15,6 +15,7 @@ const db = require('./db');
 const correo = require('./correo');
 const fotos = require('./fotos');
 const videos = require('./videos');
+const documentos = require('./documentos');
 const chat = require('./chat');
 
 /* El cálculo del importe es el MISMO módulo que carga el navegador.
@@ -37,6 +38,7 @@ const cardnet = require('./cardnet');
 const lote = require('./lote');
 const alertas = require('./alertas');
 const crypto = require('crypto');
+const fs = require('fs');
 
 /* CardNet, igual que la transferencia: si alguien lo pidió (`lab` o
    `produccion`) y aun así no está encendido, es porque falta una llave o
@@ -955,6 +957,7 @@ const eliminarCuentaConSesion = conSesion(async (req, res, ctx) => {
   if (r.bloqueo) return fallo(res, 409, MENSAJES_BLOQUEO_ELIMINAR[r.bloqueo] || 'No se puede eliminar esta cuenta.');
   r.fotos.forEach((ruta) => { try { fotos.borrar(ruta); } catch (_) { /* ya no estaba */ } });
   r.videos.forEach((ruta) => { try { videos.borrar(ruta); } catch (_) { /* ya no estaba */ } });
+  r.documentos.forEach((ruta) => { try { documentos.borrar(ruta); } catch (_) { /* ya no estaba */ } });
 
   // Las sesiones ya se borraron con la cuenta; solo falta vaciar la cookie.
   return responder(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Max-Age=0` });
@@ -5232,11 +5235,102 @@ const eliminarAnuncio = conSesion((req, res, ctx, idAnuncio) => {
      relacionara con nada. */
   rutas.fotos.forEach((r) => { try { fotos.borrar(r); } catch (_) { /* ya no estaba */ } });
   rutas.videos.forEach((r) => { try { videos.borrar(r); } catch (_) { /* ya no estaba */ } });
+  rutas.documentos.forEach((r) => { try { documentos.borrar(r); } catch (_) { /* ya no estaba */ } });
 
   return responder(res, 200, {
     ok: true,
     membresias: db.suscripcionesDe(ctx.organizacion.id),
   });
+});
+
+/* ── Documentos adjuntos a anuncios (FICHA-01) ─────────── */
+
+const ESTADO_DOCUMENTO = {
+  'no-existe': [404, 'Ese anuncio no es suyo o no existe.'],
+  tipo: [415, 'Solo se admiten documentos PDF e imágenes JPG, PNG o WebP.'],
+  vacio: [400, 'El archivo está vacío.'],
+  'tope-archivo': [413, `El archivo pasa de ${db.TOPES_DOCUMENTOS.bytesPorArchivo / 1024 / 1024} MB.`],
+  'tope-cantidad': [409, `Cada anuncio admite hasta ${db.TOPES_DOCUMENTOS.porAnuncio} documentos.`],
+  'tope-anuncio': [409, `Los documentos del anuncio pasan de ${db.TOPES_DOCUMENTOS.bytesPorAnuncio / 1024 / 1024} MB.`],
+  'tope-total': [507, `No queda espacio para documentos (tope de ${db.TOPES_DOCUMENTOS.bytesTotal / 1024 / 1024} MB).`],
+};
+
+function falloDocumento(res, motivo) {
+  const [codigo, mensaje] = ESTADO_DOCUMENTO[motivo] || [500, 'Error del servidor'];
+  return responder(res, codigo, { error: mensaje, motivo });
+}
+
+function bytesDeDocumento(dataUrl) {
+  const texto = String(dataUrl || '');
+  const marca = ';base64,';
+  const corte = texto.indexOf(marca);
+  if (!texto.startsWith('data:') || corte < 0) return Buffer.alloc(0);
+  return Buffer.from(texto.slice(corte + marca.length), 'base64');
+}
+
+const subirDocumento = conSesion(async (req, res, ctx, idAnuncio) => {
+  if (!db.permitir(`documentos:${ctx.usuario.id}`, 20, 60)) {
+    return fallo(res, 429, 'Ha subido demasiados documentos. Espere un rato.');
+  }
+  const cuerpo = await leerCuerpo(req);
+  const buffer = bytesDeDocumento(cuerpo.archivo);
+  const firma = documentos.tipoDe(buffer);
+  const motivo = db.motivoSinDocumento({
+    idAnuncio, idOrg: ctx.organizacion.id,
+    /* La base comprueba el tipo antes del tamaño. Para un cuerpo vacío
+       se usa un tipo permitido y así devuelve el motivo preciso «vacío». */
+    tipo: firma ? firma.mime : (buffer.length ? null : 'application/pdf'), bytes: buffer.length,
+  });
+  if (motivo) return falloDocumento(res, motivo);
+
+  const guardado = documentos.guardar(buffer);
+  let resultado;
+  try {
+    resultado = db.agregarDocumento({
+      idAnuncio, idOrg: ctx.organizacion.id, idUsuario: ctx.usuario.id,
+      nombre: cuerpo.nombre, tipo: guardado.tipo, bytes: guardado.bytes, ruta: guardado.ruta,
+    });
+  } catch (error) {
+    documentos.borrar(guardado.ruta);
+    throw error;
+  }
+  if (resultado.error) {
+    documentos.borrar(guardado.ruta);
+    return falloDocumento(res, resultado.error);
+  }
+  return responder(res, 201, { documento: resultado.documento });
+});
+
+function listarDocumentos(req, res, ctx, idAnuncio) {
+  const idOrg = !!ctx && ctx.organizacion ? ctx.organizacion.id : null;
+  const lista = db.documentosDe(idAnuncio, idOrg);
+  if (lista === null) return fallo(res, 404, 'Ese anuncio no existe.');
+  return responder(res, 200, { documentos: lista, topes: db.TOPES_DOCUMENTOS });
+}
+
+function nombreParaCabecera(nombre) {
+  return encodeURIComponent(nombre).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function descargarDocumento(req, res, ctx, idAnuncio, idDocumento) {
+  const idOrg = !!ctx && ctx.organizacion ? ctx.organizacion.id : null;
+  const documento = db.documentoParaDescargar(idAnuncio, idDocumento, idOrg);
+  const archivo = documento && documentos.archivoDe(documento.ruta);
+  if (!documento || !archivo) return fallo(res, 404, 'Ese documento no existe.');
+  res.writeHead(200, {
+    'Content-Type': documento.tipo,
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `inline; filename*=UTF-8''${nombreParaCabecera(documento.nombre)}`,
+    'Cache-Control': 'private, max-age=300',
+  });
+  return res.end(fs.readFileSync(archivo));
+}
+
+const eliminarDocumento = conSesion((req, res, ctx, idAnuncio, idDocumento) => {
+  const ruta = db.borrarDocumento(idAnuncio, idDocumento, ctx.organizacion.id);
+  if (ruta === null) return fallo(res, 404, 'Ese documento no existe.');
+  documentos.borrar(ruta);
+  return responder(res, 200, { ok: true });
 });
 
 /* Motor y transmisión de un anuncio ya publicado.
@@ -5705,6 +5799,11 @@ const RUTAS = [
   ['GET',  /^\/api\/borradores\/([\w-]+)$/, verBorrador],
   ['PUT',  /^\/api\/borradores\/([\w-]+)$/, guardarBorradorApi],
 
+  /* Más específicas que ver/borrar el anuncio completo. */
+  ['POST', /^\/api\/anuncios\/([\w-]+)\/documentos$/, subirDocumento],
+  ['GET', /^\/api\/anuncios\/([\w-]+)\/documentos$/, listarDocumentos],
+  ['GET', /^\/api\/anuncios\/([\w-]+)\/documentos\/([\w-]+)$/, descargarDocumento],
+  ['DELETE', /^\/api\/anuncios\/([\w-]+)\/documentos\/([\w-]+)$/, eliminarDocumento],
   ['GET',  /^\/api\/anuncios\/([\w-]+)$/, verAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/plan$/, cambiarPlanDeAnuncio],
   ['PATCH', /^\/api\/anuncios\/([\w-]+)\/tren-motriz$/, editarTrenMotriz],
