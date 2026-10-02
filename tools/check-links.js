@@ -11,6 +11,7 @@ const path = require('path');
 const puppeteer = require('puppeteer');
 
 const RAIZ = path.resolve(__dirname, '..');
+const DOMINIO_PRODUCCION = 'mercamaquinarias.com';
 
 const PAGINAS = [
   'index.html', 'equipos.html', 'equipo.html', 'categorias.html',
@@ -32,17 +33,48 @@ const ESPERADO = {
   'dealers.html': ['#dealersLista'],
 };
 
+/* Empieza vacía: cada excepción futura debe explicar qué dato o sesión crea el ancla. */
+const ANCLAS_PERMITIDAS = new Set([]);
+
 function leerBase(argv) {
   const i = argv.indexOf('--base');
   return i >= 0 ? argv[i + 1] : 'http://127.0.0.1:8080';
 }
 
+function rutaLocal(url) {
+  let ruta;
+  try {
+    ruta = decodeURIComponent(new URL(url).pathname);
+  } catch (_) {
+    return null;
+  }
+  if (ruta === '/') ruta = '/index.html';
+  const archivo = path.resolve(RAIZ, '.' + ruta);
+  return archivo.startsWith(RAIZ + path.sep) ? archivo : null;
+}
+
+async function obtener(url) {
+  try {
+    const respuesta = await fetch(url);
+    return { estado: respuesta.status, texto: await respuesta.text() };
+  } catch (_) {
+    return { estado: 'sin respuesta', texto: '' };
+  }
+}
+
 async function main() {
   const base = leerBase(process.argv.slice(2)).replace(/\/$/, '');
+  const origenBase = new URL(base).origin;
   const navegador = await puppeteer.launch({ headless: true });
 
   const problemas = [];
   const destinos = new Set();
+  const anclas = [];
+  const identificadores = new Map();
+  let anclasComprobadas = 0;
+  let recursosComprobados = 0;
+  let paginasMapaComprobadas = 0;
+  let hrefsComprobados = 0;
 
   for (const pagina of PAGINAS) {
     const p = await navegador.newPage();
@@ -71,19 +103,99 @@ async function main() {
         .filter((h) => h && h.startsWith('#') && !document.getElementById(h.slice(1))));
     [...new Set(rotos)].forEach((h) => problemas.push(`${pagina}: icono sin símbolo ${h}`));
 
-    // Enlaces internos.
-    const hrefs = await p.$$eval('a[href]', (as) => as.map((a) => a.getAttribute('href')));
-    hrefs.forEach((h) => {
-      // Las rutas de /api no son páginas: unas devuelven JSON y otras
-      // redirigen fuera del sitio, como el contador de clics de la
-      // publicidad. Comprobarlas aquí solo genera falsos positivos.
-      if (!h || h.startsWith('#') || h.startsWith('/api/')
-        || /^(https?:|mailto:|tel:)/.test(h)) return;
+    const datos = await p.evaluate(() => ({
+      url: location.href,
+      identificadores: [...document.querySelectorAll('[id], [name]')]
+        .flatMap((el) => [el.id, el.getAttribute('name')]).filter(Boolean),
+      hrefs: [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')),
+      recursos: [...document.querySelectorAll(
+        'link[rel~="icon"][href], link[rel="stylesheet"][href], script[src], meta[property="og:image"][content]',
+      )].map((el) => ({
+        valor: el.getAttribute('href') || el.getAttribute('src') || el.getAttribute('content'),
+      })),
+    }));
+    identificadores.set(new URL(datos.url).href.split('#')[0], new Set(datos.identificadores));
+
+    for (const h of datos.hrefs) {
+      hrefsComprobados++;
+      if (h && /^javascript:/i.test(h.trim())) {
+        problemas.push(`${pagina}: enlace javascript: ${h}`);
+        continue;
+      }
+      if (!h || h === '#' || h === '#top' || h.startsWith('/api/')
+        || /^(https?:|mailto:|tel:)/i.test(h)) continue;
       destinos.add(h.split('#')[0].split('?')[0]);
-    });
+    }
+
+    for (const h of datos.hrefs) {
+      if (!h || h === '#' || h === '#top' || /^javascript:/i.test(h.trim())) continue;
+      let url;
+      try { url = new URL(h, datos.url); } catch (_) { continue; }
+      if (url.origin !== origenBase || !url.hash) continue;
+      let fragmento;
+      try { fragmento = decodeURIComponent(url.hash.slice(1)); } catch (_) { continue; }
+      const clave = `${url.pathname}${url.search}#${fragmento}`;
+      if (!fragmento || fragmento === 'top' || ANCLAS_PERMITIDAS.has(clave)) continue;
+      anclas.push({ origen: pagina, destino: url.href.split('#')[0], fragmento });
+    }
+
+    for (const recurso of datos.recursos) {
+      let url;
+      try { url = new URL(recurso.valor, datos.url); } catch (_) { continue; }
+      if (url.hostname === DOMINIO_PRODUCCION) url = new URL(url.pathname + url.search, base);
+      if (url.origin !== origenBase) continue;
+      recursosComprobados++;
+      const archivo = rutaLocal(url.href);
+      if (!archivo || !fs.existsSync(archivo)) {
+        problemas.push(`${pagina}: recurso de cabecera no existe — ${url.pathname}`);
+      }
+      const respuesta = await obtener(url.href);
+      if (respuesta.estado !== 200) {
+        problemas.push(`${pagina}: recurso de cabecera ${url.pathname} — HTTP ${respuesta.estado}`);
+      }
+    }
 
     await p.close();
     console.log(`ok   ${pagina}`);
+  }
+
+  for (const ancla of anclas) {
+    anclasComprobadas++;
+    if (!identificadores.has(ancla.destino)) {
+      const p = await navegador.newPage();
+      const respuesta = await p.goto(ancla.destino, { waitUntil: 'networkidle0', timeout: 45000 }).catch(() => null);
+      const ids = respuesta && respuesta.status() === 200
+        ? await p.$$eval('[id], [name]', (els) => els
+          .flatMap((el) => [el.id, el.getAttribute('name')]).filter(Boolean))
+        : [];
+      identificadores.set(ancla.destino, new Set(ids));
+      await p.close();
+    }
+    if (!identificadores.get(ancla.destino).has(ancla.fragmento)) {
+      problemas.push(`${ancla.origen}: ancla #${ancla.fragmento} no existe en ${new URL(ancla.destino).pathname}`);
+    }
+  }
+
+  const mapa = await obtener(`${base}/sitemap.xml`);
+  if (mapa.estado !== 200) {
+    problemas.push(`mapa del sitio: HTTP ${mapa.estado}`);
+  } else {
+    const ubicaciones = [...mapa.texto.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)]
+      .map((coincidencia) => coincidencia[1].replace(/&amp;/g, '&'));
+    for (const ubicacion of ubicaciones) {
+      let url;
+      try { url = new URL(ubicacion); } catch (_) {
+        problemas.push(`mapa del sitio: dirección inválida — ${ubicacion}`);
+        continue;
+      }
+      if (url.search) continue;
+      paginasMapaComprobadas++;
+      const local = new URL(url.pathname, base);
+      const respuesta = await obtener(local.href);
+      if (respuesta.estado !== 200) {
+        problemas.push(`mapa del sitio: ${url.pathname} — HTTP ${respuesta.estado}`);
+      }
+    }
   }
 
   await navegador.close();
@@ -95,6 +207,10 @@ async function main() {
   });
 
   console.log(`\n${destinos.size} destinos internos distintos`);
+  console.log(`${anclasComprobadas} anclas internas comprobadas`);
+  console.log(`${recursosComprobados} recursos de cabecera comprobados`);
+  console.log(`${paginasMapaComprobadas} páginas del mapa del sitio comprobadas`);
+  console.log(`${hrefsComprobados} href comprobados contra javascript:`);
   if (problemas.length) {
     console.log(`\n${problemas.length} problema(s):`);
     problemas.forEach((p) => console.log('  · ' + p));
