@@ -37,6 +37,7 @@
     "pdf:puro": "node --test tools/pdf.prueba.js",
     "renovacion:probar": "node tools/probar-renovacion.js",
     "recordatorios:probar": "node tools/probar-recordatorios.js",
+    "entorno:puro": "node --test tools/entorno.prueba.js",
     "capacidad:probar": "node tools/probar-capacidad.js",
     "cardnet:probar": "node tools/probar-cardnet.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
