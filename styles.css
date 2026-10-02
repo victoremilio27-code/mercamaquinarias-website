@@ -291,6 +291,10 @@ main { padding-block: 16px 40px; }
    o la ayuda caería en la columna estrecha del rótulo. */
 .campo > .campo__rotulo { font-size: 12.5px; font-weight: 600; color: var(--gris-acero); align-self: start; }
 .campo > .campo-v__ayuda { grid-column: 2; margin-top: -4px; }
+/* En la columna de filtros el campo es de una sola columna. Con
+   `grid-column: 2` la nota de la tasa abria una segunda columna implicita
+   y el rotulo "Precio RD$" quedaba tapado por los selectores. */
+.fila--resultados .campo > .campo-v__ayuda { grid-column: 1 / -1; }
 
 .rango { display: flex; align-items: center; gap: 7px; }
 .rango span { font-size: 12px; color: var(--gris-acero); flex: none; }
@@ -3789,6 +3793,17 @@ main { position: relative; }
   @media (prefers-reduced-motion: reduce) {
     .fila--resultados > .panel--filtros:first-child { transition: none; }
   }
+}
+
+@media (max-width: 420px) {
+  /* En el cajón estrecho, el rótulo de precio necesita su propia fila:
+     si conserva la columna de 88 px, los dos selectores lo cubren. */
+  .campo--rango > label[for="f-precio1"],
+  .campo--rango > label[for="f-precio1"] ~ .rango,
+  .campo--rango > label[for="f-precio1"] ~ .campo-v__ayuda {
+    grid-column: 1 / -1;
+  }
+  .campo--rango > label[for="f-precio1"] ~ .rango { margin-top: -5px; }
 }
 
 /* Bloquea el fondo mientras hay un panel abierto encima. */
