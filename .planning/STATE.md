@@ -42,55 +42,39 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
-**Estado al cerrar el chat del 2026-10-01 (vuelta de la tanda 3):** en producción las tandas 1 y 2 (PR #84, #87),
-#60/#71 (PR #92), #59 (PR #94), #58 (PR #88, migración `2026-10-dibujo-factura`, con el respaldo de Victor) y la
-**tanda 3 (PR #98):** #61 rutas del paquete, #62 selector de la consola, #91 Formato 607 dentro del ZIP (revisado
-línea a línea, solo `tools/lote.js`), #95 `assets/especificaciones.js`, #96 `tools/alertas.js`, #90 interfaz de
-«Eliminar mi cuenta» y **#89 hecho por Claude** (`POST /api/cuenta/eliminar` + `db.eliminarCuenta`: anonimiza en
-una transacción; la huella SHA-256 de `facturas`/`pagos`/`pagos_eventos` no cambia; 409 admin / propietario con
-más miembros / pago pendiente; 403 clave mala). Comprobar su «Sitio arriba» en el job `desplegar` si no consta abajo.
-**PR #99 (pasos 2 de las fases 15 y 16) está LISTO y NO se fusiona hasta que Victor confirme un respaldo
-verificado** (trae las migraciones `2026-10-especificaciones` y `2026-10-guardar-busquedas`; pedido en #79).
-Contrato en `tools/probar-busquedas.js` (31 comprobaciones). El enlace de baja de una alerta es el id firmado con
-`MERCA_SECRETO` (`db.testigoBajaBusqueda`): no se guarda nada en claro.
-**En Codex ahora (7, despachados a la vez):** fase 15 → #100 API de especificaciones (`tools/api.js` y escrituras de
-`db.js`), #101 formulario de publicar, #102 ficha, #103 filtros del catálogo (`filtrosCatalogo`, `alertas.js`,
-`equipos.html`); fase 16 → #104 rutas `/api/busquedas` (`tools/api.js`), #105 interfaz (`assets/alertas.js` nuevo,
-panel, `alertas.html`), #106 correo y tarea diaria `alertas`. Los que necesitan las columnas nuevas (#100, #103,
-#104, #106) aplican antes `.planning/parches/paso2-db.patch`, que es el commit de `db.js` de #99 (Codex no puede
-bajar ramas; por eso va como archivo en `main`), y entregan solo sus commits encima. Choques esperables al aplicar:
-`tools/api.js` (#100, #104), `assets/app.js` (#102 detalle, #103 catálogo), `tools/auditar-flujos.js` (#101,
-#105), `package.json` y CI: se resuelven a mano conservando las dos partes. **Para aplicarlos, primero el commit
-de #99** (o la rama `claude/15-16-paso2`) y después los parches. Si #99 sigue sin fusionar, la tanda 4 sale en un
-PR encima de #99 y se fusionan juntos cuando Victor dé el respaldo.
-**De Claude:** #72 (HMAC de testigos, migración), #73 (respaldo antes de migrar: haría innecesario pedirle el
-respaldo a Victor en cada migración, conviene hacerlo pronto), #65/#66 (CardNet), #76 (partir `db.js`/`api.js`,
-el último, bloqueado). #74 cerrado por #89 y #90.
-**Lecciones de esta vuelta:** (1) las auditorías que escribe Codex no se han ejecutado nunca: la de #90 usaba
-`clickCount: 3`, que no selecciona en este puppeteer, y fallaba; correrlas siempre aquí antes de publicar; (2) el
-esquema tiene columnas NOT NULL que un issue puede pedir poner a NULL (`cambios_correo.anterior`,
-`solicitudes_recuperacion.nombre`, `metodos_pago.token`…): mirar el `CREATE TABLE` antes de escribir el contrato;
-(3) `probar-cardnet.js` exige que las migraciones posteriores a `2026-10-cardnet` vayan detrás en orden
-alfabético: los nombres nuevos de octubre tienen que ser mayores que «cardnet»; (4) en la nube el repositorio es LF
-(el CRLF es solo de la copia de Windows): no meter `\r` con `sed`.
+**Estado al cerrar el chat del 2026-10-02 (vuelta de la tanda 4):** en producción todo hasta la tanda 4 (PR #108,
+que llevaba dentro #99): fases 15 y 16 completas en código. Migraciones `2026-10-especificaciones` y
+`2026-10-guardar-busquedas` aplicadas tras el respaldo de Victor (`/var/backups/mercamaquinarias/antes-busquedas.db`,
+976 KB, `integrity_check` = ok, 2026-10-02 00:20; conservarlo unos días). Antes: tanda 3 (PR #98: lote del
+contador con 607, «Eliminar mi cuenta» #89/#90, módulos puros de #95/#96), #58 (PR #88) y las tandas 1 y 2.
+**Fase 15:** especificaciones e implementos por tipo de máquina al publicar (#101), en la ficha (#102), validados en
+la API (#100) y filtrables en el catálogo con `e_<id>_min/max` e `implemento` (#103, mismo criterio en
+`alertas.coincide`). **Fase 16:** «Guardar esta búsqueda», «Mis alertas» en el panel, `alertas.html` para la baja
+por POST (#104, #105) y la tarea diaria `alertas`, idempotente, dentro de la tanda de `tools/tareas.js` (#106).
+Correcciones de Claude al recoger: `assets/alertas.js` no guardaba los filtros técnicos, el correo enseñaba el id
+de la marca y los rangos de especificaciones salían sin estilo (`styles.css`).
+**Cola de Codex: VACÍA.** Solo queda #76 (`codex`, bloqueado: partir `db.js`/`api.js`, el último).
+**De Claude:** #73 (respaldo automático antes de migrar: así no hay que pedirle el respaldo a Victor en cada
+migración; conviene el primero), #72 (HMAC de testigos, migración), #65/#66 (CardNet). Fuera de fase: la fila de
+precio del cajón de filtros a 390 px tapa su etiqueta (ya estaba en producción; quedó como tarea sugerida).
+**Lecciones de esta vuelta:** (1) las tareas en paralelo contra un contrato se pierden lo que hace la otra: #105
+no sabía de los filtros de #103; al recoger, cruzar las tareas que comparten datos; (2) mirar a ojo SIEMPRE lo
+visual de Codex, aunque el CI esté verde: la auditoría no ve un campo sin estilo; (3) el parche de base como
+archivo en `.planning/parches/` funcionó: Codex lo aplicó y entregó solo sus commits; (4) un PR que contiene a
+otro se fusiona solo: GitHub marca el de dentro como fusionado y hay un solo despliegue.
 **Instrucción de Victor (2026-10-01): a Codex se le da la MAYOR cantidad posible de tareas en paralelo.** En cada
-vuelta, tras publicar: encargar todos los issues `codex` listos que no compartan archivos de código (los choques
-en `package.json` y en el flujo de CI se resuelven al aplicar); y si quedan menos de ~6 listos, hacer en ese mismo
-chat la tanda de planificación necesaria: convertir issues `claude` de diseño y fases del ROADMAP en issues `codex`
-autocontenidos con la plantilla de siempre, escribiendo antes las pruebas cuando sea fiscal. Las migraciones y lo
-que toca producción siguen siendo de Claude.
-**Trabajo de Claude para el próximo chat:** recoger los 7 de Codex en `codex/tanda-4` (desde `claude/15-16-paso2`
-si #99 no está fusionado); correr TODA la batería y las auditorías con el sitio arrancado, y mirar a ojo el
-formulario, la ficha, los filtros y «Mis alertas» a 390 px en los dos temas; fusionar #99 si Victor ya dio el
-respaldo. Para la cola siguiente quedan pocos `codex`: planificar la fase 14 si Victor contestó la pregunta 9 de #79
-(personas y protocolo de inspección), o adelantar #73 y #72. Notas: `db.validarMes` (de #69) duplica a
-`lote.validarMes` (de #56); unificarlos crea un `require` circular (`lote.js` carga `db.js`), así que se resuelve al
-partir los archivos en #76. Codex corre Node 24.21.
-Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`; nuevo: **el respaldo para #99**; y si «Eliminar
-mi cuenta» devuelve la parte proporcional de una membresía: por defecto no, y la interfaz dice «Perderá los días
-que le quedan de su plan»).
+vuelta, tras publicar: encargar todos los issues `codex` listos que no compartan archivos de código, y si quedan
+menos de ~6, planificar en ese mismo chat los siguientes (issues `claude` de diseño y fases del ROADMAP),
+escribiendo antes las pruebas cuando sea fiscal. Las migraciones y lo que toca producción siguen siendo de Claude.
+**Trabajo de Claude para el próximo chat:** llenar la cola de Codex. Candidatos: la fase 14 si Victor contestó la
+pregunta 9 de #79 (personas y protocolo de inspección; FICHA-01, documentos en el anuncio, se puede planificar ya
+porque no depende del protocolo), y #73 / #72 (la migración es de Claude, pero las pruebas y lo mecánico se pueden
+delegar). Notas: `db.validarMes` (de #69) duplica a `lote.validarMes` (de #56); se resuelve al partir los archivos
+en #76. Codex corre Node 24.21.
+Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`; la pregunta 9 sobre la inspección; y si
+«Eliminar mi cuenta» devuelve la parte proporcional de una membresía: por defecto no).
 
-Los issues: #56-#106, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
+Los issues: #56-#108, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
 Protocolo completo (también para cuando vuelva la rutina): `.planning/CICLO.md`; tablero #82.
 **Lo de abajo sobre GSD, planes y Sonnet ejecutor es historia:** el orden ahora lo dan los hitos y los issues.
 
