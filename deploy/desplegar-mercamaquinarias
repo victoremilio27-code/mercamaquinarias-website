@@ -50,6 +50,25 @@ echo "Actualizando de ${ANTES:0:7} a ${NUEVO:0:7}"
 # preferible que el despliegue falle a que se fusione a ciegas.
 comoDueno git merge --ff-only origin/main
 
+# #73. Las migraciones se aplican solas al arrancar y la vuelta atras de
+# abajo devuelve el codigo, no la base. Si el codigo nuevo trae
+# migraciones que la base no tiene, se respalda ANTES de reiniciar
+# (VACUUM INTO + integrity_check, en $RESPALDOS/antes-de-migrar/, los
+# ultimos 5). Antes lo hacia Victor a mano por SSH en cada fusion.
+#
+# Si el respaldo falla, no se reinicia: el proceso que corre sigue con
+# el codigo viejo en memoria, y se devuelven los archivos para que el
+# siguiente arranque no aplique nada sin respaldo. Las rutas son las de
+# deploy/mercamaquinarias.service y deploy/mercamaquinarias-tareas.service.
+BASE=/var/lib/mercamaquinarias/mercamaquinarias.db
+RESPALDOS=/var/backups/mercamaquinarias
+if ! comoDueno env MERCA_DB="$BASE" MERCA_RESPALDOS="$RESPALDOS" \
+     node --no-warnings tools/respaldo-antes-de-migrar.js; then
+  echo "ERROR: no se pudo respaldar la base antes de migrar. Volviendo a ${ANTES:0:7} sin reiniciar" >&2
+  comoDueno git reset --hard "$ANTES"
+  exit 1
+fi
+
 systemctl restart "$SERVICIO"
 
 # Se espera a que levante en vez de dormir una cantidad fija: arrancar

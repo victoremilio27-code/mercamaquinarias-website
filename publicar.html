@@ -259,6 +259,23 @@
           <p class="acceso__aviso" id="avisoVideo" role="alert" hidden></p>
           <p class="contador-fotos" id="contadorVideos"></p>
           <ul class="videos-sub" id="listaVideos"></ul>
+
+          <section class="documentos-subida" aria-labelledby="tituloDocumentos">
+            <h3 class="documentos-subida__titulo" id="tituloDocumentos">Documentos (opcional)</h3>
+            <p class="zona-fotos__nota" id="notaTopesDocumentos">Informe de inspección, manual o facturas de mantenimiento. PDF o imagen, hasta 4 MB cada uno y 4 por anuncio.</p>
+            <p class="documentos-subida__espera" id="notaDocumentosSinId">Podrá adjuntar documentos cuando se guarde el borrador.</p>
+            <div class="documentos-subida__campos">
+              <label class="campo-v"><span>Archivo</span>
+                <input type="file" id="inputDocumento" accept="application/pdf,image/jpeg,image/png,image/webp" disabled>
+              </label>
+              <label class="campo-v"><span>Nombre visible</span>
+                <input type="text" id="nombreDocumento" maxlength="120" autocomplete="off" disabled>
+              </label>
+              <button type="button" class="btn btn--linea btn--chico" id="btnSubirDocumento" disabled>Adjuntar documento</button>
+            </div>
+            <p class="acceso__aviso" id="avisoDocumento" role="alert" hidden></p>
+            <ul class="documentos-lista" id="listaDocumentos"></ul>
+          </section>
         </section>
 
         <!-- Paso 3 · Precio -->

@@ -42,6 +42,24 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
+**TANDA 5 EN CURSO (2026-10-02, noche):** **A publicada:** PR #132 (#117-#125) fusionado y en producción
+(«Sitio arriba: 7bf586f»): pruebas puras de fotos/videos, PDF, entorno, mapa, rangos, reglas y S3; `meta.js` con
+`</script>` escapado y sitemap paginado a 60; `404.html`; `tools/s3.js` sin conectar. Arreglo de Claude: la regla de
+idioma de `reglas.prueba.js` acepta `es-DO`. Quedan como `todo` en `medios.prueba.js` dos debilidades de
+`archivoDe` (no valida el nombre ni normaliza `\`; la contención en la carpeta sí funciona). **B abierta:** PR #133
+(`codex/tanda-5b`, contra `main`, contiene el #126) con #129 (testigos HMAC; `testigos:probar` ya en CI) y #130
+(pruebas del respaldo antes de migrar; Claude las corrigió: suponían `migraciones(nombre)` y otra firma de
+`pendientesDe`; el script no se tocó; `respaldo-migrar:probar` en CI). **NO se fusiona sin el respaldo de Victor**
+(#79); obliga a todos a volver a entrar una vez; luego Victor instala el script de respaldo en `/usr/local/bin`.
+También lleva FICHA-01 completa: #127 (API de documentos, `documentos-api:probar` en CI) y #128 (sección en publicar
+y en la ficha). Desde el issue Codex no pudo (su copia de `main` no tenía la base); encargados en comentarios del
+PR #133 sí funcionó: **un encargo que depende de una rama sin fusionar se hace en el PR de esa rama, no en el
+issue.** El parche de #128 traía un carácter roto (U+FFFD) en una línea de contexto: se arregló la línea a mano
+antes de `git am`. Arreglos de Claude: `tareas.js` borra los documentos al limpiar borradores abandonados, y la
+etiqueta PDF/Imagen de la ficha con ancho fijo. Probado a ojo y de punta a punta (subir, HTML disfrazado → 415,
+quitar, sin borrador → deshabilitado) a 390 y 1280 px. Preguntas a Victor: proveedor S3 para DEUDA-05 (#125),
+borrar el jpeg de WhatsApp (#122), lo abierto de #79, y, al fusionar B, copiar las dos unidades de `deploy/*.service` a systemd y `daemon-reload` (llevan `MERCA_DOCUMENTOS`).
+
 **Estado al cerrar el chat del 2026-10-02 (vuelta de la tanda 4):** en producción todo hasta la tanda 4 (PR #108,
 que llevaba dentro #99): fases 15 y 16 completas en código. Migraciones `2026-10-especificaciones` y
 `2026-10-guardar-busquedas` aplicadas tras el respaldo de Victor (`/var/backups/mercamaquinarias/antes-busquedas.db`,
