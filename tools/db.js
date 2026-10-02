@@ -1480,6 +1480,11 @@ const MIGRACIONES = [
   ]],
 ];
 
+/* Solo los nombres, para `tools/respaldo-antes-de-migrar.js` (#73), que
+   tiene que saber qué falta SIN abrir la base con `abrir()`: abrirla
+   aplicaría las migraciones antes del respaldo. */
+const NOMBRES_MIGRACIONES = Object.freeze(MIGRACIONES.map(([nombre]) => nombre));
+
 function migrar() {
   db.exec('CREATE TABLE IF NOT EXISTS migraciones (id TEXT PRIMARY KEY, aplicada TEXT NOT NULL)');
   const yaEsta = db.prepare('SELECT 1 FROM migraciones WHERE id = ?');
@@ -7073,6 +7078,8 @@ module.exports = {
   /* FICHA-01: documentos del anuncio. #72: huella de los testigos. */
   TOPES_DOCUMENTOS, TIPOS_DOCUMENTO, motivoSinDocumento, agregarDocumento, documentosDe,
   documentoParaDescargar, borrarDocumento, espacioDocumentos, huellaTestigo,
+  /* #73: el despliegue respalda la base si hay migraciones pendientes. */
+  NOMBRES_MIGRACIONES,
   guardarBusqueda, busquedasDe, borrarBusqueda, darDeBajaBusqueda, testigoBajaBusqueda, busquedasActivas,
   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,

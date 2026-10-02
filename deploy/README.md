@@ -672,9 +672,17 @@ Las migraciones de `tools/db.js` se aplican solas al arrancar.
 2. `git merge --ff-only origin/main` — a propósito: si alguien hubiera
    hecho un commit a mano en el servidor, es preferible que el despliegue
    falle a que se fusione a ciegas.
-3. Reinicia `mercamaquinarias` y espera hasta 15 s a que el sitio responda.
-4. **Si no responde, vuelve solo a la versión anterior** y la reinicia.
-   Ojo: eso devuelve el código, no la base. Las migraciones son de ida;
+3. **Respaldo antes de migrar (#73).** Si el código nuevo trae migraciones que la base
+   no tiene, `tools/respaldo-antes-de-migrar.js` (como `mercamaquinarias`) hace
+   `VACUUM INTO` + `integrity_check` en `/var/backups/mercamaquinarias/antes-de-migrar/`
+   (se conservan los últimos 5). Si falla, devuelve el código y termina **sin
+   reiniciar**. Ya no hace falta el respaldo a mano antes de fusionar una migración.
+   **El script se instala a mano** (el despliegue no se actualiza a sí mismo, a
+   propósito: es lo único que corre como root):
+   `install -m 755 /var/www/mercamaquinarias/deploy/desplegar-mercamaquinarias /usr/local/bin/`.
+4. Reinicia `mercamaquinarias` y espera hasta 15 s a que el sitio responda.
+5. **Si no responde, vuelve solo a la versión anterior** y la reinicia.
+   Ojo: eso devuelve el código, no la base (para eso está el respaldo del paso 3). Las migraciones son de ida;
    como solo añaden, una versión anterior sigue arrancando, pero una
    migración que borrara o renombrara algo rompería esa suposición.
 
