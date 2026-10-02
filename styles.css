@@ -2316,6 +2316,63 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
 .video-sub__pie { display: flex; align-items: center; gap: 10px; }
 .video-sub__dato { font-size: 12.5px; color: var(--gris-acero); }
 
+/* Documentos del vendedor: controles en publicar y descargas en la ficha. */
+.documentos-subida {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin-top: var(--gap);
+  padding-top: var(--gap);
+  border-top: 1px solid var(--linea-suave);
+}
+.documentos-subida__titulo { font-family: var(--display); font-size: 16px; }
+.documentos-subida__espera { font-size: 12px; color: var(--gris-acero); }
+.documentos-subida__campos {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+.documentos-subida__campos input { min-width: 0; width: 100%; }
+.documentos-lista, .documentos-ficha { display: grid; gap: 8px; }
+.documento-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-radius: var(--r);
+}
+.documento-item__datos, .documentos-ficha__datos { display: grid; min-width: 0; gap: 2px; }
+.documento-item__datos b, .documentos-ficha__datos b { overflow-wrap: anywhere; }
+.documento-item__datos span, .documentos-ficha__datos span { font-size: 11.5px; color: var(--gris-acero); }
+.documentos-ficha { margin-top: 10px; }
+.documentos-ficha__enlace {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 11px 12px;
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-radius: var(--r);
+}
+.documentos-ficha__enlace:hover { border-color: var(--ambar); }
+.documentos-ficha__tipo {
+  flex: none;
+  padding: 4px 7px;
+  background: var(--sup-calida);
+  border-radius: 4px;
+  color: var(--ambar-texto);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 /* ── Galería y contactos de la ficha ────────────────────── */
 
 .galeria { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin-top: 10px; }
@@ -3002,6 +3059,8 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
   .botonera .btn { width: 100%; }
   .fotos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .campo-doble { grid-template-columns: minmax(0, 1fr); }
+  .documentos-subida__campos { grid-template-columns: minmax(0, 1fr); }
+  .documentos-subida__campos .btn { width: 100%; }
 
   .tarjetas-metrica { grid-template-columns: minmax(0, 1fr); }
   .plan-estado { grid-template-columns: minmax(0, 1fr); }
@@ -5179,4 +5238,3 @@ main > .envoltura > section.panel {
   .captura__panel { padding: 14px; }
   .captura__marco { min-height: 380px; }
 }
-

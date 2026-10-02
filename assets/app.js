@@ -928,6 +928,35 @@ function videosHTML(e) {
   </div>`;
 }
 
+function pintarDocumentosFicha(contenedor, documentos, idAnuncio) {
+  if (!contenedor || !documentos.length) return;
+  const lista = contenedor.querySelector('.documentos-ficha');
+  documentos.forEach((documento) => {
+    const item = document.createElement('li');
+    const enlace = document.createElement('a');
+    enlace.className = 'documentos-ficha__enlace';
+    enlace.href = `/api/anuncios/${encodeURIComponent(idAnuncio)}/documentos/${encodeURIComponent(documento.id)}`;
+    enlace.target = '_blank';
+    enlace.rel = 'noopener';
+    const tipo = document.createElement('span');
+    tipo.className = 'documentos-ficha__tipo';
+    tipo.textContent = documento.tipo === 'application/pdf' ? 'PDF' : 'Imagen';
+    const datos = document.createElement('span');
+    datos.className = 'documentos-ficha__datos';
+    const nombre = document.createElement('b');
+    nombre.textContent = documento.nombre;
+    const bytes = document.createElement('span');
+    bytes.textContent = documento.bytes >= 1024 * 1024
+      ? `${(documento.bytes / (1024 * 1024)).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(documento.bytes / 1024))} KB`;
+    datos.append(nombre, bytes);
+    enlace.append(tipo, datos);
+    item.appendChild(enlace);
+    lista.appendChild(item);
+  });
+  contenedor.hidden = false;
+}
+
 /* Medios de contacto declarados al publicar.
 
    Solo se pinta un número si `t.verificado` viene en `true`: el
@@ -1391,6 +1420,10 @@ async function montarDetalle() {
         </div>
         ${galeriaHTML(e)}
         ${videosHTML(e)}
+        <section class="detalle__bloque" id="documentosFicha" aria-labelledby="tituloDocumentosFicha" hidden>
+          <h2 class="panel__titulo" id="tituloDocumentosFicha"><em>Documentos</em></h2>
+          <ul class="documentos-ficha"></ul>
+        </section>
         ${e.descripcion ? `<div class="detalle__bloque">
             <h2 class="panel__titulo"><em>Descripción</em> del anunciante</h2>
             <p class="panel__texto">${esc(e.descripcion)}</p>
@@ -1443,6 +1476,11 @@ async function montarDetalle() {
   // data-canal para que "llamar" y "WhatsApp" no se cuenten iguales.
   anotar(e.id, 'vista');
   montarAccionesFicha(e, cont);
+  api(`/anuncios/${encodeURIComponent(e.id)}/documentos`, { silencioso: true }).then((respuesta) => {
+    if (respuesta && Array.isArray(respuesta.documentos) && respuesta.documentos.length) {
+      pintarDocumentosFicha($('#documentosFicha'), respuesta.documentos, e.id);
+    }
+  });
   $$('.contactos [data-canal]', cont).forEach((a) => {
     a.addEventListener('click', () => anotar(e.id, a.dataset.canal || 'telefono'));
   });

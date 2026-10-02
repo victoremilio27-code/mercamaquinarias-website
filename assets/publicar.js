@@ -1078,6 +1078,160 @@ function validarFotos(seccion) {
   return true;
 }
 
+/* Los documentos conservan sus bytes originales. Pasarlos por los
+   reductores de fotografías cambiaría el tipo y eliminaría la
+   transparencia de los PNG, por eso aquí se usa FileReader directamente. */
+const TOPES_DOCUMENTOS_RESPALDO = { bytesPorArchivo: 4 * 1024 * 1024, porAnuncio: 4 };
+const TIPOS_DOCUMENTO = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+let topesDocumentos = { ...TOPES_DOCUMENTOS_RESPALDO };
+let documentosAdjuntos = [];
+
+function idParaDocumentos() {
+  return estado.idBorrador || null;
+}
+
+function tamanoLegible(bytes) {
+  if (bytes >= 1024 * 1024) {
+    const megas = bytes / (1024 * 1024);
+    return `${Number.isInteger(megas) ? megas : megas.toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function avisarDocumento(mensaje) {
+  const aviso = $('#avisoDocumento');
+  if (!aviso) return;
+  aviso.textContent = mensaje || '';
+  aviso.hidden = !mensaje;
+}
+
+function pintarDocumentos() {
+  const lista = $('#listaDocumentos');
+  if (!lista) return;
+  lista.replaceChildren();
+  documentosAdjuntos.forEach((documento) => {
+    const item = document.createElement('li');
+    item.className = 'documento-item';
+    item.dataset.id = documento.id;
+    const datos = document.createElement('span');
+    datos.className = 'documento-item__datos';
+    const nombre = document.createElement('b');
+    nombre.textContent = documento.nombre;
+    const meta = document.createElement('span');
+    meta.textContent = `${documento.tipo === 'application/pdf' ? 'PDF' : 'Imagen'} · ${tamanoLegible(documento.bytes)}`;
+    datos.append(nombre, meta);
+    const quitar = document.createElement('button');
+    quitar.type = 'button';
+    quitar.className = 'btn btn--linea btn--chico';
+    quitar.textContent = 'Quitar';
+    quitar.dataset.quitarDocumento = '';
+    item.append(datos, quitar);
+    lista.appendChild(item);
+  });
+}
+
+async function cargarDocumentos() {
+  const id = idParaDocumentos();
+  if (!id) { documentosAdjuntos = []; pintarDocumentos(); return; }
+  const respuesta = await api(`/anuncios/${encodeURIComponent(id)}/documentos`, { silencioso: true });
+  if (!respuesta) return;
+  documentosAdjuntos = Array.isArray(respuesta.documentos) ? respuesta.documentos : [];
+  if (respuesta.topes) topesDocumentos = { ...topesDocumentos, ...respuesta.topes };
+  const nota = $('#notaTopesDocumentos');
+  if (nota) nota.textContent = `Informe de inspección, manual o facturas de mantenimiento. PDF o imagen, hasta ${tamanoLegible(topesDocumentos.bytesPorArchivo)} cada uno y ${topesDocumentos.porAnuncio} por anuncio.`;
+  pintarDocumentos();
+}
+
+function actualizarDisponibilidadDocumentos({ cargar = false } = {}) {
+  const habilitado = !!idParaDocumentos();
+  const archivo = $('#inputDocumento');
+  const nombre = $('#nombreDocumento');
+  const boton = $('#btnSubirDocumento');
+  const nota = $('#notaDocumentosSinId');
+  if (!archivo) return;
+  archivo.disabled = !habilitado;
+  nombre.disabled = !habilitado;
+  boton.disabled = !habilitado || !archivo.files.length;
+  nota.hidden = habilitado;
+  if (habilitado && cargar) cargarDocumentos();
+}
+
+function leerArchivoComoDataUrl(archivo) {
+  return new Promise((resolver, rechazar) => {
+    const lector = new FileReader();
+    lector.onload = () => resolver(lector.result);
+    lector.onerror = () => rechazar(new Error('No se pudo leer el archivo.'));
+    lector.readAsDataURL(archivo);
+  });
+}
+
+function montarPasoDocumentos() {
+  const archivo = $('#inputDocumento');
+  const nombre = $('#nombreDocumento');
+  const boton = $('#btnSubirDocumento');
+  const lista = $('#listaDocumentos');
+  if (!archivo || !nombre || !boton || !lista) return;
+
+  archivo.addEventListener('change', () => {
+    avisarDocumento('');
+    const elegido = archivo.files[0];
+    if (elegido) nombre.value = elegido.name.replace(/\.[^.]*$/, '').slice(0, 120);
+    boton.disabled = !idParaDocumentos() || !elegido;
+  });
+
+  boton.addEventListener('click', async () => {
+    const elegido = archivo.files[0];
+    const id = idParaDocumentos();
+    if (!elegido || !id) return;
+    if (!TIPOS_DOCUMENTO.has(elegido.type)) {
+      avisarDocumento('Elija un PDF o una imagen JPG, PNG o WebP.');
+      return;
+    }
+    if (!elegido.size) { avisarDocumento('El archivo está vacío.'); return; }
+    if (elegido.size > topesDocumentos.bytesPorArchivo) {
+      avisarDocumento(`El archivo pasa de ${tamanoLegible(topesDocumentos.bytesPorArchivo)}.`);
+      return;
+    }
+    if (!nombre.value.trim()) { avisarDocumento('Escriba el nombre visible del documento.'); return; }
+
+    boton.disabled = true;
+    try {
+      const dataUrl = await leerArchivoComoDataUrl(elegido);
+      const respuesta = await api(`/anuncios/${encodeURIComponent(id)}/documentos`, {
+        metodo: 'POST', cuerpo: { nombre: nombre.value.trim().slice(0, 120), archivo: dataUrl },
+      });
+      if (!respuesta) throw new Error('No hay conexión con el servidor. Vuelva a intentarlo.');
+      archivo.value = '';
+      nombre.value = '';
+      avisarDocumento('');
+      await cargarDocumentos();
+    } catch (e) {
+      avisarDocumento(e.message);
+    } finally {
+      boton.disabled = !archivo.files.length;
+    }
+  });
+
+  lista.addEventListener('click', async (evento) => {
+    const botonQuitar = evento.target.closest('[data-quitar-documento]');
+    if (!botonQuitar) return;
+    const item = botonQuitar.closest('[data-id]');
+    const documento = documentosAdjuntos.find((d) => String(d.id) === item.dataset.id);
+    if (!documento || !window.confirm(`¿Quitar «${documento.nombre}»?`)) return;
+    botonQuitar.disabled = true;
+    try {
+      const respuesta = await api(`/anuncios/${encodeURIComponent(idParaDocumentos())}/documentos/${encodeURIComponent(documento.id)}`, { metodo: 'DELETE' });
+      if (!respuesta) throw new Error('No hay conexión con el servidor. Vuelva a intentarlo.');
+      await cargarDocumentos();
+    } catch (e) {
+      avisarDocumento(e.message);
+      botonQuitar.disabled = false;
+    }
+  });
+
+  actualizarDisponibilidadDocumentos({ cargar: true });
+}
+
 /* ── Paso 3 · Precio ────────────────────────────────────── */
 
 function montarPasoPrecio() {
@@ -1702,6 +1856,7 @@ async function asegurarBorrador() {
       borradorPlanServidor = estado.planElegido;
       borradorDiasServidor = estado.diasElegidos;
       history.replaceState(null, '', `publicar.html?borrador=${encodeURIComponent(estado.idBorrador)}`);
+      actualizarDisponibilidadDocumentos({ cargar: true });
     } else if (estado.planElegido !== borradorPlanServidor || estado.diasElegidos !== borradorDiasServidor) {
       const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}`, {
         metodo: 'PUT', cuerpo: { plan: estado.planElegido, dias: estado.diasElegidos },
@@ -2895,6 +3050,7 @@ async function montarPublicador() {
      probar esta pantalla en un navegador de verdad (ver 10-02-SUMMARY). */
   await montarPasoEquipo();
   montarPasoFotos();
+  montarPasoDocumentos();
   montarPasoVideos();
   montarPasoPrecio();
   montarPasoContacto();
