@@ -38,6 +38,17 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
 
+/* Dentro de <script>, JSON.stringify no impide que `</script>` cierre
+   la etiqueta. Estos escapes siguen siendo JSON válido y no crean HTML. */
+function jsonEnScript(obj) {
+  return JSON.stringify(obj)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 /* Recorta sin partir palabras: una descripción cortada a mitad de
    palabra se lee como un error del sitio. */
 function recortar(texto, maximo) {
@@ -100,16 +111,22 @@ function delAnuncio(id) {
     jsonld: {
       '@context': 'https://schema.org',
       '@type': 'Product',
+      url: `${SITIO}/equipo.html?id=${encodeURIComponent(id)}`,
       name: nombre,
       description: recortar(a.descripcion, 400),
       image: imagenDe(a.fotos),
       brand: { '@type': 'Brand', name: a.marca_nombre || a.marca },
+      itemCondition: a.condicion === 'nuevo'
+        ? 'https://schema.org/NewCondition'
+        : 'https://schema.org/UsedCondition',
       ...(a.precio ? {
         offers: {
           '@type': 'Offer',
           price: a.precio,
           priceCurrency: a.moneda || 'DOP',
-          availability: 'https://schema.org/InStock',
+          availability: a.disponibilidad === 'bajo-pedido'
+            ? 'https://schema.org/BackOrder'
+            : 'https://schema.org/InStock',
           url: `${SITIO}/equipo.html?id=${encodeURIComponent(id)}`,
         },
       } : {}),
@@ -192,7 +209,7 @@ function aplicar(html, meta) {
      la cabecera, porque no existen en el archivo. */
   const extra = [
     `<link rel="canonical" href="${esc(meta.url)}">`,
-    `<script type="application/ld+json">${JSON.stringify(meta.jsonld)}</script>`,
+    `<script type="application/ld+json">${jsonEnScript(meta.jsonld)}</script>`,
   ].join('\n');
 
   return salida.replace('</head>', `${extra}\n</head>`);
@@ -226,10 +243,16 @@ function sitemap() {
   }));
 
   try {
-    const { anuncios } = db.buscarAnuncios
-      ? { anuncios: db.anunciosPublicos({ porPagina: 5000 }) }
-      : { anuncios: [] };
-    (anuncios || []).forEach((a) => urls.push({
+    const anuncios = [];
+    let pagina = 1;
+    let resultado;
+    do {
+      resultado = db.buscarAnuncios({ porPagina: 60, pagina });
+      anuncios.push(...(resultado.anuncios || []));
+      pagina++;
+    } while (pagina <= resultado.paginas);
+
+    anuncios.forEach((a) => urls.push({
       loc: `${SITIO}/equipo.html?id=${encodeURIComponent(a.id)}`,
       prioridad: '0.8',
       frecuencia: 'weekly',
