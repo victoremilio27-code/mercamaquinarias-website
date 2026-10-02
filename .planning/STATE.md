@@ -42,6 +42,16 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
+**TANDA 5 EN CURSO (2026-10-02, tarde):** Codex tiene encargados #118-#125 (pruebas, meta.js con el sitemap
+recortado a 60 y `</script>` en el JSON-LD, 404, s3.js sin conectar) y #127-#130 (FICHA-01 API e interfaz, lo
+mecánico de #72, pruebas de #73) sobre la base del PR #126 (`claude/tanda-5-base`, migraciones de documentos y
+testigos HMAC + #73; NO se fusiona sin respaldo de Victor; obliga a todos a volver a entrar una vez; tras fusionar,
+Victor instala el script de respaldo en `/usr/local/bin`). #117 ya verificado y subido en `codex/tanda-5` (con un
+arreglo extra de escritorio en `.fila--resultados .campo > .campo-v__ayuda`). **Siguiente:** recoger los parches
+de Codex sobre `codex/tanda-5` (los de #127-#130 encima de #126), añadir los scripts nuevos a `package.json` y a
+`desplegar.yml`, verificar todo de un tiro, PR y publicar. Contrato en `.planning/tanda5-contrato.md`.
+Preguntas a Victor: proveedor S3 para DEUDA-05 (#125), borrar el jpeg de WhatsApp (#122), lo abierto de #79.
+
 **Estado al cerrar el chat del 2026-10-02 (vuelta de la tanda 4):** en producción todo hasta la tanda 4 (PR #108,
 que llevaba dentro #99): fases 15 y 16 completas en código. Migraciones `2026-10-especificaciones` y
 `2026-10-guardar-busquedas` aplicadas tras el respaldo de Victor (`/var/backups/mercamaquinarias/antes-busquedas.db`,
