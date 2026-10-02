@@ -41,6 +41,7 @@
     "capacidad:probar": "node tools/probar-capacidad.js",
     "cardnet:probar": "node tools/probar-cardnet.js",
     "facturas:letras": "node --test tools/numero-a-letras.prueba.js",
+    "meta:probar": "node tools/probar-meta.js",
     "precios:probar": "node --test tools/precios.prueba.js",
     "lote:puro": "node --test tools/lote.prueba.js",
     "alertas:puro": "node --test tools/alertas.prueba.js",
