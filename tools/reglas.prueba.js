@@ -130,14 +130,14 @@ test(`el nombre viejo TuEquipo${'RD'} solo permanece en los archivos autorizados
   fallarSiHay(errores, '«Cómo se trabaja con Victor»');
 });
 
-test('cada HTML público declara idioma, título y metadatos básicos', {
-  todo: 'Los HTML actuales declaran lang="es-DO" en vez de lang="es".',
-}, () => {
+/* El sitio declara lang="es-DO" (español dominicano), que es español: la
+   regla acepta «es» con o sin región en vez de dejar la prueba como «todo». */
+test('cada HTML público declara idioma, título y metadatos básicos', () => {
   const errores = [];
   for (const archivo of htmlDeRaiz().filter((nombre) => nombre !== 'proximamente.html')) {
     const texto = leer(archivo);
     const reglas = [
-      [/<html\b[^>]*\blang\s*=\s*["']es["']/i, '<html lang="es"'],
+      [/<html\b[^>]*\blang\s*=\s*["']es(?:-[a-z]{2})?["']/i, '<html lang="es" o "es-XX"'],
       [/<title\b[^>]*>\s*[^<\s][\s\S]*?<\/title>/i, 'un <title> no vacío'],
       [/<meta\b[^>]*\bname\s*=\s*["']description["'][^>]*>/i, '<meta name="description">'],
       [/<meta\b[^>]*\bname\s*=\s*["']viewport["'][^>]*>/i, '<meta name="viewport">'],
