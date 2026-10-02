@@ -12,6 +12,7 @@
     "check:encoding": "node tools/fix-encoding.js --check",
     "check:motion": "node tools/check-motion.js",
     "check:contraste": "node tools/check-contraste.js",
+    "cabeceras:puro": "node --test tools/cabeceras.prueba.js",
     "favicon": "node tools/make-favicon.js",
     "db:reset": "node -e \"require('fs').readdirSync('db').filter(f=>f.startsWith('mercamaquinarias.db')).forEach(f=>require('fs').rmSync('db/'+f))\"",
     "db:demo": "node tools/seed.js",
