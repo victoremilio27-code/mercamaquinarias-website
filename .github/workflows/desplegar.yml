@@ -136,6 +136,22 @@ jobs:
         run: npm run cardnet:probar
       - name: Asistente
         run: npm run chat:probar
+      - name: Fotos y videos
+        run: npm run medios:puro
+      - name: Estructura del PDF
+        run: npm run pdf:puro
+      - name: Carga del entorno
+        run: npm run entorno:puro
+      - name: Metadatos y sitemap
+        run: npm run meta:probar
+      - name: Reglas del repositorio
+        run: npm run reglas:puro
+      - name: Rangos de video
+        run: npm run rango:puro
+      - name: Mapa apagado
+        run: npm run mapa:puro
+      - name: Cliente S3
+        run: npm run s3:puro
 
   # Lo que necesita el sitio levantado: las auditorias y las dos pasadas
   # de puppeteer. Va aparte del job hermetico para que un fallo de
