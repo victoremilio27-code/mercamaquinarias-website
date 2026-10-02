@@ -22,6 +22,7 @@ const path = require('path');
 
 const fotos = require('./fotos');
 const videos = require('./videos');
+const { rangoDe } = require('./rango');
 
 const RAIZ_PROYECTO = path.resolve(__dirname, '..');
 
@@ -140,6 +141,16 @@ function leerArgs(argv) {
 
 const args = leerArgs(process.argv.slice(2));
 const RAIZ = path.resolve(RAIZ_PROYECTO, args.root);
+
+function responder404(res, alternativo) {
+  fs.readFile(path.join(RAIZ, '404.html'), (err, datos) => {
+    res.writeHead(404, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(err ? alternativo : datos);
+  });
+}
 
 /* La API se carga solo si se pide y solo si su base arranca. Si algo
    falla, el sitio sigue sirviéndose como estático en vez de no
@@ -357,27 +368,21 @@ const servidor = http.createServer((req, res) => {
         'Cache-Control': PRODUCCION ? 'public, max-age=31536000, immutable' : 'no-store',
       };
 
-      const pedido = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      const rango = rangoDe(req.headers.range, total);
 
-      if (!pedido) {
+      if (!rango) {
         res.writeHead(200, { ...comunes, 'Content-Length': total });
         if (req.method === 'HEAD') { res.end(); return; }
         enviarArchivo(fs.createReadStream(archivo), res, archivo);
         return;
       }
 
-      // `bytes=-500` son los ÚLTIMOS 500, no los primeros.
-      const sufijo = pedido[1] === '';
-      let desde = sufijo ? total - Number(pedido[2] || 0) : Number(pedido[1]);
-      let hasta = sufijo || pedido[2] === '' ? total - 1 : Number(pedido[2]);
-
-      desde = Math.max(0, desde);
-      hasta = Math.min(total - 1, hasta);
-
-      if (!Number.isFinite(desde) || !Number.isFinite(hasta) || desde > hasta || desde >= total) {
+      if (rango.invalido) {
         res.writeHead(416, { ...comunes, 'Content-Range': `bytes */${total}` }).end();
         return;
       }
+
+      const { desde, hasta } = rango;
 
       res.writeHead(206, {
         ...comunes,
@@ -396,8 +401,7 @@ const servidor = http.createServer((req, res) => {
      así el servidor ni siquiera revela, por la diferencia entre un 403
      y un 404, qué archivos existen fuera de la lista. */
   if (!esPublico(ruta)) {
-    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end('<h1>404</h1><p>No existe.</p>');
+    responder404(res, '<h1>404</h1><p>No existe.</p>');
     console.log(`404  ${ruta}  (fuera de la lista pública)`);
     return;
   }
@@ -413,8 +417,7 @@ const servidor = http.createServer((req, res) => {
 
   fs.stat(archivo, (errEst, est) => {
     if (errEst || !est.isFile()) {
-      res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<h1>404</h1><p>No existe <code>' + ruta.replace(/[<>&]/g, '') + '</code></p>');
+      responder404(res, '<h1>404</h1><p>No existe <code>' + ruta.replace(/[<>&]/g, '') + '</code></p>');
       console.log(`404  ${ruta}`);
       return;
     }
