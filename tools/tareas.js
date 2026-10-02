@@ -648,6 +648,7 @@ function limpiarBorradores() {
 
   const fotos = require('./fotos');
   const videos = require('./videos');
+  const documentos = require('./documentos');
   let borrados = 0;
   for (const b of lista) {
     try {
@@ -656,6 +657,9 @@ function limpiarBorradores() {
       borrados++;
       rutas.fotos.forEach((r) => { try { fotos.borrar(r); } catch (_) { /* ya no estaba */ } });
       rutas.videos.forEach((r) => { try { videos.borrar(r); } catch (_) { /* ya no estaba */ } });
+      /* Un borrador ya admite documentos (FICHA-01): sin esto, sus PDF se
+         quedaban en disco para siempre al limpiar el borrador. */
+      (rutas.documentos || []).forEach((r) => { try { documentos.borrar(r); } catch (_) { /* ya no estaba */ } });
     } catch (e) {
       // Uno que falla no impide limpiar los demás.
       console.error(`  ✗ no se pudo borrar el borrador ${b.id}: ${e.message}`);
