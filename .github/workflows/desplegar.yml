@@ -82,10 +82,16 @@ jobs:
         run: npm run lote:puro
       - name: Alertas
         run: npm run alertas:puro
+      - name: API de busquedas guardadas
+        run: npm run busquedas-api:probar
+      - name: Tarea diaria de alertas
+        run: npm run alertas:tarea
       - name: Formato 607
         run: npm run f607:puro
       - name: Especificaciones
         run: npm run especificaciones:puro
+      - name: Especificaciones en anuncios
+        run: npm run especificaciones:probar
       - name: Consultas del lote mensual
         run: npm run lote:probar
       - name: Paquete mensual para el contador
@@ -100,6 +106,8 @@ jobs:
         run: npm run bitacora:probar
       - name: Cuenta y recuperacion
         run: npm run cuenta:probar
+      - name: Busquedas guardadas
+        run: npm run busquedas:probar
       - name: Telefono y SMS
         run: npm run telefono:probar
       - name: Contactos verificados

@@ -18,11 +18,13 @@ test('normaliza solo filtros conocidos y válidos', () => {
     q: '  pala Santiago  ', categoria: 'excavadoras', subcategoria: 'exc-mediana',
     marca: 'caterpillar', anioMin: '2015', precioMax: '3000000', horasMax: '0',
     disponibilidad: 'en-pais', permuta: '1', itbis: 'false', orden: 'recientes', pagina: '3',
+    'e_peso-operativo_min': '20', 'e_inventada_max': '99', implemento: 'martillo-hidraulico',
   }));
   assert.deepEqual(resultado, {
     q: 'pala Santiago', categoria: 'excavadoras', subcategoria: 'exc-mediana',
     marca: 'caterpillar', anioMin: 2015, precioMax: 3000000,
-    disponibilidad: 'en-pais', permuta: '1',
+    disponibilidad: 'en-pais', permuta: '1', 'e_peso-operativo_min': 20,
+    implemento: 'martillo-hidraulico',
   });
   assert.equal(normalizarBusqueda({ categoria: 'inventada', marca: 'ninguna', precioMin: 'no' }), null);
   assert.equal(normalizarBusqueda({}), null);
@@ -57,6 +59,9 @@ test('resume la búsqueda con nombres y cifras legibles', () => {
     categoria: 'excavadoras', marca: 'caterpillar', anioMin: 2015, precioMax: 3000000,
   })), 'Excavadoras · Caterpillar · desde 2015 · hasta RD$ 3,000,000');
   assert.equal(resumenBusqueda(null), '');
+  assert.equal(resumenBusqueda(normalizarBusqueda({ categoria: 'excavadoras',
+    'e_peso-operativo_min': 20, implemento: 'martillo-hidraulico' })),
+  'Excavadoras · peso operativo desde 20 t · con martillo hidráulico');
 });
 
 function crearVendedor() {
@@ -96,6 +101,14 @@ test('coincide selecciona los mismos ids que buscarAnuncios en una base temporal
   // Un estado que el catálogo público excluye también debe excluirse en memoria.
   db.cambiarEstadoAnuncio(ids[14], org.id, 'pausado');
   const filas = ids.map((id) => db.anuncio(id));
+  const sqlite = new (require('node:sqlite').DatabaseSync)(process.env.MERCA_DB);
+  sqlite.prepare('UPDATE anuncios SET especificaciones = ?, implementos_lista = ? WHERE id = ?')
+    .run(JSON.stringify({ 'peso-operativo': 22 }), JSON.stringify(['martillo-hidraulico']), ids[5]);
+  sqlite.prepare('UPDATE anuncios SET especificaciones = ?, implementos_lista = ? WHERE id = ?')
+    .run(JSON.stringify({ 'peso-operativo': 35 }), JSON.stringify(['pulgar']), ids[6]);
+  sqlite.close();
+  filas[5] = db.anuncio(ids[5]);
+  filas[6] = db.anuncio(ids[6]);
 
   const casos = [
     { categoria: 'excavadoras' },
@@ -109,6 +122,8 @@ test('coincide selecciona los mismos ids que buscarAnuncios en una base temporal
     { permuta: 1, itbis: 1 },
     { q: 'caterpillar santo 2021' },
     { categoria: 'camiones', precioMax: 2000000 },
+    { categoria: 'excavadoras', 'e_peso-operativo_min': 20, 'e_peso-operativo_max': 30 },
+    { categoria: 'excavadoras', implemento: 'martillo-hidraulico' },
   ];
 
   for (const filtros of casos) {

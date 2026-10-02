@@ -5,6 +5,7 @@
 
 const taxonomia = require('../assets/taxonomia.js');
 const precios = require('../assets/precios.js');
+const { especificacionesDe, implementosDe } = require('../assets/especificaciones.js');
 
 const CLAVES = [
   'q', 'categoria', 'subcategoria', 'marca', 'provincia', 'condicion',
@@ -48,6 +49,19 @@ function normalizarBusqueda(query) {
     resultado[clave] = valor;
   }
 
+  if (resultado.categoria) {
+    for (const especificacion of especificacionesDe(resultado.categoria, resultado.subcategoria)) {
+      for (const extremo of ['min', 'max']) {
+        const clave = `e_${especificacion.id}_${extremo}`;
+        const numero = Number(String(recibidos[clave] || '').trim());
+        if (Number.isFinite(numero) && numero > 0) resultado[clave] = numero;
+      }
+    }
+    if (implementosDe(resultado.categoria).some((item) => item.id === recibidos.implemento)) {
+      resultado.implemento = recibidos.implemento;
+    }
+  }
+
   return Object.keys(resultado).length ? resultado : null;
 }
 
@@ -60,6 +74,25 @@ function coincide(busqueda, anuncio) {
   }
   if (busqueda.permuta && Number(anuncio.permuta) !== 1) return false;
   if (busqueda.itbis && Number(anuncio.itbis_incluido) !== 1) return false;
+
+  const filtrosEspecificacion = Object.keys(busqueda).filter((clave) => /^e_.+_(?:min|max)$/.test(clave));
+  if (filtrosEspecificacion.length) {
+    let valores;
+    try { valores = JSON.parse(anuncio.especificaciones); } catch { return false; }
+    if (!valores || typeof valores !== 'object' || Array.isArray(valores)) return false;
+    for (const clave of filtrosEspecificacion) {
+      const partes = clave.match(/^e_(.+)_(min|max)$/);
+      const valor = Number(valores[partes[1]]);
+      if (!Number.isFinite(valor)) return false;
+      if (partes[2] === 'min' && valor < busqueda[clave]) return false;
+      if (partes[2] === 'max' && valor > busqueda[clave]) return false;
+    }
+  }
+  if (busqueda.implemento) {
+    let implementos;
+    try { implementos = JSON.parse(anuncio.implementos_lista); } catch { return false; }
+    if (!Array.isArray(implementos) || !implementos.includes(busqueda.implemento)) return false;
+  }
 
   const precio = precios.precioEnPesos(anuncio.precio, anuncio.moneda);
   if (busqueda.precioMin && (precio === null || !(precio >= busqueda.precioMin))) return false;
@@ -98,6 +131,16 @@ function resumenBusqueda(busqueda) {
   if (busqueda.disponibilidad === 'bajo-pedido') partes.push('bajo pedido');
   if (busqueda.permuta) partes.push('acepta permuta');
   if (busqueda.itbis) partes.push('ITBIS incluido');
+  if (busqueda.categoria) {
+    for (const especificacion of especificacionesDe(busqueda.categoria, busqueda.subcategoria)) {
+      const minimo = busqueda[`e_${especificacion.id}_min`];
+      const maximo = busqueda[`e_${especificacion.id}_max`];
+      if (minimo) partes.push(`${especificacion.nombre.toLowerCase()} desde ${minimo} ${especificacion.unidad}`);
+      if (maximo) partes.push(`${especificacion.nombre.toLowerCase()} hasta ${maximo} ${especificacion.unidad}`);
+    }
+    const implemento = implementosDe(busqueda.categoria).find((item) => item.id === busqueda.implemento);
+    if (implemento) partes.push(`con ${implemento.nombre.toLowerCase()}`);
+  }
   return partes.join(' · ');
 }
 

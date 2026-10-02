@@ -152,6 +152,7 @@ function estadoInicial() {
       categoria: '', subcategoria: '', marca: '', modelo: '', anio: '',
       condicion: '', uso: '', unidad: 'h', serie: '', potencia: '', peso: '',
       provincia: '', ciudad: '', implementos: '', descripcion: '',
+      especificaciones: {}, implementosLista: [],
       // En el país o bajo pedido. Un borrador guardado antes de que
       // existiera el campo lo recibe de estadoInicial al fusionarse.
       disponibilidad: 'en-pais',
@@ -263,9 +264,15 @@ async function cargarCopia(idAnuncio) {
     if (!r || !r.copia) return null;
     const base = estadoInicial();
     const c = r.copia;
+    const equipo = c.equipo || {};
     return {
       ...base,
-      equipo: { ...base.equipo, ...c.equipo },
+      equipo: {
+        ...base.equipo,
+        ...equipo,
+        especificaciones: c.especificaciones || equipo.especificaciones || {},
+        implementosLista: c.implementos_lista || equipo.implementos_lista || equipo.implementosLista || [],
+      },
       precio: { ...base.precio, ...c.precio },
       contacto: { ...base.contacto, ...c.contacto },
       fotos: Array.isArray(c.fotos) ? c.fotos : [],
@@ -384,6 +391,31 @@ async function montarPasoEquipo() {
   const modeloOtro = $('#e-modelo-otro');
   if (!cat || !sub) return;
 
+  function pintarEspecificaciones() {
+    const valores = { ...(estado.equipo.especificaciones || {}) };
+    $$('#camposEspecificaciones [data-especificacion]').forEach((campo) => {
+      if (campo.value !== '') valores[campo.dataset.especificacion] = campo.value;
+    });
+
+    const seleccionados = new Set(estado.equipo.implementosLista || []);
+    $$('#casillasImplementos input:checked').forEach((campo) => seleccionados.add(campo.value));
+
+    const especificaciones = especificacionesDe(cat.value, sub.value);
+    const campos = $('#camposEspecificaciones');
+    campos.innerHTML = especificaciones.map((item) => `
+      <label class="campo-v"><span>${esc(item.nombre)} (${esc(item.unidad)})</span>
+        <input type="number" inputmode="decimal" min="${item.min}" max="${item.max}" step="${item.paso}"
+          data-especificacion="${esc(item.id)}" value="${esc(valores[item.id] ?? '')}">
+      </label>`).join('');
+    $('#bloqueEspecificaciones').hidden = !especificaciones.length;
+
+    const implementos = implementosDe(cat.value);
+    $('#casillasImplementos').innerHTML = implementos.map((item) => `
+      <label class="casilla"><input type="checkbox" value="${esc(item.id)}"
+        ${seleccionados.has(item.id) ? 'checked' : ''}><span>${esc(item.nombre)}</span></label>`).join('');
+    $('#bloqueImplementos').hidden = !implementos.length;
+  }
+
   const cond = $('#e-condicion');
   if (cond && !cond.options.length > 1) { /* ya montado */ }
   if (cond && cond.options.length <= 1) {
@@ -478,8 +510,8 @@ async function montarPasoEquipo() {
   }
 
   // Cada nivel limpia los de abajo.
-  cat.addEventListener('change', () => { pintarSub(); pintarMarcas(); pintarModelos(); pintarTrenMotriz(); });
-  sub.addEventListener('change', () => { pintarMarcas(); pintarModelos(); pintarTrenMotriz(); });
+  cat.addEventListener('change', () => { pintarSub(); pintarMarcas(); pintarModelos(); pintarTrenMotriz(); pintarEspecificaciones(); });
+  sub.addEventListener('change', () => { pintarMarcas(); pintarModelos(); pintarTrenMotriz(); pintarEspecificaciones(); });
   marca.addEventListener('change', pintarModelos);
   modelo.addEventListener('change', pintarOtroModelo);
 
@@ -487,6 +519,7 @@ async function montarPasoEquipo() {
   pintarMarcas();
   pintarModelos();
   pintarTrenMotriz();
+  pintarEspecificaciones();
 }
 
 /* El modelo que se guarda: el de la lista, o el escrito a mano cuando
@@ -1874,6 +1907,8 @@ function anuncioParaApi() {
     potencia: e.potencia,
     peso: e.peso,
     implementos: e.implementos,
+    especificaciones: e.especificaciones || {},
+    implementosLista: e.implementosLista || [],
     descripcion: e.descripcion,
     provincia: e.provincia,
     municipio: e.ciudad,
@@ -2608,6 +2643,10 @@ function leerPaso(id) {
       ciudad: $('#e-ciudad').value.trim(),
       disponibilidad: $('#e-disponibilidad').value,
       implementos: $('#e-implementos').value.trim(),
+      especificaciones: Object.fromEntries($$('#camposEspecificaciones [data-especificacion]')
+        .filter((campo) => campo.value !== '')
+        .map((campo) => [campo.dataset.especificacion, Number(campo.value)])),
+      implementosLista: $$('#casillasImplementos input:checked').map((campo) => campo.value),
       descripcion: $('#e-descripcion').value.trim(),
     });
   } else if (id === 'precio') {
@@ -2683,7 +2722,13 @@ function estadoDesdeBorrador(b, local) {
   const c = (local && local.contacto) || {};
   return {
     ...base,
-    equipo: { ...base.equipo, ...(d.equipo || {}) },
+    equipo: {
+      ...base.equipo,
+      ...(d.equipo || {}),
+      especificaciones: d.especificaciones || (d.equipo || {}).especificaciones || {},
+      implementosLista: d.implementos_lista || (d.equipo || {}).implementos_lista
+        || (d.equipo || {}).implementosLista || [],
+    },
     precio: { ...base.precio, ...(d.precio || {}) },
     contacto: {
       ...base.contacto,

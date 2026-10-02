@@ -23,6 +23,7 @@ const chat = require('./chat');
    página anunciara un plan sin costo mientras el servidor cobraba. */
 const precios = require('../assets/precios.js');
 const servicios = require('../assets/servicios.js');
+const especificacionesCatalogo = require('../assets/especificaciones.js');
 
 /* Las versiones de los documentos legales, también compartidas con el
    navegador. La casilla del formulario y la comprobación de aquí tienen
@@ -34,6 +35,7 @@ const pagos = require('./pagos');
 const transferencia = require('./transferencia');
 const cardnet = require('./cardnet');
 const lote = require('./lote');
+const alertas = require('./alertas');
 const crypto = require('crypto');
 
 /* CardNet, igual que la transferencia: si alguien lo pidió (`lab` o
@@ -957,6 +959,46 @@ const eliminarCuentaConSesion = conSesion(async (req, res, ctx) => {
   // Las sesiones ya se borraron con la cuenta; solo falta vaciar la cookie.
   return responder(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Max-Age=0` });
 });
+
+/* ── Búsquedas guardadas (fase 16) ────────────────────────── */
+
+const guardarBusquedaApi = conSesion(async (req, res, ctx) => {
+  if (!db.permitir(`guardar-busqueda:${ctx.usuario.id}`, 20, 15)) {
+    return fallo(res, 429, 'Ha guardado demasiadas búsquedas. Espere un rato.');
+  }
+  const filtros = alertas.normalizarBusqueda(await leerCuerpo(req));
+  if (!filtros) return fallo(res, 400, 'Elija al menos un filtro antes de guardar la búsqueda.');
+
+  const resumen = alertas.resumenBusqueda(filtros);
+  const resultado = db.guardarBusqueda({ idUsuario: ctx.usuario.id, filtros, resumen });
+  if (resultado.error === 'tope') {
+    return fallo(res, 409, `Puede guardar hasta ${resultado.tope} búsquedas.`);
+  }
+  return responder(res, resultado.repetida ? 200 : 201, {
+    id: resultado.id, resumen, repetida: resultado.repetida,
+  });
+});
+
+const listarBusquedas = conSesion((req, res, ctx) =>
+  responder(res, 200, { busquedas: db.busquedasDe(ctx.usuario.id) }));
+
+const borrarBusquedaApi = conSesion((req, res, ctx, idBusqueda) => {
+  if (!db.borrarBusqueda(idBusqueda, ctx.usuario.id)) {
+    return fallo(res, 404, 'La búsqueda no existe.');
+  }
+  return responder(res, 200, { ok: true });
+});
+
+const darDeBajaBusquedaApi = async (req, res) => {
+  const ip = origen(req);
+  if (!db.permitir(`baja-busqueda:${ip}`, 20, 15)) {
+    return fallo(res, 429, 'Demasiados intentos. Espere un rato.');
+  }
+  const cuerpo = await leerCuerpo(req);
+  const busqueda = db.darDeBajaBusqueda(cuerpo && cuerpo.testigo);
+  if (!busqueda) return fallo(res, 400, 'El enlace no es válido.');
+  return responder(res, 200, { ok: true, resumen: busqueda.resumen });
+};
 
 const MENSAJE_CELULAR_SIN_VERIFICAR = 'Su celular no está verificado. Pida el código al correo.';
 
@@ -3881,7 +3923,7 @@ function exigirAceptacion(res, idUsuario, ids) {
    teléfonos solo si son arrays de verdad), con los mismos formatos y
    rangos pero sin los mínimos que exige publicar: 3 fotos, un teléfono,
    modelo, año y precio. */
-function validarCamposAnuncio(c, plan, { completo = true } = {}) {
+function validarCamposAnuncio(c, plan, { completo = true, actual = null } = {}) {
   const presente = (v) => v !== undefined;
   const datos = {};
   const limite = new Date().getFullYear() + 1;
@@ -4023,6 +4065,33 @@ function validarCamposAnuncio(c, plan, { completo = true } = {}) {
   if (completo || presente(c.potencia)) datos.potencia = texto(c.potencia, 40);
   if (completo || presente(c.peso)) datos.peso = texto(c.peso, 40);
   if (completo || presente(c.implementos)) datos.implementos = texto(c.implementos, 500);
+
+  const categoriaEspecificaciones = datos.categoria !== undefined
+    ? datos.categoria : (actual && actual.categoria);
+  const subcategoriaEspecificaciones = datos.subcategoria !== undefined
+    ? datos.subcategoria : (actual && actual.subcategoria);
+  if (presente(c.especificaciones)) {
+    if (!c.especificaciones || typeof c.especificaciones !== 'object' || Array.isArray(c.especificaciones)) {
+      return { error: 'Las especificaciones deben enviarse como un objeto.' };
+    }
+    const resultado = especificacionesCatalogo.validarEspecificaciones(
+      categoriaEspecificaciones, subcategoriaEspecificaciones, c.especificaciones,
+    );
+    if (resultado.errores.length) return { error: resultado.errores[0] };
+    const permitidos = new Set(especificacionesCatalogo
+      .especificacionesDe(categoriaEspecificaciones, subcategoriaEspecificaciones).map((item) => item.id));
+    const ajeno = Object.keys(c.especificaciones).find((id) => !permitidos.has(id));
+    if (ajeno) return { error: `La especificación «${ajeno}» no corresponde a esta categoría.` };
+    datos.especificaciones = Object.keys(resultado.limpios).length
+      ? JSON.stringify(resultado.limpios) : null;
+  }
+  if (presente(c.implementosLista)) {
+    const resultado = especificacionesCatalogo.validarImplementos(
+      categoriaEspecificaciones, c.implementosLista,
+    );
+    if (resultado.errores.length) return { error: resultado.errores[0] };
+    datos.implementosLista = resultado.limpios.length ? JSON.stringify(resultado.limpios) : null;
+  }
   if (completo || presente(c.descripcion)) datos.descripcion = texto(c.descripcion, 4000);
   if (completo || presente(c.provincia)) datos.provincia = texto(c.provincia, 60);
   if (completo || presente(c.municipio)) datos.municipio = texto(c.municipio, 60);
@@ -4110,6 +4179,8 @@ function cuerpoDeBorrador(b) {
     condicion: b.condicion, usoValor: b.uso_valor, usoUnidad: b.uso_unidad,
     serie: b.serie, potencia: b.potencia, peso: b.peso,
     implementos: b.implementos, descripcion: b.descripcion,
+    especificaciones: b.especificaciones ? JSON.parse(b.especificaciones) : {},
+    implementosLista: b.implementos_lista ? JSON.parse(b.implementos_lista) : [],
     provincia: b.provincia, municipio: b.municipio,
     precio: b.precio, moneda: b.moneda, modalidadPrecio: b.modalidad_precio,
     precioMinimo: b.precio_minimo, itbisIncluido: b.itbis_incluido, permuta: b.permuta,
@@ -4370,7 +4441,23 @@ const guardarBorradorApi = conSesion(async (req, res, ctx, idAnuncio) => {
   }
   const dias = c.dias !== undefined ? (Number(c.dias) === 60 ? 60 : 30) : undefined;
 
-  const { error, datos } = validarCamposAnuncio(c, plan, { completo: false });
+  /* Si cambia el tipo sin mandar estos campos, se vuelven a validar los
+     guardados. Así nunca sobreviven ids de la categoría anterior. */
+  if ((c.categoria !== undefined || c.subcategoria !== undefined) && c.especificaciones === undefined) {
+    const permitidos = new Set(especificacionesCatalogo.especificacionesDe(
+      c.categoria !== undefined ? c.categoria : b.categoria,
+      c.subcategoria !== undefined ? c.subcategoria : b.subcategoria,
+    ).map((item) => item.id));
+    c.especificaciones = Object.fromEntries(Object.entries(
+      b.especificaciones ? JSON.parse(b.especificaciones) : {},
+    ).filter(([id]) => permitidos.has(id)));
+  }
+  if (c.categoria !== undefined && c.implementosLista === undefined) {
+    const permitidos = new Set(especificacionesCatalogo.implementosDe(c.categoria).map((item) => item.id));
+    c.implementosLista = (b.implementos_lista ? JSON.parse(b.implementos_lista) : [])
+      .filter((id) => permitidos.has(id));
+  }
+  const { error, datos } = validarCamposAnuncio(c, plan, { completo: false, actual: b });
   if (error) return fallo(res, 400, error);
 
   if (c.sucursal !== undefined) {
@@ -5294,6 +5381,8 @@ const PRIVADOS_DEL_ANUNCIO = ['precio_minimo', 'usuario_id', 'suscripcion_id',
 function verAnuncio(req, res, ctx, idAnuncio) {
   const a = db.anuncio(idAnuncio);
   if (!a) return fallo(res, 404, 'Ese anuncio no existe');
+  a.especificaciones = a.especificaciones ? JSON.parse(a.especificaciones) : null;
+  a.implementos_lista = a.implementos_lista ? JSON.parse(a.implementos_lista) : [];
   // Antes de borrar los privados: es lo único de la revisión que es público.
   a.serie_cotejada = a.serie_revision === 'conforme';
   /* Quién de dentro revisó la serie no sale ni hacia el dueño: es el
@@ -5550,6 +5639,12 @@ const RUTAS = [
   ['POST', /^\/api\/admin\/recuperaciones\/([\w-]+)\/rechazar$/, rechazarRecuperacion],
   ['GET',  /^\/api\/admin\/recuperaciones\/([\w-]+)$/,           verRecuperacion],
   ['GET',  /^\/api\/sesion$/,               verSesion],
+  ['POST', /^\/api\/busquedas$/,             guardarBusquedaApi],
+  ['GET',  /^\/api\/busquedas$/,             listarBusquedas],
+  /* La baja es pública y específica: debe ganar a `/:id`. Es POST
+     para que el rastreador que abre enlaces de un correo no la ejecute. */
+  ['POST', /^\/api\/busquedas\/baja$/,        darDeBajaBusquedaApi],
+  ['DELETE', /^\/api\/busquedas\/([\w-]+)$/,  borrarBusquedaApi],
   ['POST', /^\/api\/legales\/aceptar$/,     aceptarLegales],
   ['GET',  /^\/api\/facturas$/,             misFacturas],
   ['GET',  /^\/api\/facturas\/([\w-]+)\.pdf$/, descargarFactura],

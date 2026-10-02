@@ -632,12 +632,34 @@ const CAMPOS_BUSQUEDA = ['q', 'categoria', 'subcategoria', 'marca', 'provincia',
   'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax',
   'disponibilidad', 'permuta', 'itbis'];
 
+function pintarFiltrosEspecificaciones(form, filtros) {
+  const contenedor = $('#filtrosEspecificaciones');
+  if (!contenedor) return;
+  const categoria = form.elements.categoria.value;
+  const subcategoria = form.elements.subcategoria.value;
+  if (!categoria) {
+    contenedor.hidden = true;
+    contenedor.innerHTML = '';
+    return;
+  }
+  const especificaciones = especificacionesDe(categoria, subcategoria);
+  const implementos = implementosDe(categoria);
+  contenedor.innerHTML = especificaciones.map((item) => `<div class="campo campo--rango">
+    <label>${esc(item.nombre)} (${esc(item.unidad)})</label><div class="rango">
+    <input type="number" name="e_${esc(item.id)}_min" min="${item.min}" max="${item.max}" step="${item.paso}" placeholder="Desde" value="${esc(filtros[`e_${item.id}_min`] || '')}">
+    <span>hasta</span><input type="number" name="e_${esc(item.id)}_max" min="${item.min}" max="${item.max}" step="${item.paso}" placeholder="Hasta" aria-label="${esc(item.nombre)} hasta" value="${esc(filtros[`e_${item.id}_max`] || '')}">
+    </div></div>`).join('') + (implementos.length ? `<div class="campo"><label for="f-implemento">Implemento</label>
+    <select id="f-implemento" name="implemento"><option value="">Cualquier implemento</option>${implementos.map((item) =>
+      `<option value="${esc(item.id)}" ${filtros.implemento === item.id ? 'selected' : ''}>${esc(item.nombre)}</option>`).join('')}</select></div>` : '');
+  contenedor.hidden = false;
+}
+
 const ROTULO_FILTRO = {
   q: 'Búsqueda', categoria: 'Categoría', subcategoria: 'Tipo', marca: 'Marca',
   provincia: 'Provincia', condicion: 'Condición', anioMin: 'Desde', anioMax: 'Hasta',
   precioMin: 'Desde', precioMax: 'Hasta', horasMax: 'Hasta',
   // «Venta» y no «Condición»: ese rótulo ya es el del estado del equipo.
-  disponibilidad: 'Dónde', permuta: 'Venta', itbis: 'Venta',
+  disponibilidad: 'Dónde', permuta: 'Venta', itbis: 'Venta', implemento: 'Implemento',
 };
 
 /* Lo que dice el chip de los filtros que no son una cifra ni un nombre:
@@ -687,6 +709,17 @@ async function montarResultados() {
   const p = params();
   const filtros = {};
   CAMPOS_BUSQUEDA.forEach((k) => { filtros[k] = p.get(k) || ''; });
+  if (filtros.categoria) {
+    especificacionesDe(filtros.categoria, filtros.subcategoria).forEach((item) => {
+      ['min', 'max'].forEach((extremo) => {
+        const clave = `e_${item.id}_${extremo}`;
+        if (p.get(clave)) filtros[clave] = p.get(clave);
+      });
+    });
+    if (implementosDe(filtros.categoria).some((item) => item.id === p.get('implemento'))) {
+      filtros.implemento = p.get('implemento');
+    }
+  }
   // Un valor que el servidor no reconoce (`permuta=si`) no filtra allí;
   // aquí tampoco se enseña como aplicado, o el chip mentiría.
   Object.keys(VALOR_FILTRO).forEach((k) => {
@@ -716,8 +749,12 @@ async function montarResultados() {
     });
     // La subcategoría depende de la categoría elegida.
     sincronizarSubcategorias(form, filtros.subcategoria);
+    pintarFiltrosEspecificaciones(form, filtros);
     form.addEventListener('change', (ev) => {
-      if (ev.target.name === 'categoria') sincronizarSubcategorias(form, '');
+      if (ev.target.name === 'categoria') {
+        sincronizarSubcategorias(form, '');
+        pintarFiltrosEspecificaciones(form, {});
+      } else if (ev.target.name === 'subcategoria') pintarFiltrosEspecificaciones(form, {});
     });
   }
 
@@ -751,12 +788,19 @@ async function montarResultados() {
       q.delete(k);
       q.delete('pagina');
       const valor = k === 'categoria' ? nombreCategoria(v)
+        : k === 'implemento' ? (implementosDe(filtros.categoria).find((item) => item.id === v) || {}).nombre || v
         : VALOR_FILTRO[k] ? (textoValorFiltro(k, v) || v)
         : /precio/i.test(k) ? pesos(v)
         : k === 'horasMax' ? `${miles(v)} h`
+        : /^e_.+_(?:min|max)$/.test(k) ? `${v} ${(especificacionesDe(filtros.categoria, filtros.subcategoria)
+          .find((item) => k === `e_${item.id}_min` || k === `e_${item.id}_max`) || {}).unidad || ''}`
         : v;
+      const especificacion = especificacionesDe(filtros.categoria, filtros.subcategoria)
+        .find((item) => k === `e_${item.id}_min` || k === `e_${item.id}_max`);
+      const rotulo = especificacion ? `${especificacion.nombre} ${k.endsWith('_min') ? 'desde' : 'hasta'}`
+        : (ROTULO_FILTRO[k] || k);
       return `<a class="chip" href="equipos.html${q.toString() ? '?' + q : ''}"
-        title="Quitar este filtro"><span class="chip__clave">${esc(ROTULO_FILTRO[k] || k)}</span>
+        title="Quitar este filtro"><span class="chip__clave">${esc(rotulo)}</span>
         ${esc(valor)} <span aria-hidden="true">&times;</span>
         <span class="visualmente-oculto">Quitar filtro</span></a>`;
     }).join('');
@@ -958,6 +1002,18 @@ function contactosHTML(e) {
    la mitad de los campos en blanco parece una publicación incompleta
    aunque el anunciante haya puesto todo lo que aplica a su máquina. */
 function fichaTecnicaHTML(e) {
+  const formatoNumero = new Intl.NumberFormat('es-DO');
+  const especificaciones = e.especificaciones && typeof e.especificaciones === 'object'
+    ? e.especificaciones
+    : {};
+  const filasEspecificaciones = especificacionesDe(e.categoria, e.subcategoria)
+    .filter((item) => Object.prototype.hasOwnProperty.call(especificaciones, item.id)
+      && Number.isFinite(especificaciones[item.id]))
+    .map((item) => [
+      item.nombre,
+      `${formatoNumero.format(especificaciones[item.id])} ${item.unidad}`,
+      'num',
+    ]);
   const filas = [
     ['Año', e.anio, 'num'],
     [e.uso.unidad === 'h' ? 'Horas de uso' : 'Kilometraje', e.uso.valor ? fmtUso(e.uso) : null, 'num'],
@@ -969,6 +1025,8 @@ function fichaTecnicaHTML(e) {
     ['Transmisión', e.transmision_marca ? `${e.transmision_marca_nombre || e.transmision_marca}${e.transmision_modelo ? ` ${e.transmision_modelo}` : ''}` : ''],
     ['Potencia', e.potencia, 'num'],
     ['Peso operativo', e.peso, 'num'],
+    ['Implementos', e.implementos],
+    ...filasEspecificaciones,
     ['Ubicación', [e.municipio, e.provincia].filter(Boolean).join(', ')],
     ['Disponibilidad', e.disponibilidad === 'bajo-pedido' ? 'Bajo pedido' : 'En el país'],
   ];
@@ -976,6 +1034,25 @@ function fichaTecnicaHTML(e) {
     ${filas.filter(([, valor]) => valor).map(([rotulo, valor, clase, crudo]) =>
       `<div><dt>${esc(rotulo)}</dt><dd class="${clase || ''}">${crudo ? valor : esc(valor)}</dd></div>`).join('')}
   </dl>`;
+}
+
+/* Los ids guardados se traducen siempre contra el catálogo vigente.
+   Si un implemento se retiró del catálogo, no se publica su id como
+   sustituto: deja de aparecer hasta que los datos vuelvan a ser válidos. */
+function implementosHTML(e) {
+  if (!Array.isArray(e.implementos_lista) || !e.implementos_lista.length) return '';
+  const elegidos = new Set(e.implementos_lista);
+  const nombres = implementosDe(e.categoria)
+    .filter((item) => elegidos.has(item.id))
+    .map((item) => item.nombre);
+  if (!nombres.length) return '';
+
+  return `<div class="detalle__implementos" data-implementos-estructurados>
+    <p class="etiqueta etiqueta--bloque">Implementos incluidos</p>
+    <ul class="detalle__condiciones">
+      ${nombres.map((nombre) => `<li>${icono('i-check')} ${esc(nombre)}</li>`).join('')}
+    </ul>
+  </div>`;
 }
 
 /* Si la máquina ya está en el país o hay que traerla. Bajo pedido cambia
@@ -1292,6 +1369,10 @@ async function montarDetalle() {
     ? await api(`/anuncios/${encodeURIComponent(idPedido)}`, { silencioso: true })
     : null;
   const e = datos && datos.anuncio ? anuncioDeApi(datos.anuncio) : null;
+  if (e) {
+    e.especificaciones = datos.anuncio.especificaciones;
+    e.implementos_lista = datos.anuncio.implementos_lista;
+  }
 
   if (!e) {
     cont.innerHTML = `<div class="vacio">
@@ -1333,6 +1414,7 @@ async function montarDetalle() {
         ${accionesFichaHTML(e)}
 
         ${fichaTecnicaHTML(e)}
+        ${implementosHTML(e)}
 
         ${e.verificado ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Anunciante verificado</span> MercaMaquinarias cotejó la existencia registral del negocio y sus datos de contacto. No certifica la calidad del equipo ni garantiza la operación.</p>` : ''}
         ${e.serieCotejada ? `<p class="nota-verificado"><span class="pastilla pastilla--verde">${icono('i-check')} Serie cotejada</span> El personal de MercaMaquinarias comprobó que el número de serie declarado coincide con la placa de las fotos y no se repite en otro anuncio. No es un certificado de propiedad ni de ausencia de robo.</p>` : ''}

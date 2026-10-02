@@ -32,7 +32,10 @@ let pendiente = { correo: '', tipo: 'verificacion', via: 'correo', telefono: '' 
 
 const destinoTrasEntrar = () => {
   const pedido = new URLSearchParams(location.search).get('destino');
-  return /^[\w-]+\.html$/.test(pedido || '') ? pedido : 'panel.html';
+  /* El destino puede conservar la consulta de una búsqueda del catálogo,
+     pero siempre empieza por una página local: nunca se acepta un esquema,
+     una barra inicial ni una ruta hacia otro sitio. */
+  return /^[\w-]+\.html(?:[?#][^\r\n]*)?$/.test(pedido || '') ? pedido : 'panel.html';
 };
 
 /* ── Ver la contraseña ──────────────────────────────────────
