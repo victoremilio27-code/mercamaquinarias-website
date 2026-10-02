@@ -1704,6 +1704,24 @@ async function crearSolicitudServicio(req, res) {
   }
 
   const servicio = String(c.servicio || '');
+
+  /* La trampa se comprueba después del límite por IP: si se hiciera
+     antes, un robot podría martillear esta ruta gratis. Se le contesta
+     como a una solicitud real para que no aprenda a esquivarla. Los
+     clientes con una página antigua no mandan el tiempo y se aceptan. */
+  if (texto(c.sitio_web) || (typeof c.ms_formulario === 'number' && c.ms_formulario < 3000)) {
+    const letra = { alquiler: 'A', transporte: 'T', importacion: 'I' }[servicio] || 'S';
+    const referencia = `${letra}${new Date().getFullYear()}-${crypto.randomBytes(3).toString('hex').slice(0, 5).toUpperCase()}`;
+    const correoCliente = texto(c.correo, 160);
+    console.log('solicitudes: descartada por trampa');
+    return responder(res, 201, {
+      referencia,
+      mensaje: correoCliente
+        ? 'Recibimos su solicitud. Le enviamos copia por correo y le respondemos con precio y disponibilidad.'
+        : 'Recibimos su solicitud. Le respondemos con precio y disponibilidad.',
+    });
+  }
+
   if (!SERVICIOS_SOLICITUD.includes(servicio)) return fallo(res, 400, 'Servicio no reconocido');
 
   const nombre = texto(c.nombre, 120);

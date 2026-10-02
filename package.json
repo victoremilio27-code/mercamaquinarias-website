@@ -67,6 +67,7 @@
     "bitacora:probar": "node tools/probar-bitacora.js",
     "cuenta:probar": "node tools/probar-cuenta.js",
     "busquedas:probar": "node tools/probar-busquedas.js",
+    "solicitudes:probar": "node tools/probar-solicitudes.js",
     "documentos:probar": "node tools/probar-documentos.js",
     "documentos-api:probar": "node tools/probar-documentos-api.js",
     "testigos:probar": "node tools/probar-testigos.js",
