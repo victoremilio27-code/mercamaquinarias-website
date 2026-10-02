@@ -412,12 +412,8 @@ function porBrevo({ para, asunto, texto, html, responderA = BUZONES.general, adj
 
 const TRANSPORTES = { archivo: porArchivo, brevo: porBrevo };
 
-/* Nunca lanza: un fallo del correo no debe tumbar la operación que lo
-   provocó. Devuelve si se entregó para que quien llame decida.
-
-   Con Brevo devuelve una promesa. Quien llama puede ignorarla —el
-   correo es accesorio a la operación— o esperarla si necesita saber si
-   salió; por eso el `catch` cubre los dos casos. */
+/* Un salto de línea en el asunto permitiría inyectar cabeceras: se
+   cambian los caracteres de control por espacios y se acota el largo. */
 function limpiarAsunto(asunto) {
   return String(asunto ?? '')
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
@@ -426,6 +422,12 @@ function limpiarAsunto(asunto) {
     .slice(0, 150);
 }
 
+/* Nunca lanza: un fallo del correo no debe tumbar la operación que lo
+   provocó. Devuelve si se entregó para que quien llame decida.
+
+   Con Brevo devuelve una promesa. Quien llama puede ignorarla —el
+   correo es accesorio a la operación— o esperarla si necesita saber si
+   salió; por eso el `catch` cubre los dos casos. */
 function enviar(mensaje) {
   const transporte = TRANSPORTES[TRANSPORTE];
   if (!transporte) {

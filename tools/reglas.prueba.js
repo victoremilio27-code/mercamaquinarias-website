@@ -134,7 +134,7 @@ test(`el nombre viejo TuEquipo${'RD'} solo permanece en los archivos autorizados
    regla acepta «es» con o sin región en vez de dejar la prueba como «todo». */
 test('cada HTML público declara idioma, título y metadatos básicos', () => {
   const errores = [];
-  for (const archivo of htmlDeRaiz().filter((nombre) => nombre !== 'proximamente.html')) {
+  for (const archivo of htmlDeRaiz()) {
     const texto = leer(archivo);
     const reglas = [
       [/<html\b[^>]*\blang\s*=\s*["']es(?:-[a-z]{2})?["']/i, '<html lang="es" o "es-XX"'],
