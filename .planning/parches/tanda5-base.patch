@@ -1,0 +1,1039 @@
+From 61fbf3b32b944c1e93daa286a802a97c4769231f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 01:28:42 +0000
+Subject: [PATCH 1/4] base: documentos del anuncio (FICHA-01) y huella de
+ testigos (#72)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 2026-10-documentos-anuncio: tabla documentos_anuncio (PDF e imágenes,
+  ruta relativa con CHECK contra «..», absolutas y barra invertida).
+  Topes en código (TOPES_DOCUMENTOS): 4 MB por archivo, 4 documentos y
+  10 MB por anuncio, 100 MB en total (MERCA_DOCUMENTOS_TOPE_MB), por el
+  disco del droplet.
+- Funciones: motivoSinDocumento, agregarDocumento, documentosDe,
+  documentoParaDescargar, borrarDocumento y espacioDocumentos. Un
+  borrador no enseña sus documentos a nadie más que a su dueño.
+- borrarAnuncio y eliminarCuenta devuelven también las rutas de los
+  documentos para limpiar el disco.
+- 2026-10-testigos-hmac: vacía sesiones y dispositivos (el testigo
+  estaba en claro y SQLite no sabe hacer HMAC) y huellaTestigo, que es
+  lo que guardarán esas tablas.
+- documentos:probar (44 comprobaciones), con su paso en CI.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ .github/workflows/desplegar.yml |   2 +
+ package.json                    |   2 +
+ tools/db.js                     | 206 +++++++++++++++++++++++++++++++-
+ tools/probar-documentos.js      | 197 ++++++++++++++++++++++++++++++
+ tools/probar-testigos.js        | 110 +++++++++++++++++
+ 5 files changed, 515 insertions(+), 2 deletions(-)
+ create mode 100644 tools/probar-documentos.js
+ create mode 100644 tools/probar-testigos.js
+
+diff --git a/.github/workflows/desplegar.yml b/.github/workflows/desplegar.yml
+index 8a17d2d..7ff52f1 100644
+--- a/.github/workflows/desplegar.yml
++++ b/.github/workflows/desplegar.yml
+@@ -108,6 +108,8 @@ jobs:
+         run: npm run cuenta:probar
+       - name: Busquedas guardadas
+         run: npm run busquedas:probar
++      - name: Documentos del anuncio
++        run: npm run documentos:probar
+       - name: Telefono y SMS
+         run: npm run telefono:probar
+       - name: Contactos verificados
+diff --git a/package.json b/package.json
+index a1f8c22..f29991a 100644
+--- a/package.json
++++ b/package.json
+@@ -54,6 +54,8 @@
+     "bitacora:probar": "node tools/probar-bitacora.js",
+     "cuenta:probar": "node tools/probar-cuenta.js",
+     "busquedas:probar": "node tools/probar-busquedas.js",
++    "documentos:probar": "node tools/probar-documentos.js",
++    "testigos:probar": "node tools/probar-testigos.js",
+     "telefono:probar": "node tools/probar-telefono.js",
+     "metricas:probar": "node tools/probar-metricas.js",
+     "contactos:probar": "node tools/probar-contactos.js",
+diff --git a/tools/db.js b/tools/db.js
+index bf25000..54b4340 100644
+--- a/tools/db.js
++++ b/tools/db.js
+@@ -1426,6 +1426,58 @@ const MIGRACIONES = [
+        PRIMARY KEY (busqueda_id, anuncio_id)
+      )`,
+   ]],
++
++  /* FICHA-01 (tanda 5). Documentos adjuntos a un anuncio: informes de
++     inspección, manuales, facturas de mantenimiento. Hasta ahora un
++     anuncio solo admitía fotos y video, y sin esto no hay dónde colgar el
++     informe de la fase 14.
++
++     El archivo vive en disco (`MERCA_DOCUMENTOS`), no en la base: la base
++     guarda solo `ruta`, RELATIVA a esa carpeta, con un nombre que genera
++     el servidor. Los CHECK impiden que una ruta con «..» o absoluta llegue
++     a guardarse aunque falle la comprobación de arriba.
++
++     No se sirven como /fotos (carpeta pública): un documento de un
++     anuncio en borrador no lo puede leer nadie más que su dueño, así que
++     se descargan por una ruta de la API que mira el estado del anuncio.
++
++     Los topes (por archivo, por anuncio y total) están en código, en
++     `TOPES_DOCUMENTOS`, y no en CHECK: el disco del droplet manda y
++     cambiarlos no debe exigir una migración. Contrato completo en
++     `.planning/tanda5-contrato.md`. */
++  ['2026-10-documentos-anuncio', [
++    `CREATE TABLE IF NOT EXISTS documentos_anuncio (
++       id         TEXT PRIMARY KEY,
++       anuncio_id TEXT NOT NULL REFERENCES anuncios(id) ON DELETE CASCADE,
++       nombre     TEXT NOT NULL CHECK (length(nombre) BETWEEN 1 AND 120),
++       tipo       TEXT NOT NULL CHECK (tipo IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')),
++       bytes      INTEGER NOT NULL CHECK (bytes > 0),
++       ruta       TEXT NOT NULL UNIQUE
++                  CHECK (length(ruta) BETWEEN 1 AND 200 AND instr(ruta, '..') = 0
++                         AND substr(ruta, 1, 1) <> '/' AND instr(ruta, '\\') = 0),
++       subido_por TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
++       creado     TEXT NOT NULL
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_documentos_anuncio ON documentos_anuncio (anuncio_id)',
++  ]],
++
++  /* DEUDA-01 (#72). `sesiones.testigo` y `dispositivos.testigo` pasan a
++     guardar el HMAC del testigo (`huellaTestigo`), como ya hacían los
++     códigos y los enlaces «No fui yo». Antes, quien leyera una copia de
++     la base (un respaldo olvidado, un volcado) tenía en la mano la cookie
++     de todas las sesiones abiertas.
++
++     Las filas viejas guardan el testigo en claro y SQLite no sabe hacer
++     un HMAC, así que no se convierten: se borran. Cuesta que todo el que
++     tenga sesión abierta vuelva a entrar una vez (y confirme el equipo
++     con un código), y antes del lanzamiento eso son unas pocas cuentas
++     de prueba. Dejarlas no abría nada —la cookie en claro ya no casaría
++     con ninguna huella— pero quedarían en la base hasta caducar, que es
++     justo lo que este cambio quiere evitar. */
++  ['2026-10-testigos-hmac', [
++    'DELETE FROM sesiones',
++    'DELETE FROM dispositivos',
++  ]],
+ ];
+ 
+ function migrar() {
+@@ -1723,6 +1775,24 @@ if (!process.env.MERCA_SECRETO) {
+ const firmarCodigo = (codigo, correo) =>
+   crypto.createHmac('sha256', SECRETO).update(`${correo}|${codigo}`).digest('hex');
+ 
++/* DEUDA-01 (#72). Lo que se guarda en `sesiones.testigo` y
++   `dispositivos.testigo`: el HMAC del testigo, nunca el testigo. La
++   cookie sigue llevando el testigo en claro; el servidor calcula la
++   huella y busca por ella.
++
++   La clase va dentro del HMAC para que la huella de una sesión no sirva
++   como huella de un equipo de confianza aunque alguien copie una fila de
++   una tabla a la otra. Solo 'sesion' y 'dispositivo': cualquier otra
++   cosa es un error de programación y lanza.
++
++   Cambiar MERCA_SECRETO cierra todas las sesiones y olvida todos los
++   equipos, igual que ya invalidaba los códigos en vuelo. */
++const CLASES_TESTIGO = ['sesion', 'dispositivo'];
++function huellaTestigo(clase, testigo) {
++  if (!CLASES_TESTIGO.includes(clase)) throw new Error(`huellaTestigo: clase desconocida «${clase}»`);
++  return crypto.createHmac('sha256', SECRETO).update(`testigo-${clase}|${String(testigo)}`).digest('hex');
++}
++
+ /* Seis dígitos, con generación uniforme. Math.random no sirve: es
+    predecible y aquí protege el acceso a una cuenta. */
+ const generarCodigo = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+@@ -4976,10 +5046,14 @@ function borrarAnuncio(idAnuncio, idOrg) {
+     .all(idAnuncio);
+   const videos = d.prepare('SELECT url, poster FROM anuncio_videos WHERE anuncio_id = ?')
+     .all(idAnuncio);
++  /* Los documentos (FICHA-01) no se comparten entre anuncios —duplicar no
++     los copia—, así que no hace falta mirar si otro los usa. */
++  const documentos = d.prepare('SELECT ruta FROM documentos_anuncio WHERE anuncio_id = ?')
++    .all(idAnuncio).map((f) => f.ruta);
+ 
+   d.prepare('BEGIN').run();
+   try {
+-    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio']) {
++    for (const t of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio', 'documentos_anuncio']) {
+       try { d.prepare(`DELETE FROM ${t} WHERE anuncio_id = ?`).run(idAnuncio); } catch (_) { /* tabla sin esa columna */ }
+     }
+     d.prepare('DELETE FROM anuncios WHERE id = ? AND organizacion_id = ?').run(idAnuncio, idOrg);
+@@ -5009,6 +5083,7 @@ function borrarAnuncio(idAnuncio, idOrg) {
+   return {
+     fotos: [...rutasFotos].filter((r) => !enUso.has(r)),
+     videos: rutasVideos.filter((r) => !enUso.has(r)),
++    documentos,
+   };
+ }
+ 
+@@ -5057,7 +5132,10 @@ function eliminarCuenta(idUsuario) {
+ 
+   const rutasFotos = new Set();
+   const rutasVideos = new Set();
++  const rutasDocumentos = [];
+   for (const idOrg of propias) {
++    d.prepare(`SELECT x.ruta FROM documentos_anuncio x JOIN anuncios a ON a.id = x.anuncio_id
++               WHERE a.organizacion_id = ?`).all(idOrg).forEach((f) => rutasDocumentos.push(f.ruta));
+     d.prepare(`SELECT f.url, f.miniatura FROM anuncio_fotos f JOIN anuncios a ON a.id = f.anuncio_id
+                WHERE a.organizacion_id = ?`).all(idOrg)
+       .forEach((f) => { if (f.url) rutasFotos.add(f.url); if (f.miniatura) rutasFotos.add(f.miniatura); });
+@@ -5083,7 +5161,7 @@ function eliminarCuenta(idUsuario) {
+     for (const idOrg of propias) {
+       const anuncios = d.prepare('SELECT id FROM anuncios WHERE organizacion_id = ?').all(idOrg);
+       for (const { id } of anuncios) {
+-        for (const tabla of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio', 'recordatorios']) {
++        for (const tabla of ['anuncio_fotos', 'anuncio_videos', 'anuncio_contactos', 'eventos', 'metricas_diarias', 'contactos_anuncio', 'recordatorios', 'documentos_anuncio']) {
+           d.prepare(`DELETE FROM ${tabla} WHERE anuncio_id = ?`).run(id);
+         }
+       }
+@@ -5147,6 +5225,7 @@ function eliminarCuenta(idUsuario) {
+   return {
+     fotos: [...rutasFotos].filter((r) => !enUso.has(r)),
+     videos: [...rutasVideos].filter((r) => !enUso.has(r)),
++    documentos: rutasDocumentos,
+   };
+ }
+ 
+@@ -6870,7 +6949,130 @@ const avanzarRevisionBusqueda = (idBusqueda, hasta) => abrir()
+   .prepare('UPDATE busquedas_guardadas SET revisada_hasta = ? WHERE id = ? AND revisada_hasta < ?')
+   .run(hasta, idBusqueda, hasta).changes > 0;
+ 
++/* ── Documentos del anuncio (FICHA-01, tanda 5) ─────────────── */
++
++/* Topes pensados para el disco del droplet: 512 MB con el 60 % ocupado
++   al planificar la fase 14, y las fotos, la base, los PDF de facturas y
++   los respaldos comparten ese disco. Un informe de inspección o un manual
++   escaneado caben en 4 MB; cuatro por anuncio cubren informe, manual,
++   facturas de mantenimiento y algo más. El total corta antes de llenar
++   el disco: una subida que lo pase se rechaza para todos (la API responde
++   507), y se sube con MERCA_DOCUMENTOS_TOPE_MB el día que el disco crezca. */
++const MB = 1024 * 1024;
++const TOPES_DOCUMENTOS = Object.freeze({
++  bytesPorArchivo: 4 * MB,
++  porAnuncio: 4,
++  bytesPorAnuncio: 10 * MB,
++  bytesTotal: (Number(process.env.MERCA_DOCUMENTOS_TOPE_MB) > 0
++    ? Number(process.env.MERCA_DOCUMENTOS_TOPE_MB) : 100) * MB,
++});
++const TIPOS_DOCUMENTO = Object.freeze(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
++
++/* Lo que ve cualquiera: nunca la ruta en disco ni quién lo subió. */
++const documentoPublico = (f) => ({ id: f.id, nombre: f.nombre, tipo: f.tipo, bytes: f.bytes, creado: f.creado });
++
++/* El nombre que se enseña, no el del archivo en disco. Sin barras ni
++   caracteres de control: acaba en un Content-Disposition. */
++function nombreDocumento(nombre) {
++  const limpio = String(nombre || '').replace(/[\u0000-\u001f\u007f/\\]/g, ' ').replace(/\s+/g, ' ').trim();
++  return limpio.slice(0, 120) || 'Documento';
++}
++
++const bytesDocumentos = (d, idAnuncio) => idAnuncio
++  ? d.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM documentos_anuncio WHERE anuncio_id = ?').get(idAnuncio)
++  : d.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM documentos_anuncio').get();
++
++/* ¿Se puede subir un documento de este tipo y tamaño a este anuncio?
++   null si sí; si no, el código del motivo. La API la llama ANTES de
++   escribir el archivo en disco, para no escribir algo que luego se
++   rechaza; `agregarDocumento` lo vuelve a comprobar al insertar.
++
++   'no-existe' sirve igual para un anuncio ajeno: no se confirma que
++   exista. Un anuncio vendido o retirado sigue admitiendo documentos (el
++   dueño puede querer completar el historial); un borrador también. */
++function motivoSinDocumento({ idAnuncio, idOrg, tipo, bytes }) {
++  const d = abrir();
++  const suyo = d.prepare('SELECT 1 FROM anuncios WHERE id = ? AND organizacion_id = ?').get(idAnuncio, idOrg);
++  if (!suyo) return 'no-existe';
++  if (!TIPOS_DOCUMENTO.includes(tipo)) return 'tipo';
++  const n = Number(bytes);
++  if (!Number.isInteger(n) || n <= 0) return 'vacio';
++  if (n > TOPES_DOCUMENTOS.bytesPorArchivo) return 'tope-archivo';
++  const delAnuncio = bytesDocumentos(d, idAnuncio);
++  if (delAnuncio.n >= TOPES_DOCUMENTOS.porAnuncio) return 'tope-cantidad';
++  if (delAnuncio.b + n > TOPES_DOCUMENTOS.bytesPorAnuncio) return 'tope-anuncio';
++  if (bytesDocumentos(d).b + n > TOPES_DOCUMENTOS.bytesTotal) return 'tope-total';
++  return null;
++}
++
++/* Anota un documento YA escrito en disco. `ruta` es la relativa a
++   MERCA_DOCUMENTOS que devolvió el módulo de almacenamiento, y `tipo` el
++   que ese módulo dedujo de los primeros bytes, nunca el que mandó el
++   navegador. Devuelve `{ documento }` o `{ error }` con los mismos
++   códigos que `motivoSinDocumento`; con error, quien llama borra el
++   archivo que acaba de escribir. */
++function agregarDocumento({ idAnuncio, idOrg, idUsuario = null, nombre, tipo, bytes, ruta }) {
++  const motivo = motivoSinDocumento({ idAnuncio, idOrg, tipo, bytes });
++  if (motivo) return { error: motivo };
++  const fila = {
++    id: id(), anuncio_id: idAnuncio, nombre: nombreDocumento(nombre), tipo,
++    bytes: Number(bytes), ruta: String(ruta || ''), subido_por: idUsuario, creado: ahora(),
++  };
++  abrir().prepare(`INSERT INTO documentos_anuncio (id, anuncio_id, nombre, tipo, bytes, ruta, subido_por, creado)
++                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
++    .run(fila.id, fila.anuncio_id, fila.nombre, fila.tipo, fila.bytes, fila.ruta, fila.subido_por, fila.creado);
++  return { documento: documentoPublico(fila) };
++}
++
++/* La lista que pinta la ficha o el formulario de publicar. Mismo criterio
++   que `verAnuncio`: un borrador no existe para quien no es su dueño, y
++   entonces devuelve null (la API responde 404). `idOrg` es la
++   organización de quien mira, o null sin sesión. */
++function documentosDe(idAnuncio, idOrg = null) {
++  const d = abrir();
++  const a = d.prepare('SELECT estado, organizacion_id FROM anuncios WHERE id = ?').get(idAnuncio);
++  if (!a) return null;
++  if (a.estado === 'borrador' && (!idOrg || a.organizacion_id !== idOrg)) return null;
++  return d.prepare('SELECT * FROM documentos_anuncio WHERE anuncio_id = ? ORDER BY creado, id')
++    .all(idAnuncio).map(documentoPublico);
++}
++
++/* Para descargar: la fila CON la ruta, o null si quien mira no puede
++   verlo (mismo criterio que `documentosDe`) o el documento no es de ese
++   anuncio. Solo para la ruta de descarga: la ruta no sale nunca en JSON. */
++function documentoParaDescargar(idAnuncio, idDocumento, idOrg = null) {
++  const d = abrir();
++  const f = d.prepare(`SELECT x.*, a.estado, a.organizacion_id FROM documentos_anuncio x
++                       JOIN anuncios a ON a.id = x.anuncio_id
++                       WHERE x.id = ? AND x.anuncio_id = ?`).get(idDocumento, idAnuncio);
++  if (!f) return null;
++  if (f.estado === 'borrador' && (!idOrg || f.organizacion_id !== idOrg)) return null;
++  return { id: f.id, nombre: f.nombre, tipo: f.tipo, bytes: f.bytes, ruta: f.ruta };
++}
++
++/* Solo el dueño. Devuelve la ruta para que quien llama borre el archivo,
++   o null si no había nada que borrar (o no es suyo). */
++function borrarDocumento(idAnuncio, idDocumento, idOrg) {
++  const d = abrir();
++  const f = d.prepare(`SELECT x.ruta FROM documentos_anuncio x JOIN anuncios a ON a.id = x.anuncio_id
++                       WHERE x.id = ? AND x.anuncio_id = ? AND a.organizacion_id = ?`)
++    .get(idDocumento, idAnuncio, idOrg);
++  if (!f) return null;
++  d.prepare('DELETE FROM documentos_anuncio WHERE id = ?').run(idDocumento);
++  return f.ruta;
++}
++
++/* Lo que ocupan todos los documentos, para la consola y para la tarea
++   que algún día limpie archivos huérfanos. */
++const espacioDocumentos = () => {
++  const r = bytesDocumentos(abrir());
++  return { documentos: r.n, bytes: r.b, tope: TOPES_DOCUMENTOS.bytesTotal };
++};
++
+ module.exports = {
++  /* FICHA-01: documentos del anuncio. #72: huella de los testigos. */
++  TOPES_DOCUMENTOS, TIPOS_DOCUMENTO, motivoSinDocumento, agregarDocumento, documentosDe,
++  documentoParaDescargar, borrarDocumento, espacioDocumentos, huellaTestigo,
+   guardarBusqueda, busquedasDe, borrarBusqueda, darDeBajaBusqueda, testigoBajaBusqueda, busquedasActivas,
+   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
+   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
+diff --git a/tools/probar-documentos.js b/tools/probar-documentos.js
+new file mode 100644
+index 0000000..e6604ec
+--- /dev/null
++++ b/tools/probar-documentos.js
+@@ -0,0 +1,197 @@
++/**
++ * probar-documentos.js — tanda 5, paso 2: la migración y la capa de base
++ * de los documentos adjuntos a un anuncio (FICHA-01).
++ *
++ *   node tools/probar-documentos.js
++ *
++ * POR QUÉ EXISTE
++ *
++ * Es el contrato de las tareas de Codex que vienen detrás (rutas de la
++ * API e interfaz): si esto cambia, cambian ellas. Fija lo que no se ve
++ * leyendo una ruta: los topes por archivo, por anuncio y total; que la
++ * base rechaza una ruta con «..»; que un borrador no enseña sus
++ * documentos a nadie más que a su dueño; que la ruta en disco no sale en
++ * la lista pública, y que borrar el anuncio o la cuenta devuelve las
++ * rutas para limpiar el disco.
++ *
++ * Corre contra una base TEMPORAL en `.tmp/prueba-documentos/`.
++ */
++
++const fs = require('fs');
++const path = require('path');
++
++/* Antes de cargar db.js: la ruta de la base y los topes se leen al importarlo. */
++const BANCO = path.join(__dirname, '..', '.tmp', 'prueba-documentos');
++fs.rmSync(BANCO, { recursive: true, force: true });
++fs.mkdirSync(BANCO, { recursive: true });
++process.env.MERCA_DB = path.join(BANCO, 'prueba.db');
++process.env.MERCA_CORREO = 'archivo';
++process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
++process.env.MERCA_DOCUMENTOS_TOPE_MB = '20';
++
++const db = require('./db.js');
++
++let bien = 0;
++let mal = 0;
++function comprobar(condicion, que) {
++  if (condicion) {
++    bien++;
++    console.log(`  ok  ${que}`);
++    return;
++  }
++  mal++;
++  console.log(`  MAL ${que}`);
++}
++const lanza = (fn) => { try { fn(); return null; } catch (e) { return e; } };
++const ejecuta = (sql, ...args) => db.abrir().prepare(sql).run(...args);
++const fila = (sql, ...args) => db.abrir().prepare(sql).get(...args);
++
++const MB = 1024 * 1024;
++let serie = 0;
++const ruta = (ext = 'pdf') => `2026-10/prueba-${++serie}.${ext}`;
++
++function cuenta(correoCuenta) {
++  const { idUsuario } = db.crearCuenta({
++    correo: correoCuenta, clave: 'UnaClaveLargaYSegura9', nombre: 'Prueba Documentos',
++    telefono: '8095550000', tipo: 'particular',
++  });
++  return { idUsuario, org: db.organizacionDe(idUsuario) };
++}
++const anuncioDe = (c, estado = 'activo') => {
++  const idAnuncio = db.crearBorrador({ idOrg: c.org.id, idPlan: 'destacado', dias: 30 });
++  if (estado !== 'borrador') ejecuta('UPDATE anuncios SET estado = ? WHERE id = ?', estado, idAnuncio);
++  return idAnuncio;
++};
++
++console.log('\n1 · Migración y topes');
++{
++  comprobar(!!fila("SELECT 1 FROM migraciones WHERE id = '2026-10-documentos-anuncio'"), 'migración anotada');
++  comprobar(!!fila("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'ix_documentos_anuncio'"), 'con su índice');
++  const t = db.TOPES_DOCUMENTOS;
++  comprobar(t.bytesPorArchivo === 4 * MB && t.porAnuncio === 4 && t.bytesPorAnuncio === 10 * MB,
++    'topes: 4 MB por archivo, 4 documentos y 10 MB por anuncio');
++  comprobar(t.bytesTotal === 20 * MB, 'el total se lee de MERCA_DOCUMENTOS_TOPE_MB');
++  comprobar(Object.isFrozen(t), 'los topes no se pueden cambiar en caliente');
++  comprobar(db.TIPOS_DOCUMENTO.join() === 'application/pdf,image/jpeg,image/png,image/webp', 'PDF e imágenes, nada más');
++}
++
++console.log('\n2 · Subir: tipo, tamaño y dueño');
++{
++  const ana = cuenta('ana-doc@ejemplo.test');
++  const beto = cuenta('beto-doc@ejemplo.test');
++  const idA = anuncioDe(ana);
++  const base = { idAnuncio: idA, idOrg: ana.org.id, idUsuario: ana.idUsuario };
++
++  comprobar(db.motivoSinDocumento({ ...base, tipo: 'application/pdf', bytes: 1000 }) === null, 'un PDF pequeño se admite');
++  comprobar(db.motivoSinDocumento({ ...base, tipo: 'text/html', bytes: 1000 }) === 'tipo', 'HTML no');
++  comprobar(db.motivoSinDocumento({ ...base, tipo: 'image/svg+xml', bytes: 1000 }) === 'tipo', 'SVG no (lleva script)');
++  comprobar(db.motivoSinDocumento({ ...base, tipo: 'application/pdf', bytes: 0 }) === 'vacio', 'vacío no');
++  comprobar(db.motivoSinDocumento({ ...base, tipo: 'application/pdf', bytes: 4 * MB + 1 }) === 'tope-archivo',
++    'un byte por encima de 4 MB no');
++  comprobar(db.motivoSinDocumento({ ...base, idOrg: beto.org.id, tipo: 'application/pdf', bytes: 1000 }) === 'no-existe',
++    'en un anuncio ajeno: «no existe», sin confirmar que existe');
++  comprobar(db.motivoSinDocumento({ ...base, idAnuncio: 'no-hay', tipo: 'application/pdf', bytes: 1000 }) === 'no-existe',
++    'en un anuncio que no existe, lo mismo');
++
++  const r = db.agregarDocumento({ ...base, nombre: '  Informe\nde ../inspección.pdf ', tipo: 'application/pdf', bytes: 1234, ruta: ruta() });
++  comprobar(r.documento && r.documento.id && r.documento.bytes === 1234 && r.documento.tipo === 'application/pdf',
++    'agregarDocumento devuelve el documento');
++  comprobar(r.documento.nombre === 'Informe de .. inspección.pdf', 'el nombre se limpia de saltos y barras');
++  comprobar(!('ruta' in r.documento) && !('subido_por' in r.documento), 'sin la ruta en disco ni quién lo subió');
++  comprobar(fila('SELECT subido_por FROM documentos_anuncio WHERE id = ?', r.documento.id).subido_por === ana.idUsuario,
++    'en la base sí queda quién lo subió');
++  comprobar(db.agregarDocumento({ ...base, nombre: 'x', tipo: 'text/html', bytes: 10, ruta: ruta('html') }).error === 'tipo',
++    'agregarDocumento también comprueba (no confía en la llamada previa)');
++}
++
++console.log('\n3 · Topes por anuncio y total');
++{
++  const caro = cuenta('caro-doc@ejemplo.test');
++  const idA = anuncioDe(caro);
++  const base = { idAnuncio: idA, idOrg: caro.org.id, idUsuario: caro.idUsuario, nombre: 'Manual', tipo: 'application/pdf' };
++  for (let i = 0; i < 3; i++) db.agregarDocumento({ ...base, bytes: 3 * MB, ruta: ruta() });
++  comprobar(db.motivoSinDocumento({ ...base, bytes: 1 * MB + 1 }) === 'tope-anuncio', 'pasarse de 10 MB en el anuncio no');
++  comprobar(db.agregarDocumento({ ...base, bytes: 1 * MB, ruta: ruta() }).documento, 'justo 10 MB sí');
++  comprobar(db.motivoSinDocumento({ ...base, bytes: 1 }) === 'tope-cantidad', 'el quinto documento no');
++
++  const dora = cuenta('dora-doc@ejemplo.test');
++  const idB = anuncioDe(dora);
++  const baseB = { idAnuncio: idB, idOrg: dora.org.id, idUsuario: dora.idUsuario, nombre: 'Otro', tipo: 'image/png' };
++  /* Ya hay 10 MB de caro y ~1 KB de ana: 20 MB de tope total. */
++  db.agregarDocumento({ ...baseB, bytes: 4 * MB, ruta: ruta('png') });
++  db.agregarDocumento({ ...baseB, bytes: 4 * MB, ruta: ruta('png') });
++  comprobar(db.motivoSinDocumento({ ...baseB, bytes: 2 * MB }) === 'tope-total', 'el tope total corta para todos');
++  const e = db.espacioDocumentos();
++  comprobar(e.documentos === 7 && e.bytes === 18 * MB + 1234 && e.tope === 20 * MB, 'espacioDocumentos suma todo');
++}
++
++console.log('\n4 · La base rechaza rutas peligrosas aunque falle la API');
++{
++  const eva = cuenta('eva-doc@ejemplo.test');
++  const idA = anuncioDe(eva);
++  const base = { idAnuncio: idA, idOrg: eva.org.id, nombre: 'x', tipo: 'application/pdf', bytes: 10 };
++  comprobar(!!lanza(() => db.agregarDocumento({ ...base, ruta: '../etc/passwd' })), 'con «..» no');
++  comprobar(!!lanza(() => db.agregarDocumento({ ...base, ruta: '/etc/passwd' })), 'absoluta no');
++  comprobar(!!lanza(() => db.agregarDocumento({ ...base, ruta: '2026-10\\a.pdf' })), 'con barra invertida no');
++  comprobar(!!lanza(() => db.agregarDocumento({ ...base, ruta: '' })), 'vacía no');
++  const r = ruta();
++  db.agregarDocumento({ ...base, ruta: r });
++  comprobar(!!lanza(() => db.agregarDocumento({ ...base, ruta: r })), 'la misma ruta dos veces no');
++}
++
++console.log('\n5 · Quién ve qué');
++{
++  const fran = cuenta('fran-doc@ejemplo.test');
++  const gil = cuenta('gil-doc@ejemplo.test');
++  const idBorrador = anuncioDe(fran, 'borrador');
++  const idPublicado = anuncioDe(fran, 'activo');
++  const idVendido = anuncioDe(fran, 'vendido');
++  const subir = (idAnuncio) => db.agregarDocumento({
++    idAnuncio, idOrg: fran.org.id, nombre: 'Informe', tipo: 'application/pdf', bytes: 100, ruta: ruta(),
++  }).documento;
++  const dBorrador = subir(idBorrador);
++  const dPublicado = subir(idPublicado);
++  subir(idVendido);
++
++  comprobar(db.documentosDe(idBorrador, fran.org.id).length === 1, 'el dueño ve los de su borrador');
++  comprobar(db.documentosDe(idBorrador, gil.org.id) === null && db.documentosDe(idBorrador) === null,
++    'nadie más: un borrador no existe para otros');
++  comprobar(db.documentosDe(idPublicado).length === 1 && db.documentosDe(idVendido).length === 1,
++    'los de un anuncio publicado o vendido los ve cualquiera, sin sesión');
++  comprobar(!('ruta' in db.documentosDe(idPublicado)[0]), 'la lista no lleva la ruta en disco');
++  comprobar(db.documentosDe('no-hay') === null, 'un anuncio que no existe: null');
++
++  const dl = db.documentoParaDescargar(idPublicado, dPublicado.id);
++  comprobar(dl && dl.ruta && dl.tipo === 'application/pdf' && dl.nombre === 'Informe', 'descargar uno publicado sin sesión');
++  comprobar(db.documentoParaDescargar(idBorrador, dBorrador.id) === null
++    && db.documentoParaDescargar(idBorrador, dBorrador.id, gil.org.id) === null, 'el de un borrador, nadie más');
++  comprobar(!!db.documentoParaDescargar(idBorrador, dBorrador.id, fran.org.id), 'el dueño sí');
++  comprobar(db.documentoParaDescargar(idPublicado, dBorrador.id) === null,
++    'un documento pedido por otro anuncio: null (no se cruzan ids)');
++
++  comprobar(db.borrarDocumento(idPublicado, dPublicado.id, gil.org.id) === null, 'borrar uno ajeno no');
++  comprobar(db.borrarDocumento(idPublicado, dPublicado.id, fran.org.id) === dl.ruta, 'el dueño sí, y recibe la ruta');
++  comprobar(db.borrarDocumento(idPublicado, dPublicado.id, fran.org.id) === null, 'la segunda vez ya no hay nada');
++}
++
++console.log('\n6 · Borrar el anuncio o la cuenta devuelve las rutas');
++{
++  const hugo = cuenta('hugo-doc@ejemplo.test');
++  db.marcarCorreoVerificado(hugo.idUsuario);
++  const idA = anuncioDe(hugo);
++  const r1 = ruta();
++  db.agregarDocumento({ idAnuncio: idA, idOrg: hugo.org.id, nombre: 'a', tipo: 'application/pdf', bytes: 10, ruta: r1 });
++  const b = db.borrarAnuncio(idA, hugo.org.id);
++  comprobar(Array.isArray(b.documentos) && b.documentos.length === 1 && b.documentos[0] === r1, 'borrarAnuncio devuelve documentos');
++  comprobar(fila('SELECT COUNT(*) AS n FROM documentos_anuncio WHERE anuncio_id = ?', idA).n === 0, 'y no quedan filas');
++
++  const idB = anuncioDe(hugo);
++  const r2 = ruta();
++  db.agregarDocumento({ idAnuncio: idB, idOrg: hugo.org.id, nombre: 'b', tipo: 'application/pdf', bytes: 10, ruta: r2 });
++  const c = db.eliminarCuenta(hugo.idUsuario);
++  comprobar(!c.bloqueo && Array.isArray(c.documentos) && c.documentos.includes(r2), 'eliminarCuenta devuelve documentos');
++  comprobar(fila('SELECT COUNT(*) AS n FROM documentos_anuncio WHERE anuncio_id = ?', idB).n === 0, 'y no quedan filas');
++}
++
++console.log(`\n${bien} ok, ${mal} MAL`);
++process.exit(mal ? 1 : 0);
+diff --git a/tools/probar-testigos.js b/tools/probar-testigos.js
+new file mode 100644
+index 0000000..a879868
+--- /dev/null
++++ b/tools/probar-testigos.js
+@@ -0,0 +1,110 @@
++/**
++ * probar-testigos.js — DEUDA-01 (#72): los testigos de sesión y de equipo
++ * de confianza se guardan como HMAC, nunca en claro.
++ *
++ *   node tools/probar-testigos.js
++ *
++ * POR QUÉ EXISTE
++ *
++ * Fija el contrato antes de cambiar las funciones de sesión (tanda 5):
++ * la cookie sigue llevando el testigo en claro, la base guarda solo
++ * `huellaTestigo(clase, testigo)`, y presentar como cookie lo que hay en
++ * la base no abre nada. Las firmas públicas de `abrirSesion`, `sesion`,
++ * `cerrarSesion`, `cerrarOtrasDe`, `recordarDispositivo` y
++ * `dispositivoDeConfianza` NO cambian: `tools/api.js` no se toca.
++ *
++ * Corre contra una base TEMPORAL en `.tmp/prueba-testigos/`.
++ */
++
++const fs = require('fs');
++const path = require('path');
++const crypto = require('crypto');
++
++/* Antes de cargar db.js: la ruta de la base y el secreto se leen al importarlo. */
++const BANCO = path.join(__dirname, '..', '.tmp', 'prueba-testigos');
++fs.rmSync(BANCO, { recursive: true, force: true });
++fs.mkdirSync(BANCO, { recursive: true });
++process.env.MERCA_DB = path.join(BANCO, 'prueba.db');
++process.env.MERCA_CORREO = 'archivo';
++process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
++
++const db = require('./db.js');
++
++let bien = 0;
++let mal = 0;
++function comprobar(condicion, que) {
++  if (condicion) {
++    bien++;
++    console.log(`  ok  ${que}`);
++    return;
++  }
++  mal++;
++  console.log(`  MAL ${que}`);
++}
++const lanza = (fn) => { try { fn(); return null; } catch (e) { return e; } };
++const fila = (sql, ...args) => db.abrir().prepare(sql).get(...args);
++const todas = (sql, ...args) => db.abrir().prepare(sql).all(...args);
++
++function cuenta(correoCuenta) {
++  const { idUsuario } = db.crearCuenta({
++    correo: correoCuenta, clave: 'UnaClaveLargaYSegura9', nombre: 'Prueba Testigos',
++    telefono: '8095550000', tipo: 'particular',
++  });
++  return idUsuario;
++}
++
++console.log('\n1 · La huella');
++{
++  comprobar(!!fila("SELECT 1 FROM migraciones WHERE id = '2026-10-testigos-hmac'"), 'migración anotada');
++  const t = 'a'.repeat(64);
++  const esperada = crypto.createHmac('sha256', process.env.MERCA_SECRETO).update(`testigo-sesion|${t}`).digest('hex');
++  comprobar(db.huellaTestigo('sesion', t) === esperada, 'HMAC-SHA256 de «testigo-sesion|<testigo>» con MERCA_SECRETO');
++  comprobar(db.huellaTestigo('sesion', t) !== db.huellaTestigo('dispositivo', t), 'la clase cambia la huella');
++  comprobar(!!lanza(() => db.huellaTestigo('otra', t)), 'una clase desconocida lanza');
++}
++
++console.log('\n2 · Sesiones');
++{
++  const u = cuenta('ana-testigo@ejemplo.test');
++  const t = db.abrirSesion(u);
++  comprobar(/^[0-9a-f]{64}$/.test(t), 'abrirSesion sigue devolviendo el testigo en claro (va a la cookie)');
++  const guardadas = todas('SELECT testigo FROM sesiones WHERE usuario_id = ?', u).map((f) => f.testigo);
++  comprobar(guardadas.length === 1 && guardadas[0] === db.huellaTestigo('sesion', t), 'en la base, solo la huella');
++  comprobar(!guardadas.includes(t), 'el testigo en claro no está en la base');
++  const s = db.sesion(t);
++  comprobar(s && s.usuario_id === u, 'sesion(testigo) encuentra la sesión');
++  comprobar(db.sesion(guardadas[0]) === null, 'presentar la huella copiada de la base no abre nada');
++
++  const t2 = db.abrirSesion(u);
++  const cerradas = db.cerrarOtrasDe(u, t2);
++  comprobar(cerradas === 1 && db.sesion(t) === null && !!db.sesion(t2), 'cerrarOtrasDe conserva la actual por su testigo en claro');
++
++  db.cerrarSesion(t2);
++  comprobar(db.sesion(t2) === null && todas('SELECT 1 FROM sesiones WHERE usuario_id = ?', u).length === 0,
++    'cerrarSesion(testigo) la borra');
++
++  const t3 = db.abrirSesion(u);
++  db.abrir().prepare('UPDATE sesiones SET expira = ? WHERE testigo = ?').run('2000-01-01T00:00:00.000Z', db.huellaTestigo('sesion', t3));
++  comprobar(db.sesion(t3) === null && todas('SELECT 1 FROM sesiones WHERE usuario_id = ?', u).length === 0,
++    'una sesión caducada se borra al usarla');
++}
++
++console.log('\n3 · Equipos de confianza');
++{
++  const u = cuenta('beto-testigo@ejemplo.test');
++  const otro = cuenta('caro-testigo@ejemplo.test');
++  const t = db.recordarDispositivo(u, 'Firefox en Linux');
++  comprobar(/^[0-9a-f]{64}$/.test(t), 'recordarDispositivo sigue devolviendo el testigo en claro');
++  const guardado = fila('SELECT testigo FROM dispositivos WHERE usuario_id = ?', u).testigo;
++  comprobar(guardado === db.huellaTestigo('dispositivo', t) && guardado !== t, 'en la base, solo la huella');
++  comprobar(db.dispositivoDeConfianza(t, u) === true, 'dispositivoDeConfianza(testigo) lo reconoce');
++  comprobar(db.dispositivoDeConfianza(guardado, u) === false, 'la huella copiada de la base no vale');
++  comprobar(db.dispositivoDeConfianza(t, otro) === false, 'ni para otra cuenta');
++  comprobar(!!fila('SELECT ultimo_uso FROM dispositivos WHERE testigo = ?', guardado).ultimo_uso, 'anota el último uso');
++  /* Una sesión no sirve como equipo de confianza aunque se copie la fila. */
++  const ts = db.abrirSesion(u);
++  comprobar(db.dispositivoDeConfianza(ts, u) === false, 'el testigo de una sesión no es un equipo');
++}
++
++console.log(`\n${bien} ok, ${mal} MAL`);
++process.exit(mal ? 1 : 0);
+-- 
+2.43.0
+
+
+From d5584de6a23d25476f03008cd19935e67da470d4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 01:28:50 +0000
+Subject: [PATCH 2/4] docs: contrato de la base de la tanda 5 y prueba de
+ testigos (#72)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- .planning/tanda5-contrato.md: firmas de db.js, rutas de la API
+  previstas, almacenamiento de los documentos y el diseño de #73.
+- testigos:probar (incluida en el commit anterior) queda en rojo a
+  propósito hasta que las funciones de sesión guarden la huella: es el
+  criterio de terminado de la tarea mecánica de #72.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ .planning/tanda5-contrato.md | 77 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 77 insertions(+)
+ create mode 100644 .planning/tanda5-contrato.md
+
+diff --git a/.planning/tanda5-contrato.md b/.planning/tanda5-contrato.md
+new file mode 100644
+index 0000000..8b083e8
+--- /dev/null
++++ b/.planning/tanda5-contrato.md
+@@ -0,0 +1,77 @@
++# Tanda 5 — contrato de la base (paso 2)
++
++Rama `claude/tanda-5-base`. Parche para Codex: `.planning/parches/tanda5-base.patch`
++(`git am --keep-cr -3`). Lo que aquí se fija lo prueban `npm run documentos:probar` (en CI) y
++`npm run testigos:probar` (en rojo hasta que se haga lo mecánico de #72; entonces entra en CI).
++
++## FICHA-01 · Documentos adjuntos a un anuncio
++
++**Tabla** `documentos_anuncio` (migración `2026-10-documentos-anuncio`): `id`, `anuncio_id`
++(CASCADE), `nombre` (1-120), `tipo` (`application/pdf`, `image/jpeg`, `image/png`, `image/webp`),
++`bytes`, `ruta` (única, relativa, sin `..`, sin `/` inicial ni `\`), `subido_por`, `creado`.
++
++**Topes** (`db.TOPES_DOCUMENTOS`, congelado): 4 MB por archivo, 4 documentos y 10 MB por anuncio,
++100 MB en total (`MERCA_DOCUMENTOS_TOPE_MB` lo cambia). El disco del droplet es de 512 MB y lo
++comparten fotos, base, PDF de facturas y respaldos.
++
++**Funciones de `tools/db.js`:**
++
++| Función | Devuelve |
++|---|---|
++| `motivoSinDocumento({ idAnuncio, idOrg, tipo, bytes })` | `null` o `'no-existe' \| 'tipo' \| 'vacio' \| 'tope-archivo' \| 'tope-cantidad' \| 'tope-anuncio' \| 'tope-total'` |
++| `agregarDocumento({ idAnuncio, idOrg, idUsuario, nombre, tipo, bytes, ruta })` | `{ documento }` o `{ error }` (mismos códigos); lanza si la ruta es peligrosa o repetida |
++| `documentosDe(idAnuncio, idOrg = null)` | lista pública `{ id, nombre, tipo, bytes, creado }`, o `null` si no existe o es un borrador ajeno |
++| `documentoParaDescargar(idAnuncio, idDocumento, idOrg = null)` | `{ id, nombre, tipo, bytes, ruta }` o `null` (mismo criterio) |
++| `borrarDocumento(idAnuncio, idDocumento, idOrg)` | la `ruta` para borrar el archivo, o `null` |
++| `espacioDocumentos()` | `{ documentos, bytes, tope }` |
++
++`borrarAnuncio` y `eliminarCuenta` devuelven además `documentos: [rutas]`; quien llama borra esos
++archivos (como ya hace con `fotos` y `videos`). Duplicar un anuncio **no** copia sus documentos.
++
++Visibilidad: la de `verAnuncio` en `tools/api.js`. Un borrador solo lo ve su dueño; cualquier otro
++estado (activo, pausado, vendido…) lo ve cualquiera, también sin sesión.
++
++**Almacenamiento (lo escribe Codex, `tools/documentos.js`, a imagen de `tools/fotos.js`):**
++carpeta `process.env.MERCA_DOCUMENTOS || .tmp/documentos`; subcarpeta por mes `AAAA-MM/`;
++nombre `crypto.randomUUID()` + extensión (`pdf`, `jpg`, `png`, `webp`) que genera el servidor,
++nunca el de quien sube. El tipo se deduce de los primeros bytes (`%PDF-`; firmas de JPEG, PNG y
++WebP `RIFF....WEBP`), nunca del `Content-Type` ni de la extensión. Exporta
++`guardar(buffer) → { ruta, tipo, bytes }` (lanza si el tipo no es admitido), `tipoDe(buffer)`,
++`archivoDe(ruta) → ruta absoluta o null` (rechaza lo que salga de la carpeta) y `borrar(ruta)`.
++`/var/lib/mercamaquinarias/documentos` en producción (lo fija Victor en el `.env`, ver
++`deploy/README.md`).
++
++**Rutas de la API previstas** (array de `tools/api.js`, las específicas antes que
++`/api/anuncios/([\w-]+)$`):
++
++- `POST /api/anuncios/:id/documentos` — sesión; cuerpo JSON `{ nombre, archivo }` con `archivo`
++  como data URL (como las fotos; el límite de 25 MB del cuerpo cubre 4 MB en base64). Orden:
++  `motivoSinDocumento` con el tipo deducido de los bytes → `documentos.guardar` →
++  `agregarDocumento` (si devuelve error, borrar el archivo). Límite de ritmo con
++  `db.permitir('documentos:<usuario>', 20, 60)`. Respuestas: 201 `{ documento }`; 404 `no-existe`;
++  415 `tipo`; 400 `vacio`; 413 `tope-archivo`; 409 `tope-cantidad`/`tope-anuncio`; 507 `tope-total`.
++- `GET /api/anuncios/:id/documentos` — sin sesión obligatoria (`!!ctx` antes de
++  `ctx.organizacion`); 200 `{ documentos, topes }` o 404.
++- `GET /api/anuncios/:id/documentos/:doc` — el archivo, con `Content-Type` de la fila,
++  `X-Content-Type-Options: nosniff`, `Content-Disposition: inline; filename*=UTF-8''<nombre>`,
++  `Cache-Control: private, max-age=300`; 404 si `documentoParaDescargar` da `null` o falta el
++  archivo.
++- `DELETE /api/anuncios/:id/documentos/:doc` — dueño; 200 `{ ok: true }` o 404; borra el archivo.
++
++## #72 · Testigos como HMAC
++
++Migración `2026-10-testigos-hmac`: vacía `sesiones` y `dispositivos` (las filas viejas tienen el
++testigo en claro y SQLite no sabe hacer HMAC): todos vuelven a entrar una vez.
++
++`db.huellaTestigo(clase, testigo)` = HMAC-SHA256 con `MERCA_SECRETO` de
++`testigo-<clase>|<testigo>`, clase `'sesion'` o `'dispositivo'` (otra lanza). Lo mecánico
++(Codex): que `abrirSesion`, `sesion`, `cerrarSesion`, `cerrarOtrasDe`, `recordarDispositivo` y
++`dispositivoDeConfianza` guarden y busquen por la huella sin cambiar sus firmas ni lo que
++devuelven (la cookie sigue llevando el testigo en claro). `tools/api.js` no se toca.
++
++## #73 · Respaldo antes de migrar
++
++`deploy/desplegar-mercamaquinarias`: antes de reiniciar, si `tools/db.js` trae migraciones que la
++base de producción no tiene anotadas, `VACUUM INTO` + `PRAGMA integrity_check` a
++`/var/backups/mercamaquinarias/antes-<migración>-<fecha>.db`; si el respaldo falla, el despliegue
++se para sin reiniciar. Las migraciones pendientes las lista `node tools/migraciones-pendientes.js`.
+-- 
+2.43.0
+
+
+From 9f6bdd1ab0760586fd947b67491dbcf18cb78e17 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 01:31:01 +0000
+Subject: [PATCH 3/4] despliegue: respaldo verificado antes de aplicar
+ migraciones (#73)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- tools/respaldo-antes-de-migrar.js: abre la base de producción en solo
+  lectura (nunca con db.abrir(), que migraría antes de respaldar), compara
+  la tabla migraciones con db.NOMBRES_MIGRACIONES y, si falta alguna,
+  hace VACUUM INTO + integrity_check en antes-de-migrar/ y conserva las
+  últimas 5. Sale con 1 si el respaldo no queda verificado.
+- deploy/desplegar-mercamaquinarias lo llama tras el merge y antes del
+  reinicio; si falla, devuelve el código y termina sin reiniciar.
+- deploy/README.md: el paso nuevo y cómo instalar el script (a mano).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ deploy/README.md                  |  14 +++-
+ deploy/desplegar-mercamaquinarias |  19 +++++
+ tools/db.js                       |   7 ++
+ tools/respaldo-antes-de-migrar.js | 128 ++++++++++++++++++++++++++++++
+ 4 files changed, 165 insertions(+), 3 deletions(-)
+ create mode 100644 tools/respaldo-antes-de-migrar.js
+
+diff --git a/deploy/README.md b/deploy/README.md
+index c4d4b6d..61ebb4c 100644
+--- a/deploy/README.md
++++ b/deploy/README.md
+@@ -672,9 +672,17 @@ Las migraciones de `tools/db.js` se aplican solas al arrancar.
+ 2. `git merge --ff-only origin/main` — a propósito: si alguien hubiera
+    hecho un commit a mano en el servidor, es preferible que el despliegue
+    falle a que se fusione a ciegas.
+-3. Reinicia `mercamaquinarias` y espera hasta 15 s a que el sitio responda.
+-4. **Si no responde, vuelve solo a la versión anterior** y la reinicia.
+-   Ojo: eso devuelve el código, no la base. Las migraciones son de ida;
++3. **Respaldo antes de migrar (#73).** Si el código nuevo trae migraciones que la base
++   no tiene, `tools/respaldo-antes-de-migrar.js` (como `mercamaquinarias`) hace
++   `VACUUM INTO` + `integrity_check` en `/var/backups/mercamaquinarias/antes-de-migrar/`
++   (se conservan los últimos 5). Si falla, devuelve el código y termina **sin
++   reiniciar**. Ya no hace falta el respaldo a mano antes de fusionar una migración.
++   **El script se instala a mano** (el despliegue no se actualiza a sí mismo, a
++   propósito: es lo único que corre como root):
++   `install -m 755 /var/www/mercamaquinarias/deploy/desplegar-mercamaquinarias /usr/local/bin/`.
++4. Reinicia `mercamaquinarias` y espera hasta 15 s a que el sitio responda.
++5. **Si no responde, vuelve solo a la versión anterior** y la reinicia.
++   Ojo: eso devuelve el código, no la base (para eso está el respaldo del paso 3). Las migraciones son de ida;
+    como solo añaden, una versión anterior sigue arrancando, pero una
+    migración que borrara o renombrara algo rompería esa suposición.
+ 
+diff --git a/deploy/desplegar-mercamaquinarias b/deploy/desplegar-mercamaquinarias
+index 9dbe58f..269dd91 100644
+--- a/deploy/desplegar-mercamaquinarias
++++ b/deploy/desplegar-mercamaquinarias
+@@ -50,6 +50,25 @@ echo "Actualizando de ${ANTES:0:7} a ${NUEVO:0:7}"
+ # preferible que el despliegue falle a que se fusione a ciegas.
+ comoDueno git merge --ff-only origin/main
+ 
++# #73. Las migraciones se aplican solas al arrancar y la vuelta atras de
++# abajo devuelve el codigo, no la base. Si el codigo nuevo trae
++# migraciones que la base no tiene, se respalda ANTES de reiniciar
++# (VACUUM INTO + integrity_check, en $RESPALDOS/antes-de-migrar/, los
++# ultimos 5). Antes lo hacia Victor a mano por SSH en cada fusion.
++#
++# Si el respaldo falla, no se reinicia: el proceso que corre sigue con
++# el codigo viejo en memoria, y se devuelven los archivos para que el
++# siguiente arranque no aplique nada sin respaldo. Las rutas son las de
++# deploy/mercamaquinarias.service y deploy/mercamaquinarias-tareas.service.
++BASE=/var/lib/mercamaquinarias/mercamaquinarias.db
++RESPALDOS=/var/backups/mercamaquinarias
++if ! comoDueno env MERCA_DB="$BASE" MERCA_RESPALDOS="$RESPALDOS" \
++     node --no-warnings tools/respaldo-antes-de-migrar.js; then
++  echo "ERROR: no se pudo respaldar la base antes de migrar. Volviendo a ${ANTES:0:7} sin reiniciar" >&2
++  comoDueno git reset --hard "$ANTES"
++  exit 1
++fi
++
+ systemctl restart "$SERVICIO"
+ 
+ # Se espera a que levante en vez de dormir una cantidad fija: arrancar
+diff --git a/tools/db.js b/tools/db.js
+index 54b4340..d302cc3 100644
+--- a/tools/db.js
++++ b/tools/db.js
+@@ -1480,6 +1480,11 @@ const MIGRACIONES = [
+   ]],
+ ];
+ 
++/* Solo los nombres, para `tools/respaldo-antes-de-migrar.js` (#73), que
++   tiene que saber qué falta SIN abrir la base con `abrir()`: abrirla
++   aplicaría las migraciones antes del respaldo. */
++const NOMBRES_MIGRACIONES = Object.freeze(MIGRACIONES.map(([nombre]) => nombre));
++
+ function migrar() {
+   db.exec('CREATE TABLE IF NOT EXISTS migraciones (id TEXT PRIMARY KEY, aplicada TEXT NOT NULL)');
+   const yaEsta = db.prepare('SELECT 1 FROM migraciones WHERE id = ?');
+@@ -7073,6 +7078,8 @@ module.exports = {
+   /* FICHA-01: documentos del anuncio. #72: huella de los testigos. */
+   TOPES_DOCUMENTOS, TIPOS_DOCUMENTO, motivoSinDocumento, agregarDocumento, documentosDe,
+   documentoParaDescargar, borrarDocumento, espacioDocumentos, huellaTestigo,
++  /* #73: el despliegue respalda la base si hay migraciones pendientes. */
++  NOMBRES_MIGRACIONES,
+   guardarBusqueda, busquedasDe, borrarBusqueda, darDeBajaBusqueda, testigoBajaBusqueda, busquedasActivas,
+   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
+   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
+diff --git a/tools/respaldo-antes-de-migrar.js b/tools/respaldo-antes-de-migrar.js
+new file mode 100644
+index 0000000..d80ecb4
+--- /dev/null
++++ b/tools/respaldo-antes-de-migrar.js
+@@ -0,0 +1,128 @@
++/**
++ * respaldo-antes-de-migrar.js — #73: el despliegue respalda la base de
++ * producción ANTES de reiniciar, si el código nuevo trae migraciones que
++ * esa base todavía no tiene.
++ *
++ *   MERCA_DB=… MERCA_RESPALDOS=… node tools/respaldo-antes-de-migrar.js
++ *
++ * Lo llama `deploy/desplegar-mercamaquinarias` después del `git merge` y
++ * antes de `systemctl restart`. Sale con 0 si no hacía falta o si el
++ * respaldo quedó hecho y verificado; con 1 si algo falló, y entonces el
++ * despliegue vuelve al código anterior SIN reiniciar.
++ *
++ * POR QUÉ EXISTE
++ *
++ * Las migraciones se aplican solas al arrancar, y la vuelta atrás del
++ * despliegue devuelve el código, no la base. Los respaldos de la 10.1, la
++ * 10.2 y la tanda 4 los hizo Victor a mano por SSH antes de cada fusión;
++ * esto hace lo mismo (`VACUUM INTO` + `integrity_check`) sin depender de
++ * que alguien se acuerde.
++ *
++ * NO usa `db.abrir()`: abrir la base con el código nuevo aplicaría las
++ * migraciones antes de respaldar, que es justo lo que se quiere evitar.
++ * Abre el archivo en solo lectura y compara la tabla `migraciones` con
++ * `db.NOMBRES_MIGRACIONES`, que no abre nada.
++ *
++ * Se guardan los últimos MERCA_RESPALDOS_MIGRAR (5 por omisión) en la
++ * subcarpeta `antes-de-migrar/`, aparte de la rotación diaria de
++ * `tools/tareas.js` (que solo mira `mercamaquinarias-*.db`). El disco del
++ * droplet es pequeño: más copias no caben.
++ */
++
++const fs = require('fs');
++const path = require('path');
++const { DatabaseSync } = require('node:sqlite');
++
++const RAIZ = path.resolve(__dirname, '..');
++const BASE = process.env.MERCA_DB || path.join(RAIZ, 'db', 'mercamaquinarias.db');
++const CARPETA = path.join(process.env.MERCA_RESPALDOS || path.join(RAIZ, '.tmp', 'respaldos'), 'antes-de-migrar');
++const CONSERVAR = Number(process.env.MERCA_RESPALDOS_MIGRAR) > 0 ? Number(process.env.MERCA_RESPALDOS_MIGRAR) : 5;
++
++/* Lo que la base ya tiene anotado. Una base sin la tabla (no debería
++   pasar en producción) cuenta como que le falta todo. */
++function aplicadas(conexion) {
++  const hay = conexion.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'migraciones'").get();
++  if (!hay) return new Set();
++  return new Set(conexion.prepare('SELECT id FROM migraciones').all().map((f) => f.id));
++}
++
++function pendientesDe(conexion, nombres) {
++  const ya = aplicadas(conexion);
++  return nombres.filter((n) => !ya.has(n));
++}
++
++function respaldar({ base = BASE, carpeta = CARPETA, conservar = CONSERVAR, nombres } = {}) {
++  /* Sin base no hay nada que perder: el primer arranque la crea. */
++  if (!fs.existsSync(base)) return { hecho: false, motivo: 'sin-base', pendientes: [] };
++
++  /* db.js avisa si falta MERCA_SECRETO, y el despliegue no lo tiene: aquí
++     no se firma nada, solo se leen los nombres de las migraciones. Sin
++     esto, el registro de cada despliegue llevaría un aviso falso. */
++  if (!nombres && !process.env.MERCA_SECRETO) process.env.MERCA_SECRETO = 'respaldo-antes-de-migrar-no-firma-nada';
++  const lista = nombres || require('./db.js').NOMBRES_MIGRACIONES;
++  const origen = new DatabaseSync(base, { readOnly: true });
++  let destino = null;
++  try {
++    origen.exec('PRAGMA busy_timeout = 5000');
++    const pendientes = pendientesDe(origen, lista);
++    if (!pendientes.length) return { hecho: false, motivo: 'al-dia', pendientes };
++
++    fs.mkdirSync(carpeta, { recursive: true });
++    const sello = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
++    /* El nombre dice qué migración venía: es lo que se busca el día que
++       hay que volver atrás. Sin caracteres raros en la ruta. */
++    const etiqueta = pendientes[0].replace(/[^\w-]/g, '_');
++    destino = path.join(carpeta, `antes-${etiqueta}-${sello}.db`);
++    fs.rmSync(destino, { force: true });
++    origen.exec(`VACUUM INTO '${destino.replace(/'/g, "''")}'`);
++
++    const copia = new DatabaseSync(destino, { readOnly: true });
++    let integridad;
++    let mismas;
++    try {
++      integridad = Object.values(copia.prepare('PRAGMA integrity_check').get())[0];
++      mismas = pendientesDe(copia, lista).length === pendientes.length;
++    } finally {
++      copia.close();
++    }
++    if (integridad !== 'ok' || !mismas) {
++      fs.rmSync(destino, { force: true });
++      throw new Error(`el respaldo no pasó la comprobación (integrity_check: ${integridad})`);
++    }
++
++    /* Rotación: solo los de esta carpeta, del más nuevo al más viejo por
++       nombre (el sello va en ISO, así que ordena por fecha dentro de la
++       misma migración) y por fecha de modificación entre migraciones. */
++    const viejos = fs.readdirSync(carpeta)
++      .filter((f) => f.startsWith('antes-') && f.endsWith('.db'))
++      .map((f) => ({ f, t: fs.statSync(path.join(carpeta, f)).mtimeMs }))
++      .sort((a, b) => b.t - a.t || b.f.localeCompare(a.f))
++      .slice(conservar);
++    viejos.forEach(({ f }) => fs.rmSync(path.join(carpeta, f), { force: true }));
++
++    return { hecho: true, destino, pendientes, bytes: fs.statSync(destino).size, borrados: viejos.length };
++  } finally {
++    origen.close();
++  }
++}
++
++if (require.main === module) {
++  try {
++    const r = respaldar();
++    if (!r.hecho) {
++      console.log(r.motivo === 'sin-base'
++        ? `respaldo antes de migrar: no hay base en ${BASE}; nada que respaldar`
++        : 'respaldo antes de migrar: sin migraciones pendientes');
++    } else {
++      console.log(`respaldo antes de migrar (${r.pendientes.join(', ')}): ${r.destino}`
++        + ` · ${Math.round(r.bytes / 1024)} KB · íntegro`
++        + (r.borrados ? ` · ${r.borrados} antiguo(s) eliminado(s)` : ''));
++    }
++    process.exit(0);
++  } catch (e) {
++    console.error(`ERROR respaldo antes de migrar: ${e.message}`);
++    process.exit(1);
++  }
++}
++
++module.exports = { respaldar, pendientesDe };
+-- 
+2.43.0
+
+
+From 1e997767f179576281f5ce6246f7a88f9df8c65b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 01:31:01 +0000
+Subject: [PATCH 4/4] despliegue: MERCA_DOCUMENTOS fuera del repositorio
+ (FICHA-01)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ deploy/mercamaquinarias.service | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/deploy/mercamaquinarias.service b/deploy/mercamaquinarias.service
+index 20bc5d9..874bb4f 100644
+--- a/deploy/mercamaquinarias.service
++++ b/deploy/mercamaquinarias.service
+@@ -22,6 +22,8 @@ Environment=MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db
+ Environment=MERCA_FOTOS=/var/lib/mercamaquinarias/fotos
+ Environment=MERCA_VIDEOS=/var/lib/mercamaquinarias/videos
+ Environment=MERCA_FACTURAS=/var/lib/mercamaquinarias/facturas
++# FICHA-01: documentos adjuntos a los anuncios (fuera del repositorio, como las fotos).
++Environment=MERCA_DOCUMENTOS=/var/lib/mercamaquinarias/documentos
+ 
+ # Secretos: NO ponerlos aquí. Van en /etc/mercamaquinarias.env, con
+ # permisos 600 y propietario root. Ver deploy/README.md.
+-- 
+2.43.0
+
