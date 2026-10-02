@@ -31,6 +31,7 @@
     "chat:probar": "node tools/prueba-chat.js",
     "facturas:probar": "node tools/probar-facturas.js",
     "pagos:probar": "node tools/probar-pagos.js",
+    "medios:puro": "node --test tools/medios.prueba.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
     "publicacion:probar": "node tools/probar-publicacion.js",
     "renovacion:probar": "node tools/probar-renovacion.js",
