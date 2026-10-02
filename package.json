@@ -22,6 +22,7 @@
     "auditar:permisos": "node tools/auditar-permisos.js",
     "auditar:metricas": "node tools/auditar-metricas.js",
     "auditar:telefono": "node tools/auditar-telefono.js",
+    "auditar:accesibilidad": "node tools/auditar-accesibilidad.js",
     "tareas": "node tools/tareas.js",
     "tareas:seco": "node tools/tareas.js --seco",
     "respaldo": "node tools/tareas.js respaldo",
