@@ -58,7 +58,7 @@ issue.** El parche de #128 traía un carácter roto (U+FFFD) en una línea de co
 antes de `git am`. Arreglos de Claude: `tareas.js` borra los documentos al limpiar borradores abandonados, y la
 etiqueta PDF/Imagen de la ficha con ancho fijo. Probado a ojo y de punta a punta (subir, HTML disfrazado → 415,
 quitar, sin borrador → deshabilitado) a 390 y 1280 px. Preguntas a Victor: proveedor S3 para DEUDA-05 (#125),
-borrar el jpeg de WhatsApp (#122), lo abierto de #79, y fijar `MERCA_DOCUMENTOS` en el `.env` (ver `deploy/README.md`).
+borrar el jpeg de WhatsApp (#122), lo abierto de #79, y, al fusionar B, copiar las dos unidades de `deploy/*.service` a systemd y `daemon-reload` (llevan `MERCA_DOCUMENTOS`).
 
 **Estado al cerrar el chat del 2026-10-02 (vuelta de la tanda 4):** en producción todo hasta la tanda 4 (PR #108,
 que llevaba dentro #99): fases 15 y 16 completas en código. Migraciones `2026-10-especificaciones` y
