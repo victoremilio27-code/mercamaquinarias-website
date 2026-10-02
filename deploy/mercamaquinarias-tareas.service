@@ -16,6 +16,9 @@ Environment=MERCA_DB=/var/lib/mercamaquinarias/mercamaquinarias.db
 Environment=MERCA_RESPALDOS=/var/backups/mercamaquinarias
 # El reintento de envío de comprobantes necesita leer los PDF.
 Environment=MERCA_FACTURAS=/var/lib/mercamaquinarias/facturas
+# La limpieza de borradores abandonados borra sus documentos (FICHA-01):
+# sin esto los buscaría en .tmp/documentos del repositorio y no los hallaría.
+Environment=MERCA_DOCUMENTOS=/var/lib/mercamaquinarias/documentos
 EnvironmentFile=/etc/mercamaquinarias.env
 
 ExecStart=/usr/bin/node tools/tareas.js
