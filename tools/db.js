@@ -1746,8 +1746,10 @@ const sucursalPrincipal = (idOrg) =>
 function abrirSesion(idUsuario) {
   const testigo = crypto.randomBytes(32).toString('hex');
   const d = abrir();
+  /* Antes la base guardaba la cookie de cada sesión abierta; una copia
+     filtrada permitía usarlas. Solo conserva su HMAC para poder cotejarlas. */
   d.prepare('INSERT INTO sesiones (testigo, usuario_id, creada, expira) VALUES (?, ?, ?, ?)')
-    .run(testigo, idUsuario, ahora(), sumarDias(30));
+    .run(huellaTestigo('sesion', testigo), idUsuario, ahora(), sumarDias(30));
   d.prepare('UPDATE usuarios SET ultimo_acceso = ? WHERE id = ?').run(ahora(), idUsuario);
   return testigo;
 }
@@ -1757,14 +1759,14 @@ function sesion(testigo) {
   const fila = abrir().prepare(`
     SELECT s.usuario_id, s.expira, u.correo, u.nombre, u.es_admin
     FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
-    WHERE s.testigo = ?`).get(testigo);
+    WHERE s.testigo = ?`).get(huellaTestigo('sesion', testigo));
   if (!fila) return null;
   if (fila.expira < ahora()) { cerrarSesion(testigo); return null; }
   return fila;
 }
 
 const cerrarSesion = (testigo) =>
-  abrir().prepare('DELETE FROM sesiones WHERE testigo = ?').run(testigo);
+  abrir().prepare('DELETE FROM sesiones WHERE testigo = ?').run(huellaTestigo('sesion', testigo));
 
 /* ── Códigos de verificación ────────────────────────────── */
 
@@ -2044,7 +2046,7 @@ function recordarDispositivo(idUsuario, descripcion) {
   const testigo = crypto.randomBytes(32).toString('hex');
   abrir().prepare(`INSERT INTO dispositivos (testigo, usuario_id, descripcion, creado, expira, ultimo_uso)
                    VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(testigo, idUsuario, String(descripcion || '').slice(0, 200), ahora(),
+    .run(huellaTestigo('dispositivo', testigo), idUsuario, String(descripcion || '').slice(0, 200), ahora(),
       sumarDias(DIAS_DISPOSITIVO), ahora());
   return testigo;
 }
@@ -2053,10 +2055,11 @@ function recordarDispositivo(idUsuario, descripcion) {
 function dispositivoDeConfianza(testigo, idUsuario) {
   if (!testigo) return false;
   const d = abrir();
+  const huella = huellaTestigo('dispositivo', testigo);
   const fila = d.prepare('SELECT * FROM dispositivos WHERE testigo = ? AND usuario_id = ?')
-    .get(testigo, idUsuario);
+    .get(huella, idUsuario);
   if (!fila || fila.expira < ahora()) return false;
-  d.prepare('UPDATE dispositivos SET ultimo_uso = ? WHERE testigo = ?').run(ahora(), testigo);
+  d.prepare('UPDATE dispositivos SET ultimo_uso = ? WHERE testigo = ?').run(ahora(), huella);
   return true;
 }
 
@@ -5971,7 +5974,7 @@ const cambiarClave = (idUsuario, clave, claveCifrada) => {
 function cerrarOtrasDe(idUsuario, testigoActual) {
   const d = abrir();
   const r = d.prepare('DELETE FROM sesiones WHERE usuario_id = ? AND testigo <> ?')
-    .run(idUsuario, String(testigoActual || ''));
+    .run(idUsuario, huellaTestigo('sesion', String(testigoActual || '')));
   d.prepare('DELETE FROM dispositivos WHERE usuario_id = ?').run(idUsuario);
   return Number(r.changes);
 }
