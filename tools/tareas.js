@@ -24,6 +24,7 @@ const db = require('./db');
 const correo = require('./correo');
 const facturas = require('./facturas');
 const alertas = require('./alertas');
+const taxonomia = require('../assets/taxonomia.js');
 
 const RAIZ = path.resolve(__dirname, '..');
 
@@ -167,7 +168,8 @@ async function avisarAlertas() {
           para: busqueda.correo,
           nombre: busqueda.nombre,
           resumen: busqueda.resumen,
-          anuncios: nuevos.slice(0, 10),
+          // Las filas traen el id de la marca; el correo enseña su nombre.
+          anuncios: nuevos.slice(0, 10).map((a) => ({ ...a, marca_nombre: taxonomia.nombreMarca(a.marca) })),
           restantes: Math.max(0, nuevos.length - 10),
           enlaceCatalogo: `${correo.SITIO}/equipos.html?${parametros}`,
           enlaceBaja: `${correo.SITIO}/alertas.html?baja=${encodeURIComponent(db.testigoBajaBusqueda(busqueda.id))}`,

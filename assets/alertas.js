@@ -6,10 +6,18 @@ const CAMPOS_ALERTA = ['q', 'categoria', 'subcategoria', 'marca', 'provincia',
   'condicion', 'anioMin', 'anioMax', 'precioMin', 'precioMax', 'horasMax',
   'disponibilidad', 'permuta', 'itbis'];
 
+/* Los filtros técnicos de la fase 15 (`e_<id>_min`, `e_<id>_max` e
+   `implemento`) se hicieron a la vez que esto: sin ellos, guardar una
+   búsqueda por «peso desde 20 t» guardaba solo la categoría y avisaba de
+   todas las excavadoras. Cuáles valen lo decide el servidor. */
+const CAMPO_TECNICO = /^(?:e_[\w-]+_(?:min|max)|implemento)$/;
+
 function filtrosDeAlerta() {
   const actuales = new URLSearchParams(location.search);
   const filtros = {};
-  CAMPOS_ALERTA.forEach((campo) => {
+  const campos = new Set(CAMPOS_ALERTA);
+  actuales.forEach((_, clave) => { if (CAMPO_TECNICO.test(clave)) campos.add(clave); });
+  campos.forEach((campo) => {
     const valores = actuales.getAll(campo).filter(Boolean);
     if (valores.length) filtros[campo] = valores.length === 1 ? valores[0] : valores;
   });
