@@ -69,11 +69,6 @@ if (document.body) inyectarSprite();
 
 /* ── Utilidades ─────────────────────────────────────────── */
 
-/* Número de WhatsApp del negocio, en formato internacional y sin
-   signos, que es como lo quiere wa.me. Está aquí y no repartido por
-   las páginas para que cambiarlo sea tocar una línea.
-   PENDIENTE: sigue siendo el número de relleno. */
-
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
