@@ -2371,6 +2371,10 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
   font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
+  /* Ancho fijo: con «PDF» y «IMAGEN» de anchos distintos, los nombres de
+     la lista quedaban desalineados entre filas. */
+  min-width: 60px;
+  text-align: center;
 }
 
 /* ── Galería y contactos de la ficha ────────────────────── */
