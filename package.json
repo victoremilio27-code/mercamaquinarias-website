@@ -34,6 +34,7 @@
     "medios:puro": "node --test tools/medios.prueba.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
     "publicacion:probar": "node tools/probar-publicacion.js",
+    "pdf:puro": "node --test tools/pdf.prueba.js",
     "renovacion:probar": "node tools/probar-renovacion.js",
     "recordatorios:probar": "node tools/probar-recordatorios.js",
     "capacidad:probar": "node tools/probar-capacidad.js",
