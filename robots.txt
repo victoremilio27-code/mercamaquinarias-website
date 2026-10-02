@@ -19,6 +19,5 @@ Disallow: /api/
 # búsqueda anunciando algo que no se presta.
 Disallow: /transporte.html
 Disallow: /financiamiento.html
-Disallow: /proximamente.html
 
 Sitemap: https://mercamaquinarias.com/sitemap.xml
