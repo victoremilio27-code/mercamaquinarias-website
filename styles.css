@@ -3791,6 +3791,17 @@ main { position: relative; }
   }
 }
 
+@media (max-width: 420px) {
+  /* En el cajón estrecho, el rótulo de precio necesita su propia fila:
+     si conserva la columna de 88 px, los dos selectores lo cubren. */
+  .campo--rango > label[for="f-precio1"],
+  .campo--rango > label[for="f-precio1"] ~ .rango,
+  .campo--rango > label[for="f-precio1"] ~ .campo-v__ayuda {
+    grid-column: 1 / -1;
+  }
+  .campo--rango > label[for="f-precio1"] ~ .rango { margin-top: -5px; }
+}
+
 /* Bloquea el fondo mientras hay un panel abierto encima. */
 body.sin-scroll { overflow: hidden; }
 
