@@ -398,6 +398,7 @@ Plans:
 **Notas**: `codigos.codigo_hash` ya guarda un HMAC en vez del código crudo, con el comentario que explica por qué — DEUDA-01 aplica el mismo criterio a `sesiones.testigo` y `dispositivos.testigo`. Al partir `tools/db.js` (3.353 líneas) y `tools/api.js` (2.677) se conservan las secciones `── Nombre ──` ya existentes, el array plano `RUTAS` con la ruta específica antes de la genérica, y el `MIGRACIONES` append-only. Antes de tocar la base de producción, respaldo verificado (`VACUUM INTO` + `integrity_check`).
 
 ### Phase 14: Inspección propia con informe publicado
+**Rediseño del 2026-10-02 (Victor):** pasa a ser la **importación asistida desde Ritchie Bros** con inspección opcional, cobrada aparte y no reembolsable. Ver #110 (diseño y decisiones), #111 (impuestos y fletes), #112 (tabla de presupuestos), #113 (calculadora), #114 (formulario y cláusulas) y #115 (cobros y contrato). FICHA-01 (documentos en el anuncio) se mantiene y va primero. Lo de abajo es el planteamiento original.
 **Goal**: Que un comprador pueda confiar en la máquina de un desconocido porque alguien de la casa la vio y escribió lo que vio.
 **Depends on**: Phase 13
 **Requirements**: FICHA-01, FICHA-02
