@@ -110,6 +110,8 @@ jobs:
         run: npm run busquedas:probar
       - name: Documentos del anuncio
         run: npm run documentos:probar
+      - name: API de documentos
+        run: npm run documentos-api:probar
       - name: Testigos como HMAC
         run: npm run testigos:probar
       - name: Respaldo antes de migrar
