@@ -66,13 +66,46 @@ otro se fusiona solo: GitHub marca el de dentro como fusionado y hay un solo des
 vuelta, tras publicar: encargar todos los issues `codex` listos que no compartan archivos de código, y si quedan
 menos de ~6, planificar en ese mismo chat los siguientes (issues `claude` de diseño y fases del ROADMAP),
 escribiendo antes las pruebas cuando sea fiscal. Las migraciones y lo que toca producción siguen siendo de Claude.
-**Trabajo de Claude para el próximo chat:** llenar la cola de Codex. Candidatos: la fase 14 si Victor contestó la
-pregunta 9 de #79 (personas y protocolo de inspección; FICHA-01, documentos en el anuncio, se puede planificar ya
-porque no depende del protocolo), y #73 / #72 (la migración es de Claude, pero las pruebas y lo mecánico se pueden
-delegar). Notas: `db.validarMes` (de #69) duplica a `lote.validarMes` (de #56); se resuelve al partir los archivos
-en #76. Codex corre Node 24.21.
-Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`; la pregunta 9 sobre la inspección; y si
-«Eliminar mi cuenta» devuelve la parte proporcional de una membresía: por defecto no).
+**ESPERAR LUZ VERDE DE VICTOR antes de empezar** (2026-10-02: pidió dejarlo todo organizado y no arrancar hasta que
+se le renueve el uso semanal, el martes 6). Con la luz verde, el plan del primer chat, a máxima capacidad con Codex:
+1. **Claude, un «paso 2» con migraciones** (como #99), en un PR que no se fusiona sin un respaldo de Victor
+   (comandos en #79; después de #73 ya no hará falta): FICHA-01, documentos adjuntos a un anuncio (tabla nueva,
+   tope de tamaño por el disco del droplet), y #72, testigos de sesión y dispositivo como HMAC. El commit de base va
+   también a `.planning/parches/` para que Codex lo aplique con `git am`, como en la tanda 4.
+2. **Claude, #73** (respaldo verificado automático antes de aplicar una migración al desplegar). Toca el despliegue
+   y producción: no se delega, pero sus pruebas sí.
+3. **Issues `codex` de la tanda 5, encargados todos a la vez:** FICHA-01 API (subir, listar y borrar documentos),
+   FICHA-01 interfaz (formulario de publicar y ficha), lo mecánico de #72 sobre el contrato del paso 2, las pruebas de
+   #73, y el arreglo de la fila de precio del cajón de filtros a 390 px (los selectores tapan «Precio RD$»; ya
+   estaba en producción; hay una tarea sugerida con el detalle).
+4. **Mientras Codex trabaja, Claude investiga** #111 (impuestos y fletes) y #115 (cobros y contrato con Ritchie
+   Bros). Desde la nube no se llega a dgii.gov.do: si hace falta, desde el PC de Victor o con PDF que él pase.
+**Tema nuevo, importación asistida (#110 a #115, después del lanzamiento):** la empresa compra en **Ritchie Bros**
+(Texas, Florida y como mucho Pensilvania; otras zonas solo como excepción con presupuesto alto) e importa por el
+cliente, que lo costea todo:
+- el depósito del 25 % del límite de puja;
+- el 3 % por transferir el depósito al pago;
+- la transferencia, unos US$100 (con tarjeta, nada);
+- una semana para pagar y otra para retirar, con multas diarias si se pasa;
+- fletes terrestre y marítimo, aduana (lo hace la empresa con su agente aduanal), endoso al cliente y transporte
+  en RD.
+
+La **inspección** es opcional:
+- el cliente la pide aparte, con un precio que varía por zona;
+- no es garantía y no se reembolsa;
+- si el equipo no está en condiciones, se entrega un informe completo;
+- se sugiere siempre, y de forma destacada si el presupuesto que declara el cliente es de US$40,000 o más.
+
+Sin inspección, la empresa no responde por el estado del equipo. Una IA puede hacer una «revisión de datos» de
+coherencia (nunca llamarla inspección). Los impuestos se calculan sobre el **precio de factura** más fletes y
+seguro, y la base es el arancel público. **Transparencia total:** lo general en la página, y lo concreto en un paso
+de confirmación al solicitar el servicio, antes de pagar. Pendiente de Victor: el precio de la inspección por zona
+y su comisión, que van a `modelo-comercial.md`; el modelo fiscal (revende o es mandataria), que decide su
+contador; y el contrato, que revisa un abogado. Victor también quiere revisar con Claude el formulario de publicar
+y todas las cláusulas (#114): juntar los cambios en una sola versión legal, porque obliga a aceptar de nuevo.
+Notas: `db.validarMes` (de #69) duplica a `lote.validarMes` (de #56); se resuelve al partir los archivos en #76.
+Codex corre Node 24.21.
+Lo de Victor sigue en #78 y #79 (lo más urgente: proteger `main`; nuevo, las preguntas de la importación).
 
 Los issues: #56-#108, con hitos por fase y etiquetas `codex` / `claude` / `victor` / `bloqueado` / `en-curso`.
 Protocolo completo (también para cuando vuelva la rutina): `.planning/CICLO.md`; tablero #82.
