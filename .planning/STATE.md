@@ -42,6 +42,21 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
+**TANDA 5 EN CURSO (2026-10-02, noche):** **A publicada:** PR #132 (#117-#125) fusionado y en producción
+(«Sitio arriba: 7bf586f»): pruebas puras de fotos/videos, PDF, entorno, mapa, rangos, reglas y S3; `meta.js` con
+`</script>` escapado y sitemap paginado a 60; `404.html`; `tools/s3.js` sin conectar. Arreglo de Claude: la regla de
+idioma de `reglas.prueba.js` acepta `es-DO`. Quedan como `todo` en `medios.prueba.js` dos debilidades de
+`archivoDe` (no valida el nombre ni normaliza `\`; la contención en la carpeta sí funciona). **B abierta:** PR #133
+(`codex/tanda-5b`, contra `main`, contiene el #126) con #129 (testigos HMAC; `testigos:probar` ya en CI) y #130
+(pruebas del respaldo antes de migrar; Claude las corrigió: suponían `migraciones(nombre)` y otra firma de
+`pendientesDe`; el script no se tocó; `respaldo-migrar:probar` en CI). **NO se fusiona sin el respaldo de Victor**
+(#79); obliga a todos a volver a entrar una vez; luego Victor instala el script de respaldo en `/usr/local/bin`.
+**Pendiente de Codex:** #127 (API de documentos) y #128 (interfaz) se le volvieron a encargar en comentarios del PR
+#133, porque desde el issue su copia de `main` no tenía la base. Al llegar: bajar el parche del comentario del bot
+en el PR #133, aplicarlo en `codex/tanda-5b`, añadir `documentos-api:probar` a `package.json` y a CI, mirar a ojo
+publicar y ficha a 390 y 1280 px, y sumar `Closes #127`/`#128` al cuerpo del PR. Preguntas a Victor: proveedor S3
+para DEUDA-05 (#125), borrar el jpeg de WhatsApp (#122), lo abierto de #79.
+
 **Estado al cerrar el chat del 2026-10-02 (vuelta de la tanda 4):** en producción todo hasta la tanda 4 (PR #108,
 que llevaba dentro #99): fases 15 y 16 completas en código. Migraciones `2026-10-especificaciones` y
 `2026-10-guardar-busquedas` aplicadas tras el respaldo de Victor (`/var/backups/mercamaquinarias/antes-busquedas.db`,
