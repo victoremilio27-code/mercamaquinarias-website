@@ -2257,6 +2257,14 @@ const descargarLoteContador = conAdmin((req, res, ctx, mes) => {
     });
     return res.end(paquete.zip);
   } catch (e) {
+    /* Los 500 que lanza lote.armarPaquete a propósito («Hay fechas
+       irregulares: …», «El paquete no cuadra…») son lo único que le dice
+       al administrador qué comprobante revisar, y esta ruta solo la ve él.
+       Se les deja el mensaje; cualquier otro error sigue saliendo genérico. */
+    if (e && e.codigo === 500 && /^(Hay fechas irregulares|El paquete no cuadra)/.test(e.message)) {
+      console.error('lote del contador:', e.message);
+      return fallo(res, 500, e.message);
+    }
     return falloDe(res, e, 'lote del contador',
       e.codigo === 409 && Array.isArray(e.faltan) ? { faltan: e.faltan } : undefined);
   }

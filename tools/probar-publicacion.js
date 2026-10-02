@@ -211,7 +211,7 @@ function borradorCompleto(idPlan, dias) {
   db.guardarBorrador(idAnuncio, ID_ORG, {
     categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt',
     modelo: '567', anio: 2019, precio: 2500000, provincia: 'Santo Domingo',
-    fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+    fotos: ['/fotos/2026-09/23ef103fbb7bcbcbfd4d1eb74ded979e.jpg', '/fotos/2026-09/b99cecd23bb4b33ef1e8e62d87525017.jpg', '/fotos/2026-09/f924ecc0ea99f69cb65f39f2e6941f47.jpg'].map((url) => ({ url, miniatura: null })),
     telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
   });
   return idAnuncio;
@@ -273,7 +273,7 @@ db.cargarSecuencia({
     const eg = lanza(() => {
       r = db.guardarBorrador(idBorrador, ID_ORG, {
         modelo: '320D', anio: 2018,
-        fotos: [{ url: '/fotos/a.jpg', miniatura: '/fotos/a-m.jpg' }, { url: '/fotos/b.jpg', miniatura: '/fotos/b-m.jpg' }],
+        fotos: [{ url: '/fotos/2026-09/64d6cf29da6354a71ebdbeb7493bd8be.jpg', miniatura: '/fotos/2026-09/09f39eb329a0e78b33223b377c38fe59.jpg' }, { url: '/fotos/2026-09/5da88b7d5b5e752443463f6f5c5d5e4f.jpg', miniatura: '/fotos/2026-09/948eed85cf4da7b330e6b30a327800e2.jpg' }],
         telefonos: [{ numero: '8095550000', tipo: 'ambos' }],
       });
     });
@@ -282,7 +282,7 @@ db.cargarSecuencia({
     ok(g.modelo === '320D' && g.anio === 2018 && fotosDe(idBorrador) === 2,
       `modelo=${g.modelo} año=${g.anio} fotos=${fotosDe(idBorrador)}`);
 
-    db.guardarBorrador(idBorrador, ID_ORG, { fotos: [{ url: '/fotos/c.jpg', miniatura: null }] });
+    db.guardarBorrador(idBorrador, ID_ORG, { fotos: [{ url: '/fotos/2026-09/302570f163ca639e394ef08a00b58fb1.jpg', miniatura: null }] });
     ok(fotosDe(idBorrador) === 1, `las fotos se reemplazan: ${fotosDe(idBorrador)} (se esperaba 1)`);
     db.guardarBorrador(idBorrador, ID_ORG, { descripcion: 'Buena' });
     ok(fotosDe(idBorrador) === 1, `sin «fotos» no se tocan: ${fotosDe(idBorrador)} (se esperaba 1)`);
@@ -1153,7 +1153,8 @@ db.cargarSecuencia({
       ejecuta('UPDATE anuncios SET creado = ?, actualizado = ? WHERE id = ?', hace(dias), hace(dias), idAnuncio);
 
     // Una foto de verdad en disco para el borrador abandonado: la limpieza debe llevársela.
-    const rutaFoto = `/fotos/2026-09/abandonado-${SELLO}.jpg`;
+    // Con el nombre que genera fotos.guardar: archivoDe ya no acepta otros (#134).
+    const rutaFoto = `/fotos/2026-09/${require('crypto').randomBytes(16).toString('hex')}.jpg`;
     const archivoFoto = fotosModulo.archivoDe(rutaFoto);
     fs.mkdirSync(path.dirname(archivoFoto), { recursive: true });
     fs.writeFileSync(archivoFoto, 'jpg de prueba');

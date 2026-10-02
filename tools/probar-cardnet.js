@@ -1285,7 +1285,7 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
       db.guardarBorrador(id, idOrg, {
         categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
         precio: 2500000, provincia: 'Santo Domingo',
-        fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+        fotos: ['/fotos/2026-09/23ef103fbb7bcbcbfd4d1eb74ded979e.jpg', '/fotos/2026-09/b99cecd23bb4b33ef1e8e62d87525017.jpg', '/fotos/2026-09/f924ecc0ea99f69cb65f39f2e6941f47.jpg'].map((url) => ({ url, miniatura: null })),
         telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
       });
       return id;
@@ -1829,7 +1829,7 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
       db.guardarBorrador(id, idOrg, {
         categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
         precio: 2500000, provincia: 'Santo Domingo',
-        fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+        fotos: ['/fotos/2026-09/23ef103fbb7bcbcbfd4d1eb74ded979e.jpg', '/fotos/2026-09/b99cecd23bb4b33ef1e8e62d87525017.jpg', '/fotos/2026-09/f924ecc0ea99f69cb65f39f2e6941f47.jpg'].map((url) => ({ url, miniatura: null })),
         telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
       });
       return id;
@@ -2061,7 +2061,7 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
       db.guardarBorrador(id, idOrg, {
         categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
         precio: 2500000, provincia: 'Santo Domingo',
-        fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+        fotos: ['/fotos/2026-09/23ef103fbb7bcbcbfd4d1eb74ded979e.jpg', '/fotos/2026-09/b99cecd23bb4b33ef1e8e62d87525017.jpg', '/fotos/2026-09/f924ecc0ea99f69cb65f39f2e6941f47.jpg'].map((url) => ({ url, miniatura: null })),
         telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
       });
       return id;
@@ -2830,7 +2830,7 @@ const URL_PROD = 'https://servicios.cardnet.com.do/servicios/tokens/';
       db.guardarBorrador(id, idOrg, {
         categoria: 'camiones', subcategoria: 'cam-volteo', marca: 'peterbilt', modelo: '567', anio: 2019,
         precio: 2500000, provincia: 'Santo Domingo',
-        fotos: ['/fotos/1.jpg', '/fotos/2.jpg', '/fotos/3.jpg'].map((url) => ({ url, miniatura: null })),
+        fotos: ['/fotos/2026-09/23ef103fbb7bcbcbfd4d1eb74ded979e.jpg', '/fotos/2026-09/b99cecd23bb4b33ef1e8e62d87525017.jpg', '/fotos/2026-09/f924ecc0ea99f69cb65f39f2e6941f47.jpg'].map((url) => ({ url, miniatura: null })),
         telefonos: [{ numero: '8095551234', tipo: 'ambos' }],
       });
       return id;

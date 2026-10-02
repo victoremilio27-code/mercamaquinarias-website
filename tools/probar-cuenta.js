@@ -573,8 +573,9 @@ async function bloqueEliminar() {
   const pia = cuenta('pia@ejemplo.test', 'Pía Borrable');
   const idAnuncio = db.crearBorrador({ idOrg: pia.org.id, idPlan: 'destacado', dias: 30 });
   ejecuta("UPDATE anuncios SET estado = 'activo', anio = 2015 WHERE id = ?", idAnuncio);
-  const rutaFoto = `${fotos.RUTA_PUBLICA}/prueba-eliminar-cuenta.jpg`;
-  fs.mkdirSync(fotos.CARPETA, { recursive: true });
+  // Con el nombre que genera fotos.guardar: archivoDe ya no acepta otros (#134).
+  const rutaFoto = `${fotos.RUTA_PUBLICA}/2026-09/${crypto.randomBytes(16).toString('hex')}.jpg`;
+  fs.mkdirSync(path.dirname(fotos.archivoDe(rutaFoto)), { recursive: true });
   fs.writeFileSync(fotos.archivoDe(rutaFoto), 'jpg');
   ejecuta('INSERT INTO anuncio_fotos (id, anuncio_id, url, miniatura, orden, creada) VALUES (?, ?, ?, NULL, 0, ?)',
     'foto-eliminar', idAnuncio, rutaFoto, t);

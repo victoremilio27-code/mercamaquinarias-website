@@ -105,7 +105,7 @@ function publicarEquipos(idOrg, idUsuario, cuantos) {
       precio: 1000000 + i,
       moneda: 'DOP',
       vence: db.sumarDias(30),
-      fotos: ['/fotos/2026-09/a.jpg', '/fotos/2026-09/b.jpg', '/fotos/2026-09/c.jpg'],
+      fotos: ['/fotos/2026-09/64d6cf29da6354a71ebdbeb7493bd8be.jpg', '/fotos/2026-09/5da88b7d5b5e752443463f6f5c5d5e4f.jpg', '/fotos/2026-09/302570f163ca639e394ef08a00b58fb1.jpg'],
       telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos' }],
     });
   }
@@ -447,7 +447,7 @@ function publicarEquipos(idOrg, idUsuario, cuantos) {
   r = await pedir({ metodo: 'DELETE', url: `${base}/secciones/${idS}`, cabeceras: sesionAdmin });
   comprobar(r.codigo === 200 && r.datos.secciones.length === 2 && filasPagina() === n + 4, 'y lo quita');
 
-  r = await pedir({ metodo: 'POST', url: `${base}/galeria`, cuerpo: { url: '/fotos/2026-09/taller.jpg' }, cabeceras: sesionAdmin });
+  r = await pedir({ metodo: 'POST', url: `${base}/galeria`, cuerpo: { url: '/fotos/2026-09/2a1b8b48ee226a8de1b985504f1f9124.jpg' }, cabeceras: sesionAdmin });
   const idFoto = r.datos && r.datos.galeria && r.datos.galeria[0] && r.datos.galeria[0].id;
   comprobar(r.codigo === 201 && !!idFoto && filasPagina() === n + 5, 'añade una foto a la galeria');
   r = await pedir({ metodo: 'DELETE', url: `${base}/galeria/${idFoto}`, cabeceras: sesionAdmin });

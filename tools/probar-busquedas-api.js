@@ -117,7 +117,8 @@ async function probar() {
   const segunda = db.guardarBusqueda({ idUsuario: ana.id, filtros: { q: 'segunda' }, resumen: 'segunda' });
   const testigoPrimera = db.testigoBajaBusqueda(primera.id);
   r = await pedir({ url: `/api/busquedas/baja?testigo=${encodeURIComponent(testigoPrimera)}` });
-  comprobar(r.codigo === 404 && db.busquedasDe(ana.id).find((b) => b.id === primera.id).activa,
+  // 405 y no 404 desde el issue #136: la ruta existe, pero solo por POST.
+  comprobar(r.codigo === 405 && db.busquedasDe(ana.id).find((b) => b.id === primera.id).activa,
     'abrir por GET el enlace no da de baja la búsqueda');
   r = await pedir({ metodo: 'POST', url: '/api/busquedas/baja', cuerpo: { testigo: 'incorrecto' }, ip: '201.8.7.7' });
   const errorMalo = r.datos.error;

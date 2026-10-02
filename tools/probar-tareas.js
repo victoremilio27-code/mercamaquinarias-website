@@ -164,8 +164,9 @@ function sinContadorNiNcfAjeno(lista) {
 
   const borrador = db.crearBorrador({ idOrg: propietario.organizacion, idUsuario: propietario.usuario,
     idPlan: 'estandar', dias: 30 });
-  const rutaFoto = '/fotos/2026-08/borrador.jpg';
-  const archivoFoto = path.join(rutas.fotos, '2026-08', 'borrador.jpg');
+  const rutaFoto = '/fotos/2026-08/48c7a4aa29239b538d3d1f7c67ee761d.jpg';
+  // El nombre tiene la forma que genera fotos.guardar: archivoDe rechaza cualquier otra (#134).
+  const archivoFoto = path.join(rutas.fotos, '2026-08', '48c7a4aa29239b538d3d1f7c67ee761d.jpg');
   fs.mkdirSync(path.dirname(archivoFoto), { recursive: true });
   fs.writeFileSync(archivoFoto, 'foto del borrador');
   ejecutar('INSERT INTO anuncio_fotos (id, anuncio_id, url, orden, creada) VALUES (?, ?, ?, 0, ?)',
@@ -221,6 +222,14 @@ function sinContadorNiNcfAjeno(lista) {
   console.log('\n4 · segunda tanda inmediata');
   const estadoPrimera = instantanea();
   const cantidadPrimera = correosPrimera.length;
+  /* El respaldo se nombra por segundo (tareas.js, respaldar) y VACUUM INTO
+     no pisa un archivo existente: en una máquina rápida las dos tandas caían
+     en el mismo segundo y la segunda fallaba por eso, no por idempotencia.
+     En producción la tanda corre una vez al día. */
+  const segundoPrimera = Math.floor(Date.now() / 1000);
+  while (Math.floor(Date.now() / 1000) === segundoPrimera) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
   const segunda = ejecutarTanda();
   comprobar(segunda.status === 0, `la segunda tanda termina en cero${segunda.stderr ? `: ${segunda.stderr.trim()}` : ''}`);
   comprobar(mensajes().length === cantidadPrimera, 'la segunda tanda no manda correos nuevos');
