@@ -177,8 +177,14 @@ const cookieEquipo = (testigo, dias = 60) =>
 
    Delante del servidor hay dos intermediarios: Cloudflare y nginx.
    `CF-Connecting-IP` la escribe Cloudflare con la IP real del
-   visitante y la sustituye siempre, así que el cliente no puede
-   falsificarla mientras nadie llegue al VPS saltándose el proxy.
+   visitante y la sustituye siempre. Pero se podía llegar al VPS
+   saltándose Cloudflare, y nginx reenviaba la cabecera tal cual: quien
+   entrara directo se la inventaba en cada petición (#169). Ahora nginx
+   solo se la cree si la conexión viene de un rango de Cloudflare
+   (deploy/nginx-cloudflare.conf) y si no, manda la IP real de la
+   conexión con el mismo nombre; el cortafuegos además cierra 80/443 a
+   todo lo que no sea Cloudflare. Aquí no hace falta cambiar nada: la
+   cabecera que llega ya es de fiar.
 
    De X-Forwarded-For se toma el ÚLTIMO elemento, nunca el primero.
    Esa cabecera se acumula por la izquierda: el primer valor es el
