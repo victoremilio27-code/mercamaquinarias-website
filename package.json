@@ -37,6 +37,7 @@
     "facturas:probar": "node tools/probar-facturas.js",
     "ncf-unico:probar": "node tools/probar-ncf-unico.js",
     "pagos:probar": "node tools/probar-pagos.js",
+    "sin-aplicar:probar": "node tools/probar-sin-aplicar.js",
     "medios:puro": "node --test tools/medios.prueba.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
     "publicacion:probar": "node tools/probar-publicacion.js",
