@@ -16,6 +16,7 @@ const MODULOS_COMPARTIDOS = [
   'assets/taxonomia.js',
   'assets/legales.js',
   'assets/especificaciones.js',
+  'assets/importacion.js',
 ];
 
 const leer = (archivo) => fs.readFileSync(path.join(RAIZ, archivo), 'utf8');

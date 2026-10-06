@@ -1,0 +1,2551 @@
+From b06f8c72200cb8cdbdbb26fb1ea12cdc739fae2c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 21:54:59 +0000
+Subject: [PATCH 1/6] =?UTF-8?q?Importaci=C3=B3n=20asistida:=20m=C3=B3dulo?=
+ =?UTF-8?q?=20compartido=20con=20estados,=20transiciones=20y=20par=C3=A1me?=
+ =?UTF-8?q?tros,=20todo=20apagado?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Base C1 de la fase 14 (#148). Parámetros sin decidir a null; lo fiscal
+bloquea el encendido hasta la decisión del contador.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ assets/importacion.js  | 462 +++++++++++++++++++++++++++++++++++++++++
+ tools/reglas.prueba.js |   1 +
+ 2 files changed, 463 insertions(+)
+ create mode 100644 assets/importacion.js
+
+diff --git a/assets/importacion.js b/assets/importacion.js
+new file mode 100644
+index 0000000..8eceaac
+--- /dev/null
++++ b/assets/importacion.js
+@@ -0,0 +1,462 @@
++/* ═══════════════════════════════════════════════════════════
++   MercaMaquinarias · Importación asistida (fase 14)
++
++   Estados del expediente, transiciones permitidas y quién hace cada
++   una, conceptos del libro de dinero del cliente, parámetros con nombre
++   e interruptores. Lo carga el navegador con <script> y el servidor con
++   require(), como `assets/servicios.js`: la pantalla y el servidor leen
++   la misma tabla, no dos copias que se desincronizan.
++
++   La referencia completa (rutas, errores, firmas de tools/importacion.js)
++   está en `.planning/importacion-contrato.md`. Si algo de aquí no casa
++   con el contrato, manda el contrato y se corrige aquí.
++
++   TODO ESTÁ APAGADO A PROPÓSITO. El servicio se construye entero y se
++   entrega con los interruptores en `false`: encenderlo exige que todos
++   los parámetros obligatorios tengan valor (`puedeEncenderse`) y que lo
++   fiscal esté decidido e implementado (`FISCAL_LISTO`). La decisión
++   fiscal (la empresa como mandataria o como revendedora) la toma el
++   contador de Victor; hasta entonces, nada que emita un comprobante.
++
++   NINGÚN PRECIO NI COMISIÓN SE PROPONE AQUÍ. Lo que no ha decidido
++   Victor, el contador, el abogado o las condiciones de la subasta está
++   a `null`, y con un `null` obligatorio el servicio no se enciende.
++
++   Unidades, para no repetirlas en cada línea:
++     · Importes: enteros en centavos de la moneda de la línea (US$ salvo
++       que diga otra cosa). Nunca decimales: un 0.1 + 0.2 en un depósito
++       es exactamente el error que no se puede devolver.
++     · Porcentajes: enteros en puntos básicos (1 % = 100), para que el
++       redondeo sea aritmética de enteros y no de coma flotante.
++     · Plazos: enteros en días (`_DIAS`) o en horas (`_H`).
++
++   El «cargo por aplicar el depósito» (`CARGO_APLICAR_DEPOSITO`) es un
++   cargo de la subasta. No tiene nada que ver con el 3 % de la fórmula de
++   precios del sitio, y este módulo no carga `assets/precios.js`.
++   ═══════════════════════════════════════════════════════════ */
++
++/* Todo dentro de una función y un solo nombre global, `Importacion`:
++   panel.js ya declara un `ESTADOS` propio, y dos `const` con el mismo
++   nombre en dos <script> de la misma página tumban el segundo entero. */
++const Importacion = (function () {
++  const IMPORTACION = {
++    // El flujo nuevo entero. Apagado, `importar.html` y su formulario
++    // siguen como hoy y las rutas nuevas responden 503.
++    asistida: { activo: false },
++    // La inspección en la yarda: opcional, cobrada aparte, no es garantía
++    // y no se reembolsa.
++    inspeccion: { activa: false },
++    // La calculadora pública (#113). Se enciende cuando Victor apruebe
++    // la tabla de #112.
++    calculadora: { activa: false },
++  };
++
++  /* Lo fiscal no está implementado: depende de la decisión del contador.
++     Mientras sea `false`, `puedeEncenderse` no deja encender el servicio
++     aunque `MODELO_FISCAL` tenga valor. Se pone a `true` en el mismo PR
++     que implemente y pruebe la emisión de comprobantes. */
++  const FISCAL_LISTO = false;
++
++  const PARAMETROS = {
++    /* Contador. 'mandatario': la empresa compra por cuenta del cliente.
++       'revendedor': la empresa compra y revende. Cambia qué conceptos
++       emiten NCF; las tablas son las mismas. */
++    MODELO_FISCAL: null,
++
++    /* Victor (modelo-comercial.md). Objeto { TX, FL, PA, EXCEPCION } en
++       centavos de US$. Sin él la inspección no se enciende. */
++    PRECIO_INSPECCION_POR_ZONA: null,
++
++    /* Victor (modelo-comercial.md). { forma: 'fija', importe } o
++       { forma: 'porcentaje', pb, minimo, maximo } (minimo y maximo en
++       centavos, opcionales). */
++    COMISION_SERVICIO: null,
++
++    /* Confirmado por Victor en #110: US$40,000. Solo cambia cómo se
++       destaca la sugerencia de inspección, nunca si se ofrece. */
++    UMBRAL_INSPECCION_DESTACADA: 4000000,
++
++    // Victor. Estados de EE. UU. desde los que se proponen lotes.
++    ZONAS_PERMITIDAS: ['TX', 'FL', 'PA'],
++    // Victor. Presupuesto mínimo (centavos) para proponer fuera de zona.
++    PRESUPUESTO_MIN_EXCEPCION_ZONA: null,
++
++    // Condiciones de la subasta (#115).
++    PORCENTAJE_DEPOSITO_SUBASTA: null, // pb sobre el límite de puja
++    CARGO_APLICAR_DEPOSITO: null, // pb sobre el depósito aplicado
++    COMISION_TRANSFERENCIA: null, // centavos, fijo por transferencia
++    PLAZO_PAGO_SUBASTA_DIAS: null,
++    PLAZO_RETIRO_DIAS: null,
++    MULTAS_SUBASTA: null,
++
++    // Plazos propios (Victor, con #115).
++    PLAZO_PROPUESTA_DIAS: null,
++    PLAZO_SALDO_CLIENTE_DIAS: null,
++    PLAZO_DEPOSITO_ANTES_SUBASTA_H: null,
++    PLAZO_MIN_INSPECCION_DIAS: null,
++    PLAZO_DECISION_TRAS_INFORME_H: null,
++    PLAZO_AJUSTE_DIAS: null,
++    PLAZO_DEVOLUCION_DIAS: null,
++    RECORDATORIOS_SALDO_H: null, // lista de horas antes del vencimiento
++
++    /* Victor, con #115. 'al_ganar': un solo cobro grande al ganar.
++       'por_etapa': cada tramo logístico se cobra antes de contratarlo. */
++    POLITICA_COBRO: null,
++
++    // Victor, con #115. pb de colchón sobre lo estimado; 0 = ninguno.
++    COLCHON_IMPREVISTOS: null,
++
++    // Victor y contador. 'USD' o 'DOP'; con 'DOP', FUENTE_TASA obligatoria.
++    MONEDA_COBRO: null,
++    FUENTE_TASA: null,
++
++    /* Contrato (#115, abogado). { retiene: [conceptos], descuento } con
++       `descuento` en centavos: qué se descuenta de la devolución. */
++    DEVOLUCION_SI_PERDIDA: null,
++    DEVOLUCION_SIN_PUJA: null,
++
++    // Abogado. 'en_linea' o 'documento' (PDF firmado subido).
++    FIRMA_CONTRATO: null,
++  };
++
++  const OPCIONES = {
++    MODELO_FISCAL: ['mandatario', 'revendedor'],
++    POLITICA_COBRO: ['al_ganar', 'por_etapa'],
++    MONEDA_COBRO: ['USD', 'DOP'],
++    FIRMA_CONTRATO: ['en_linea', 'documento'],
++  };
++
++  /* ── Estados ─────────────────────────────────────────────── */
++
++  const ESTADOS = Object.freeze([
++    'solicitada', 'en_busqueda', 'propuesta', 'confirmacion',
++    'inspeccion_pendiente_pago', 'inspeccion_en_curso', 'inspeccion_entregada',
++    'deposito_pendiente', 'lista_para_pujar', 'pujando',
++    'perdida', 'ganada', 'saldo_pendiente', 'pagada_subasta',
++    'retiro', 'transito_terrestre', 'puerto_origen', 'transito_maritimo',
++    'en_aduana', 'endosada', 'transporte_rd', 'entregada',
++    'devolucion_pendiente', 'cerrada',
++    'desistida', 'sin_opciones', 'cancelada', 'incumplida',
++  ]);
++
++  const ESTADOS_SALIDA = Object.freeze(['desistida', 'sin_opciones', 'cancelada', 'incumplida']);
++  const ACTORES = Object.freeze(['cliente', 'personal', 'sistema']);
++
++  /* Etapas de cobro. Una transición con `cobro` exige que el cobro de esa
++     etapa esté CONFIRMADO; con `cobroPorEtapa`, solo cuando
++     POLITICA_COBRO = 'por_etapa' (con 'al_ganar' ese tramo ya se cobró en
++     el saldo). Es la regla que sostiene todo: la empresa no se compromete
++     con un tercero (pujar, pagar la subasta, contratar un flete) con
++     dinero que todavía no tiene. */
++  const TRANSICIONES = Object.freeze([
++    { de: 'solicitada', a: 'en_busqueda', actor: 'personal' },
++    { de: 'en_busqueda', a: 'propuesta', actor: 'personal', exige: 'al menos un lote propuesto' },
++    { de: 'en_busqueda', a: 'sin_opciones', actor: 'personal' },
++    { de: 'propuesta', a: 'confirmacion', actor: 'cliente', exige: 'un lote elegido' },
++    { de: 'propuesta', a: 'en_busqueda', actor: 'sistema', exige: 'el lote caducó sin elección' },
++    { de: 'confirmacion', a: 'propuesta', actor: 'cliente', exige: 'cambiar de lote' },
++    { de: 'confirmacion', a: 'deposito_pendiente', actor: 'cliente', exige: 'huella que casa y condiciones aceptadas, sin inspección pedida' },
++    { de: 'confirmacion', a: 'inspeccion_pendiente_pago', actor: 'cliente', exige: 'huella que casa y condiciones aceptadas, con inspección pedida' },
++    { de: 'inspeccion_pendiente_pago', a: 'inspeccion_en_curso', actor: 'personal', cobro: 'inspeccion' },
++    { de: 'inspeccion_pendiente_pago', a: 'deposito_pendiente', actor: 'sistema', exige: 'venció el pago de la inspección: sigue sin inspección' },
++    { de: 'inspeccion_en_curso', a: 'inspeccion_entregada', actor: 'personal', exige: 'informe_inspeccion subido' },
++    { de: 'inspeccion_entregada', a: 'deposito_pendiente', actor: 'cliente', exige: 'decide seguir' },
++    { de: 'inspeccion_entregada', a: 'desistida', actor: 'sistema', exige: 'venció PLAZO_DECISION_TRAS_INFORME_H sin respuesta' },
++    { de: 'deposito_pendiente', a: 'lista_para_pujar', actor: 'personal', cobro: 'deposito' },
++    { de: 'deposito_pendiente', a: 'en_busqueda', actor: 'sistema', exige: 'el depósito no se confirmó a tiempo: no se puja' },
++    { de: 'lista_para_pujar', a: 'confirmacion', actor: 'cliente', exige: 'subir el límite de puja: otra confirmación' },
++    { de: 'lista_para_pujar', a: 'pujando', actor: 'personal', cobro: 'deposito' },
++    { de: 'pujando', a: 'ganada', actor: 'personal', exige: 'precio de martillo' },
++    { de: 'pujando', a: 'perdida', actor: 'personal' },
++    { de: 'perdida', a: 'propuesta', actor: 'cliente', exige: 'otro lote con el mismo depósito' },
++    { de: 'perdida', a: 'devolucion_pendiente', actor: 'cliente' },
++    { de: 'ganada', a: 'saldo_pendiente', actor: 'sistema' },
++    { de: 'saldo_pendiente', a: 'pagada_subasta', actor: 'personal', cobro: 'saldo' },
++    { de: 'saldo_pendiente', a: 'incumplida', actor: 'sistema', exige: 'venció PLAZO_SALDO_CLIENTE_DIAS' },
++    { de: 'saldo_pendiente', a: 'incumplida', actor: 'personal', exige: 'motivo' },
++    { de: 'pagada_subasta', a: 'retiro', actor: 'personal', cobroPorEtapa: 'flete_eeuu' },
++    { de: 'retiro', a: 'transito_terrestre', actor: 'personal' },
++    { de: 'transito_terrestre', a: 'puerto_origen', actor: 'personal' },
++    { de: 'puerto_origen', a: 'transito_maritimo', actor: 'personal', cobroPorEtapa: 'maritimo' },
++    { de: 'transito_maritimo', a: 'en_aduana', actor: 'personal' },
++    { de: 'en_aduana', a: 'endosada', actor: 'personal', cobroPorEtapa: 'aduana', exige: 'ajuste de liquidación a cobrar, si lo hay, confirmado' },
++    { de: 'endosada', a: 'transporte_rd', actor: 'personal', cobroPorEtapa: 'flete_rd' },
++    { de: 'transporte_rd', a: 'entregada', actor: 'personal', exige: 'acta_entrega subida' },
++    { de: 'entregada', a: 'cerrada', actor: 'sistema', exige: 'saldo del cliente en cero' },
++    { de: 'entregada', a: 'devolucion_pendiente', actor: 'sistema', exige: 'queda dinero del cliente' },
++    { de: 'devolucion_pendiente', a: 'cerrada', actor: 'personal', exige: 'devolución registrada en el libro' },
++    // Salidas antes de pujar.
++    ...['solicitada', 'en_busqueda', 'propuesta', 'confirmacion', 'inspeccion_pendiente_pago',
++      'inspeccion_entregada', 'deposito_pendiente', 'lista_para_pujar']
++      .map((de) => ({ de, a: 'desistida', actor: 'cliente' })),
++    ...['solicitada', 'en_busqueda', 'propuesta', 'confirmacion', 'inspeccion_pendiente_pago',
++      'inspeccion_en_curso', 'inspeccion_entregada', 'deposito_pendiente', 'lista_para_pujar']
++      .map((de) => ({ de, a: 'cancelada', actor: 'personal', exige: 'motivo' })),
++    // Desde una salida solo se devuelve o se cierra.
++    ...ESTADOS_SALIDA.map((de) => ({ de, a: 'devolucion_pendiente', actor: 'sistema', exige: 'queda dinero del cliente' })),
++    ...ESTADOS_SALIDA.map((de) => ({ de, a: 'cerrada', actor: 'sistema', exige: 'saldo del cliente en cero' })),
++  ]);
++
++  function transicionPermitida(de, a, actor) {
++    return TRANSICIONES.some((t) => t.de === de && t.a === a && t.actor === actor);
++  }
++
++  function transicion(de, a, actor) {
++    return TRANSICIONES.find((t) => t.de === de && t.a === a && t.actor === actor) || null;
++  }
++
++  /* ── Conceptos del libro ─────────────────────────────────── */
++
++  const CONCEPTOS = Object.freeze([
++    'inspeccion', 'comision_servicio', 'deposito_puja', 'cargo_aplicar_deposito',
++    'precio_equipo', 'cargos_comprador', 'comision_transferencia', 'multa_subasta',
++    'flete_terrestre_eeuu', 'flete_maritimo', 'seguro', 'impuestos_aduana',
++    'agente_aduanal', 'gastos_puerto', 'flete_rd', 'ajuste_liquidacion', 'otro',
++  ]);
++
++  const SENTIDOS = Object.freeze(['cobro_cliente', 'pago_tercero', 'devolucion_cliente', 'ajuste']);
++
++  /* Lo que nunca entra en una devolución, sea cual sea el motivo: la
++     inspección se cobró como servicio aparte y no se reembolsa (decisión
++     de Victor, #110). */
++  const NO_REEMBOLSABLES = Object.freeze(['inspeccion']);
++
++  const ETAPAS = Object.freeze(['inspeccion', 'deposito', 'saldo', 'flete_eeuu', 'maritimo', 'aduana', 'flete_rd']);
++
++  const TRAMOS = {
++    flete_eeuu: ['flete_terrestre_eeuu'],
++    maritimo: ['flete_maritimo', 'seguro'],
++    aduana: ['impuestos_aduana', 'agente_aduanal', 'gastos_puerto'],
++    flete_rd: ['flete_rd'],
++  };
++
++  /* Qué conceptos se cobran en cada etapa. La comisión del servicio va en
++     el saldo en las dos políticas porque es la única etapa en la que ya se
++     conoce el martillo (sirve tanto si es fija como si es un porcentaje).
++     Con 'al_ganar' los tramos logísticos entran también en el saldo y sus
++     etapas propias quedan vacías. */
++  function conceptosDeEtapa(etapa, politica) {
++    if (etapa === 'inspeccion') return ['inspeccion'];
++    if (etapa === 'deposito') return ['deposito_puja'];
++    if (etapa === 'saldo') {
++      const base = ['precio_equipo', 'cargos_comprador', 'cargo_aplicar_deposito', 'comision_transferencia', 'comision_servicio'];
++      if (politica === 'al_ganar') return base.concat(TRAMOS.flete_eeuu, TRAMOS.maritimo, TRAMOS.aduana, TRAMOS.flete_rd);
++      return base;
++    }
++    if (TRAMOS[etapa]) return politica === 'por_etapa' ? TRAMOS[etapa].slice() : [];
++    throw new Error(`etapa desconocida: ${etapa}`);
++  }
++
++  /* ── Dinero: aritmética de enteros ───────────────────────── */
++
++  function entero(valor, que) {
++    if (!Number.isSafeInteger(valor)) throw new Error(`${que} tiene que ser un entero (centavos o puntos básicos): ${valor}`);
++    return valor;
++  }
++
++  /* importe × pb / 10000, redondeado a la mitad hacia arriba, SIN coma
++     flotante. Math.round(5000 * (3 / 10000)) da 1 y no 2, porque
++     5000 × 0,0003 sale 1,4999999999999998 en binario; aquí sale lo mismo
++     en el navegador y en el servidor. Solo admite no negativos. */
++  function porcentaje(importe, pb) {
++    entero(importe, 'el importe');
++    entero(pb, 'el porcentaje');
++    if (importe < 0 || pb < 0) throw new Error('porcentaje() no admite negativos');
++    return Math.floor((importe * pb + 5000) / 10000);
++  }
++
++  function depositoPara(limitePuja, config) {
++    const pb = config.PORCENTAJE_DEPOSITO_SUBASTA;
++    if (pb == null) throw new Error('falta PORCENTAJE_DEPOSITO_SUBASTA');
++    return porcentaje(entero(limitePuja, 'el límite de puja'), pb);
++  }
++
++  function comisionServicio(base, config) {
++    const c = config.COMISION_SERVICIO;
++    if (!c) throw new Error('falta COMISION_SERVICIO');
++    if (c.forma === 'fija') return entero(c.importe, 'la comisión fija');
++    if (c.forma === 'porcentaje') {
++      let importe = porcentaje(base, c.pb);
++      if (c.minimo != null) importe = Math.max(importe, entero(c.minimo, 'el mínimo'));
++      if (c.maximo != null) importe = Math.min(importe, entero(c.maximo, 'el máximo'));
++      return importe;
++    }
++    throw new Error(`forma de comisión desconocida: ${c.forma}`);
++  }
++
++  /* Aplica el depósito contra las líneas del saldo, en el orden en que
++     vienen (el servidor las manda en el orden de CONCEPTOS, así que
++     primero el precio del equipo). Devuelve qué falta cobrar por cada
++     concepto, cuánto del depósito se aplicó a cada uno (en el libro va
++     como un par de ajustes: menos en deposito_puja, más en ese concepto)
++     y el sobrante si el depósito superó el saldo, que se devuelve al
++     cerrar. Ninguna línea queda negativa. */
++  function aplicarDeposito(lineas, deposito) {
++    entero(deposito, 'el depósito');
++    let queda = deposito;
++    const cobros = [];
++    const aplicaciones = [];
++    for (const l of lineas) {
++      entero(l.importe, `la línea ${l.concepto}`);
++      const aplicado = Math.min(queda, l.importe);
++      queda -= aplicado;
++      if (aplicado > 0) aplicaciones.push({ concepto: l.concepto, importe: aplicado });
++      if (l.importe - aplicado > 0) cobros.push({ concepto: l.concepto, importe: l.importe - aplicado });
++    }
++    return { cobros, aplicaciones, sobrante: queda };
++  }
++
++  /* Signo de cada movimiento en el saldo del cliente: el dinero suyo que
++     la empresa tiene en la mano. Un ajuste lleva su propio signo. */
++  function importeConSigno(m) {
++    if (m.sentido === 'cobro_cliente') return m.importe;
++    if (m.sentido === 'devolucion_cliente' || m.sentido === 'pago_tercero') return -m.importe;
++    if (m.sentido === 'ajuste') return m.importe;
++    throw new Error(`sentido desconocido: ${m.sentido}`);
++  }
++
++  function saldoCliente(movimientos) {
++    return movimientos.reduce((s, m) => s + importeConSigno(m), 0);
++  }
++
++  /* Cuánto se le devuelve al cliente según la política del motivo.
++     `politica` es { retiene: [conceptos], descuento } o null (sin
++     retención). Los movimientos de un concepto retenido o no reembolsable
++     no cuentan, ni a favor ni en contra: lo cobrado por la inspección y
++     lo pagado al inspector quedan fuera juntos. El descuento fijo se resta
++     al final y la devolución nunca es negativa. */
++  function devolucionDe(movimientos, politica) {
++    const fuera = new Set(NO_REEMBOLSABLES.concat((politica && politica.retiene) || []));
++    const base = movimientos
++      .filter((m) => !fuera.has(m.concepto))
++      .reduce((s, m) => s + importeConSigno(m), 0);
++    const descuento = politica && politica.descuento ? entero(politica.descuento, 'el descuento') : 0;
++    return Math.max(0, base - descuento);
++  }
++
++  /* Qué política de devolución rige según el estado del que se sale. */
++  function motivoDevolucion(estadoPrevio) {
++    if (estadoPrevio === 'perdida') return 'perdida';
++    if (estadoPrevio === 'incumplida') return 'incumplida';
++    if (estadoPrevio === 'cancelada') return 'cancelada';
++    if (estadoPrevio === 'entregada') return 'cierre';
++    if (estadoPrevio === 'desistida' || estadoPrevio === 'sin_opciones') return 'sin_puja';
++    throw new Error(`no hay devolución desde ${estadoPrevio}`);
++  }
++
++  function politicaDevolucion(motivo, config) {
++    if (motivo === 'perdida') return config.DEVOLUCION_SI_PERDIDA;
++    if (motivo === 'sin_puja') return config.DEVOLUCION_SIN_PUJA;
++    // El diseño de #110 lo fija: quien incumple pierde el depósito y
++    // carga con las multas de la subasta.
++    if (motivo === 'incumplida') return { retiene: ['deposito_puja', 'multa_subasta'], descuento: 0 };
++    // Cancelación por la empresa y sobrante al cerrar: sin retención
++    // (salvo lo no reembolsable). Pendiente de que Victor lo confirme.
++    if (motivo === 'cancelada' || motivo === 'cierre') return null;
++    throw new Error(`motivo de devolución desconocido: ${motivo}`);
++  }
++
++  function destacarInspeccion(presupuesto, config) {
++    return entero(presupuesto, 'el presupuesto') >= config.UMBRAL_INSPECCION_DESTACADA;
++  }
++
++  /* ── Huella del desglose ─────────────────────────────────── */
++
++  /* JSON canónico: claves ordenadas, sin espacios, y solo números
++     enteros. Un decimal aquí es un importe mal calculado: se rechaza en
++     vez de firmarlo. */
++  function canonico(valor) {
++    if (valor === null || typeof valor === 'boolean' || typeof valor === 'string') return JSON.stringify(valor);
++    if (typeof valor === 'number') return String(entero(valor, 'un número del desglose'));
++    if (Array.isArray(valor)) return `[${valor.map(canonico).join(',')}]`;
++    if (typeof valor === 'object') {
++      return `{${Object.keys(valor).sort().map((k) => `${JSON.stringify(k)}:${canonico(valor[k])}`).join(',')}}`;
++    }
++    throw new Error(`valor no admitido en el desglose: ${typeof valor}`);
++  }
++
++  /* Lo que se firma: solo estos campos. Lo demás que viaje con el
++     desglose (nombres, textos de ayuda) puede cambiar sin cambiar lo que
++     el cliente aceptó. */
++  function contenidoFirmado(desglose) {
++    return {
++      cifras_version: desglose.cifras_version,
++      condiciones_version: desglose.condiciones_version,
++      limite_puja: desglose.limite_puja,
++      lineas: desglose.lineas.map((l) => ({
++        concepto: l.concepto, importe: l.importe, moneda: l.moneda, es_estimado: !!l.es_estimado,
++      })),
++    };
++  }
++
++  /* SHA-256 en hex. Solo en el servidor: el navegador recibe la huella ya
++     calculada y la devuelve al confirmar. */
++  function huellaDesglose(desglose) {
++    if (typeof require !== 'function') throw new Error('huellaDesglose solo corre en el servidor');
++    return require('crypto').createHash('sha256').update(canonico(contenidoFirmado(desglose))).digest('hex');
++  }
++
++  /* ── Configuración e interruptores ───────────────────────── */
++
++  /* La configuración efectiva: los parámetros y los interruptores de este
++     módulo con lo que se sobrescriba. Las pruebas la inyectan así en vez
++     de tocar el módulo compartido. */
++  function configuracion(sobre) {
++    const s = sobre || {};
++    return Object.assign({}, PARAMETROS, s, {
++      IMPORTACION: {
++        asistida: Object.assign({}, IMPORTACION.asistida, s.IMPORTACION && s.IMPORTACION.asistida),
++        inspeccion: Object.assign({}, IMPORTACION.inspeccion, s.IMPORTACION && s.IMPORTACION.inspeccion),
++        calculadora: Object.assign({}, IMPORTACION.calculadora, s.IMPORTACION && s.IMPORTACION.calculadora),
++      },
++      FISCAL_LISTO: s.FISCAL_LISTO != null ? s.FISCAL_LISTO : FISCAL_LISTO,
++    });
++  }
++
++  const OBLIGATORIOS_ASISTIDA = Object.freeze([
++    'MODELO_FISCAL', 'COMISION_SERVICIO', 'UMBRAL_INSPECCION_DESTACADA', 'ZONAS_PERMITIDAS',
++    'PRESUPUESTO_MIN_EXCEPCION_ZONA', 'PORCENTAJE_DEPOSITO_SUBASTA', 'CARGO_APLICAR_DEPOSITO',
++    'COMISION_TRANSFERENCIA', 'PLAZO_PAGO_SUBASTA_DIAS', 'PLAZO_RETIRO_DIAS', 'MULTAS_SUBASTA',
++    'PLAZO_PROPUESTA_DIAS', 'PLAZO_SALDO_CLIENTE_DIAS', 'PLAZO_DEPOSITO_ANTES_SUBASTA_H',
++    'PLAZO_AJUSTE_DIAS', 'PLAZO_DEVOLUCION_DIAS', 'RECORDATORIOS_SALDO_H', 'POLITICA_COBRO',
++    'COLCHON_IMPREVISTOS', 'MONEDA_COBRO', 'DEVOLUCION_SI_PERDIDA', 'DEVOLUCION_SIN_PUJA',
++    'FIRMA_CONTRATO',
++  ]);
++
++  const OBLIGATORIOS_INSPECCION = Object.freeze([
++    'PRECIO_INSPECCION_POR_ZONA', 'PLAZO_MIN_INSPECCION_DIAS', 'PLAZO_DECISION_TRAS_INFORME_H',
++  ]);
++
++  /* Lista de lo que falta para encender `servicio` ('asistida' o
++     'inspeccion'). Vacía = se puede encender. Un valor fuera de sus
++     opciones cuenta como que falta. */
++  function puedeEncenderse(config, servicio) {
++    const c = config || configuracion();
++    const cual = servicio || 'asistida';
++    const faltan = [];
++    const revisar = (nombre) => {
++      const v = c[nombre];
++      if (v == null) { faltan.push(nombre); return; }
++      if (OPCIONES[nombre] && !OPCIONES[nombre].includes(v)) faltan.push(nombre);
++    };
++    OBLIGATORIOS_ASISTIDA.forEach(revisar);
++    if (c.MONEDA_COBRO === 'DOP' && c.FUENTE_TASA == null) faltan.push('FUENTE_TASA');
++    if (!c.FISCAL_LISTO) faltan.push('FISCAL_LISTO');
++    if (cual === 'inspeccion') OBLIGATORIOS_INSPECCION.forEach(revisar);
++    return faltan;
++  }
++
++  return {
++    IMPORTACION, FISCAL_LISTO, PARAMETROS, OPCIONES,
++    ESTADOS, ESTADOS_SALIDA, ACTORES, TRANSICIONES, transicionPermitida, transicion,
++    CONCEPTOS, SENTIDOS, NO_REEMBOLSABLES, ETAPAS, conceptosDeEtapa,
++    porcentaje, depositoPara, comisionServicio, aplicarDeposito,
++    importeConSigno, saldoCliente, devolucionDe, motivoDevolucion, politicaDevolucion,
++    destacarInspeccion, canonico, contenidoFirmado, huellaDesglose,
++    configuracion, OBLIGATORIOS_ASISTIDA, OBLIGATORIOS_INSPECCION, puedeEncenderse,
++  };
++})();
++
++if (typeof module !== 'undefined' && module.exports) {
++  module.exports = Importacion;
++}
+diff --git a/tools/reglas.prueba.js b/tools/reglas.prueba.js
+index 7d140eb..7bac0e6 100644
+--- a/tools/reglas.prueba.js
++++ b/tools/reglas.prueba.js
+@@ -16,6 +16,7 @@ const MODULOS_COMPARTIDOS = [
+   'assets/taxonomia.js',
+   'assets/legales.js',
+   'assets/especificaciones.js',
++  'assets/importacion.js',
+ ];
+ 
+ const leer = (archivo) => fs.readFileSync(path.join(RAIZ, archivo), 'utf8');
+-- 
+2.43.0
+
+
+From b28c5a640fde73c6b5b494e2befc05fde7460e2f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 21:57:13 +0000
+Subject: [PATCH 2/6] =?UTF-8?q?Importaci=C3=B3n=20asistida:=20migraci?=
+ =?UTF-8?q?=C3=B3n=202026-10-importacion-asistida=20y=20su=20prueba?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Base C2 de la fase 14 (#148). Siete tablas vacías y pagos.importacion_id;
+el libro, los eventos y las aceptaciones son de solo añadir. La prueba
+la pasa por una base nueva y por otra con las anteriores y pagos con filas.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ .github/workflows/desplegar.yml       |   2 +
+ package.json                          |   1 +
+ tools/db.js                           | 208 ++++++++++++++++++++++
+ tools/probar-importacion-migracion.js | 239 ++++++++++++++++++++++++++
+ 4 files changed, 450 insertions(+)
+ create mode 100644 tools/probar-importacion-migracion.js
+
+diff --git a/.github/workflows/desplegar.yml b/.github/workflows/desplegar.yml
+index e18eaf5..75a24cd 100644
+--- a/.github/workflows/desplegar.yml
++++ b/.github/workflows/desplegar.yml
+@@ -172,6 +172,8 @@ jobs:
+         run: npm run tareas:probar
+       - name: Solicitudes y trampa anti-spam
+         run: npm run solicitudes:probar
++      - name: Migración de la importación asistida
++        run: npm run importacion-migracion:probar
+ 
+   # Lo que necesita el sitio levantado: las auditorias y las dos pasadas
+   # de puppeteer. Va aparte del job hermetico para que un fallo de
+diff --git a/package.json b/package.json
+index b941400..66ccd14 100644
+--- a/package.json
++++ b/package.json
+@@ -78,6 +78,7 @@
+     "metricas:probar": "node tools/probar-metricas.js",
+     "contactos:probar": "node tools/probar-contactos.js",
+     "catalogo:probar": "node tools/probar-catalogo.js",
++    "importacion-migracion:probar": "node tools/probar-importacion-migracion.js",
+     "db:flota": "node tools/seed.js --solo-flota",
+     "taxonomia": "node tools/verificar-taxonomia.js"
+   },
+diff --git a/tools/db.js b/tools/db.js
+index e405804..6093d89 100644
+--- a/tools/db.js
++++ b/tools/db.js
+@@ -1478,6 +1478,214 @@ const MIGRACIONES = [
+     'DELETE FROM sesiones',
+     'DELETE FROM dispositivos',
+   ]],
++
++  /* Fase 14, base C2 (#148): importación asistida. Solo tablas vacías;
++     ninguna escritura de datos. El servicio está apagado en
++     `assets/importacion.js` y el contrato completo está en
++     `.planning/importacion-contrato.md`.
++
++     Las listas de los CHECK van escritas a mano y NO se generan desde
++     `assets/importacion.js`: una migración no puede cambiar de texto
++     después de aplicarse, y la lista del módulo sí puede crecer (con
++     otra migración).
++
++     El libro (`importacion_movimientos`), los eventos y las aceptaciones
++     son de solo añadir, con disparadores que abortan UPDATE y DELETE,
++     igual que `pagos_eventos`: es dinero de clientes y lo que aceptaron.
++     Una corrección es un contramovimiento (`corrige_id`), como una B04
++     corrige un comprobante. Por eso ninguna tabla hija cuelga de
++     `importaciones` con ON DELETE CASCADE: un expediente no se borra.
++
++     `importacion_aceptaciones` no estaba en el diseño de #110, que solo
++     guardaba la última aceptación en `importaciones`. Subir el límite de
++     puja es aceptar de nuevo, y sobrescribir la anterior borraría la
++     prueba de lo que el cliente firmó primero.
++
++     `pagos.importacion_id` va sin clave foránea, como `anuncio_id`: el
++     rastro de un pago no depende de lo que le pase al expediente. */
++  ['2026-10-importacion-asistida', [
++    `CREATE TABLE IF NOT EXISTS importaciones (
++       id                    TEXT PRIMARY KEY,
++       referencia            TEXT NOT NULL UNIQUE CHECK (substr(referencia, 1, 1) = 'I'),
++       organizacion_id       TEXT NOT NULL REFERENCES organizaciones(id),
++       usuario_id            TEXT NOT NULL REFERENCES usuarios(id),
++       solicitud_id          TEXT REFERENCES solicitudes_servicio(id),
++       estado                TEXT NOT NULL DEFAULT 'solicitada' CHECK (estado IN (
++         'solicitada', 'en_busqueda', 'propuesta', 'confirmacion', 'inspeccion_pendiente_pago',
++         'inspeccion_en_curso', 'inspeccion_entregada', 'deposito_pendiente', 'lista_para_pujar',
++         'pujando', 'perdida', 'ganada', 'saldo_pendiente', 'pagada_subasta', 'retiro',
++         'transito_terrestre', 'puerto_origen', 'transito_maritimo', 'en_aduana', 'endosada',
++         'transporte_rd', 'entregada', 'devolucion_pendiente', 'cerrada', 'desistida',
++         'sin_opciones', 'cancelada', 'incumplida')),
++       tipo_equipo           TEXT NOT NULL,
++       marca                 TEXT,
++       anio_min              INTEGER CHECK (anio_min IS NULL OR typeof(anio_min) = 'integer'),
++       horas_max             INTEGER CHECK (horas_max IS NULL OR (typeof(horas_max) = 'integer' AND horas_max >= 0)),
++       uso                   TEXT,
++       provincia_destino     TEXT NOT NULL,
++       zona_preferida        TEXT,
++       presupuesto_declarado INTEGER NOT NULL CHECK (typeof(presupuesto_declarado) = 'integer' AND presupuesto_declarado > 0),
++       inspeccion_destacada  INTEGER NOT NULL DEFAULT 0 CHECK (inspeccion_destacada IN (0, 1)),
++       umbral_inspeccion     INTEGER CHECK (umbral_inspeccion IS NULL OR typeof(umbral_inspeccion) = 'integer'),
++       inspeccion            TEXT NOT NULL DEFAULT 'no_pedida' CHECK (inspeccion IN (
++         'no_pedida', 'pedida', 'pagada', 'en_curso', 'entregada', 'no_disponible')),
++       lote_id               TEXT,
++       limite_puja           INTEGER CHECK (limite_puja IS NULL OR (typeof(limite_puja) = 'integer' AND limite_puja > 0)),
++       desglose_json         TEXT CHECK (desglose_json IS NULL OR (json_valid(desglose_json) AND json_type(desglose_json) = 'object')),
++       desglose_huella       TEXT CHECK (desglose_huella IS NULL OR length(desglose_huella) = 64),
++       cifras_version        TEXT,
++       condiciones_version   TEXT,
++       condiciones_aceptadas TEXT,
++       ip_aceptacion         TEXT,
++       modelo_fiscal         TEXT CHECK (modelo_fiscal IS NULL OR modelo_fiscal IN ('mandatario', 'revendedor')),
++       moneda_cobro          TEXT CHECK (moneda_cobro IS NULL OR moneda_cobro IN ('USD', 'DOP')),
++       fecha_subasta         TEXT,
++       vence_accion          TEXT,
++       creada                TEXT NOT NULL,
++       actualizada           TEXT NOT NULL,
++       cerrada               TEXT,
++       motivo_cierre         TEXT
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_importaciones_org ON importaciones (organizacion_id, creada)',
++    'CREATE INDEX IF NOT EXISTS ix_importaciones_estado ON importaciones (estado, vence_accion)',
++
++    `CREATE TABLE IF NOT EXISTS importacion_lotes (
++       id                TEXT PRIMARY KEY,
++       importacion_id    TEXT NOT NULL REFERENCES importaciones(id),
++       subasta           TEXT NOT NULL CHECK (subasta IN ('ritchie_bros')),
++       url               TEXT,
++       numero_lote       TEXT,
++       estado_eeuu       TEXT,
++       zona              TEXT NOT NULL,
++       excepcion_zona    INTEGER NOT NULL DEFAULT 0 CHECK (excepcion_zona IN (0, 1)),
++       motivo_excepcion  TEXT,
++       fecha_subasta     TEXT NOT NULL,
++       marca             TEXT,
++       modelo            TEXT,
++       anio              INTEGER CHECK (anio IS NULL OR typeof(anio) = 'integer'),
++       horas             INTEGER CHECK (horas IS NULL OR (typeof(horas) = 'integer' AND horas >= 0)),
++       serie             TEXT,
++       descripcion       TEXT,
++       estado            TEXT NOT NULL DEFAULT 'propuesto'
++                         CHECK (estado IN ('propuesto', 'elegido', 'descartado', 'caducado')),
++       creado            TEXT NOT NULL,
++       CHECK (excepcion_zona = 0 OR length(trim(coalesce(motivo_excepcion, ''))) > 0)
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_importacion_lotes ON importacion_lotes (importacion_id, estado)',
++
++    `CREATE TABLE IF NOT EXISTS importacion_eventos (
++       id             INTEGER PRIMARY KEY AUTOINCREMENT,
++       importacion_id TEXT NOT NULL REFERENCES importaciones(id),
++       de_estado      TEXT,
++       a_estado       TEXT NOT NULL,
++       actor          TEXT NOT NULL CHECK (actor IN ('cliente', 'personal', 'sistema')),
++       usuario_id     TEXT,
++       nota           TEXT,
++       fecha          TEXT NOT NULL
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_importacion_eventos ON importacion_eventos (importacion_id, id)',
++    `CREATE TRIGGER IF NOT EXISTS tr_importacion_eventos_sin_update
++       BEFORE UPDATE ON importacion_eventos
++       BEGIN SELECT RAISE(ABORT, 'importacion_eventos es de solo añadir'); END`,
++    `CREATE TRIGGER IF NOT EXISTS tr_importacion_eventos_sin_delete
++       BEFORE DELETE ON importacion_eventos
++       BEGIN SELECT RAISE(ABORT, 'importacion_eventos es de solo añadir'); END`,
++
++    `CREATE TABLE IF NOT EXISTS importacion_movimientos (
++       id             INTEGER PRIMARY KEY AUTOINCREMENT,
++       importacion_id TEXT NOT NULL REFERENCES importaciones(id),
++       sentido        TEXT NOT NULL CHECK (sentido IN ('cobro_cliente', 'pago_tercero', 'devolucion_cliente', 'ajuste')),
++       concepto       TEXT NOT NULL CHECK (concepto IN (
++         'inspeccion', 'comision_servicio', 'deposito_puja', 'cargo_aplicar_deposito',
++         'precio_equipo', 'cargos_comprador', 'comision_transferencia', 'multa_subasta',
++         'flete_terrestre_eeuu', 'flete_maritimo', 'seguro', 'impuestos_aduana',
++         'agente_aduanal', 'gastos_puerto', 'flete_rd', 'ajuste_liquidacion', 'otro')),
++       importe        INTEGER NOT NULL CHECK (typeof(importe) = 'integer'
++                        AND ((sentido = 'ajuste' AND importe <> 0) OR (sentido <> 'ajuste' AND importe > 0))),
++       moneda         TEXT NOT NULL CHECK (moneda IN ('USD', 'DOP')),
++       tasa           REAL CHECK (tasa IS NULL OR tasa > 0),
++       es_estimado    INTEGER NOT NULL DEFAULT 0 CHECK (es_estimado IN (0, 1)),
++       referencia     TEXT,
++       corrige_id     INTEGER REFERENCES importacion_movimientos(id),
++       pago_id        TEXT,
++       documento_id   TEXT,
++       registrado_por TEXT,
++       nota           TEXT,
++       fecha          TEXT NOT NULL,
++       CHECK (moneda = 'USD' OR tasa IS NOT NULL)
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_importacion_movimientos ON importacion_movimientos (importacion_id, id)',
++    /* La idempotencia de registrar un cobro: la misma referencia (el
++       número de la transferencia, el id del pago) no entra dos veces
++       para el mismo concepto y sentido. */
++    `CREATE UNIQUE INDEX IF NOT EXISTS ux_importacion_movimientos_ref
++       ON importacion_movimientos (importacion_id, sentido, concepto, referencia)
++       WHERE referencia IS NOT NULL`,
++    `CREATE TRIGGER IF NOT EXISTS tr_importacion_movimientos_sin_update
++       BEFORE UPDATE ON importacion_movimientos
++       BEGIN SELECT RAISE(ABORT, 'importacion_movimientos es de solo añadir: corrija con un contramovimiento'); END`,
++    `CREATE TRIGGER IF NOT EXISTS tr_importacion_movimientos_sin_delete
++       BEFORE DELETE ON importacion_movimientos
++       BEGIN SELECT RAISE(ABORT, 'importacion_movimientos es de solo añadir: corrija con un contramovimiento'); END`,
++
++    `CREATE TABLE IF NOT EXISTS importacion_aceptaciones (
++       id                  INTEGER PRIMARY KEY AUTOINCREMENT,
++       importacion_id      TEXT NOT NULL REFERENCES importaciones(id),
++       condiciones_version TEXT NOT NULL,
++       desglose_huella     TEXT NOT NULL CHECK (length(desglose_huella) = 64),
++       limite_puja         INTEGER NOT NULL CHECK (typeof(limite_puja) = 'integer' AND limite_puja > 0),
++       usuario_id          TEXT NOT NULL,
++       ip                  TEXT,
++       fecha               TEXT NOT NULL
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_importacion_aceptaciones ON importacion_aceptaciones (importacion_id, id)',
++    `CREATE TRIGGER IF NOT EXISTS tr_importacion_aceptaciones_sin_update
++       BEFORE UPDATE ON importacion_aceptaciones
++       BEGIN SELECT RAISE(ABORT, 'importacion_aceptaciones es de solo añadir'); END`,
++    `CREATE TRIGGER IF NOT EXISTS tr_importacion_aceptaciones_sin_delete
++       BEFORE DELETE ON importacion_aceptaciones
++       BEGIN SELECT RAISE(ABORT, 'importacion_aceptaciones es de solo añadir'); END`,
++
++    /* Mismo patrón que `documentos_anuncio`: el archivo en disco con un
++       nombre que genera el servidor, la base guarda la ruta relativa.
++       `formato` es el tipo MIME; `tipo`, qué documento es. */
++    `CREATE TABLE IF NOT EXISTS importacion_documentos (
++       id              TEXT PRIMARY KEY,
++       importacion_id  TEXT NOT NULL REFERENCES importaciones(id),
++       tipo            TEXT NOT NULL CHECK (tipo IN (
++         'informe_inspeccion', 'revision_datos', 'factura_subasta', 'conocimiento_embarque',
++         'liquidacion_aduana', 'endoso', 'acta_entrega', 'contrato_firmado',
++         'comprobante_tercero', 'otro')),
++       nombre          TEXT NOT NULL CHECK (length(nombre) BETWEEN 1 AND 120),
++       formato         TEXT NOT NULL CHECK (formato IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')),
++       bytes           INTEGER NOT NULL CHECK (bytes > 0),
++       ruta            TEXT NOT NULL UNIQUE
++                       CHECK (length(ruta) BETWEEN 1 AND 200 AND instr(ruta, '..') = 0
++                              AND substr(ruta, 1, 1) <> '/' AND instr(ruta, '\\') = 0),
++       visible_cliente INTEGER NOT NULL DEFAULT 0 CHECK (visible_cliente IN (0, 1)),
++       subido_por      TEXT,
++       creado          TEXT NOT NULL
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_importacion_documentos ON importacion_documentos (importacion_id)',
++
++    /* «Revisión de datos (no es una inspección)»: lo que comprueba la IA.
++       Nunca se llama inspección, ni en el nombre de la tabla. */
++    `CREATE TABLE IF NOT EXISTS importacion_revisiones_datos (
++       id                  TEXT PRIMARY KEY,
++       lote_id             TEXT NOT NULL REFERENCES importacion_lotes(id),
++       comprobaciones_json TEXT NOT NULL CHECK (json_valid(comprobaciones_json)),
++       resultado           TEXT NOT NULL CHECK (resultado IN ('sin_alertas', 'dudas', 'alertas')),
++       modelo_ia           TEXT,
++       fecha               TEXT NOT NULL,
++       decidido_por        TEXT,
++       decision            TEXT CHECK (decision IS NULL OR decision IN ('seguir', 'descartar')),
++       nota                TEXT
++     )`,
++    'CREATE INDEX IF NOT EXISTS ix_importacion_revisiones_lote ON importacion_revisiones_datos (lote_id)',
++
++    'ALTER TABLE pagos ADD COLUMN importacion_id TEXT',
++    'CREATE INDEX IF NOT EXISTS ix_pagos_importacion ON pagos (importacion_id)',
++  ]],
+ ];
+ 
+ /* Solo los nombres, para `tools/respaldo-antes-de-migrar.js` (#73), que
+diff --git a/tools/probar-importacion-migracion.js b/tools/probar-importacion-migracion.js
+new file mode 100644
+index 0000000..645bc63
+--- /dev/null
++++ b/tools/probar-importacion-migracion.js
+@@ -0,0 +1,239 @@
++/**
++ * probar-importacion-migracion.js — fase 14, base C2 (#148): la migración
++ * `2026-10-importacion-asistida`.
++ *
++ *   node tools/probar-importacion-migracion.js
++ *
++ * POR QUÉ EXISTE
++ *
++ * Una migración se ejecuta una sola vez en producción y no se puede
++ * reescribir. Esta prueba la pasa por los dos caminos que tendrá en la
++ * vida real: una base nueva (schema.sql + todas las migraciones) y una
++ * base que ya tenía todas las anteriores y PAGOS CON FILAS, que es la de
++ * producción. Comprueba que entra una sola vez, que los CHECK rechazan
++ * lo que no está en la lista, que el libro, los eventos y las
++ * aceptaciones no se pueden reescribir y que `pagos` conserva sus filas.
++ *
++ * Cada apertura de la base corre en un proceso hijo: `abrir()` guarda la
++ * conexión y aplica las migraciones al abrir, así que la única forma de
++ * ver «otro arranque del servidor» es arrancar otro proceso. Las
++ * variables de entorno se fijan en ese hijo ANTES del require de db.js.
++ *
++ * La base «con las anteriores» se fabrica deshaciendo a mano solo esta
++ * migración sobre una base completa (borrar sus tablas, su índice y su
++ * columna, y su fila en `migraciones`). Es lo mismo que tenía producción
++ * justo antes, sin depender de una copia vieja de db.js.
++ */
++
++const fs = require('fs');
++const path = require('path');
++const { spawnSync } = require('child_process');
++const { DatabaseSync } = require('node:sqlite');
++
++const RAIZ = path.join(__dirname, '..');
++const BANCO = path.join(RAIZ, '.tmp', 'prueba-importacion-migracion');
++fs.rmSync(BANCO, { recursive: true, force: true });
++fs.mkdirSync(BANCO, { recursive: true });
++
++const MIGRACION = '2026-10-importacion-asistida';
++const TABLAS = [
++  'importaciones', 'importacion_lotes', 'importacion_eventos', 'importacion_movimientos',
++  'importacion_aceptaciones', 'importacion_documentos', 'importacion_revisiones_datos',
++];
++
++let bien = 0;
++let mal = 0;
++function comprobar(condicion, que) {
++  if (condicion) { bien++; console.log(`  ok  ${que}`); return; }
++  mal++;
++  console.log(`  MAL ${que}`);
++}
++const lanza = (fn) => { try { fn(); return null; } catch (e) { return e; } };
++
++/* Arranca db.js en otro proceso contra `archivo` y corre `codigo` con
++   `db` ya cargado. Devuelve la salida o lanza con el error del hijo. */
++function enHijo(archivo, codigo = '') {
++  const programa = `
++    const db = require(${JSON.stringify(path.join(__dirname, 'db.js'))});
++    db.abrir();
++    ${codigo}
++  `;
++  const r = spawnSync(process.execPath, ['-e', programa], {
++    env: Object.assign({}, process.env, {
++      MERCA_DB: archivo,
++      MERCA_CORREO: 'archivo',
++      MERCA_CORREOS: path.join(BANCO, 'correos'),
++      MERCA_SECRETO: 'secreto-de-prueba-no-usar-en-produccion',
++    }),
++    encoding: 'utf8',
++  });
++  if (r.status !== 0) throw new Error(`el hijo falló:\n${r.stderr || r.stdout}`);
++  return r.stdout;
++}
++
++const abrirCruda = (archivo) => new DatabaseSync(archivo);
++const tablasDe = (d) => new Set(d.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((f) => f.name));
++const columnasDe = (d, tabla) => d.prepare(`PRAGMA table_info(${tabla})`).all().map((c) => c.name);
++const vecesAnotada = (d) => d.prepare('SELECT COUNT(*) AS n FROM migraciones WHERE id = ?').get(MIGRACION).n;
++
++function comprobarEsquema(d, donde) {
++  const tablas = tablasDe(d);
++  comprobar(TABLAS.every((t) => tablas.has(t)), `${donde}: están las ${TABLAS.length} tablas nuevas`);
++  comprobar(columnasDe(d, 'pagos').includes('importacion_id'), `${donde}: pagos tiene importacion_id`);
++  const indice = d.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'ix_pagos_importacion'").get();
++  comprobar(!!indice, `${donde}: pagos tiene su índice por importacion_id`);
++  comprobar(vecesAnotada(d) === 1, `${donde}: la migración está anotada una sola vez`);
++  for (const t of TABLAS) {
++    const n = d.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
++    if (n !== 0) comprobar(false, `${donde}: ${t} nace vacía (tiene ${n})`);
++  }
++  comprobar(true, `${donde}: ninguna tabla nueva trae datos`);
++}
++
++/* ── 1 · Base nueva ─────────────────────────────────────── */
++console.log('\n1 · Base nueva');
++const NUEVA = path.join(BANCO, 'nueva.db');
++enHijo(NUEVA);
++{
++  const d = abrirCruda(NUEVA);
++  comprobarEsquema(d, 'nueva');
++  d.close();
++}
++enHijo(NUEVA);
++{
++  const d = abrirCruda(NUEVA);
++  comprobar(vecesAnotada(d) === 1, 'nueva: un segundo arranque no la vuelve a aplicar');
++  d.close();
++}
++
++/* ── 2 · Base con todas las anteriores y pagos con filas ── */
++console.log('\n2 · Base con las migraciones anteriores y pagos con filas');
++const VIEJA = path.join(BANCO, 'vieja.db');
++const salida = enHijo(VIEJA, `
++  const { idOrg } = db.crearCuenta({
++    correo: 'migracion@prueba.do', clave: 'UnaClaveLargaYSegura9', nombre: 'Prueba Migración',
++    telefono: '8095550000', tipo: 'particular',
++  });
++  const d = db.abrir();
++  for (const [idPago, total] of [['pago-viejo-1', 118000], ['pago-viejo-2', 236000]]) {
++    d.prepare(\`INSERT INTO pagos (id, organizacion_id, subtotal, itbis, total, estado, creado)
++               VALUES (?, ?, ?, ?, ?, 'aprobado', ?)\`)
++      .run(idPago, idOrg, total - total * 18 / 118, total * 18 / 118, total, new Date().toISOString());
++  }
++  process.stdout.write(idOrg);
++`);
++const ORG = salida.trim();
++{
++  // Se deshace solo esta migración: así estaba producción justo antes.
++  const d = abrirCruda(VIEJA);
++  d.exec('DROP INDEX IF EXISTS ix_pagos_importacion');
++  d.exec('ALTER TABLE pagos DROP COLUMN importacion_id');
++  for (const t of TABLAS.slice().reverse()) d.exec(`DROP TABLE IF EXISTS ${t}`);
++  d.prepare('DELETE FROM migraciones WHERE id = ?').run(MIGRACION);
++  const tablas = tablasDe(d);
++  comprobar(TABLAS.every((t) => !tablas.has(t)) && !columnasDe(d, 'pagos').includes('importacion_id'),
++    'vieja: preparada sin la migración nueva');
++  const otras = d.prepare('SELECT COUNT(*) AS n FROM migraciones').get().n;
++  comprobar(otras > 10, `vieja: conserva las ${otras} migraciones anteriores`);
++  d.close();
++}
++enHijo(VIEJA);
++{
++  const d = abrirCruda(VIEJA);
++  comprobarEsquema(d, 'vieja');
++  const pagos = d.prepare('SELECT id, total, importacion_id FROM pagos ORDER BY id').all();
++  comprobar(pagos.length === 2 && pagos[0].total === 118000 && pagos[1].total === 236000,
++    'vieja: pagos conserva sus filas e importes');
++  comprobar(pagos.every((p) => p.importacion_id === null), 'vieja: los pagos viejos quedan sin importación');
++  d.close();
++}
++enHijo(VIEJA);
++{
++  const d = abrirCruda(VIEJA);
++  comprobar(vecesAnotada(d) === 1, 'vieja: un segundo arranque no la vuelve a aplicar');
++  d.close();
++}
++
++/* ── 3 · Los CHECK ──────────────────────────────────────── */
++console.log('\n3 · Los CHECK rechazan lo que no está en la lista');
++{
++  const d = abrirCruda(VIEJA);
++  const usuario = d.prepare('SELECT id FROM usuarios LIMIT 1').get().id;
++  const ahora = new Date().toISOString();
++  const expediente = (cambios = {}) => Object.assign({
++    id: `imp-${Math.random().toString(36).slice(2)}`,
++    referencia: `I2026-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
++    estado: 'solicitada', presupuesto: 5000000, inspeccion: 'no_pedida',
++  }, cambios);
++  const insertar = (e) => d.prepare(`INSERT INTO importaciones
++      (id, referencia, organizacion_id, usuario_id, estado, tipo_equipo, provincia_destino,
++       presupuesto_declarado, inspeccion, creada, actualizada)
++      VALUES (?, ?, ?, ?, ?, 'excavadora', 'Santo Domingo', ?, ?, ?, ?)`)
++    .run(e.id, e.referencia, ORG, usuario, e.estado, e.presupuesto, e.inspeccion, ahora, ahora);
++
++  const bueno = expediente();
++  comprobar(!lanza(() => insertar(bueno)), 'un expediente válido entra');
++  comprobar(!!lanza(() => insertar(expediente({ estado: 'aprobada' }))), 'estado fuera de lista: rechazado');
++  comprobar(!!lanza(() => insertar(expediente({ referencia: 'X2026-AAAAA' }))), 'referencia sin la letra I: rechazada');
++  comprobar(!!lanza(() => insertar(expediente({ referencia: bueno.referencia }))), 'referencia repetida: rechazada');
++  comprobar(!!lanza(() => insertar(expediente({ presupuesto: 50000.5 }))), 'presupuesto con decimales: rechazado');
++  comprobar(!!lanza(() => insertar(expediente({ inspeccion: 'garantizada' }))), 'estado de inspección fuera de lista: rechazado');
++
++  const lote = (cambios = {}) => {
++    const l = Object.assign({ subasta: 'ritchie_bros', excepcion: 0, motivo: null }, cambios);
++    return d.prepare(`INSERT INTO importacion_lotes
++        (id, importacion_id, subasta, zona, excepcion_zona, motivo_excepcion, fecha_subasta, creado)
++        VALUES (?, ?, ?, 'TX', ?, ?, ?, ?)`)
++      .run(`lote-${Math.random().toString(36).slice(2)}`, bueno.id, l.subasta, l.excepcion, l.motivo, ahora, ahora);
++  };
++  comprobar(!lanza(() => lote()), 'un lote válido entra');
++  comprobar(!!lanza(() => lote({ subasta: 'otra_subasta' })), 'subasta fuera de lista: rechazada');
++  comprobar(!!lanza(() => lote({ excepcion: 1 })), 'excepción de zona sin motivo: rechazada');
++  comprobar(!lanza(() => lote({ excepcion: 1, motivo: 'Presupuesto alto, aprobado por Victor' })), 'excepción de zona con motivo: entra');
++
++  const movimiento = (cambios = {}) => {
++    const m = Object.assign({ sentido: 'cobro_cliente', concepto: 'deposito_puja', importe: 100000, moneda: 'USD', tasa: null, referencia: null }, cambios);
++    return d.prepare(`INSERT INTO importacion_movimientos
++        (importacion_id, sentido, concepto, importe, moneda, tasa, referencia, fecha)
++        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
++      .run(bueno.id, m.sentido, m.concepto, m.importe, m.moneda, m.tasa, m.referencia, ahora);
++  };
++  comprobar(!lanza(() => movimiento({ referencia: 'TRF-1' })), 'un cobro válido entra');
++  comprobar(!!lanza(() => movimiento({ referencia: 'TRF-1' })), 'el mismo cobro con la misma referencia no entra dos veces');
++  comprobar(!!lanza(() => movimiento({ concepto: 'propina' })), 'concepto fuera de lista: rechazado');
++  comprobar(!!lanza(() => movimiento({ sentido: 'regalo' })), 'sentido fuera de lista: rechazado');
++  comprobar(!!lanza(() => movimiento({ importe: 1000.5 })), 'importe con decimales: rechazado');
++  comprobar(!!lanza(() => movimiento({ importe: -5 })), 'cobro negativo: rechazado');
++  comprobar(!!lanza(() => movimiento({ sentido: 'ajuste', importe: 0 })), 'ajuste de cero: rechazado');
++  comprobar(!lanza(() => movimiento({ sentido: 'ajuste', importe: -5 })), 'ajuste negativo (contramovimiento): entra');
++  comprobar(!!lanza(() => movimiento({ moneda: 'EUR' })), 'moneda fuera de lista: rechazada');
++  comprobar(!!lanza(() => movimiento({ moneda: 'DOP' })), 'cobro en RD$ sin tasa: rechazado');
++  comprobar(!lanza(() => movimiento({ moneda: 'DOP', tasa: 60.5 })), 'cobro en RD$ con tasa: entra');
++
++  const documento = (tipo) => d.prepare(`INSERT INTO importacion_documentos
++      (id, importacion_id, tipo, nombre, formato, bytes, ruta, creado)
++      VALUES (?, ?, ?, 'informe.pdf', 'application/pdf', 10, ?, ?)`)
++    .run(`doc-${Math.random().toString(36).slice(2)}`, bueno.id, tipo, `imp/${Math.random().toString(36).slice(2)}.pdf`, ahora);
++  comprobar(!lanza(() => documento('informe_inspeccion')), 'un documento válido entra');
++  comprobar(!!lanza(() => documento('garantia')), 'tipo de documento fuera de lista: rechazado');
++
++  /* ── 4 · Solo añadir ─────────────────────────────────── */
++  console.log('\n4 · El libro, los eventos y las aceptaciones son de solo añadir');
++  comprobar(!!lanza(() => d.prepare('UPDATE importacion_movimientos SET importe = 1').run()), 'UPDATE de un movimiento: abortado');
++  comprobar(!!lanza(() => d.prepare('DELETE FROM importacion_movimientos').run()), 'DELETE de un movimiento: abortado');
++  d.prepare(`INSERT INTO importacion_eventos (importacion_id, de_estado, a_estado, actor, fecha)
++             VALUES (?, NULL, 'solicitada', 'cliente', ?)`).run(bueno.id, ahora);
++  comprobar(!!lanza(() => d.prepare("UPDATE importacion_eventos SET a_estado = 'cerrada'").run()), 'UPDATE de un evento: abortado');
++  comprobar(!!lanza(() => d.prepare('DELETE FROM importacion_eventos').run()), 'DELETE de un evento: abortado');
++  comprobar(!!lanza(() => d.prepare(`INSERT INTO importacion_eventos (importacion_id, a_estado, actor, fecha)
++             VALUES (?, 'solicitada', 'contador', ?)`).run(bueno.id, ahora)), 'evento con actor fuera de lista: rechazado');
++  d.prepare(`INSERT INTO importacion_aceptaciones
++             (importacion_id, condiciones_version, desglose_huella, limite_puja, usuario_id, ip, fecha)
++             VALUES (?, '2026-10', ?, 5000000, ?, '127.0.0.1', ?)`).run(bueno.id, 'a'.repeat(64), usuario, ahora);
++  comprobar(!!lanza(() => d.prepare('UPDATE importacion_aceptaciones SET limite_puja = 1').run()), 'UPDATE de una aceptación: abortado');
++  comprobar(!!lanza(() => d.prepare('DELETE FROM importacion_aceptaciones').run()), 'DELETE de una aceptación: abortado');
++  d.close();
++}
++
++console.log(`\n${bien} bien, ${mal} mal`);
++process.exit(mal ? 1 : 0);
+-- 
+2.43.0
+
+
+From e917ce25921e254fa996483108eff6dda0263189 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 22:00:35 +0000
+Subject: [PATCH 3/6] =?UTF-8?q?Importaci=C3=B3n=20asistida:=20saldo=20al?=
+ =?UTF-8?q?=20ganar=20y=20columnas=20del=20martillo=20en=20la=20migraci?=
+ =?UTF-8?q?=C3=B3n?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+El saldo se recalcula en el servidor con el martillo y los cargos reales;
+el depósito se aplica primero al precio del equipo.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ assets/importacion.js | 37 +++++++++++++++++++++++++++++++++----
+ tools/db.js           |  8 ++++++--
+ 2 files changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/assets/importacion.js b/assets/importacion.js
+index 8eceaac..fa5b955 100644
+--- a/assets/importacion.js
++++ b/assets/importacion.js
+@@ -285,9 +285,8 @@ const Importacion = (function () {
+   }
+ 
+   /* Aplica el depósito contra las líneas del saldo, en el orden en que
+-     vienen (el servidor las manda en el orden de CONCEPTOS, así que
+-     primero el precio del equipo). Devuelve qué falta cobrar por cada
+-     concepto, cuánto del depósito se aplicó a cada uno (en el libro va
++     vienen (`lineasSaldo` pone primero el precio del equipo). Devuelve
++     qué falta cobrar por cada concepto, cuánto del depósito se aplicó a cada uno (en el libro va
+      como un par de ajustes: menos en deposito_puja, más en ese concepto)
+      y el sobrante si el depósito superó el saldo, que se devuelve al
+      cerrar. Ninguna línea queda negativa. */
+@@ -306,6 +305,36 @@ const Importacion = (function () {
+     return { cobros, aplicaciones, sobrante: queda };
+   }
+ 
++  /* Las líneas del saldo al ganar, en el orden de `conceptosDeEtapa`
++     (primero el precio del equipo, que es a lo que la subasta aplica el
++     depósito), con los
++     importes reales del martillo y de los cargos del comprador. Con
++     'al_ganar' los tramos logísticos entran con lo estimado en el
++     desglose congelado; la diferencia con lo real es el ajuste de
++     liquidación de después. El depósito todavía NO está descontado: eso
++     lo hace `aplicarDeposito`. */
++  function lineasSaldo({ martillo, cargosComprador, deposito, desglose, config }) {
++    entero(martillo, 'el precio de martillo');
++    entero(cargosComprador, 'los cargos del comprador');
++    if (config.CARGO_APLICAR_DEPOSITO == null) throw new Error('falta CARGO_APLICAR_DEPOSITO');
++    if (config.COMISION_TRANSFERENCIA == null) throw new Error('falta COMISION_TRANSFERENCIA');
++    const importes = {
++      precio_equipo: martillo,
++      cargos_comprador: cargosComprador,
++      cargo_aplicar_deposito: porcentaje(deposito, config.CARGO_APLICAR_DEPOSITO),
++      comision_transferencia: entero(config.COMISION_TRANSFERENCIA, 'la comisión por transferencia'),
++      comision_servicio: comisionServicio(martillo, config),
++    };
++    const congeladas = (desglose && desglose.lineas) || [];
++    return conceptosDeEtapa('saldo', config.POLITICA_COBRO)
++      .map((concepto) => {
++        if (concepto in importes) return { concepto, importe: importes[concepto], es_estimado: false };
++        const l = congeladas.find((x) => x.concepto === concepto);
++        return { concepto, importe: l ? l.importe : 0, es_estimado: true };
++      })
++      .filter((l) => l.importe > 0);
++  }
++
+   /* Signo de cada movimiento en el saldo del cliente: el dinero suyo que
+      la empresa tiene en la mano. Un ajuste lleva su propio signo. */
+   function importeConSigno(m) {
+@@ -450,7 +479,7 @@ const Importacion = (function () {
+     IMPORTACION, FISCAL_LISTO, PARAMETROS, OPCIONES,
+     ESTADOS, ESTADOS_SALIDA, ACTORES, TRANSICIONES, transicionPermitida, transicion,
+     CONCEPTOS, SENTIDOS, NO_REEMBOLSABLES, ETAPAS, conceptosDeEtapa,
+-    porcentaje, depositoPara, comisionServicio, aplicarDeposito,
++    porcentaje, depositoPara, comisionServicio, lineasSaldo, aplicarDeposito,
+     importeConSigno, saldoCliente, devolucionDe, motivoDevolucion, politicaDevolucion,
+     destacarInspeccion, canonico, contenidoFirmado, huellaDesglose,
+     configuracion, OBLIGATORIOS_ASISTIDA, OBLIGATORIOS_INSPECCION, puedeEncenderse,
+diff --git a/tools/db.js b/tools/db.js
+index 6093d89..6542ceb 100644
+--- a/tools/db.js
++++ b/tools/db.js
+@@ -1499,7 +1499,9 @@ const MIGRACIONES = [
+      `importacion_aceptaciones` no estaba en el diseño de #110, que solo
+      guardaba la última aceptación en `importaciones`. Subir el límite de
+      puja es aceptar de nuevo, y sobrescribir la anterior borraría la
+-     prueba de lo que el cliente firmó primero.
++     prueba de lo que el cliente firmó primero. Tampoco estaban
++     `precio_martillo` y `cargos_comprador`: sin ellos el saldo al ganar
++     no se puede recalcular en el servidor.
+ 
+      `pagos.importacion_id` va sin clave foránea, como `anuncio_id`: el
+      rastro de un pago no depende de lo que le pase al expediente. */
+@@ -1531,7 +1533,9 @@ const MIGRACIONES = [
+          'no_pedida', 'pedida', 'pagada', 'en_curso', 'entregada', 'no_disponible')),
+        lote_id               TEXT,
+        limite_puja           INTEGER CHECK (limite_puja IS NULL OR (typeof(limite_puja) = 'integer' AND limite_puja > 0)),
+-       desglose_json         TEXT CHECK (desglose_json IS NULL OR (json_valid(desglose_json) AND json_type(desglose_json) = 'object')),
++       precio_martillo       INTEGER CHECK (precio_martillo IS NULL OR (typeof(precio_martillo) = 'integer' AND precio_martillo > 0)),
++       cargos_comprador      INTEGER CHECK (cargos_comprador IS NULL OR (typeof(cargos_comprador) = 'integer' AND cargos_comprador >= 0)),
++       desglose_json        TEXT CHECK (desglose_json IS NULL OR (json_valid(desglose_json) AND json_type(desglose_json) = 'object')),
+        desglose_huella       TEXT CHECK (desglose_huella IS NULL OR length(desglose_huella) = 64),
+        cifras_version        TEXT,
+        condiciones_version   TEXT,
+-- 
+2.43.0
+
+
+From 3ce206fd9064647595b960c9980b4cc5cf5f1f73 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 22:00:36 +0000
+Subject: [PATCH 4/6] =?UTF-8?q?Importaci=C3=B3n=20asistida:=20pruebas=20pu?=
+ =?UTF-8?q?ras=20de=20transiciones,=20redondeos,=20dep=C3=B3sitos=20y=20de?=
+ =?UTF-8?q?voluciones?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Base C3 de la fase 14 (#149). Lo fiscal queda como todo hasta que el
+contador decida entre mandataria y revendedora.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ .github/workflows/desplegar.yml |   2 +
+ package.json                    |   2 +
+ tools/importacion.prueba.js     | 444 ++++++++++++++++++++++++++++++++
+ 3 files changed, 448 insertions(+)
+ create mode 100644 tools/importacion.prueba.js
+
+diff --git a/.github/workflows/desplegar.yml b/.github/workflows/desplegar.yml
+index 75a24cd..8de084b 100644
+--- a/.github/workflows/desplegar.yml
++++ b/.github/workflows/desplegar.yml
+@@ -174,6 +174,8 @@ jobs:
+         run: npm run solicitudes:probar
+       - name: Migración de la importación asistida
+         run: npm run importacion-migracion:probar
++      - name: Importación asistida, pruebas puras
++        run: npm run importacion:puro
+ 
+   # Lo que necesita el sitio levantado: las auditorias y las dos pasadas
+   # de puppeteer. Va aparte del job hermetico para que un fallo de
+diff --git a/package.json b/package.json
+index 66ccd14..41f46be 100644
+--- a/package.json
++++ b/package.json
+@@ -79,6 +79,8 @@
+     "contactos:probar": "node tools/probar-contactos.js",
+     "catalogo:probar": "node tools/probar-catalogo.js",
+     "importacion-migracion:probar": "node tools/probar-importacion-migracion.js",
++    "importacion:puro": "node --test tools/importacion.prueba.js",
++    "importacion:probar": "node tools/probar-importacion.js",
+     "db:flota": "node tools/seed.js --solo-flota",
+     "taxonomia": "node tools/verificar-taxonomia.js"
+   },
+diff --git a/tools/importacion.prueba.js b/tools/importacion.prueba.js
+new file mode 100644
+index 0000000..50dcf5c
+--- /dev/null
++++ b/tools/importacion.prueba.js
+@@ -0,0 +1,444 @@
++/**
++ * Pruebas puras de `assets/importacion.js` (fase 14, base C3, #149).
++ *
++ *   node --test tools/importacion.prueba.js
++ *
++ * Fijan la tabla de transiciones y la aritmética del dinero ANTES de que
++ * se implemente `tools/importacion.js`: quien la implemente tiene que
++ * pasarlas sin tocarlas. Los valores de los parámetros que aparecen aquí
++ * son de prueba (números redondos para hacer las cuentas a mano), no
++ * cifras reales ni propuestas de precio.
++ *
++ * Lo fiscal queda en `todo`: depende de que el contador decida si la
++ * empresa actúa como mandataria o como revendedora (ver el final).
++ */
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++
++const I = require('../assets/importacion.js');
++
++/* ── Transiciones ────────────────────────────────────────── */
++
++test('cada transición de la tabla está permitida para su actor y prohibida para los demás', () => {
++  for (const t of I.TRANSICIONES) {
++    const actores = new Set(I.TRANSICIONES.filter((x) => x.de === t.de && x.a === t.a).map((x) => x.actor));
++    for (const actor of I.ACTORES) {
++      assert.equal(I.transicionPermitida(t.de, t.a, actor), actores.has(actor), `${t.de} → ${t.a} por ${actor}`);
++    }
++  }
++});
++
++test('cualquier par fuera de la tabla está prohibido', () => {
++  const enTabla = new Set(I.TRANSICIONES.map((t) => `${t.de}>${t.a}`));
++  let fuera = 0;
++  for (const de of I.ESTADOS) {
++    for (const a of I.ESTADOS) {
++      if (enTabla.has(`${de}>${a}`)) continue;
++      fuera++;
++      for (const actor of I.ACTORES) assert.equal(I.transicionPermitida(de, a, actor), false, `${de} → ${a} por ${actor}`);
++    }
++  }
++  assert.ok(fuera > 600, 'la tabla no puede permitirlo casi todo');
++  assert.equal(I.transicionPermitida('solicitada', 'en_busqueda', 'contador'), false, 'un actor desconocido no hace nada');
++});
++
++test('la tabla solo usa estados y actores conocidos, sin filas repetidas', () => {
++  const vistas = new Set();
++  for (const t of I.TRANSICIONES) {
++    assert.ok(I.ESTADOS.includes(t.de), t.de);
++    assert.ok(I.ESTADOS.includes(t.a), t.a);
++    assert.ok(I.ACTORES.includes(t.actor), t.actor);
++    const clave = `${t.de}>${t.a}>${t.actor}`;
++    assert.ok(!vistas.has(clave), `repetida: ${clave}`);
++    vistas.add(clave);
++    if (t.cobro) assert.ok(I.ETAPAS.includes(t.cobro), t.cobro);
++    if (t.cobroPorEtapa) assert.ok(I.ETAPAS.includes(t.cobroPorEtapa), t.cobroPorEtapa);
++  }
++});
++
++test('desde una salida solo se va a devolucion_pendiente o a cerrada, y cerrada no sale', () => {
++  for (const de of I.ESTADOS_SALIDA) {
++    const destinos = new Set(I.TRANSICIONES.filter((t) => t.de === de).map((t) => t.a));
++    assert.deepEqual([...destinos].sort(), ['cerrada', 'devolucion_pendiente'], de);
++  }
++  assert.equal(I.TRANSICIONES.filter((t) => t.de === 'cerrada').length, 0);
++  assert.deepEqual(I.TRANSICIONES.filter((t) => t.de === 'devolucion_pendiente').map((t) => t.a), ['cerrada']);
++});
++
++test('todo estado se alcanza desde solicitada y todo estado no final tiene salida', () => {
++  const alcanzados = new Set(['solicitada']);
++  let antes = 0;
++  while (alcanzados.size !== antes) {
++    antes = alcanzados.size;
++    for (const t of I.TRANSICIONES) if (alcanzados.has(t.de)) alcanzados.add(t.a);
++  }
++  assert.deepEqual([...alcanzados].sort(), [...I.ESTADOS].sort());
++  for (const e of I.ESTADOS) {
++    if (e === 'cerrada') continue;
++    assert.ok(I.TRANSICIONES.some((t) => t.de === e), `${e} no tiene salida`);
++  }
++});
++
++test('ningún paso que compromete dinero con un tercero va sin su cobro confirmado', () => {
++  const cobro = (de, a) => I.TRANSICIONES.filter((t) => t.de === de && t.a === a);
++  // Pujar: el depósito.
++  for (const t of cobro('deposito_pendiente', 'lista_para_pujar')) assert.equal(t.cobro, 'deposito');
++  for (const t of cobro('lista_para_pujar', 'pujando')) assert.equal(t.cobro, 'deposito');
++  // Pagar la subasta: el saldo.
++  for (const t of cobro('saldo_pendiente', 'pagada_subasta')) assert.equal(t.cobro, 'saldo');
++  // Contratar al inspector: la inspección.
++  for (const t of cobro('inspeccion_pendiente_pago', 'inspeccion_en_curso')) assert.equal(t.cobro, 'inspeccion');
++  // Cada tramo logístico con POLITICA_COBRO = 'por_etapa'.
++  assert.equal(cobro('pagada_subasta', 'retiro')[0].cobroPorEtapa, 'flete_eeuu');
++  assert.equal(cobro('puerto_origen', 'transito_maritimo')[0].cobroPorEtapa, 'maritimo');
++  assert.equal(cobro('en_aduana', 'endosada')[0].cobroPorEtapa, 'aduana');
++  assert.equal(cobro('endosada', 'transporte_rd')[0].cobroPorEtapa, 'flete_rd');
++  // Y a esos estados no se llega por ningún otro camino sin cobro.
++  for (const a of ['lista_para_pujar', 'pujando', 'pagada_subasta', 'inspeccion_en_curso']) {
++    for (const t of I.TRANSICIONES.filter((x) => x.a === a)) assert.ok(t.cobro, `${t.de} → ${a} sin cobro`);
++  }
++});
++
++test('solo el cliente acepta, elige, sigue o desiste; solo el personal puja y avanza la logística', () => {
++  const actorDe = (de, a) => I.TRANSICIONES.filter((t) => t.de === de && t.a === a).map((t) => t.actor);
++  assert.deepEqual(actorDe('confirmacion', 'deposito_pendiente'), ['cliente']);
++  assert.deepEqual(actorDe('propuesta', 'confirmacion'), ['cliente']);
++  assert.deepEqual(actorDe('inspeccion_entregada', 'deposito_pendiente'), ['cliente']);
++  assert.deepEqual(actorDe('pujando', 'ganada'), ['personal']);
++  assert.deepEqual(actorDe('pujando', 'perdida'), ['personal']);
++  for (const [de, a] of [['retiro', 'transito_terrestre'], ['transito_maritimo', 'en_aduana'], ['transporte_rd', 'entregada']]) {
++    assert.deepEqual(actorDe(de, a), ['personal'], `${de} → ${a}`);
++  }
++  // Una vez pujando, el cliente ya no puede desistir.
++  for (const de of ['pujando', 'ganada', 'saldo_pendiente', 'pagada_subasta']) {
++    assert.equal(I.transicionPermitida(de, 'desistida', 'cliente'), false, de);
++  }
++});
++
++/* ── Etapas de cobro ─────────────────────────────────────── */
++
++test('cada etapa cobra sus conceptos y la política decide dónde van los tramos', () => {
++  assert.deepEqual(I.conceptosDeEtapa('deposito', 'por_etapa'), ['deposito_puja']);
++  assert.deepEqual(I.conceptosDeEtapa('inspeccion', 'al_ganar'), ['inspeccion']);
++  assert.deepEqual(I.conceptosDeEtapa('maritimo', 'por_etapa'), ['flete_maritimo', 'seguro']);
++  assert.deepEqual(I.conceptosDeEtapa('maritimo', 'al_ganar'), []);
++  const saldoAlGanar = I.conceptosDeEtapa('saldo', 'al_ganar');
++  for (const c of ['flete_terrestre_eeuu', 'flete_maritimo', 'seguro', 'impuestos_aduana', 'agente_aduanal', 'gastos_puerto', 'flete_rd']) {
++    assert.ok(saldoAlGanar.includes(c), c);
++    assert.ok(!I.conceptosDeEtapa('saldo', 'por_etapa').includes(c), c);
++  }
++  assert.equal(I.conceptosDeEtapa('saldo', 'por_etapa')[0], 'precio_equipo', 'el depósito se aplica primero al equipo');
++  assert.throws(() => I.conceptosDeEtapa('propina', 'por_etapa'));
++  for (const e of I.ETAPAS) for (const c of I.conceptosDeEtapa(e, 'por_etapa')) assert.ok(I.CONCEPTOS.includes(c), c);
++});
++
++/* ── Redondeos ───────────────────────────────────────────── */
++
++test('porcentaje: enteros, mitad hacia arriba, sin coma flotante', () => {
++  assert.equal(I.porcentaje(12345, 300), 370); // 370,35
++  assert.equal(I.porcentaje(12350, 300), 371); // 370,50 → arriba
++  assert.equal(I.porcentaje(5000, 3), 2); // 1,5: Math.round(5000 * 0.0003) da 1
++  assert.equal(I.porcentaje(0, 1000), 0);
++  assert.equal(I.porcentaje(1, 4999), 0);
++  assert.equal(I.porcentaje(1, 5000), 1);
++  assert.equal(I.porcentaje(999999999, 10000), 999999999);
++  assert.throws(() => I.porcentaje(100.5, 300), /entero/);
++  assert.throws(() => I.porcentaje(100, 2.5), /entero/);
++  assert.throws(() => I.porcentaje(-100, 300));
++});
++
++test('depósito y comisión salen de los parámetros, y sin ellos lanzan', () => {
++  const c = I.configuracion({ PORCENTAJE_DEPOSITO_SUBASTA: 1000 });
++  assert.equal(I.depositoPara(5000000, c), 500000);
++  assert.equal(I.depositoPara(3333333, c), 333333);
++  assert.throws(() => I.depositoPara(5000000, I.configuracion()), /PORCENTAJE_DEPOSITO_SUBASTA/);
++  assert.throws(() => I.depositoPara(50000.5, c), /entero/);
++
++  assert.equal(I.comisionServicio(3000000, I.configuracion({ COMISION_SERVICIO: { forma: 'fija', importe: 77700 } })), 77700);
++  const pct = I.configuracion({ COMISION_SERVICIO: { forma: 'porcentaje', pb: 500, minimo: 100000, maximo: 400000 } });
++  assert.equal(I.comisionServicio(3000000, pct), 150000);
++  assert.equal(I.comisionServicio(1000000, pct), 100000, 'el mínimo manda');
++  assert.equal(I.comisionServicio(20000000, pct), 400000, 'el máximo manda');
++  assert.throws(() => I.comisionServicio(3000000, I.configuracion()), /COMISION_SERVICIO/);
++  assert.throws(() => I.comisionServicio(3000000, I.configuracion({ COMISION_SERVICIO: { forma: 'regalo' } })));
++});
++
++/* ── Depósito aplicado al saldo ──────────────────────────── */
++
++const CONFIG_SALDO = I.configuracion({
++  CARGO_APLICAR_DEPOSITO: 300, COMISION_TRANSFERENCIA: 5000, POLITICA_COBRO: 'por_etapa',
++  COMISION_SERVICIO: { forma: 'fija', importe: 100000 }, PORCENTAJE_DEPOSITO_SUBASTA: 1000,
++});
++
++test('saldo al ganar: precio primero, cargo por aplicar el depósito sobre el depósito', () => {
++  const lineas = I.lineasSaldo({ martillo: 3000000, cargosComprador: 150000, deposito: 500000, desglose: null, config: CONFIG_SALDO });
++  assert.deepEqual(lineas.map((l) => [l.concepto, l.importe]), [
++    ['precio_equipo', 3000000],
++    ['cargos_comprador', 150000],
++    ['cargo_aplicar_deposito', 15000],
++    ['comision_transferencia', 5000],
++    ['comision_servicio', 100000],
++  ]);
++  const r = I.aplicarDeposito(lineas, 500000);
++  assert.deepEqual(r.aplicaciones, [{ concepto: 'precio_equipo', importe: 500000 }]);
++  assert.equal(r.sobrante, 0);
++  const cobrado = r.cobros.reduce((s, x) => s + x.importe, 0);
++  assert.equal(cobrado, 3270000 - 500000, 'se cobra el saldo menos el depósito, ni un centavo más');
++  assert.equal(r.cobros[0].importe, 2500000);
++});
++
++test('saldo al ganar con al_ganar: entran los tramos estimados del desglose congelado', () => {
++  const c = I.configuracion(Object.assign({}, CONFIG_SALDO, { POLITICA_COBRO: 'al_ganar' }));
++  const desglose = { lineas: [
++    { concepto: 'flete_maritimo', importe: 400000, es_estimado: true },
++    { concepto: 'flete_rd', importe: 80000, es_estimado: true },
++    { concepto: 'precio_equipo', importe: 9999999, es_estimado: true },
++  ] };
++  const lineas = I.lineasSaldo({ martillo: 3000000, cargosComprador: 0, deposito: 500000, desglose, config: c });
++  const por = Object.fromEntries(lineas.map((l) => [l.concepto, l]));
++  assert.equal(por.precio_equipo.importe, 3000000, 'el martillo real, no lo estimado');
++  assert.equal(por.flete_maritimo.importe, 400000);
++  assert.equal(por.flete_maritimo.es_estimado, true);
++  assert.equal(por.flete_rd.importe, 80000);
++  assert.ok(!por.cargos_comprador, 'una línea en cero no se cobra');
++  assert.ok(!por.seguro, 'un tramo sin estimación no se inventa');
++});
++
++test('un depósito mayor que el saldo deja sobrante y ninguna línea negativa', () => {
++  const lineas = [{ concepto: 'precio_equipo', importe: 300000 }, { concepto: 'comision_servicio', importe: 100000 }];
++  const r = I.aplicarDeposito(lineas, 500000);
++  assert.deepEqual(r.cobros, []);
++  assert.deepEqual(r.aplicaciones, [{ concepto: 'precio_equipo', importe: 300000 }, { concepto: 'comision_servicio', importe: 100000 }]);
++  assert.equal(r.sobrante, 100000);
++  assert.throws(() => I.aplicarDeposito(lineas, 100.5), /entero/);
++});
++
++/* ── Devoluciones ────────────────────────────────────────── */
++
++const mov = (sentido, concepto, importe) => ({ sentido, concepto, importe });
++
++test('el saldo del cliente: cobros suman, pagos a terceros y devoluciones restan, ajustes con su signo', () => {
++  const libro = [
++    mov('cobro_cliente', 'deposito_puja', 500000),
++    mov('cobro_cliente', 'deposito_puja', 20000), // cobrado de más por error
++    mov('ajuste', 'deposito_puja', -20000), // su contramovimiento
++    mov('pago_tercero', 'multa_subasta', 1000),
++    mov('devolucion_cliente', 'deposito_puja', 100000),
++  ];
++  assert.equal(I.saldoCliente(libro), 399000);
++  assert.throws(() => I.saldoCliente([mov('regalo', 'otro', 1)]));
++});
++
++test('la inspección nunca se devuelve, sea cual sea el motivo', () => {
++  const libro = [
++    mov('cobro_cliente', 'inspeccion', 60000),
++    mov('pago_tercero', 'inspeccion', 45000),
++    mov('cobro_cliente', 'deposito_puja', 500000),
++  ];
++  for (const motivo of ['perdida', 'sin_puja', 'cancelada', 'cierre']) {
++    const politica = I.politicaDevolucion(motivo, I.configuracion({
++      DEVOLUCION_SI_PERDIDA: { retiene: [], descuento: 0 }, DEVOLUCION_SIN_PUJA: { retiene: [], descuento: 0 },
++    }));
++    assert.equal(I.devolucionDe(libro, politica), 500000, motivo);
++  }
++  assert.deepEqual(I.NO_REEMBOLSABLES, ['inspeccion']);
++});
++
++test('perder la subasta aplica DEVOLUCION_SI_PERDIDA y lo devuelto más lo retenido cuadra con el libro', () => {
++  const config = I.configuracion({ DEVOLUCION_SI_PERDIDA: { retiene: ['comision_transferencia'], descuento: 2500 } });
++  const libro = [
++    mov('cobro_cliente', 'inspeccion', 60000),
++    mov('cobro_cliente', 'deposito_puja', 500000),
++    mov('cobro_cliente', 'comision_transferencia', 5000),
++    mov('pago_tercero', 'comision_transferencia', 5000),
++  ];
++  const politica = I.politicaDevolucion(I.motivoDevolucion('perdida'), config);
++  const devolucion = I.devolucionDe(libro, politica);
++  assert.equal(devolucion, 500000 - 2500);
++  const despues = libro.concat([mov('devolucion_cliente', 'deposito_puja', devolucion)]);
++  const reembolsable = despues.filter((m) => !['inspeccion', 'comision_transferencia'].includes(m.concepto));
++  assert.equal(I.saldoCliente(reembolsable), 2500, 'en el libro queda exactamente el descuento');
++  assert.equal(I.devolucionDe(despues, politica), 0, 'una segunda devolución sale en cero');
++});
++
++test('quien incumple pierde el depósito y las multas; la devolución nunca es negativa', () => {
++  const libro = [
++    mov('cobro_cliente', 'deposito_puja', 500000),
++    mov('pago_tercero', 'multa_subasta', 30000),
++    mov('cobro_cliente', 'comision_servicio', 100000),
++  ];
++  const p = I.politicaDevolucion(I.motivoDevolucion('incumplida'), I.configuracion());
++  assert.equal(I.devolucionDe(libro, p), 100000);
++  assert.equal(I.devolucionDe([mov('pago_tercero', 'flete_rd', 5000)], null), 0);
++  assert.throws(() => I.devolucionDe(libro, { retiene: [], descuento: 0.5 }), /entero/);
++});
++
++test('cada estado de salida tiene su motivo de devolución, y los demás no', () => {
++  assert.equal(I.motivoDevolucion('perdida'), 'perdida');
++  assert.equal(I.motivoDevolucion('desistida'), 'sin_puja');
++  assert.equal(I.motivoDevolucion('sin_opciones'), 'sin_puja');
++  assert.equal(I.motivoDevolucion('incumplida'), 'incumplida');
++  assert.equal(I.motivoDevolucion('cancelada'), 'cancelada');
++  assert.equal(I.motivoDevolucion('entregada'), 'cierre');
++  assert.throws(() => I.motivoDevolucion('pujando'));
++  for (const t of I.TRANSICIONES.filter((x) => x.a === 'devolucion_pendiente')) {
++    assert.doesNotThrow(() => I.motivoDevolucion(t.de), t.de);
++  }
++});
++
++/* ── Inspección destacada ────────────────────────────────── */
++
++test('la inspección se destaca desde el umbral, justo en él y no un centavo antes', () => {
++  const c = I.configuracion();
++  assert.equal(c.UMBRAL_INSPECCION_DESTACADA, 4000000);
++  assert.equal(I.destacarInspeccion(4000000, c), true);
++  assert.equal(I.destacarInspeccion(3999999, c), false);
++  assert.throws(() => I.destacarInspeccion(40000.5, c), /entero/);
++});
++
++/* ── Huella del desglose ─────────────────────────────────── */
++
++const DESGLOSE = {
++  cifras_version: '2026-10-muestra',
++  condiciones_version: '2026-10',
++  limite_puja: 5000000,
++  lineas: [
++    { concepto: 'precio_equipo', importe: 5000000, moneda: 'USD', es_estimado: true },
++    { concepto: 'flete_maritimo', importe: 400000, moneda: 'USD', es_estimado: true },
++  ],
++};
++
++test('la huella es SHA-256 en hex del JSON canónico de lo firmado', () => {
++  const h = I.huellaDesglose(DESGLOSE);
++  assert.match(h, /^[0-9a-f]{64}$/);
++  const esperado = '{"cifras_version":"2026-10-muestra","condiciones_version":"2026-10","limite_puja":5000000,'
++    + '"lineas":[{"concepto":"precio_equipo","es_estimado":true,"importe":5000000,"moneda":"USD"},'
++    + '{"concepto":"flete_maritimo","es_estimado":true,"importe":400000,"moneda":"USD"}]}';
++  assert.equal(I.canonico(I.contenidoFirmado(DESGLOSE)), esperado);
++  assert.equal(h, require('node:crypto').createHash('sha256').update(esperado).digest('hex'));
++});
++
++test('la huella no cambia con el orden de las claves ni con campos que no se firman', () => {
++  const desordenado = {
++    lineas: DESGLOSE.lineas.map((l) => ({ es_estimado: l.es_estimado, moneda: l.moneda, importe: l.importe, concepto: l.concepto, nombre: 'texto de ayuda' })),
++    limite_puja: 5000000, condiciones_version: '2026-10', cifras_version: '2026-10-muestra', total: 5400000,
++  };
++  assert.equal(I.huellaDesglose(desordenado), I.huellaDesglose(DESGLOSE));
++});
++
++test('la huella cambia con un centavo, con otra versión de cifras o de condiciones, o con otro límite', () => {
++  const base = I.huellaDesglose(DESGLOSE);
++  const con = (cambio) => I.huellaDesglose(Object.assign({}, DESGLOSE, cambio));
++  const lineasMas1 = DESGLOSE.lineas.map((l, i) => (i === 1 ? Object.assign({}, l, { importe: l.importe + 1 }) : l));
++  assert.notEqual(con({ lineas: lineasMas1 }), base, 'un centavo');
++  assert.notEqual(con({ cifras_version: '2026-11-muestra' }), base, 'versión de cifras');
++  assert.notEqual(con({ condiciones_version: '2026-11' }), base, 'versión de condiciones');
++  assert.notEqual(con({ limite_puja: 5000001 }), base, 'límite de puja');
++  assert.notEqual(con({ lineas: DESGLOSE.lineas.slice().reverse() }), base, 'el orden de las líneas sí cuenta');
++  const firme = DESGLOSE.lineas.map((l, i) => (i === 1 ? Object.assign({}, l, { es_estimado: false }) : l));
++  assert.notEqual(con({ lineas: firme }), base, 'estimado o firme');
++});
++
++test('un importe con decimales no se firma', () => {
++  const malo = Object.assign({}, DESGLOSE, { limite_puja: 50000.5 });
++  assert.throws(() => I.huellaDesglose(malo), /entero/);
++});
++
++/* ── Parámetros e interruptores ──────────────────────────── */
++
++test('todo se entrega apagado y sin precios ni comisiones decididos', () => {
++  assert.equal(I.IMPORTACION.asistida.activo, false);
++  assert.equal(I.IMPORTACION.inspeccion.activa, false);
++  assert.equal(I.IMPORTACION.calculadora.activa, false);
++  assert.equal(I.FISCAL_LISTO, false);
++  for (const [nombre, valor] of Object.entries(I.PARAMETROS)) {
++    if (nombre === 'UMBRAL_INSPECCION_DESTACADA' || nombre === 'ZONAS_PERMITIDAS') continue;
++    assert.equal(valor, null, `${nombre} no puede tener valor hasta que lo decida quien corresponde`);
++  }
++  assert.deepEqual(I.PARAMETROS.ZONAS_PERMITIDAS, ['TX', 'FL', 'PA']);
++});
++
++test('puedeEncenderse lista todo lo que falta y no deja encender con un null', () => {
++  const faltan = I.puedeEncenderse(I.configuracion());
++  for (const [nombre, valor] of Object.entries(I.PARAMETROS)) {
++    if (valor === null && I.OBLIGATORIOS_ASISTIDA.includes(nombre)) assert.ok(faltan.includes(nombre), nombre);
++  }
++  assert.ok(faltan.includes('MODELO_FISCAL'));
++  assert.ok(faltan.includes('FISCAL_LISTO'), 'lo fiscal sin implementar también bloquea');
++  assert.ok(!faltan.includes('UMBRAL_INSPECCION_DESTACADA'));
++  assert.ok(faltan.length > 0);
++  // Si el módulo se publica encendido, tiene que poder encenderse.
++  if (I.IMPORTACION.asistida.activo) assert.deepEqual(I.puedeEncenderse(I.configuracion()), []);
++  if (I.IMPORTACION.inspeccion.activa) assert.deepEqual(I.puedeEncenderse(I.configuracion(), 'inspeccion'), []);
++});
++
++/* Una configuración con todo relleno con valores DE PRUEBA, para
++   comprobar que cada hueco, por sí solo, impide encender. */
++function configCompleta(cambios) {
++  return I.configuracion(Object.assign({
++    MODELO_FISCAL: 'mandatario', FISCAL_LISTO: true,
++    PRECIO_INSPECCION_POR_ZONA: { TX: 1, FL: 1, PA: 1, EXCEPCION: 1 },
++    COMISION_SERVICIO: { forma: 'fija', importe: 1 }, PRESUPUESTO_MIN_EXCEPCION_ZONA: 1,
++    PORCENTAJE_DEPOSITO_SUBASTA: 1, CARGO_APLICAR_DEPOSITO: 1, COMISION_TRANSFERENCIA: 1,
++    PLAZO_PAGO_SUBASTA_DIAS: 1, PLAZO_RETIRO_DIAS: 1, MULTAS_SUBASTA: {},
++    PLAZO_PROPUESTA_DIAS: 1, PLAZO_SALDO_CLIENTE_DIAS: 1, PLAZO_DEPOSITO_ANTES_SUBASTA_H: 1,
++    PLAZO_MIN_INSPECCION_DIAS: 1, PLAZO_DECISION_TRAS_INFORME_H: 1, PLAZO_AJUSTE_DIAS: 1,
++    PLAZO_DEVOLUCION_DIAS: 1, RECORDATORIOS_SALDO_H: [1], POLITICA_COBRO: 'por_etapa',
++    COLCHON_IMPREVISTOS: 0, MONEDA_COBRO: 'USD',
++    DEVOLUCION_SI_PERDIDA: { retiene: [], descuento: 0 }, DEVOLUCION_SIN_PUJA: { retiene: [], descuento: 0 },
++    FIRMA_CONTRATO: 'en_linea',
++  }, cambios));
++}
++
++test('cada parámetro obligatorio, por sí solo, impide encender', () => {
++  assert.deepEqual(I.puedeEncenderse(configCompleta()), []);
++  assert.deepEqual(I.puedeEncenderse(configCompleta(), 'inspeccion'), []);
++  for (const nombre of I.OBLIGATORIOS_ASISTIDA) {
++    assert.deepEqual(I.puedeEncenderse(configCompleta({ [nombre]: null })), [nombre], nombre);
++  }
++  assert.deepEqual(I.puedeEncenderse(configCompleta({ FISCAL_LISTO: false })), ['FISCAL_LISTO']);
++  assert.deepEqual(I.puedeEncenderse(configCompleta({ MODELO_FISCAL: 'mixto' })), ['MODELO_FISCAL'], 'un valor fuera de sus opciones cuenta como que falta');
++  assert.deepEqual(I.puedeEncenderse(configCompleta({ MONEDA_COBRO: 'DOP' })), ['FUENTE_TASA']);
++  assert.deepEqual(I.puedeEncenderse(configCompleta({ COLCHON_IMPREVISTOS: 0 })), [], 'un colchón de cero es una decisión, no un hueco');
++});
++
++test('la inspección no se enciende sin precio por zona ni sus plazos', () => {
++  for (const nombre of I.OBLIGATORIOS_INSPECCION) {
++    assert.deepEqual(I.puedeEncenderse(configCompleta({ [nombre]: null }), 'inspeccion'), [nombre], nombre);
++    assert.deepEqual(I.puedeEncenderse(configCompleta({ [nombre]: null }), 'asistida'), [], `${nombre} no frena el resto`);
++  }
++});
++
++test('configuracion() inyecta sin tocar el módulo compartido', () => {
++  const c = I.configuracion({ IMPORTACION: { asistida: { activo: true } }, PLAZO_AJUSTE_DIAS: 3 });
++  assert.equal(c.IMPORTACION.asistida.activo, true);
++  assert.equal(c.IMPORTACION.inspeccion.activa, false);
++  assert.equal(c.PLAZO_AJUSTE_DIAS, 3);
++  assert.equal(I.IMPORTACION.asistida.activo, false);
++  assert.equal(I.PARAMETROS.PLAZO_AJUSTE_DIAS, null);
++});
++
++test('el módulo no mezcla el cargo de la subasta con la fórmula de precios del sitio', () => {
++  const fuente = fs.readFileSync(path.join(__dirname, '..', 'assets', 'importacion.js'), 'utf8');
++  assert.doesNotMatch(fuente, /require\([^)]*precios/);
++  assert.doesNotMatch(fuente, /PRECIOS\b/);
++});
++
++/* ── Lo fiscal: pendiente de la decisión del contador ────────────────
++   Si la empresa actúa como MANDATARIA (compra por cuenta del cliente) o
++   como REVENDEDORA (compra y revende) lo decide el contador de Victor, y
++   de eso depende qué conceptos emiten NCF, con qué tipo (B01/B02) y en
++   qué momento (al cobrar o al endosar). Hasta que lo decida, estas
++   pruebas quedan como `todo`: escribirlas ahora sería inventar
++   comportamiento fiscal, que es irreversible una vez emitido. El día que
++   haya decisión, Claude las escribe (regla de «delegar solo con red»),
++   se implementa hasta que pasen y `FISCAL_LISTO` pasa a true. */
++
++test('fiscal · qué conceptos emiten comprobante con MODELO_FISCAL decidido', { todo: 'depende de la decisión del contador: mandataria o revendedora' });
++test('fiscal · tipo de NCF (B01/B02) y momento de emisión de cada cobro', { todo: 'depende de la decisión del contador' });
++test('fiscal · qué conceptos llevan ITBIS y sobre qué base', { todo: 'depende de la decisión del contador' });
++test('fiscal · tratamiento de los anticipos (depósito, saldo) antes del endoso', { todo: 'depende de la decisión del contador' });
++test('fiscal · nota de crédito (B04) cuando se devuelve algo ya facturado', { todo: 'depende de la decisión del contador' });
+-- 
+2.43.0
+
+
+From e9cc6344d3cfcc8f360aa588562bebb1d5ace588 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 22:05:39 +0000
+Subject: [PATCH 5/6] =?UTF-8?q?Importaci=C3=B3n=20asistida:=20contrato=20d?=
+ =?UTF-8?q?e=20datos=20para=20la=20oleada=208?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Estados, transiciones, libro, huella, errores, firmas de tools/importacion.js
+y rutas. Lo fiscal queda pendiente de la decisión del contador.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ .planning/importacion-contrato.md | 334 ++++++++++++++++++++++++++++++
+ 1 file changed, 334 insertions(+)
+ create mode 100644 .planning/importacion-contrato.md
+
+diff --git a/.planning/importacion-contrato.md b/.planning/importacion-contrato.md
+new file mode 100644
+index 0000000..6b0bec3
+--- /dev/null
++++ b/.planning/importacion-contrato.md
+@@ -0,0 +1,334 @@
++# Contrato de datos · Importación asistida (fase 14)
++
++Base C1 de Claude (#148, #149). Es **la especificación** de #152 (K1) y de las oleadas
++siguientes: se lee entera y manda sobre los issues si algo difiere. Resume el diseño del
++comentario de Claude en #110; no hace falta abrir #110.
++
++La fase va **después del lanzamiento del 2026-10-14**. Todo se construye entero y se entrega
++**apagado**. `importar.html` y su formulario de hoy no se tocan hasta encender.
++
++Fuente de verdad en código:
++
++| Qué | Dónde |
++|---|---|
++| Estados, transiciones, actores, conceptos, etapas, parámetros, interruptores, aritmética pura | `assets/importacion.js` (global `Importacion` en el navegador; `require` en Node) |
++| Tablas | migración `2026-10-importacion-asistida` al final de `MIGRACIONES` en `tools/db.js` |
++| Pruebas puras (pasan ya) | `tools/importacion.prueba.js` → `npm run importacion:puro` |
++| Pruebas del punto de transición (fallan hasta #152) | `tools/probar-importacion.js` → `npm run importacion:probar` |
++| Prueba de la migración | `tools/probar-importacion-migracion.js` → `npm run importacion-migracion:probar` |
++
++Vocabulario fijo en código, textos y correos: **inspección** (la hace una persona en la yarda;
++opcional, se cobra aparte, no es garantía, no se reembolsa), **revisión de datos** (la IA; nunca
++se llama inspección), **expediente** (una importación), **cargo por aplicar el depósito**
++(`CARGO_APLICAR_DEPOSITO`, de la subasta; nada que ver con el 3 % de `assets/precios.js`, que
++este módulo no carga).
++
++---
++
++## 1. Unidades y reglas de dinero
++
++- Importes: **enteros en centavos** de la moneda de la línea. En K1 solo US$ (`moneda = 'USD'`).
++  Un decimal se rechaza (lo hacen `entero()` del módulo y los `CHECK typeof(...) = 'integer'`).
++- Porcentajes: **enteros en puntos básicos** (1 % = 100). Se calculan con
++  `Importacion.porcentaje(importe, pb)` = `floor((importe × pb + 5000) / 10000)`: mitad hacia
++  arriba, sin coma flotante. Ningún otro redondeo.
++- **Todos los importes se calculan en el servidor.** Cualquier `importe`, `total` o línea que
++  llegue en la entrada de una función o del cuerpo de una ruta se **ignora**. La única
++  excepción es `registrarMovimiento` del personal (costes reales a terceros y contramovimientos).
++- **Ningún compromiso de dinero sin cobro confirmado** (la regla que sostiene todo): ver §3.
++- **El libro es de solo añadir.** No existe función que actualice o borre un movimiento; la base
++  lo impide además con disparadores. Una corrección es un **contramovimiento**: un `ajuste` con
++  el signo contrario y `corrige_id` apuntando al movimiento corregido.
++- La inspección **nunca** se devuelve (`NO_REEMBOLSABLES = ['inspeccion']`).
++
++## 2. Estados
++
++`ESTADOS` en el módulo (28). Flujo normal:
++
++`solicitada → en_busqueda → propuesta → confirmacion → [inspeccion_pendiente_pago →
++inspeccion_en_curso → inspeccion_entregada →] deposito_pendiente → lista_para_pujar → pujando →
++ganada → saldo_pendiente → pagada_subasta → retiro → transito_terrestre → puerto_origen →
++transito_maritimo → en_aduana → endosada → transporte_rd → entregada → cerrada`
++
++Ramas: `pujando → perdida → (propuesta | devolucion_pendiente)`; `entregada →
++devolucion_pendiente` si queda dinero del cliente.
++
++Salidas (`ESTADOS_SALIDA`): `desistida`, `sin_opciones`, `cancelada`, `incumplida`. Desde una
++salida **solo** se va a `devolucion_pendiente` (si queda dinero reembolsable) o a `cerrada`.
++`devolucion_pendiente → cerrada` cuando la devolución está registrada. `cerrada` no sale.
++
++## 3. Transiciones
++
++La tabla completa es `TRANSICIONES` en el módulo: `{ de, a, actor, cobro?, cobroPorEtapa?, exige? }`.
++`transicionPermitida(de, a, actor)` es la única pregunta que se hace; un par fuera de la tabla
++está prohibido para todos. Resumen:
++
++| De | A | Actor | Condición |
++|---|---|---|---|
++| solicitada | en_busqueda | personal | — |
++| en_busqueda | propuesta | personal | al menos un lote `propuesto` |
++| en_busqueda | sin_opciones | personal | — |
++| propuesta | confirmacion | cliente | `elegirLote` |
++| propuesta | en_busqueda | sistema | el lote caducó sin elección |
++| confirmacion | propuesta | cliente | cambiar de lote |
++| confirmacion | deposito_pendiente | cliente | `confirmar` sin inspección pedida |
++| confirmacion | inspeccion_pendiente_pago | cliente | `confirmar` con inspección pedida |
++| inspeccion_pendiente_pago | inspeccion_en_curso | personal | **cobro `inspeccion` confirmado** |
++| inspeccion_pendiente_pago | deposito_pendiente | sistema | venció el pago: sigue sin inspección |
++| inspeccion_en_curso | inspeccion_entregada | personal | documento `informe_inspeccion` subido |
++| inspeccion_entregada | deposito_pendiente | cliente | `decidirTrasInforme('seguir')` |
++| inspeccion_entregada | desistida | sistema | venció `PLAZO_DECISION_TRAS_INFORME_H` (desistimiento tácito) |
++| deposito_pendiente | lista_para_pujar | personal | **cobro `deposito` confirmado** |
++| deposito_pendiente | en_busqueda | sistema | depósito no confirmado a tiempo: no se puja |
++| lista_para_pujar | confirmacion | cliente | subir el límite: otra confirmación, otra huella |
++| lista_para_pujar | pujando | personal | **cobro `deposito` confirmado** (para el límite vigente) |
++| pujando | ganada | personal | `registrarResultado` con martillo ≤ límite |
++| pujando | perdida | personal | `registrarResultado` |
++| perdida | propuesta | cliente | otro lote con el mismo depósito |
++| perdida | devolucion_pendiente | cliente | pide la devolución |
++| ganada | saldo_pendiente | sistema | inmediata, en la misma transacción que `ganada` |
++| saldo_pendiente | pagada_subasta | personal | **cobro `saldo` confirmado** |
++| saldo_pendiente | incumplida | sistema / personal | venció `PLAZO_SALDO_CLIENTE_DIAS` / motivo |
++| pagada_subasta | retiro | personal | con `por_etapa`: **cobro `flete_eeuu`** |
++| retiro → transito_terrestre → puerto_origen | | personal | — |
++| puerto_origen | transito_maritimo | personal | con `por_etapa`: **cobro `maritimo`** |
++| transito_maritimo | en_aduana | personal | — |
++| en_aduana | endosada | personal | con `por_etapa`: **cobro `aduana`**; y el `ajuste_liquidacion` a cobrar, si lo hay, cobrado |
++| endosada | transporte_rd | personal | con `por_etapa`: **cobro `flete_rd`** |
++| transporte_rd | entregada | personal | documento `acta_entrega` subido |
++| entregada | cerrada / devolucion_pendiente | sistema | saldo reembolsable en cero / no |
++| 8 estados antes de pujar | desistida | cliente | `desistir` |
++| 9 estados antes de pujar | cancelada | personal | motivo obligatorio |
++| salidas | devolucion_pendiente / cerrada | sistema | queda dinero reembolsable / no |
++| devolucion_pendiente | cerrada | personal | `registrarDevolucion` |
++
++### Etapa de cobro «confirmada»
++
++`conceptosDeEtapa(etapa, POLITICA_COBRO)` da los conceptos de cada etapa (`ETAPAS`). Una etapa
++está **confirmada** cuando, para el expediente, la suma con signo (`importeConSigno`) de los
++movimientos **no estimados** (`es_estimado = 0`) de esos conceptos es **≥ lo exigido**:
++
++| Etapa | Exigido |
++|---|---|
++| `inspeccion` | `PRECIO_INSPECCION_POR_ZONA[zona del lote]` (o `EXCEPCION` si el lote es excepción de zona) |
++| `deposito` | `depositoPara(limite_puja)` del límite **vigente** |
++| `saldo` | suma de `lineasSaldo({ martillo, cargosComprador, deposito, desglose, config })` |
++| `flete_eeuu`, `maritimo`, `aduana`, `flete_rd` | suma de las líneas de esos conceptos en el desglose congelado (con `al_ganar` la etapa está vacía y se da por confirmada: ya entró en el saldo) |
++
++Sin la etapa confirmada, la transición responde **409 `cobro_sin_confirmar`** y no escribe nada.
++
++## 4. Conceptos y libro
++
++`CONCEPTOS` (17) y `SENTIDOS` en el módulo; los mismos en los `CHECK` de la migración.
++
++| Sentido | Signo en el saldo del cliente | Quién lo escribe |
++|---|---|---|
++| `cobro_cliente` | + | `registrarPago` |
++| `pago_tercero` | − | `registrarMovimiento` (personal) |
++| `devolucion_cliente` | − | `registrarDevolucion` |
++| `ajuste` | su propio signo (≠ 0) | `registrarPago` (depósito aplicado), `registrarMovimiento` (contramovimientos, ajuste de liquidación) |
++
++- **Depósito aplicado al saldo:** `aplicarDeposito(lineasSaldo(...), deposito)` devuelve
++  `{ cobros, aplicaciones, sobrante }`. Por cada aplicación se escriben **dos ajustes** con la
++  misma `referencia`: `−importe` en `deposito_puja` y `+importe` en el concepto. Por cada cobro, un
++  `cobro_cliente`. El sobrante se queda en `deposito_puja` y se devuelve al cerrar.
++- **Idempotencia:** índice único `(importacion_id, sentido, concepto, referencia)` cuando hay
++  referencia. Registrar dos veces el mismo pago (misma `referencia`) no escribe nada la segunda
++  vez y devuelve `{ duplicado: true }`.
++- **Devolución:** `devolucionDe(movimientos, politica)`: suma con signo de los movimientos cuyo
++  concepto no está en `NO_REEMBOLSABLES` ni en `politica.retiene`, menos `politica.descuento`,
++  nunca negativa. La política sale de `politicaDevolucion(motivoDevolucion(estadoPrevio), config)`:
++
++| Estado del que se sale | Motivo | Política |
++|---|---|---|
++| `perdida` | `perdida` | `DEVOLUCION_SI_PERDIDA` |
++| `desistida`, `sin_opciones` | `sin_puja` | `DEVOLUCION_SIN_PUJA` |
++| `incumplida` | `incumplida` | retiene `deposito_puja` y `multa_subasta` (diseño de #110) |
++| `cancelada` | `cancelada` | sin retención **(pendiente de que Victor lo confirme)** |
++| `entregada` | `cierre` | sin retención (sobrante) |
++
++## 5. Huella del desglose
++
++- Lo firmado (`contenidoFirmado`): `{ cifras_version, condiciones_version, limite_puja,
++  lineas: [{ concepto, importe, moneda, es_estimado }] }`. Nada más (nombres, textos, `total`, no).
++- JSON canónico (`canonico`): claves ordenadas, sin espacios, solo enteros (un decimal lanza),
++  `es_estimado` como booleano, **las líneas en el orden en que vienen** (el servidor las da en el
++  orden de `CONCEPTOS`).
++- Huella: SHA-256 en hex de ese JSON (`huellaDesglose`, solo en el servidor).
++- `confirmar` recalcula el desglose con el `limitePuja` recibido; si la huella no casa → **409
++  `huella_distinta`** y nada cambia. Otro límite = otra huella = confirmación nueva.
++
++## 6. Parámetros e interruptores
++
++`PARAMETROS` en el módulo, **todos a `null`** salvo `UMBRAL_INSPECCION_DESTACADA = 4000000`
++(US$40,000, confirmado por Victor) y `ZONAS_PERMITIDAS = ['TX', 'FL', 'PA']`. Ningún precio ni
++comisión se fija aquí: lo decide quien dice la tabla del diseño (Victor, contador, abogado,
++condiciones de la subasta). Formas:
++
++- `PRECIO_INSPECCION_POR_ZONA`: `{ TX, FL, PA, EXCEPCION }` en centavos.
++- `COMISION_SERVICIO`: `{ forma: 'fija', importe }` o `{ forma: 'porcentaje', pb, minimo?, maximo? }`.
++- `PORCENTAJE_DEPOSITO_SUBASTA`, `CARGO_APLICAR_DEPOSITO`, `COLCHON_IMPREVISTOS`: pb.
++- `COMISION_TRANSFERENCIA`, `PRESUPUESTO_MIN_EXCEPCION_ZONA`: centavos.
++- `DEVOLUCION_SI_PERDIDA`, `DEVOLUCION_SIN_PUJA`: `{ retiene: [conceptos], descuento }`.
++- `POLITICA_COBRO`: `'al_ganar' | 'por_etapa'`; `MONEDA_COBRO`: `'USD' | 'DOP'` (con `'DOP'`,
++  `FUENTE_TASA` obligatoria; **K1 solo implementa USD**: con `'DOP'` las funciones de cobro lanzan
++  501 `moneda_pendiente`); `FIRMA_CONTRATO`: `'en_linea' | 'documento'`.
++- Plazos `_DIAS` / `_H` enteros; `RECORDATORIOS_SALDO_H` lista de enteros.
++
++Interruptores (todos `false`): `IMPORTACION.asistida.activo`, `IMPORTACION.inspeccion.activa`,
++`IMPORTACION.calculadora.activa`. Más `FISCAL_LISTO = false` (§7).
++`puedeEncenderse(config, 'asistida' | 'inspeccion')` devuelve lo que falta; vacía = se puede
++encender. `importacion:puro` comprueba que el módulo nunca se publica encendido con huecos.
++
++`configuracion(sobrescribir)` da la configuración efectiva; **las pruebas la inyectan** así y
++nunca tocan el módulo compartido.
++
++## 7. Lo fiscal: PENDIENTE de la decisión del contador
++
++Si la empresa actúa como **mandataria** (compra por cuenta del cliente) o como **revendedora**
++(compra y revende) lo decide el contador de Victor. De eso depende qué conceptos emiten NCF, de
++qué tipo (B01/B02), sobre qué base lleva ITBIS, cuándo (al cobrar, al endosar) y cómo se tratan
++los anticipos. **No se implementa nada fiscal hasta esa decisión.** El diseño de #110 describe las
++dos hipótesis (mandataria: NCF solo por el servicio propio; revendedora: el equipo entero al
++endosar); son hipótesis para el contador, no comportamiento.
++
++Mientras tanto:
++- `registrarPago` **solo escribe el libro**. No crea filas en `pagos` ni llama a `confirmarPago`.
++- `facturarCobro(id, movimientoId, ctx)` existe y lanza **501 `decision_fiscal_pendiente`** con
++  cualquier `MODELO_FISCAL`.
++- `FISCAL_LISTO = false` hace que `puedeEncenderse` no deje encender el servicio.
++- `pagos.importacion_id` ya existe para cuando haga falta.
++- Las pruebas fiscales están como `todo` en `importacion:puro` y como sección saltada en
++  `importacion:probar`. El día de la decisión, Claude las escribe, se implementa hasta que pasen
++  y `FISCAL_LISTO` pasa a `true` en el mismo PR. `tools/facturas.js` y `assets/precios.js` no se
++  tocan en K1.
++
++## 8. Tablas (migración `2026-10-importacion-asistida`)
++
++Ver el bloque comentado en `tools/db.js`. Resumen de lo que no es obvio:
++
++- `importaciones`: además de lo del diseño, `precio_martillo`, `cargos_comprador` (para
++  recalcular el saldo) y `umbral_inspeccion` (el umbral que regía al guardar
++  `inspeccion_destacada`). `referencia` UNIQUE empezando por `I` (`I2026-XXXXX`, como
++  `referenciaServicio`). Nada cuelga con `ON DELETE CASCADE`: un expediente no se borra.
++- `importacion_aceptaciones` (**nueva respecto al diseño**, solo añadir): una fila por cada
++  aceptación (versión, huella, límite, usuario, IP de `CF-Connecting-IP`, fecha). Subir el límite
++  añade otra fila; `importaciones` guarda la última.
++- `importacion_eventos` (solo añadir): `de_estado` es `NULL` en la creación.
++- `importacion_movimientos` (solo añadir): `importe ≠ 0` en `ajuste`, `> 0` en los demás;
++  `tasa` obligatoria si `moneda = 'DOP'`; `referencia` y `corrige_id`.
++- `importacion_documentos`: patrón de `documentos_anuncio`; `formato` = MIME, `tipo` = qué
++  documento, `visible_cliente`.
++- `pagos.importacion_id` sin clave foránea (como `anuncio_id`), con índice.
++
++## 9. `tools/importacion.js` (lo implementa #152)
++
++Único punto de transición del expediente, como `tools/pagos.js` lo es de un cobro. Síncrono
++(`DatabaseSync`). Todo el SQL va en una sección nueva `── Importación ──` de `tools/db.js`.
++
++**Contexto `ctx`** (último argumento de cada función):
++`{ config, actor, usuarioId, ip, ahora, dependencias }`.
++- `config`: `Importacion.configuracion(...)`; por defecto `configuracion()`.
++- `actor`: `'cliente' | 'personal' | 'sistema'`. `usuarioId`: quien actúa (null en `sistema`).
++- `ahora`: ISO; por defecto `new Date().toISOString()`. Todos los plazos se cuentan desde aquí.
++- `dependencias.escribirEvento(fila)`: por defecto la función de `tools/db.js` que inserta en
++  `importacion_eventos`. Las pruebas la sustituyen por una que lanza para comprobar que estado y
++  evento se escriben juntos.
++- `config.estimarCostos({ importacion, lote, limitePuja })` → `{ version, lineas }` con las líneas
++  estimadas de `cargos_comprador`, fletes, `seguro`, `impuestos_aduana`, `agente_aduanal`,
++  `gastos_puerto` y `flete_rd`. En producción lo conectará K3 con `assets/importacion-cifras.js`
++  (K2); sin él, `desglose` lanza 503 `cifras_no_disponibles`.
++- `config.CONDICIONES_VERSION`: versión del documento legal `importacion` (C4). Sin ella,
++  `desglose` lanza 503 `condiciones_no_disponibles`.
++
++**Errores:** `Error` con `codigo` (HTTP) y `motivo` (texto fijo, para las pruebas y la API):
++
++| codigo | motivo | cuándo |
++|---|---|---|
++| 400 | `datos_invalidos` | falta o sobra algo, o no es entero; motivo obligatorio vacío |
++| 400 | `zona_no_permitida` | lote fuera de `ZONAS_PERMITIDAS` sin presupuesto ≥ `PRESUPUESTO_MIN_EXCEPCION_ZONA` o sin motivo |
++| 403 | `correo_sin_verificar` | `crearSolicitud` sin correo verificado |
++| 403 | `ajeno` | el expediente es de otra organización (lo comprueba la ruta; las funciones reciben `organizacionId` en lo del cliente) |
++| 404 | `no_existe` | expediente o lote inexistente |
++| 409 | `transicion_no_permitida` | `transicionPermitida` dice que no |
++| 409 | `cobro_sin_confirmar` | §3 |
++| 409 | `huella_distinta` | §5 |
++| 409 | `falta_documento` | informe o acta sin subir; contrato firmado con `FIRMA_CONTRATO = 'documento'` |
++| 409 | `sin_tiempo_para_inspeccion` | faltan menos de `PLAZO_MIN_INSPECCION_DIAS` para la subasta |
++| 409 | `martillo_sobre_limite` | martillo > `limite_puja` |
++| 501 | `decision_fiscal_pendiente` | `facturarCobro` (§7) |
++| 501 | `moneda_pendiente` | `MONEDA_COBRO = 'DOP'` en una función de cobro |
++| 503 | `servicio_apagado` | `config.IMPORTACION.asistida.activo` es `false` (toda función, antes de escribir nada) |
++| 503 | `inspeccion_apagada` | `pedirInspeccion` con `IMPORTACION.inspeccion.activa = false` |
++
++**Cada transición:** valida con `transicionPermitida` y las condiciones de §3; escribe estado,
++`actualizada`, `vence_accion` y el evento **en una sola transacción** (si algo lanza, nada queda
++escrito); devuelve el expediente leído de nuevo.
++
++**Funciones** (todas devuelven el expediente salvo que se diga):
++
++| Función | Actor | Qué hace |
++|---|---|---|
++| `transicionPermitida(de, a, actor)` | — | reexporta la del módulo |
++| `crearSolicitud(datos, ctx)` | cliente | `datos = { organizacionId, tipo_equipo, marca?, anio_min?, horas_max?, uso?, provincia_destino, zona_preferida?, presupuesto_declarado }`. Exige correo verificado de `ctx.usuarioId`. Guarda `inspeccion_destacada = destacarInspeccion(presupuesto)` y `umbral_inspeccion`. Estado `solicitada`, evento `NULL → solicitada`. |
++| `proponerLotes(id, lotes, ctx)` | personal | Inserta lotes `propuesto` (`zona`, `fecha_subasta` obligatorias). Fuera de zona: §errores. Si está en `en_busqueda`, pasa a `propuesta`. `vence_accion` = la subasta más próxima. |
++| `elegirLote(id, loteId, ctx)` | cliente | `propuesta → confirmacion`; el lote `elegido`, los demás `descartado`. `vence_accion` = su `fecha_subasta`. |
++| `pedirInspeccion(id, ctx)` | cliente | En `confirmacion`: `inspeccion = 'pedida'` (sin cambio de estado: el desglose cambia y hay que volver a verlo). |
++| `desglose(id, { limitePuja }, ctx)` | cliente | Solo lee. Devuelve `{ cifras_version, condiciones_version, limite_puja, deposito, lineas, total, huella }`. Líneas en orden de `CONCEPTOS`: `inspeccion` (si pedida), `comision_servicio` (`comisionServicio(limitePuja)`, estimada si es porcentaje), `cargo_aplicar_deposito`, `precio_equipo = limitePuja` (estimada: «hasta»), `cargos_comprador`, `comision_transferencia`, y las de `estimarCostos`. `deposito = depositoPara(limitePuja)` va aparte: es un anticipo del precio, no una línea más. |
++| `confirmar(id, { huella, limitePuja, aceptaCondiciones }, ctx)` | cliente | Recalcula el desglose; huella distinta → 409. Exige `aceptaCondiciones === true` (400). Guarda desglose, huella, versiones, límite, `modelo_fiscal` y `moneda_cobro` congelados, añade una fila en `importacion_aceptaciones` (IP de `ctx.ip`) y pasa a `deposito_pendiente` (`vence_accion` = subasta − `PLAZO_DEPOSITO_ANTES_SUBASTA_H`) o a `inspeccion_pendiente_pago` (subasta − `PLAZO_MIN_INSPECCION_DIAS`). Ignora cualquier importe de la entrada. |
++| `registrarPago(id, { etapa, referencia }, ctx)` | personal | Calcula **lo que falta** de lo exigido de la etapa (§3; tras subir el límite, solo la diferencia del depósito) y escribe los `cobro_cliente` (y los ajustes del depósito aplicado en `saldo`) con `es_estimado = 0` y esa `referencia`. No cambia estado ni escribe evento. Idempotente por `referencia`. Ignora cualquier importe de la entrada. Devuelve `{ movimientos, duplicado }`. |
++| `registrarMovimiento(id, { sentido, concepto, importe, referencia?, corrige_id?, nota? }, ctx)` | personal | Solo `pago_tercero` y `ajuste`. Un ajuste con `corrige_id` es el contramovimiento de ese movimiento: si no se da importe, lleva `−importeConSigno(corregido)` (un `pago_tercero` de 7777 se corrige con un ajuste de +7777). `cobro_cliente` y `devolucion_cliente` no se apuntan a mano (400). Devuelve el movimiento. |
++| `registrarResultado(id, { resultado, martillo?, cargosComprador? }, ctx)` | personal | `'ganada'`: martillo ≤ límite; guarda martillo y cargos; `pujando → ganada → saldo_pendiente` (dos eventos, una transacción); `vence_accion` = ahora + `PLAZO_SALDO_CLIENTE_DIAS`. `'perdida'`: `pujando → perdida`. |
++| `avanzar(id, a, ctx)` | según tabla | Transición genérica para lo que no tiene función propia (logística, `cancelada` con `ctx.nota`, caducidades del sistema). Aplica §3 y los documentos exigidos. |
++| `decidirTrasInforme(id, decision, ctx)` | cliente | `'seguir'` → `deposito_pendiente`; `'desistir'` → `desistida`. El movimiento de la inspección queda intacto. |
++| `desistir(id, ctx)` | cliente | → `desistida` desde los estados de la tabla. |
++| `marcarIncumplida(id, { motivo }, ctx)` | personal / sistema | `saldo_pendiente → incumplida`. |
++| `calcularDevolucion(id, ctx)` | — | Solo lee: `{ importe, motivo, politica }` con §4 sobre el libro del expediente. El estado previo es el actual, o el `de_estado` del último evento si está en `devolucion_pendiente`. |
++| `registrarDevolucion(id, { referencia }, ctx)` | personal | Escribe `devolucion_cliente` por cada concepto reembolsable con saldo positivo (suma = `calcularDevolucion`) y pasa a `cerrada`. |
++| `facturarCobro(id, movimientoId, ctx)` | — | 501 `decision_fiscal_pendiente` (§7). |
++
++**Correos:** K1 no envía ninguno (son K6). Nunca se envía nada a un contador; los únicos
++destinatarios posibles son el cliente y los buzones de `tools/correo.js`.
++
++## 10. Rutas (las implementa K3)
++
++Array plano de `tools/api.js`; las `/:id/...` antes que `/:id`, y `/admin/...` antes que la
++genérica. Con `asistida` apagado, todas responden **503**. Cuerpo y respuesta en JSON; los
++importes de la respuesta en centavos.
++
++| Método y ruta | Cuerpo | Llama a | Responde |
++|---|---|---|---|
++| `POST /api/importaciones` | datos de `crearSolicitud` | `crearSolicitud` | 201 expediente |
++| `GET /api/importaciones` | — | listar de la organización | 200 lista |
++| `GET /api/importaciones/:id` | — | leer (+ eventos, lotes, documentos visibles, libro) | 200 |
++| `POST /api/importaciones/:id/lote` | `{ loteId }` | `elegirLote` | 200 |
++| `POST /api/importaciones/:id/inspeccion` | — | `pedirInspeccion` | 200 |
++| `GET /api/importaciones/:id/desglose?limite=` | — | `desglose` | 200 |
++| `POST /api/importaciones/:id/confirmar` | `{ huella, limitePuja, aceptaCondiciones }` | `confirmar` | 200 / 409 |
++| `POST /api/importaciones/:id/decision` | `{ decision }` | `decidirTrasInforme` | 200 |
++| `POST /api/importaciones/:id/pago` | `{ etapa }` (sin importe) | instrucciones de pago de la etapa | 200 |
++| `POST /api/importaciones/:id/desistir` | — | `desistir` | 200 |
++| `POST /api/importaciones/:id/tras-perdida` | `{ eleccion: 'otro_lote' \| 'devolucion' }` | `avanzar` | 200 |
++| `GET /api/importaciones/:id/documentos/:doc` | — | descarga si `visible_cliente` | 200 / 404 |
++| `GET /api/admin/importaciones` | `?estado=` | bandeja por estado y `vence_accion` | 200 |
++| `GET /api/admin/importaciones/:id` | — | leer todo | 200 |
++| `POST /api/admin/importaciones/:id/lotes` | `{ lotes }` | `proponerLotes` | 200 |
++| `POST /api/admin/importaciones/:id/revision-datos` | revisión | (K7) | 200 |
++| `POST /api/admin/importaciones/:id/estado` | `{ a, nota }` | `avanzar` | 200 / 409 |
++| `POST /api/admin/importaciones/:id/resultado` | `{ resultado, martillo, cargosComprador }` | `registrarResultado` | 200 |
++| `POST /api/admin/importaciones/:id/movimientos` | movimiento | `registrarMovimiento` | 201 |
++| `POST /api/admin/importaciones/:id/documentos` | archivo | (patrón de `tools/documentos.js`) | 201 |
++| `POST /api/admin/importaciones/:id/pagos/:etapa/recibido` | `{ referencia }` | `registrarPago` | 200 |
++| `POST /api/admin/importaciones/:id/incumplida` | `{ motivo }` | `marcarIncumplida` | 200 |
++| `POST /api/admin/importaciones/:id/devolucion` | `{ referencia }` | `registrarDevolucion` | 200 |
++
++401 sin sesión, 403 de otra organización (o sin rol de personal en `/admin`), 404, 409 y 503
++como en §9. Una ruta cuyo contexto puede ser `null` comprueba `!!ctx`. Todo lo del personal
++queda en `bitacora_admin`.
++
++## 11. Pendiente de terceros (no frena construir, solo encender)
++
++Contador: `MODELO_FISCAL` y todo §7. Victor: precio de inspección por zona, comisión, plazos,
++política de cobro, moneda y tasa, colchón, qué se retiene si la empresa cancela. Abogado:
++contrato `importacion`, cláusulas de #114, `FIRMA_CONTRATO`, devoluciones. Subasta (#115):
++porcentaje del depósito, cargo por aplicarlo, comisión por transferencia, plazos y multas.
+-- 
+2.43.0
+
+
+From 818928b2f0a2572415f2e4ff63ab1a248a911968 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 22:05:39 +0000
+Subject: [PATCH 6/6] =?UTF-8?q?Importaci=C3=B3n=20asistida:=20arn=C3=A9s?=
+ =?UTF-8?q?=20que=20fija=20transiciones=20y=20dinero=20antes=20de=20implem?=
+ =?UTF-8?q?entar?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Falla a propósito hasta que #152 escriba tools/importacion.js; por eso aún
+no va en CI. La sección fiscal está saltada hasta la decisión del contador.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ tools/probar-importacion.js | 524 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 524 insertions(+)
+ create mode 100644 tools/probar-importacion.js
+
+diff --git a/tools/probar-importacion.js b/tools/probar-importacion.js
+new file mode 100644
+index 0000000..fa09bdc
+--- /dev/null
++++ b/tools/probar-importacion.js
+@@ -0,0 +1,524 @@
++/**
++ * probar-importacion.js — fase 14, base C3 (#149): el punto único de
++ * transición del expediente, `tools/importacion.js`.
++ *
++ *   node tools/probar-importacion.js
++ *
++ * POR QUÉ EXISTE
++ *
++ * Hay dinero de clientes en juego: depósitos de subasta, saldos de
++ * decenas de miles de dólares, devoluciones. Estas pruebas fijan el
++ * comportamiento ANTES de que se escriba el código (#152), que se
++ * implementa hasta que pasen SIN tocarlas. La especificación es
++ * `.planning/importacion-contrato.md`; si una prueba y el contrato no
++ * casan, se corrige el contrato y se avisa, no la prueba a escondidas.
++ *
++ * Con la base sola (sin `tools/importacion.js`) este arnés FALLA a
++ * propósito: por eso aún no está en CI. Se cuelga cuando pase.
++ *
++ * Los parámetros inyectados son VALORES DE PRUEBA, números redondos para
++ * hacer las cuentas a mano. No son cifras reales ni propuestas de precio
++ * o comisión. La parte fiscal está SALTADA: depende de que el contador
++ * decida si la empresa es mandataria o revendedora (sección 12).
++ *
++ * Corre contra una base TEMPORAL en `.tmp/prueba-importacion/`.
++ */
++
++const fs = require('fs');
++const path = require('path');
++
++/* Antes de cargar db.js: la ruta de la base, el correo, el secreto y la
++   carpeta de documentos se leen al importarlo. Si se fijan después, la
++   prueba corre contra la base equivocada. */
++const BANCO = path.join(__dirname, '..', '.tmp', 'prueba-importacion');
++fs.rmSync(BANCO, { recursive: true, force: true });
++fs.mkdirSync(BANCO, { recursive: true });
++process.env.MERCA_DB = path.join(BANCO, 'prueba.db');
++process.env.MERCA_CORREO = 'archivo';
++process.env.MERCA_CORREOS = path.join(BANCO, 'correos');
++process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
++process.env.MERCA_DOCUMENTOS = path.join(BANCO, 'documentos');
++
++const db = require('./db.js');
++const correo = require('./correo.js');
++const Importacion = require('../assets/importacion.js');
++
++let imp;
++try {
++  imp = require('./importacion.js');
++} catch (e) {
++  if (e.code !== 'MODULE_NOT_FOUND' || !/importacion\.js/.test(e.message)) throw e;
++  console.log('\n  MAL tools/importacion.js aún no existe: lo implementa #152 siguiendo .planning/importacion-contrato.md');
++  process.exit(1);
++}
++
++let bien = 0;
++let mal = 0;
++let saltadas = 0;
++function comprobar(condicion, que) {
++  if (condicion) { bien++; console.log(`  ok  ${que}`); return; }
++  mal++;
++  console.log(`  MAL ${que}`);
++}
++function saltar(que, porque) {
++  saltadas++;
++  console.log(`  --  SALTADA ${que} (${porque})`);
++}
++const lanza = (fn) => { try { fn(); return null; } catch (e) { return e; } };
++function lanzaCon(fn, codigo, motivo, que) {
++  const e = lanza(fn);
++  comprobar(!!e && e.codigo === codigo && (!motivo || e.motivo === motivo),
++    `${que} → ${codigo}${motivo ? ` ${motivo}` : ''}${e ? ` (dio ${e.codigo} ${e.motivo || e.message})` : ' (no lanzó)'}`);
++  return e;
++}
++/* Una sección entera no puede tumbar las siguientes: si la
++   implementación aún no está, se anota como fallo y se sigue. */
++function seccion(titulo, fn) {
++  console.log(`\n${titulo}`);
++  const e = lanza(fn);
++  if (e) comprobar(false, `la sección terminó con una excepción: ${e.codigo || ''} ${e.motivo || ''} ${e.message}`);
++}
++
++const d = () => db.abrir();
++const fila = (sql, ...args) => d().prepare(sql).get(...args);
++const todas = (sql, ...args) => d().prepare(sql).all(...args);
++const contar = (tabla, donde = '1 = 1', ...args) => fila(`SELECT COUNT(*) AS n FROM ${tabla} WHERE ${donde}`, ...args).n;
++const expediente = (id) => fila('SELECT * FROM importaciones WHERE id = ?', id);
++const libro = (id) => todas('SELECT * FROM importacion_movimientos WHERE importacion_id = ? ORDER BY id', id);
++const eventos = (id) => todas('SELECT * FROM importacion_eventos WHERE importacion_id = ? ORDER BY id', id);
++const sumaDe = (movs, conceptos) => movs.filter((m) => conceptos.includes(m.concepto))
++  .reduce((s, m) => s + Importacion.importeConSigno(m), 0);
++const idDe = (r) => (r && (r.id || (r.expediente && r.expediente.id))) || null;
++
++/* ── Escenario ───────────────────────────────────────────── */
++
++const AHORA = '2026-11-02T12:00:00.000Z';
++const masDias = (iso, dias) => new Date(Date.parse(iso) + dias * 86400000).toISOString();
++const masHoras = (iso, h) => new Date(Date.parse(iso) + h * 3600000).toISOString();
++const SUBASTA = masDias(AHORA, 10);
++
++const COSTOS_ESTIMADOS = [
++  { concepto: 'cargos_comprador', importe: 150000 },
++  { concepto: 'flete_terrestre_eeuu', importe: 200000 },
++  { concepto: 'flete_maritimo', importe: 400000 },
++  { concepto: 'seguro', importe: 30000 },
++  { concepto: 'impuestos_aduana', importe: 900000 },
++  { concepto: 'agente_aduanal', importe: 50000 },
++  { concepto: 'gastos_puerto', importe: 40000 },
++  { concepto: 'flete_rd', importe: 80000 },
++].map((l) => Object.assign({ moneda: 'USD', es_estimado: true }, l));
++
++// VALORES DE PRUEBA. Ninguno es una cifra real ni una propuesta.
++const BASE_PRUEBA = {
++  IMPORTACION: { asistida: { activo: true }, inspeccion: { activa: true } },
++  PRECIO_INSPECCION_POR_ZONA: { TX: 60000, FL: 60000, PA: 60000, EXCEPCION: 90000 },
++  COMISION_SERVICIO: { forma: 'fija', importe: 100000 },
++  PRESUPUESTO_MIN_EXCEPCION_ZONA: 8000000,
++  PORCENTAJE_DEPOSITO_SUBASTA: 1000, // 10 %
++  CARGO_APLICAR_DEPOSITO: 300, // 3 %
++  COMISION_TRANSFERENCIA: 5000,
++  PLAZO_PAGO_SUBASTA_DIAS: 7, PLAZO_RETIRO_DIAS: 10, MULTAS_SUBASTA: {},
++  PLAZO_PROPUESTA_DIAS: 5, PLAZO_SALDO_CLIENTE_DIAS: 3, PLAZO_DEPOSITO_ANTES_SUBASTA_H: 48,
++  PLAZO_MIN_INSPECCION_DIAS: 3, PLAZO_DECISION_TRAS_INFORME_H: 24, PLAZO_AJUSTE_DIAS: 5,
++  PLAZO_DEVOLUCION_DIAS: 10, RECORDATORIOS_SALDO_H: [48, 24],
++  POLITICA_COBRO: 'al_ganar', COLCHON_IMPREVISTOS: 0, MONEDA_COBRO: 'USD', FIRMA_CONTRATO: 'en_linea',
++  DEVOLUCION_SI_PERDIDA: { retiene: [], descuento: 2500 },
++  DEVOLUCION_SIN_PUJA: { retiene: [], descuento: 0 },
++  CONDICIONES_VERSION: 'prueba-condiciones-1',
++  estimarCostos: () => ({ version: 'prueba-cifras-1', lineas: COSTOS_ESTIMADOS.map((l) => Object.assign({}, l)) }),
++  // MODELO_FISCAL se deja en null a propósito: nada de lo que se prueba
++  // aquí puede depender de él (sección 12).
++};
++const config = (cambios) => Importacion.configuracion(Object.assign({}, BASE_PRUEBA, cambios));
++const CONFIG = config();
++
++const { idUsuario: CLIENTE, idOrg: ORG } = db.crearCuenta({
++  correo: 'cliente-importacion@prueba.do', clave: 'UnaClaveLargaYSegura9', nombre: 'Cliente Importación',
++  telefono: '8095550101', tipo: 'particular',
++});
++const { idUsuario: SIN_VERIFICAR, idOrg: ORG_SIN_VERIFICAR } = db.crearCuenta({
++  correo: 'sin-verificar@prueba.do', clave: 'UnaClaveLargaYSegura9', nombre: 'Sin Verificar',
++  telefono: '8095550102', tipo: 'particular',
++});
++const { idUsuario: PERSONAL } = db.crearCuenta({
++  correo: 'personal-importacion@prueba.do', clave: 'UnaClaveLargaYSegura9', nombre: 'Personal',
++  telefono: '8095550103', tipo: 'particular',
++});
++d().prepare('UPDATE usuarios SET correo_verificado = 1 WHERE id IN (?, ?)').run(CLIENTE, PERSONAL);
++d().prepare('UPDATE usuarios SET correo_verificado = 0 WHERE id = ?').run(SIN_VERIFICAR);
++
++const ctx = (actor, extra = {}) => Object.assign({
++  config: CONFIG, actor, ahora: AHORA, ip: '203.0.113.7',
++  usuarioId: actor === 'cliente' ? CLIENTE : actor === 'personal' ? PERSONAL : null,
++}, extra);
++const cliente = (extra) => ctx('cliente', extra);
++const personal = (extra) => ctx('personal', extra);
++const sistema = (extra) => ctx('sistema', extra);
++
++const DATOS = {
++  organizacionId: ORG, tipo_equipo: 'excavadora', marca: 'Caterpillar', anio_min: 2015, horas_max: 8000,
++  uso: 'construcción', provincia_destino: 'Santo Domingo', zona_preferida: 'TX', presupuesto_declarado: 5000000,
++};
++
++let nLote = 0;
++const lote = (cambios = {}) => Object.assign({
++  subasta: 'ritchie_bros', numero_lote: `L-${++nLote}`, zona: 'TX', estado_eeuu: 'TX',
++  fecha_subasta: SUBASTA, marca: 'Caterpillar', modelo: '320', anio: 2018, horas: 5000, serie: 'CAT0320X1',
++}, cambios);
++
++/* Lleva un expediente nuevo hasta `confirmacion` con un lote elegido. */
++function hastaConfirmacion(c = CONFIG, cambiosLote = {}) {
++  const e = imp.crearSolicitud(Object.assign({}, DATOS), cliente({ config: c }));
++  const id = idDe(e);
++  imp.avanzar(id, 'en_busqueda', personal({ config: c }));
++  imp.proponerLotes(id, [lote(cambiosLote)], personal({ config: c }));
++  const loteId = fila("SELECT id FROM importacion_lotes WHERE importacion_id = ? AND estado = 'propuesto'", id).id;
++  imp.elegirLote(id, loteId, cliente({ config: c }));
++  return { id, loteId };
++}
++function confirmarCon(id, limite, c = CONFIG) {
++  const g = imp.desglose(id, { limitePuja: limite }, cliente({ config: c }));
++  imp.confirmar(id, { huella: g.huella, limitePuja: limite, aceptaCondiciones: true }, cliente({ config: c }));
++  return g;
++}
++/* Hasta `pujando` con el depósito pagado. */
++function hastaPujando(c = CONFIG, limite = 5000000) {
++  const { id } = hastaConfirmacion(c);
++  confirmarCon(id, limite, c);
++  imp.registrarPago(id, { etapa: 'deposito', referencia: `DEP-${id}` }, personal({ config: c }));
++  imp.avanzar(id, 'lista_para_pujar', personal({ config: c }));
++  imp.avanzar(id, 'pujando', personal({ config: c }));
++  return id;
++}
++function subirInforme(id) {
++  d().prepare(`INSERT INTO importacion_documentos (id, importacion_id, tipo, nombre, formato, bytes, ruta, visible_cliente, creado)
++               VALUES (?, ?, 'informe_inspeccion', 'informe.pdf', 'application/pdf', 100, ?, 1, ?)`)
++    .run(db.id(), id, `importaciones/${id}/${db.id()}.pdf`, AHORA);
++}
++
++/* ── 1 · Interruptor apagado ─────────────────────────────── */
++seccion('1 · Con el servicio apagado nada escribe', () => {
++  const apagado = config({ IMPORTACION: { asistida: { activo: false } } });
++  const antes = contar('importaciones');
++  lanzaCon(() => imp.crearSolicitud(Object.assign({}, DATOS), cliente({ config: apagado })), 503, 'servicio_apagado', 'crearSolicitud apagado');
++  comprobar(contar('importaciones') === antes, 'no se creó ningún expediente');
++
++  const { id } = hastaConfirmacion();
++  const ev = eventos(id).length;
++  const mov = libro(id).length;
++  const g = imp.desglose(id, { limitePuja: 5000000 }, cliente());
++  lanzaCon(() => imp.confirmar(id, { huella: g.huella, limitePuja: 5000000, aceptaCondiciones: true }, cliente({ config: apagado })),
++    503, 'servicio_apagado', 'confirmar apagado');
++  lanzaCon(() => imp.registrarPago(id, { etapa: 'deposito', referencia: 'X' }, personal({ config: apagado })), 503, 'servicio_apagado', 'registrarPago apagado');
++  lanzaCon(() => imp.avanzar(id, 'cancelada', personal({ config: apagado, nota: 'x' })), 503, 'servicio_apagado', 'avanzar apagado');
++  lanzaCon(() => imp.desistir(id, cliente({ config: apagado })), 503, 'servicio_apagado', 'desistir apagado');
++  comprobar(expediente(id).estado === 'confirmacion', 'el estado no cambió');
++  comprobar(eventos(id).length === ev && libro(id).length === mov, 'ni eventos ni movimientos nuevos');
++});
++
++/* ── 2 · Crear la solicitud ─────────────────────────────── */
++seccion('2 · Crear la solicitud', () => {
++  lanzaCon(() => imp.crearSolicitud(Object.assign({}, DATOS, { organizacionId: ORG_SIN_VERIFICAR }),
++    ctx('cliente', { usuarioId: SIN_VERIFICAR })), 403, 'correo_sin_verificar', 'sin correo verificado');
++  lanzaCon(() => imp.crearSolicitud(Object.assign({}, DATOS, { presupuesto_declarado: 50000.5 }), cliente()),
++    400, 'datos_invalidos', 'presupuesto con decimales');
++
++  const id = idDe(imp.crearSolicitud(Object.assign({}, DATOS), cliente()));
++  const e = expediente(id);
++  comprobar(!!e && e.estado === 'solicitada', 'nace en solicitada');
++  comprobar(/^I\d{4}-/.test(e.referencia), `referencia con la letra I (${e.referencia})`);
++  comprobar(e.inspeccion_destacada === 1 && e.umbral_inspeccion === 4000000, 'US$50,000 ≥ umbral: inspección destacada, con el umbral guardado');
++  const ev = eventos(id);
++  comprobar(ev.length === 1 && ev[0].de_estado === null && ev[0].a_estado === 'solicitada' && ev[0].actor === 'cliente',
++    'un evento NULL → solicitada del cliente');
++
++  const id2 = idDe(imp.crearSolicitud(Object.assign({}, DATOS, { presupuesto_declarado: 3999999 }), cliente()));
++  comprobar(expediente(id2).inspeccion_destacada === 0, 'un centavo por debajo del umbral: no destacada');
++
++  lanzaCon(() => imp.avanzar(id, 'en_busqueda', cliente()), 409, 'transicion_no_permitida', 'el cliente no puede pasar a en_busqueda');
++  lanzaCon(() => imp.avanzar(id, 'pujando', personal()), 409, 'transicion_no_permitida', 'de solicitada a pujando');
++  comprobar(expediente(id).estado === 'solicitada' && eventos(id).length === 1, 'el estado no cambió');
++});
++
++/* ── 3 · Lotes y zonas ───────────────────────────────────── */
++seccion('3 · Lotes fuera de zona', () => {
++  const id = idDe(imp.crearSolicitud(Object.assign({}, DATOS), cliente()));
++  imp.avanzar(id, 'en_busqueda', personal());
++  lanzaCon(() => imp.proponerLotes(id, [lote({ zona: 'CA', estado_eeuu: 'CA' })], personal()), 400, 'zona_no_permitida',
++    'fuera de zona con presupuesto por debajo del mínimo');
++  comprobar(expediente(id).estado === 'en_busqueda' && contar('importacion_lotes', 'importacion_id = ?', id) === 0, 'no se guardó nada');
++
++  const id2 = idDe(imp.crearSolicitud(Object.assign({}, DATOS, { presupuesto_declarado: 9000000 }), cliente()));
++  imp.avanzar(id2, 'en_busqueda', personal());
++  lanzaCon(() => imp.proponerLotes(id2, [lote({ zona: 'CA' })], personal()), 400, 'zona_no_permitida', 'fuera de zona sin motivo');
++  imp.proponerLotes(id2, [lote({ zona: 'CA', excepcion_zona: 1, motivo_excepcion: 'Única unidad en el presupuesto' })], personal());
++  const l = fila('SELECT * FROM importacion_lotes WHERE importacion_id = ?', id2);
++  comprobar(!!l && l.excepcion_zona === 1 && expediente(id2).estado === 'propuesta', 'con presupuesto y motivo: excepción anotada y en propuesta');
++});
++
++/* ── 4 · Desglose y huella ───────────────────────────────── */
++seccion('4 · El desglose sale del servidor y la huella manda', () => {
++  const { id } = hastaConfirmacion();
++  const g = imp.desglose(id, { limitePuja: 5000000, importe: 1, lineas: [] }, cliente());
++  comprobar(/^[0-9a-f]{64}$/.test(g.huella), 'huella SHA-256 en hex');
++  comprobar(g.huella === Importacion.huellaDesglose(g), 'la huella es la del contrato (JSON canónico)');
++  comprobar(g.deposito === 500000, 'depósito = 10 % de prueba de US$50,000');
++  comprobar(g.cifras_version === 'prueba-cifras-1' && g.condiciones_version === 'prueba-condiciones-1', 'con las versiones de cifras y condiciones');
++  const por = Object.fromEntries(g.lineas.map((l) => [l.concepto, l]));
++  comprobar(por.precio_equipo && por.precio_equipo.importe === 5000000, 'precio del equipo = el límite');
++  comprobar(por.cargo_aplicar_deposito && por.cargo_aplicar_deposito.importe === 15000, 'cargo por aplicar el depósito = 3 % de prueba del depósito');
++  comprobar(por.comision_servicio && por.comision_servicio.importe === 100000, 'comisión de prueba');
++  comprobar(!por.inspeccion, 'sin inspección pedida no hay línea de inspección');
++  comprobar(!por.deposito_puja, 'el depósito no es una línea más (es un anticipo del precio)');
++  comprobar(g.lineas.every((l) => Number.isSafeInteger(l.importe)), 'todos los importes enteros');
++  const orden = g.lineas.map((l) => Importacion.CONCEPTOS.indexOf(l.concepto));
++  comprobar(orden.every((x, i) => i === 0 || orden[i - 1] < x), 'líneas en el orden de CONCEPTOS');
++  comprobar(g.total === g.lineas.reduce((s, l) => s + l.importe, 0), 'el total es la suma de las líneas');
++
++  const ev = eventos(id).length;
++  lanzaCon(() => imp.confirmar(id, { huella: 'f'.repeat(64), limitePuja: 5000000, aceptaCondiciones: true }, cliente()),
++    409, 'huella_distinta', 'otra huella');
++  lanzaCon(() => imp.confirmar(id, { huella: g.huella, limitePuja: 6000000, aceptaCondiciones: true }, cliente()),
++    409, 'huella_distinta', 'la huella de un límite con otro límite');
++  lanzaCon(() => imp.confirmar(id, { huella: g.huella, limitePuja: 5000000, aceptaCondiciones: false }, cliente()),
++    400, 'datos_invalidos', 'sin aceptar las condiciones');
++  comprobar(expediente(id).estado === 'confirmacion' && eventos(id).length === ev, 'nada cambió');
++  comprobar(contar('importacion_aceptaciones', 'importacion_id = ?', id) === 0, 'ninguna aceptación guardada');
++
++  imp.confirmar(id, { huella: g.huella, limitePuja: 5000000, aceptaCondiciones: true, importe: 1, total: 1, deposito: 1 }, cliente());
++  const e = expediente(id);
++  comprobar(e.estado === 'deposito_pendiente', 'confirmado: deposito_pendiente');
++  comprobar(e.desglose_huella === g.huella && e.limite_puja === 5000000, 'guarda la huella y el límite firmados');
++  comprobar(JSON.parse(e.desglose_json).total === g.total, 'el desglose guardado es el del servidor, no el importe de la entrada');
++  comprobar(e.vence_accion === masHoras(SUBASTA, -48), 'vence 48 h (de prueba) antes de la subasta');
++  const a = todas('SELECT * FROM importacion_aceptaciones WHERE importacion_id = ?', id);
++  comprobar(a.length === 1 && a[0].ip === '203.0.113.7' && a[0].desglose_huella === g.huella && a[0].limite_puja === 5000000,
++    'una aceptación con IP, huella y límite');
++});
++
++/* ── 5 · Depósito antes de pujar ─────────────────────────── */
++seccion('5 · Sin depósito confirmado no se puja', () => {
++  const { id } = hastaConfirmacion();
++  confirmarCon(id, 5000000);
++  lanzaCon(() => imp.avanzar(id, 'lista_para_pujar', personal()), 409, 'cobro_sin_confirmar', 'lista_para_pujar sin depósito');
++  comprobar(expediente(id).estado === 'deposito_pendiente', 'sigue en deposito_pendiente');
++
++  const ev = eventos(id).length;
++  imp.registrarPago(id, { etapa: 'deposito', referencia: 'TRF-D1', importe: 1, concepto: 'otro' }, personal());
++  let movs = libro(id);
++  comprobar(movs.length === 1 && movs[0].concepto === 'deposito_puja' && movs[0].importe === 500000 && movs[0].sentido === 'cobro_cliente'
++    && movs[0].es_estimado === 0, 'el cobro es el depósito calculado (500000), no el importe de la entrada');
++  comprobar(eventos(id).length === ev, 'registrar un pago no escribe evento');
++  const r = imp.registrarPago(id, { etapa: 'deposito', referencia: 'TRF-D1' }, personal());
++  comprobar(libro(id).length === 1 && r && r.duplicado === true, 'el mismo pago dos veces: un solo movimiento y duplicado = true');
++  comprobar(eventos(id).length === ev, 'ni un evento de más');
++
++  imp.avanzar(id, 'lista_para_pujar', personal());
++  comprobar(expediente(id).estado === 'lista_para_pujar', 'con el depósito: lista_para_pujar');
++
++  // Subir el límite exige otra confirmación y la diferencia del depósito.
++  imp.avanzar(id, 'confirmacion', cliente());
++  const g2 = imp.desglose(id, { limitePuja: 6000000 }, cliente());
++  comprobar(g2.huella !== expediente(id).desglose_huella, 'otro límite, otra huella');
++  imp.confirmar(id, { huella: g2.huella, limitePuja: 6000000, aceptaCondiciones: true }, cliente());
++  comprobar(contar('importacion_aceptaciones', 'importacion_id = ?', id) === 2, 'la aceptación nueva se añade; la primera sigue');
++  lanzaCon(() => imp.avanzar(id, 'lista_para_pujar', personal()), 409, 'cobro_sin_confirmar', 'con el depósito del límite viejo no basta');
++  imp.registrarPago(id, { etapa: 'deposito', referencia: 'TRF-D2' }, personal());
++  movs = libro(id);
++  comprobar(movs.length === 2 && movs[1].importe === 100000, 'solo se cobra la diferencia (100000)');
++  imp.avanzar(id, 'lista_para_pujar', personal());
++  imp.avanzar(id, 'pujando', personal());
++  comprobar(expediente(id).estado === 'pujando', 'ahora sí se puja');
++  lanzaCon(() => imp.desistir(id, cliente()), 409, 'transicion_no_permitida', 'pujando ya no se desiste');
++});
++
++/* ── 6 · Ganar y pagar la subasta ────────────────────────── */
++seccion('6 · Sin saldo confirmado no se paga la subasta', () => {
++  const id = hastaPujando();
++  lanzaCon(() => imp.registrarResultado(id, { resultado: 'ganada', martillo: 5000001, cargosComprador: 0 }, personal()),
++    409, 'martillo_sobre_limite', 'martillo por encima del límite firmado');
++  comprobar(expediente(id).estado === 'pujando', 'sigue pujando');
++
++  imp.registrarResultado(id, { resultado: 'ganada', martillo: 3000000, cargosComprador: 150000 }, personal());
++  const e = expediente(id);
++  comprobar(e.estado === 'saldo_pendiente', 'ganada → saldo_pendiente');
++  comprobar(eventos(id).slice(-2).map((x) => x.a_estado).join(',') === 'ganada,saldo_pendiente', 'dos eventos: ganada y saldo_pendiente');
++  comprobar(e.vence_accion === masDias(AHORA, 3), 'el saldo vence en PLAZO_SALDO_CLIENTE_DIAS (3, de prueba)');
++  lanzaCon(() => imp.avanzar(id, 'pagada_subasta', personal()), 409, 'cobro_sin_confirmar', 'pagada_subasta sin saldo');
++
++  imp.registrarPago(id, { etapa: 'saldo', referencia: 'TRF-S1', importe: 1 }, personal());
++  const movs = libro(id);
++  const lineas = Importacion.lineasSaldo({ martillo: 3000000, cargosComprador: 150000, deposito: 500000,
++    desglose: JSON.parse(e.desglose_json), config: CONFIG });
++  const exigido = lineas.reduce((s, l) => s + l.importe, 0);
++  const cobrado = movs.filter((m) => m.sentido === 'cobro_cliente').reduce((s, m) => s + m.importe, 0);
++  comprobar(cobrado === 500000 + exigido - 500000, `se cobra el saldo menos el depósito (${exigido - 500000}), ni un centavo más`);
++  const aplicados = movs.filter((m) => m.sentido === 'ajuste');
++  comprobar(aplicados.length === 2 && aplicados.some((m) => m.concepto === 'deposito_puja' && m.importe === -500000)
++    && aplicados.some((m) => m.concepto === 'precio_equipo' && m.importe === 500000), 'el depósito aplicado: un par de ajustes al precio');
++  comprobar(Importacion.saldoCliente(movs) === exigido, 'el saldo del cliente cuadra con lo exigido');
++  comprobar(sumaDe(movs, ['deposito_puja']) === 0, 'el depósito quedó aplicado entero');
++  imp.avanzar(id, 'pagada_subasta', personal());
++  comprobar(expediente(id).estado === 'pagada_subasta', 'con el saldo: pagada_subasta');
++  imp.avanzar(id, 'retiro', personal());
++  comprobar(expediente(id).estado === 'retiro', "con 'al_ganar' el flete ya iba en el saldo: retiro sin otro cobro");
++});
++
++/* ── 7 · Por etapa: cada tramo antes de contratarlo ──────── */
++seccion("7 · Con 'por_etapa', ningún tramo sin su cobro", () => {
++  const c = config({ POLITICA_COBRO: 'por_etapa' });
++  const id = hastaPujando(c);
++  imp.registrarResultado(id, { resultado: 'ganada', martillo: 3000000, cargosComprador: 150000 }, personal({ config: c }));
++  imp.registrarPago(id, { etapa: 'saldo', referencia: 'PE-S' }, personal({ config: c }));
++  imp.avanzar(id, 'pagada_subasta', personal({ config: c }));
++  const tramo = (a, etapa, antes = []) => {
++    for (const b of antes) imp.avanzar(id, b, personal({ config: c }));
++    lanzaCon(() => imp.avanzar(id, a, personal({ config: c })), 409, 'cobro_sin_confirmar', `${a} sin el cobro de ${etapa}`);
++    imp.registrarPago(id, { etapa, referencia: `PE-${etapa}` }, personal({ config: c }));
++    imp.avanzar(id, a, personal({ config: c }));
++    comprobar(expediente(id).estado === a, `${a} con el cobro de ${etapa}`);
++  };
++  tramo('retiro', 'flete_eeuu');
++  tramo('transito_maritimo', 'maritimo', ['transito_terrestre', 'puerto_origen']);
++  tramo('endosada', 'aduana', ['en_aduana']);
++  tramo('transporte_rd', 'flete_rd');
++  const movs = libro(id);
++  comprobar(sumaDe(movs, ['flete_maritimo', 'seguro']) === 430000, 'el tramo marítimo cobró flete y seguro estimados');
++  lanzaCon(() => imp.avanzar(id, 'entregada', personal({ config: c })), 409, 'falta_documento', 'entregada sin acta');
++});
++
++/* ── 8 · Estado y evento juntos ──────────────────────────── */
++seccion('8 · Si falla el evento, el estado no cambia', () => {
++  const id = idDe(imp.crearSolicitud(Object.assign({}, DATOS), cliente()));
++  const ev = eventos(id).length;
++  const rota = { escribirEvento: () => { throw new Error('evento roto a propósito'); } };
++  const e = lanza(() => imp.avanzar(id, 'en_busqueda', personal({ dependencias: rota })));
++  comprobar(!!e, 'la transición lanza');
++  comprobar(expediente(id).estado === 'solicitada', 'el estado sigue en solicitada');
++  comprobar(eventos(id).length === ev, 'no quedó evento a medias');
++  imp.avanzar(id, 'en_busqueda', personal());
++  comprobar(expediente(id).estado === 'en_busqueda', 'con el evento sano, la misma transición entra');
++});
++
++/* ── 9 · El libro es de solo añadir ──────────────────────── */
++seccion('9 · El libro solo se corrige con contramovimientos', () => {
++  const borra = /(actualiz|modific|borr|elimin|anul|editar|cambiar).*movimiento|movimiento.*(actualiz|modific|borr|elimin)/i;
++  const nombres = Object.keys(imp).concat(Object.keys(db));
++  const culpables = nombres.filter((n) => borra.test(n));
++  comprobar(culpables.length === 0, `ninguna función actualiza ni borra un movimiento${culpables.length ? `: ${culpables.join(', ')}` : ''}`);
++  const fuente = fs.readFileSync(path.join(__dirname, 'importacion.js'), 'utf8');
++  comprobar(!/(UPDATE|DELETE\s+FROM)\s+importacion_movimientos/i.test(fuente), 'tools/importacion.js no tiene UPDATE ni DELETE sobre el libro');
++
++  const id = hastaPujando();
++  const antes = Importacion.saldoCliente(libro(id));
++  const malo = imp.registrarMovimiento(id, { sentido: 'pago_tercero', concepto: 'multa_subasta', importe: 7777, nota: 'por error' }, personal());
++  const idMalo = (malo && malo.id) || libro(id).slice(-1)[0].id;
++  comprobar(Importacion.saldoCliente(libro(id)) === antes - 7777, 'el pago equivocado resta');
++  imp.registrarMovimiento(id, { sentido: 'ajuste', concepto: 'multa_subasta', corrige_id: idMalo, nota: 'corrige el anterior' }, personal());
++  const movs = libro(id);
++  const contra = movs.slice(-1)[0];
++  comprobar(contra.corrige_id === idMalo && contra.importe === 7777, 'el contramovimiento apunta al corregido y lleva el signo contrario');
++  comprobar(Importacion.saldoCliente(movs) === antes, 'el saldo vuelve a cuadrar');
++  comprobar(movs.some((m) => m.id === idMalo && m.importe === 7777), 'el movimiento equivocado sigue en el libro, intacto');
++  lanzaCon(() => imp.registrarMovimiento(id, { sentido: 'cobro_cliente', concepto: 'deposito_puja', importe: 1 }, personal()),
++    400, 'datos_invalidos', 'un cobro no se apunta a mano (sale de registrarPago)');
++});
++
++/* ── 10 · Inspección ─────────────────────────────────────── */
++seccion('10 · La inspección: opcional, cobrada antes, no reembolsable', () => {
++  const sinInspeccion = config({ IMPORTACION: { asistida: { activo: true }, inspeccion: { activa: false } } });
++  const a = hastaConfirmacion(sinInspeccion);
++  lanzaCon(() => imp.pedirInspeccion(a.id, cliente({ config: sinInspeccion })), 503, 'inspeccion_apagada', 'inspección apagada');
++
++  const cerca = hastaConfirmacion(CONFIG, { fecha_subasta: masDias(AHORA, 2) });
++  lanzaCon(() => imp.pedirInspeccion(cerca.id, cliente()), 409, 'sin_tiempo_para_inspeccion', 'subasta en 2 días con mínimo de 3');
++
++  const { id } = hastaConfirmacion();
++  imp.pedirInspeccion(id, cliente());
++  comprobar(expediente(id).inspeccion === 'pedida' && expediente(id).estado === 'confirmacion', 'pedida, sin cambiar de estado');
++  const g = confirmarCon(id, 5000000);
++  comprobar(g.lineas.some((l) => l.concepto === 'inspeccion' && l.importe === 60000), 'el desglose incluye la inspección de su zona');
++  comprobar(expediente(id).estado === 'inspeccion_pendiente_pago', 'confirmar con inspección: inspeccion_pendiente_pago');
++  lanzaCon(() => imp.avanzar(id, 'inspeccion_en_curso', personal()), 409, 'cobro_sin_confirmar', 'no se contrata al inspector sin cobrar');
++  imp.registrarPago(id, { etapa: 'inspeccion', referencia: 'INS-1', importe: 1 }, personal());
++  comprobar(sumaDe(libro(id), ['inspeccion']) === 60000, 'se cobra el precio de la zona, no el importe de la entrada');
++  imp.avanzar(id, 'inspeccion_en_curso', personal());
++  lanzaCon(() => imp.avanzar(id, 'inspeccion_entregada', personal()), 409, 'falta_documento', 'entregada sin informe');
++  subirInforme(id);
++  imp.avanzar(id, 'inspeccion_entregada', personal());
++  const antes = libro(id).map((m) => `${m.id}:${m.importe}`).join('|');
++  imp.decidirTrasInforme(id, 'desistir', cliente());
++  comprobar(expediente(id).estado === 'desistida', 'desistir tras el informe: desistida');
++  comprobar(libro(id).map((m) => `${m.id}:${m.importe}`).join('|') === antes, 'el movimiento de la inspección queda intacto');
++  const dev = imp.calcularDevolucion(id, sistema());
++  comprobar(dev && dev.importe === 0 && dev.motivo === 'sin_puja', 'la devolución no incluye la inspección');
++  lanzaCon(() => imp.decidirTrasInforme(id, 'seguir', cliente()), 409, 'transicion_no_permitida', 'ya no se puede seguir');
++});
++
++/* ── 11 · Perder la subasta ──────────────────────────────── */
++seccion('11 · Perder: se devuelve según DEVOLUCION_SI_PERDIDA y cuadra con el libro', () => {
++  const id = hastaPujando();
++  imp.registrarResultado(id, { resultado: 'perdida' }, personal());
++  comprobar(expediente(id).estado === 'perdida', 'perdida');
++  const dev = imp.calcularDevolucion(id, cliente());
++  comprobar(dev && dev.motivo === 'perdida' && dev.importe === 500000 - 2500, 'depósito menos el descuento de prueba (497500)');
++  comprobar(libro(id).length === 1, 'calcular no escribe nada');
++  imp.avanzar(id, 'devolucion_pendiente', cliente());
++  const dev2 = imp.calcularDevolucion(id, personal());
++  comprobar(dev2.importe === dev.importe && dev2.motivo === 'perdida', 'en devolucion_pendiente rige el motivo del estado previo');
++  imp.registrarDevolucion(id, { referencia: 'DEV-1' }, personal());
++  const movs = libro(id);
++  const devuelto = movs.filter((m) => m.sentido === 'devolucion_cliente').reduce((s, m) => s + m.importe, 0);
++  comprobar(devuelto === 497500, 'lo devuelto es lo calculado');
++  comprobar(Importacion.saldoCliente(movs) === 2500, 'en el libro queda exactamente lo retenido');
++  comprobar(expediente(id).estado === 'cerrada', 'cerrada');
++
++  // Perder y elegir otro lote con el mismo depósito.
++  const id2 = hastaPujando();
++  imp.registrarResultado(id2, { resultado: 'perdida' }, personal());
++  imp.avanzar(id2, 'propuesta', cliente());
++  comprobar(expediente(id2).estado === 'propuesta' && sumaDe(libro(id2), ['deposito_puja']) === 500000, 'otro lote: el depósito sigue en el libro');
++});
++
++/* ── 12 · Lo fiscal ──────────────────────────────────────── */
++seccion('12 · Lo fiscal: nada se factura hasta la decisión del contador', () => {
++  /* Lo que SÍ está fijado: mientras no haya decisión, ningún cobro de
++     importación crea un pago ni un comprobante. */
++  comprobar(contar('pagos', 'importacion_id IS NOT NULL') === 0, 'ningún cobro de importación creó una fila en pagos');
++  comprobar(contar('facturas') === 0, 'ninguna factura emitida, ningún NCF consumido');
++  const id = hastaPujando();
++  const m = libro(id)[0];
++  for (const modelo of [null, 'mandatario', 'revendedor']) {
++    lanzaCon(() => imp.facturarCobro(id, m.id, personal({ config: config({ MODELO_FISCAL: modelo }) })), 501,
++      'decision_fiscal_pendiente', `facturarCobro con MODELO_FISCAL = ${modelo}`);
++  }
++
++  /* Lo que NO está fijado. Si la empresa es mandataria o revendedora lo
++     decide el contador de Victor, y de eso depende qué conceptos emiten
++     NCF, de qué tipo (B01/B02), con qué ITBIS y en qué momento. Escribir
++     estas pruebas ahora sería inventar comportamiento fiscal, que una vez
++     emitido no se puede borrar. Cuando haya decisión, Claude las escribe
++     aquí, se implementa hasta que pasen y FISCAL_LISTO pasa a true. */
++  const porque = 'depende de la decisión del contador: mandataria o revendedora';
++  saltar('qué conceptos pasan por confirmarPago y emiten comprobante', porque);
++  saltar('que el cobro fiscal no otorga cupos ni toca membresías', porque);
++  saltar('que depósito, precio del equipo, fletes e impuestos no consumen NCF (o sí, si es revendedora)', porque);
++  saltar('tipo de NCF y momento (al cobrar o al endosar)', porque);
++  saltar('nota de crédito B04 cuando se devuelve algo ya facturado', porque);
++});
++
++/* ── 13 · Nada a un contador ─────────────────────────────── */
++seccion('13 · Ningún correo sale a quien no sea el cliente o un buzón interno', () => {
++  const permitidos = new Set(['cliente-importacion@prueba.do', ...Object.values(correo.BUZONES)]);
++  let archivos = [];
++  try { archivos = fs.readdirSync(process.env.MERCA_CORREOS).filter((f) => f.endsWith('.txt')); } catch (_) { /* sin correos */ }
++  const ajenos = archivos
++    .map((f) => /^Para: (.*)$/m.exec(fs.readFileSync(path.join(process.env.MERCA_CORREOS, f), 'utf8')))
++    .filter((m) => m && !permitidos.has(m[1].trim().toLowerCase()))
++    .map((m) => m[1]);
++  comprobar(ajenos.length === 0, `todos los correos van al cliente o a un buzón interno${ajenos.length ? `: ${ajenos.join(', ')}` : ''}`);
++  comprobar(!Object.keys(imp).some((n) => /contador/i.test(n)), 'ninguna función envía nada a un contador');
++});
++
++console.log(`\n${bien} bien, ${mal} mal, ${saltadas} saltadas (fiscal, pendiente del contador)`);
++process.exit(mal ? 1 : 0);
+-- 
+2.43.0
+

@@ -78,6 +78,9 @@
     "metricas:probar": "node tools/probar-metricas.js",
     "contactos:probar": "node tools/probar-contactos.js",
     "catalogo:probar": "node tools/probar-catalogo.js",
+    "importacion-migracion:probar": "node tools/probar-importacion-migracion.js",
+    "importacion:puro": "node --test tools/importacion.prueba.js",
+    "importacion:probar": "node tools/probar-importacion.js",
     "db:flota": "node tools/seed.js --solo-flota",
     "taxonomia": "node tools/verificar-taxonomia.js"
   },
