@@ -6,6 +6,12 @@
 # ejecuta, así que un solo archivo sirve para los dos informes y no hay
 # dos copias que mantener sincronizadas.
 #
+# La @ del NOMBRE DEL ARCHIVO es lo que la hace plantilla (#170). Se
+# llamó mercamaquinarias-informes.service, sin @, y así systemd no
+# conoce ninguna instancia mercamaquinarias-informes@informe-semanal:
+# los temporizadores no tenían nada que disparar y los informes a
+# gerencia no salían. Si se renombra, que conserve la @.
+#
 #   systemctl start mercamaquinarias-informes@informe-semanal
 #   systemctl start mercamaquinarias-informes@informe-mensual
 

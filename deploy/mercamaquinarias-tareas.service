@@ -19,6 +19,13 @@ Environment=MERCA_FACTURAS=/var/lib/mercamaquinarias/facturas
 # La limpieza de borradores abandonados borra sus documentos (FICHA-01):
 # sin esto los buscaría en .tmp/documentos del repositorio y no los hallaría.
 Environment=MERCA_DOCUMENTOS=/var/lib/mercamaquinarias/documentos
+# Las mismas que deploy/mercamaquinarias.service (#170). Faltaban, y la
+# tanda buscaba fotos y videos en .tmp/fotos del repositorio, que en el
+# VPS no existe: la recogida de huérfanos decía «sin archivos huérfanos»
+# sin mirar nada, y al limpiar borradores abandonados se iban las filas
+# pero los archivos se quedaban en el disco para siempre.
+Environment=MERCA_FOTOS=/var/lib/mercamaquinarias/fotos
+Environment=MERCA_VIDEOS=/var/lib/mercamaquinarias/videos
 EnvironmentFile=/etc/mercamaquinarias.env
 
 ExecStart=/usr/bin/node tools/tareas.js

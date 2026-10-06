@@ -219,9 +219,14 @@ Con el certificado ya puesto, se sustituye por la configuración buena,
 que además manda el `www` al dominio sin `www`:
 
 ```bash
+cp /var/www/mercamaquinarias/deploy/nginx-cloudflare.conf /etc/nginx/snippets/cloudflare.conf
 cp /var/www/mercamaquinarias/deploy/nginx.conf /etc/nginx/sites-available/mercamaquinarias
 nginx -t && systemctl reload nginx
 ```
+
+`nginx.conf` incluye `snippets/cloudflare.conf`: los rangos de Cloudflare,
+los únicos de quienes nginx se cree la cabecera `CF-Connecting-IP` (#169).
+Sin ese archivo, `nginx -t` falla y no se recarga nada.
 
 Si el sitio viene de otro dominio, `deploy/nginx-dominio-viejo.conf`
 lo redirige entero al nuevo con un 301. Es temporal y el propio archivo
@@ -235,11 +240,29 @@ paso va antes de dar el sitio por publicado.
 
 ## 8. Cortafuegos
 
+80 y 443 se abren **solo a Cloudflare**, y el 22 a todos. Antes aquí
+ponía `ufw allow 'Nginx Full'`, que abría la web a todo Internet: quien
+diera con la IP del droplet hablaba con nginx sin pasar por Cloudflare
+y podía inventarse el `CF-Connecting-IP` para anular los topes por
+origen (#169). nginx ya ignora esa cabecera si no viene de Cloudflare;
+el cortafuegos es la segunda capa.
+
 ```bash
-ufw allow OpenSSH
-ufw allow 'Nginx Full'
-ufw --force enable
+# Primero sin tocar nada: ¿la copia de los rangos sigue al día?
+bash /var/www/mercamaquinarias/deploy/cortafuegos-cloudflare.sh --comprobar
+# Aplica: abre el 22, añade los rangos de Cloudflare a 80/443, quita
+# 'Nginx Full' y enciende ufw.
+bash /var/www/mercamaquinarias/deploy/cortafuegos-cloudflare.sh
 ```
+
+Los rangos se leen de `/etc/nginx/snippets/cloudflare.conf` (copia de
+`deploy/nginx-cloudflare.conf`), la misma lista que usa nginx. **Para
+refrescarlos**, si `--comprobar` avisa de que han cambiado: editar
+`deploy/nginx-cloudflare.conf` con la lista de
+<https://www.cloudflare.com/ips-v4> y <https://www.cloudflare.com/ips-v6>,
+fusionar, copiarlo de nuevo a `snippets/`, `nginx -t && systemctl reload nginx`
+y repetir el script. Un rango que Cloudflare retire hay que quitarlo a
+mano con `ufw status numbered` y `ufw delete <número>`.
 
 ---
 
@@ -603,13 +626,19 @@ lunes a las 07:00 y mensual el día 1 a las 07:30. Van a
 `gerencia@inversionesxzt.com` con copia a `facturacion@`.
 
 ```bash
-cp /var/www/mercamaquinarias/deploy/mercamaquinarias-informes.service /etc/systemd/system/
+cp /var/www/mercamaquinarias/deploy/mercamaquinarias-informes@.service /etc/systemd/system/
 cp /var/www/mercamaquinarias/deploy/mercamaquinarias-informe-*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now mercamaquinarias-informe-semanal.timer
 systemctl enable --now mercamaquinarias-informe-mensual.timer
 systemctl list-timers 'mercamaquinarias-informe-*'
 ```
+
+**La `@` del nombre del servicio no sobra:** es lo que lo hace plantilla.
+Se llamó `mercamaquinarias-informes.service`, sin ella, y los temporizadores
+apuntaban a `mercamaquinarias-informes@informe-semanal.service`, que así no
+existe: los informes no salían (#170). Si en `/etc/systemd/system/` queda la
+copia vieja sin `@`, se borra.
 
 **No van en la tanda diaria** a propósito: un informe semanal que
 llegara todos los días se dejaría de leer en una semana, y entonces
