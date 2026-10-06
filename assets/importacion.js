@@ -285,9 +285,8 @@ const Importacion = (function () {
   }
 
   /* Aplica el depósito contra las líneas del saldo, en el orden en que
-     vienen (el servidor las manda en el orden de CONCEPTOS, así que
-     primero el precio del equipo). Devuelve qué falta cobrar por cada
-     concepto, cuánto del depósito se aplicó a cada uno (en el libro va
+     vienen (`lineasSaldo` pone primero el precio del equipo). Devuelve
+     qué falta cobrar por cada concepto, cuánto del depósito se aplicó a cada uno (en el libro va
      como un par de ajustes: menos en deposito_puja, más en ese concepto)
      y el sobrante si el depósito superó el saldo, que se devuelve al
      cerrar. Ninguna línea queda negativa. */
@@ -304,6 +303,36 @@ const Importacion = (function () {
       if (l.importe - aplicado > 0) cobros.push({ concepto: l.concepto, importe: l.importe - aplicado });
     }
     return { cobros, aplicaciones, sobrante: queda };
+  }
+
+  /* Las líneas del saldo al ganar, en el orden de `conceptosDeEtapa`
+     (primero el precio del equipo, que es a lo que la subasta aplica el
+     depósito), con los
+     importes reales del martillo y de los cargos del comprador. Con
+     'al_ganar' los tramos logísticos entran con lo estimado en el
+     desglose congelado; la diferencia con lo real es el ajuste de
+     liquidación de después. El depósito todavía NO está descontado: eso
+     lo hace `aplicarDeposito`. */
+  function lineasSaldo({ martillo, cargosComprador, deposito, desglose, config }) {
+    entero(martillo, 'el precio de martillo');
+    entero(cargosComprador, 'los cargos del comprador');
+    if (config.CARGO_APLICAR_DEPOSITO == null) throw new Error('falta CARGO_APLICAR_DEPOSITO');
+    if (config.COMISION_TRANSFERENCIA == null) throw new Error('falta COMISION_TRANSFERENCIA');
+    const importes = {
+      precio_equipo: martillo,
+      cargos_comprador: cargosComprador,
+      cargo_aplicar_deposito: porcentaje(deposito, config.CARGO_APLICAR_DEPOSITO),
+      comision_transferencia: entero(config.COMISION_TRANSFERENCIA, 'la comisión por transferencia'),
+      comision_servicio: comisionServicio(martillo, config),
+    };
+    const congeladas = (desglose && desglose.lineas) || [];
+    return conceptosDeEtapa('saldo', config.POLITICA_COBRO)
+      .map((concepto) => {
+        if (concepto in importes) return { concepto, importe: importes[concepto], es_estimado: false };
+        const l = congeladas.find((x) => x.concepto === concepto);
+        return { concepto, importe: l ? l.importe : 0, es_estimado: true };
+      })
+      .filter((l) => l.importe > 0);
   }
 
   /* Signo de cada movimiento en el saldo del cliente: el dinero suyo que
@@ -450,7 +479,7 @@ const Importacion = (function () {
     IMPORTACION, FISCAL_LISTO, PARAMETROS, OPCIONES,
     ESTADOS, ESTADOS_SALIDA, ACTORES, TRANSICIONES, transicionPermitida, transicion,
     CONCEPTOS, SENTIDOS, NO_REEMBOLSABLES, ETAPAS, conceptosDeEtapa,
-    porcentaje, depositoPara, comisionServicio, aplicarDeposito,
+    porcentaje, depositoPara, comisionServicio, lineasSaldo, aplicarDeposito,
     importeConSigno, saldoCliente, devolucionDe, motivoDevolucion, politicaDevolucion,
     destacarInspeccion, canonico, contenidoFirmado, huellaDesglose,
     configuracion, OBLIGATORIOS_ASISTIDA, OBLIGATORIOS_INSPECCION, puedeEncenderse,

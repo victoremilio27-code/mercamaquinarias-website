@@ -1499,7 +1499,9 @@ const MIGRACIONES = [
      `importacion_aceptaciones` no estaba en el diseño de #110, que solo
      guardaba la última aceptación en `importaciones`. Subir el límite de
      puja es aceptar de nuevo, y sobrescribir la anterior borraría la
-     prueba de lo que el cliente firmó primero.
+     prueba de lo que el cliente firmó primero. Tampoco estaban
+     `precio_martillo` y `cargos_comprador`: sin ellos el saldo al ganar
+     no se puede recalcular en el servidor.
 
      `pagos.importacion_id` va sin clave foránea, como `anuncio_id`: el
      rastro de un pago no depende de lo que le pase al expediente. */
@@ -1531,7 +1533,9 @@ const MIGRACIONES = [
          'no_pedida', 'pedida', 'pagada', 'en_curso', 'entregada', 'no_disponible')),
        lote_id               TEXT,
        limite_puja           INTEGER CHECK (limite_puja IS NULL OR (typeof(limite_puja) = 'integer' AND limite_puja > 0)),
-       desglose_json         TEXT CHECK (desglose_json IS NULL OR (json_valid(desglose_json) AND json_type(desglose_json) = 'object')),
+       precio_martillo       INTEGER CHECK (precio_martillo IS NULL OR (typeof(precio_martillo) = 'integer' AND precio_martillo > 0)),
+       cargos_comprador      INTEGER CHECK (cargos_comprador IS NULL OR (typeof(cargos_comprador) = 'integer' AND cargos_comprador >= 0)),
+       desglose_json        TEXT CHECK (desglose_json IS NULL OR (json_valid(desglose_json) AND json_type(desglose_json) = 'object')),
        desglose_huella       TEXT CHECK (desglose_huella IS NULL OR length(desglose_huella) = 64),
        cifras_version        TEXT,
        condiciones_version   TEXT,
