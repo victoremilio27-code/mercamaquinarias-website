@@ -91,7 +91,10 @@ async function revisarDom(pagina) {
         return;
       }
       if (imagen.alt.trim()) return;
-      const control = imagen.closest('a[href], button');
+      /* Un <label> con texto también nombra su control: el render decorativo
+         de cada equipo de alquiler (alt="" a propósito, assets/app.js) vive
+         dentro del label de su casilla y salía como falso positivo. */
+      const control = imagen.closest('a[href], button, label');
       const controlConTexto = control && texto(control).trim();
       if (imagen.getAttribute('role') !== 'presentation' && !controlConTexto) falla('imagen-alt-vacio', imagen);
     });
