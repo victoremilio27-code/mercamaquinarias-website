@@ -2681,6 +2681,7 @@ const ACCIONES_BITACORA = Object.freeze({
   'pagina.editar': 'Página del dealer editada en su nombre',
   'pago.transferencia_recibida': 'Transferencia marcada como recibida',
   'pago.transferencia_anulada': 'Transferencia anulada sin cobro',
+  'pago.devolver-sin-aplicar': 'Cobro con tarjeta aprobado sin aplicar, devuelto',
   'cuenta.recuperar': 'Cuenta recuperada: correo cambiado tras comprobar identidad',
 });
 
@@ -4037,17 +4038,24 @@ function filasDeCobros(donde, args, limite) {
     SELECT p.id, p.organizacion_id, o.nombre AS organizacion, p.referencia, p.procesador, p.estado,
            p.base, p.ajuste, p.ajuste_tasa, p.subtotal, p.itbis, p.itbis_tasa, p.total,
            p.creado, p.confirmado, p.intencion, p.anuncio_id,
-           NULLIF(TRIM(COALESCE(a.marca, '') || ' ' || COALESCE(a.modelo, '')), '') AS anuncio_titulo
+           NULLIF(TRIM(COALESCE(a.marca, '') || ' ' || COALESCE(a.modelo, '')), '') AS anuncio_titulo,
+           EXISTS (SELECT 1 FROM pagos_eventos e
+                    WHERE e.pago_id = p.id AND e.tipo = 'aprobado-sin-aplicar') AS sin_aplicar
       FROM pagos p
       JOIN organizaciones o ON o.id = p.organizacion_id
       LEFT JOIN anuncios a ON a.id = p.anuncio_id
      WHERE ${donde}
      ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(...args, topeConsola(limite))
-    .map(({ intencion, ...p }) => {
+    .map(({ intencion, sin_aplicar: sinEvento, ...p }) => {
       const i = intencionDe({ intencion });
       /* `automatica`: la renovación que cobró sola la tarea diaria (06-08), para que la consola de
-         solo lectura la distinga de la que pagó el cliente a mano. */
-      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null, automatica: !!i.automatica };
+         solo lectura la distinga de la que pagó el cliente a mano.
+         `sinAplicar` (#147): CardNet lo aprobó y no se pudo aplicar, y todavía no se ha marcado
+         devuelto; es la fila en la que la consola ofrece «Marcar devuelto» (#151). */
+      return {
+        ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null, automatica: !!i.automatica,
+        sinAplicar: !!sinEvento && p.estado !== 'devuelto',
+      };
     });
 }
 
@@ -4503,8 +4511,84 @@ function cobrosSinAplicar() {
   return abrir().prepare(`SELECT p.id, p.referencia, p.total, p.estado, p.organizacion_id,
                                  MIN(e.creado) AS fecha
                             FROM pagos_eventos e JOIN pagos p ON p.id = e.pago_id
-                           WHERE e.tipo = 'aprobado-sin-aplicar'
+                           WHERE e.tipo = 'aprobado-sin-aplicar' AND p.estado <> 'devuelto'
                            GROUP BY p.id ORDER BY MIN(e.id)`).all();
+}
+
+/* #66 (#147). El personal cierra un cobro `aprobado-sin-aplicar` después
+ * de devolver el dinero en el portal de CardNet.
+ *
+ * Hasta ahora no había forma de cerrarlo: el banco cobró, no se otorgó
+ * nada ni se emitió comprobante, y el informe lo seguía enseñando para
+ * siempre como «hay que devolverlo». Esto solo DEJA CONSTANCIA:
+ *   - NO emite NCF ni nota de crédito: no hubo comprobante que anular, y
+ *     una B04 sin original sería un documento fiscal de algo que no
+ *     ocurrió. Si el pago tiene factura, lo que toca es la B04 desde
+ *     Facturas, no esto (409).
+ *   - NO toca capacidad ni membresías: nunca se otorgaron.
+ *   - NO llama a CardNet: la devolución del dinero se hace en su portal
+ *     (CardNet está apagado y sin certificar, y una devolución por API
+ *     que falle a medias dejaría el dinero en el aire).
+ *
+ * Vale para un pago `pendiente` o `rechazado`: un aprobado de CardNet que
+ * llega sobre un pago ya rechazado (`reemplazado`, `abandonado`) queda
+ * `rechazado` con el mismo evento (ver `cobrosSinAplicar`), y es el mismo
+ * dinero que devolver. Lo que lo distingue es el EVENTO, no el estado.
+ *
+ * Estado, evento y bitácora en una sola transacción (`enNombreDe`): sin
+ * anotación no hay devolución, y una devolución que falla no deja nada.
+ * Repetirla responde 409 «Ya está devuelto» sin escribir. */
+const MOTIVO_DEVOLUCION = { minimo: 10, maximo: 500 };
+
+function devolverCobroSinAplicar({ idPago, idAdmin, motivo, ip } = {}) {
+  const pago = idPago ? pagoPorId(idPago) : null;
+  if (!pago) throw errorCodigo('Ese pago no existe', 404);
+
+  const texto = String(motivo == null ? '' : motivo).trim();
+  if (texto.length < MOTIVO_DEVOLUCION.minimo || texto.length > MOTIVO_DEVOLUCION.maximo) {
+    throw errorCodigo(`Escriba el motivo de la devolución (de ${MOTIVO_DEVOLUCION.minimo} a ${MOTIVO_DEVOLUCION.maximo} caracteres).`, 400);
+  }
+
+  const d = abrir();
+  return enNombreDe({
+    idAdmin, idOrganizacion: pago.organizacion_id, accion: 'pago.devolver-sin-aplicar',
+    objetoTipo: 'pago', objetoId: pago.id, motivo: texto, ip,
+  }, () => {
+    // Se relee dentro de la transacción: otro pudo resolverlo entre medias.
+    const actual = pagoPorId(pago.id);
+    if (actual.estado === 'devuelto') throw errorCodigo('Ya está devuelto.', 409);
+    if (actual.procesador !== 'cardnet') {
+      throw errorCodigo('Solo se devuelve así un cobro con tarjeta (CardNet).', 409);
+    }
+    if (actual.estado !== 'pendiente' && actual.estado !== 'rechazado') {
+      throw errorCodigo(`Ese pago está ${actual.estado}: no es un cobro sin aplicar.`, 409);
+    }
+    const sinAplicar = d.prepare(`SELECT 1 FROM pagos_eventos
+                                   WHERE pago_id = ? AND tipo = 'aprobado-sin-aplicar' LIMIT 1`).get(actual.id);
+    if (!sinAplicar) {
+      throw errorCodigo('Ese cobro no consta como aprobado sin aplicar: no hay nada que devolver.', 409);
+    }
+    if (facturaDePago(actual.id)) {
+      throw errorCodigo('Ese pago tiene comprobante: para devolverlo, anúlelo con una nota de crédito en Facturas.', 409);
+    }
+
+    const t = ahora();
+    const hecho = d.prepare(`UPDATE pagos SET estado = 'devuelto', actualizado = ?
+                              WHERE id = ? AND estado = ?`).run(t, actual.id, actual.estado);
+    if (hecho.changes !== 1) throw errorCodigo('Ese pago cambió mientras tanto. Recargue la lista.', 409);
+
+    anotarEventoPago({
+      pagoId: actual.id, procesador: actual.procesador, origen: 'consola', tipo: 'devuelto-manual',
+      cuerpo: { motivo: texto, idAdmin, estadoAnterior: actual.estado },
+    });
+
+    const despues = pagoPorId(actual.id);
+    return {
+      antes: { estado: actual.estado },
+      despues: { estado: despues.estado, referencia: despues.referencia, total: despues.total },
+      resultado: despues,
+    };
+  });
 }
 
 /* ── Membresía de las cuentas internas ──────────────────────
@@ -7157,7 +7241,7 @@ module.exports = {
   eventosDePago, huboIntentoDeCobro, intencionAplicable, activarRenovacionConTarjeta, desactivarRenovacion,
   reprogramarRenovacion, suscripcionesPorRenovar, anotarIntentoRenovacion, clienteDeRenovacion,
   anuncioUnicoDeSuscripcion, suscripcionesPorAvisar, anotarAvisoRenovacion, tarjetasPorVencer,
-  anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
+  anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar, devolverCobroSinAplicar,
   facturasDe, comprobantesDelPeriodo, sumaDelPeriodo, fechasIrregulares,
   facturas, validarMes, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
