@@ -1478,6 +1478,29 @@ const MIGRACIONES = [
     'DELETE FROM sesiones',
     'DELETE FROM dispositivos',
   ]],
+
+  /* #65 (#146). Un solo comprobante por cobro, garantizado por la base.
+
+     `emitirPorPago` miraba «¿ya tiene factura?», tomaba un NCF e
+     insertaba, todo fuera de una transacción. Con la notificación de
+     CardNet y la conciliación del temporizador llegando a la vez, los
+     dos procesos veían «sin factura» y salían DOS comprobantes fiscales
+     del mismo cobro. Un NCF emitido no se borra ni se reescribe, así que
+     hay que impedirlo antes de que ocurra, no corregirlo después.
+
+     La nota de crédito (B04) queda FUERA del índice a propósito: lleva
+     el mismo `pago_id` que el comprobante que anula, y sin la condición
+     sobre `tipo` la primera devolución chocaría con su propia factura.
+
+     Si una base ya tuviera dos comprobantes no-B04 del mismo pago, el
+     índice no se puede crear y la migración falla entera (y el
+     despliegue con ella): es lo que se quiere. Esa base se mira a mano y
+     se decide con Victor; aquí no se borra ni se cambia ningún
+     comprobante para que el índice entre. */
+  ['2026-10-factura-unica-por-pago', [
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_facturas_pago_unica ON facturas (pago_id)
+       WHERE pago_id IS NOT NULL AND tipo <> 'nota_credito'`,
+  ]],
 ];
 
 /* Solo los nombres, para `tools/respaldo-antes-de-migrar.js` (#73), que
@@ -6692,6 +6715,46 @@ function crearFactura(datos) {
   throw new Error('no se pudo asignar un número de comprobante');
 }
 
+/* #65 (#146). Ejecuta `fn` dentro de BEGIN IMMEDIATE … COMMIT.
+ *
+ * IMMEDIATE y no un BEGIN a secas: el BEGIN diferido no reserva nada
+ * hasta la primera escritura, así que dos procesos podían leer los dos
+ * «este pago no tiene factura» y solo chocar después, cuando ya habían
+ * decidido emitir. Con IMMEDIATE el segundo espera en la entrada
+ * (`busy_timeout` de `abrir()`) y, al pasar, ya ve lo que hizo el
+ * primero.
+ *
+ * Si `fn` lanza, ROLLBACK y se relanza: un NCF tomado dentro vuelve a la
+ * secuencia y no queda hueco que justificar ante la DGII.
+ *
+ * NO se anida: si la conexión ya está en una transacción, lanza. La
+ * emisión del comprobante va fuera de `envolver`/`enNombreDe` a
+ * propósito (comentario de `confirmarPago` en `tools/pagos.js`), y un
+ * BEGIN dentro de otra transacción fallaría igual, pero con un mensaje
+ * de SQLite que no dice quién la abrió. `fn` tiene que ser síncrona:
+ * lo que no es base de datos (el PDF, el correo) va después del COMMIT. */
+function enTransaccionInmediata(fn) {
+  const d = abrir();
+  if (d.isTransaction) {
+    throw new Error('enTransaccionInmediata: ya hay una transacción abierta en esta conexión; '
+      + 'la emisión del comprobante va fuera de cualquier otra transacción');
+  }
+  d.exec('BEGIN IMMEDIATE');
+  let resultado;
+  try {
+    resultado = fn();
+    if (resultado && typeof resultado.then === 'function') {
+      resultado.then(() => {}, () => {});
+      throw new Error('enTransaccionInmediata: la función tiene que ser síncrona');
+    }
+  } catch (e) {
+    if (d.isTransaction) d.exec('ROLLBACK');
+    throw e;
+  }
+  d.exec('COMMIT');
+  return resultado;
+}
+
 /* El pago por su referencia.
  *
  * Se busca así y no como «el último pago de esta organización»: son
@@ -7087,7 +7150,7 @@ module.exports = {
   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
   eliminarCuenta, bloqueoEliminarCuenta,
-  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, facturaPorId, facturaDePago, ultimosDatosFiscales,
+  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, enTransaccionInmediata, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,
   borrarMetodoPago, enlazarMetodoPago, anotarResultadoTarjeta, anotarRespuestaProcesador, anotarEventoPago,
