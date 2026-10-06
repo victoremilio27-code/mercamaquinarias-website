@@ -16,7 +16,7 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-10-01) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-10-06) — EMPIEZA AQUÍ
 
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
@@ -42,7 +42,25 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
-**TANDA 5 EN CURSO (2026-10-02, noche):** **A publicada:** PR #132 (#117-#125) fusionado y en producción
+**OLEADA 6 PUBLICADA (2026-10-06):** PR de `codex/tanda-6` con las 12 tareas: #131 (fuera `proximamente.html`,
+`vercel.json` y `deploy/VERCEL.md`; «cupos» ya no sale en ningún texto visible, solo en identificadores, clases y
+comentarios; `legal.html` cambió dos frases a «capacidad de publicaciones activas» y **NO se subió la versión legal**:
+que Victor decida si se junta con la revisión de cláusulas de #114), #134 (`archivoDe` estricto), #135 (canonical,
+JSON-LD de portada, metadatos por categoría), #136 (`falloDe`, 405 con `Allow`, `GET /api/salud`, `rutas:probar`), #137
+(asunto limpio, `List-Unsubscribe`), #138 (`auditar:accesibilidad`, en CI), #139 (mensajes por código HTTP), #140
+(`tareas:probar`), #141 (`@media print` de la ficha), #142 (check-links con anclas, recursos y sitemap), #143
+(`cabeceras:puro`), #144 (trampa anti-spam). Todo en CI. Arreglos de Claude al recoger: seis pruebas se inventaban
+nombres de foto que #134 ya rechaza; `busquedas-api` espera 405; el lote del contador sigue enseñando al admin sus 500
+deliberados (fechas irregulares, paquete descuadrado); `tareas:probar` espera a cambiar de segundo (el respaldo se
+nombra por segundo); anclas `#detalle` rotas de la portada (las destapó #142); falso positivo de alt vacío dentro de un
+`label` en la auditoría de accesibilidad. Visto a ojo a 390 y 1280: mensajes de #139, ficha impresa, la trampa no se
+ve ni recibe foco. **Para la siguiente oleada:** 6 avisos de orden de encabezados (h3 sin h2) en panel, dealer y 404;
+el jpeg de WhatsApp de la raíz sigue en el repo sin ninguna referencia (#122 no lo borró: espera a Victor).
+**Codex sin uso hasta el viernes 9:** no se le encarga nada hasta entonces.
+**Fase 14 (importación asistida):** diseño en #110 e investigación en #111/#115; solo la frena la decisión fiscal del
+contador de Victor (la empresa como mandataria o como revendedora).
+
+**TANDA 5 (2026-10-02, noche, ya cerrada):** **A publicada:** PR #132 (#117-#125) fusionado y en producción
 («Sitio arriba: 7bf586f»): pruebas puras de fotos/videos, PDF, entorno, mapa, rangos, reglas y S3; `meta.js` con
 `</script>` escapado y sitemap paginado a 60; `404.html`; `tools/s3.js` sin conectar. Arreglo de Claude: la regla de
 idioma de `reglas.prueba.js` acepta `es-DO`. Quedan como `todo` en `medios.prueba.js` dos debilidades de
