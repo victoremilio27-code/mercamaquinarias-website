@@ -1478,6 +1478,214 @@ const MIGRACIONES = [
     'DELETE FROM sesiones',
     'DELETE FROM dispositivos',
   ]],
+
+  /* Fase 14, base C2 (#148): importación asistida. Solo tablas vacías;
+     ninguna escritura de datos. El servicio está apagado en
+     `assets/importacion.js` y el contrato completo está en
+     `.planning/importacion-contrato.md`.
+
+     Las listas de los CHECK van escritas a mano y NO se generan desde
+     `assets/importacion.js`: una migración no puede cambiar de texto
+     después de aplicarse, y la lista del módulo sí puede crecer (con
+     otra migración).
+
+     El libro (`importacion_movimientos`), los eventos y las aceptaciones
+     son de solo añadir, con disparadores que abortan UPDATE y DELETE,
+     igual que `pagos_eventos`: es dinero de clientes y lo que aceptaron.
+     Una corrección es un contramovimiento (`corrige_id`), como una B04
+     corrige un comprobante. Por eso ninguna tabla hija cuelga de
+     `importaciones` con ON DELETE CASCADE: un expediente no se borra.
+
+     `importacion_aceptaciones` no estaba en el diseño de #110, que solo
+     guardaba la última aceptación en `importaciones`. Subir el límite de
+     puja es aceptar de nuevo, y sobrescribir la anterior borraría la
+     prueba de lo que el cliente firmó primero.
+
+     `pagos.importacion_id` va sin clave foránea, como `anuncio_id`: el
+     rastro de un pago no depende de lo que le pase al expediente. */
+  ['2026-10-importacion-asistida', [
+    `CREATE TABLE IF NOT EXISTS importaciones (
+       id                    TEXT PRIMARY KEY,
+       referencia            TEXT NOT NULL UNIQUE CHECK (substr(referencia, 1, 1) = 'I'),
+       organizacion_id       TEXT NOT NULL REFERENCES organizaciones(id),
+       usuario_id            TEXT NOT NULL REFERENCES usuarios(id),
+       solicitud_id          TEXT REFERENCES solicitudes_servicio(id),
+       estado                TEXT NOT NULL DEFAULT 'solicitada' CHECK (estado IN (
+         'solicitada', 'en_busqueda', 'propuesta', 'confirmacion', 'inspeccion_pendiente_pago',
+         'inspeccion_en_curso', 'inspeccion_entregada', 'deposito_pendiente', 'lista_para_pujar',
+         'pujando', 'perdida', 'ganada', 'saldo_pendiente', 'pagada_subasta', 'retiro',
+         'transito_terrestre', 'puerto_origen', 'transito_maritimo', 'en_aduana', 'endosada',
+         'transporte_rd', 'entregada', 'devolucion_pendiente', 'cerrada', 'desistida',
+         'sin_opciones', 'cancelada', 'incumplida')),
+       tipo_equipo           TEXT NOT NULL,
+       marca                 TEXT,
+       anio_min              INTEGER CHECK (anio_min IS NULL OR typeof(anio_min) = 'integer'),
+       horas_max             INTEGER CHECK (horas_max IS NULL OR (typeof(horas_max) = 'integer' AND horas_max >= 0)),
+       uso                   TEXT,
+       provincia_destino     TEXT NOT NULL,
+       zona_preferida        TEXT,
+       presupuesto_declarado INTEGER NOT NULL CHECK (typeof(presupuesto_declarado) = 'integer' AND presupuesto_declarado > 0),
+       inspeccion_destacada  INTEGER NOT NULL DEFAULT 0 CHECK (inspeccion_destacada IN (0, 1)),
+       umbral_inspeccion     INTEGER CHECK (umbral_inspeccion IS NULL OR typeof(umbral_inspeccion) = 'integer'),
+       inspeccion            TEXT NOT NULL DEFAULT 'no_pedida' CHECK (inspeccion IN (
+         'no_pedida', 'pedida', 'pagada', 'en_curso', 'entregada', 'no_disponible')),
+       lote_id               TEXT,
+       limite_puja           INTEGER CHECK (limite_puja IS NULL OR (typeof(limite_puja) = 'integer' AND limite_puja > 0)),
+       desglose_json         TEXT CHECK (desglose_json IS NULL OR (json_valid(desglose_json) AND json_type(desglose_json) = 'object')),
+       desglose_huella       TEXT CHECK (desglose_huella IS NULL OR length(desglose_huella) = 64),
+       cifras_version        TEXT,
+       condiciones_version   TEXT,
+       condiciones_aceptadas TEXT,
+       ip_aceptacion         TEXT,
+       modelo_fiscal         TEXT CHECK (modelo_fiscal IS NULL OR modelo_fiscal IN ('mandatario', 'revendedor')),
+       moneda_cobro          TEXT CHECK (moneda_cobro IS NULL OR moneda_cobro IN ('USD', 'DOP')),
+       fecha_subasta         TEXT,
+       vence_accion          TEXT,
+       creada                TEXT NOT NULL,
+       actualizada           TEXT NOT NULL,
+       cerrada               TEXT,
+       motivo_cierre         TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_importaciones_org ON importaciones (organizacion_id, creada)',
+    'CREATE INDEX IF NOT EXISTS ix_importaciones_estado ON importaciones (estado, vence_accion)',
+
+    `CREATE TABLE IF NOT EXISTS importacion_lotes (
+       id                TEXT PRIMARY KEY,
+       importacion_id    TEXT NOT NULL REFERENCES importaciones(id),
+       subasta           TEXT NOT NULL CHECK (subasta IN ('ritchie_bros')),
+       url               TEXT,
+       numero_lote       TEXT,
+       estado_eeuu       TEXT,
+       zona              TEXT NOT NULL,
+       excepcion_zona    INTEGER NOT NULL DEFAULT 0 CHECK (excepcion_zona IN (0, 1)),
+       motivo_excepcion  TEXT,
+       fecha_subasta     TEXT NOT NULL,
+       marca             TEXT,
+       modelo            TEXT,
+       anio              INTEGER CHECK (anio IS NULL OR typeof(anio) = 'integer'),
+       horas             INTEGER CHECK (horas IS NULL OR (typeof(horas) = 'integer' AND horas >= 0)),
+       serie             TEXT,
+       descripcion       TEXT,
+       estado            TEXT NOT NULL DEFAULT 'propuesto'
+                         CHECK (estado IN ('propuesto', 'elegido', 'descartado', 'caducado')),
+       creado            TEXT NOT NULL,
+       CHECK (excepcion_zona = 0 OR length(trim(coalesce(motivo_excepcion, ''))) > 0)
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_importacion_lotes ON importacion_lotes (importacion_id, estado)',
+
+    `CREATE TABLE IF NOT EXISTS importacion_eventos (
+       id             INTEGER PRIMARY KEY AUTOINCREMENT,
+       importacion_id TEXT NOT NULL REFERENCES importaciones(id),
+       de_estado      TEXT,
+       a_estado       TEXT NOT NULL,
+       actor          TEXT NOT NULL CHECK (actor IN ('cliente', 'personal', 'sistema')),
+       usuario_id     TEXT,
+       nota           TEXT,
+       fecha          TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_importacion_eventos ON importacion_eventos (importacion_id, id)',
+    `CREATE TRIGGER IF NOT EXISTS tr_importacion_eventos_sin_update
+       BEFORE UPDATE ON importacion_eventos
+       BEGIN SELECT RAISE(ABORT, 'importacion_eventos es de solo añadir'); END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_importacion_eventos_sin_delete
+       BEFORE DELETE ON importacion_eventos
+       BEGIN SELECT RAISE(ABORT, 'importacion_eventos es de solo añadir'); END`,
+
+    `CREATE TABLE IF NOT EXISTS importacion_movimientos (
+       id             INTEGER PRIMARY KEY AUTOINCREMENT,
+       importacion_id TEXT NOT NULL REFERENCES importaciones(id),
+       sentido        TEXT NOT NULL CHECK (sentido IN ('cobro_cliente', 'pago_tercero', 'devolucion_cliente', 'ajuste')),
+       concepto       TEXT NOT NULL CHECK (concepto IN (
+         'inspeccion', 'comision_servicio', 'deposito_puja', 'cargo_aplicar_deposito',
+         'precio_equipo', 'cargos_comprador', 'comision_transferencia', 'multa_subasta',
+         'flete_terrestre_eeuu', 'flete_maritimo', 'seguro', 'impuestos_aduana',
+         'agente_aduanal', 'gastos_puerto', 'flete_rd', 'ajuste_liquidacion', 'otro')),
+       importe        INTEGER NOT NULL CHECK (typeof(importe) = 'integer'
+                        AND ((sentido = 'ajuste' AND importe <> 0) OR (sentido <> 'ajuste' AND importe > 0))),
+       moneda         TEXT NOT NULL CHECK (moneda IN ('USD', 'DOP')),
+       tasa           REAL CHECK (tasa IS NULL OR tasa > 0),
+       es_estimado    INTEGER NOT NULL DEFAULT 0 CHECK (es_estimado IN (0, 1)),
+       referencia     TEXT,
+       corrige_id     INTEGER REFERENCES importacion_movimientos(id),
+       pago_id        TEXT,
+       documento_id   TEXT,
+       registrado_por TEXT,
+       nota           TEXT,
+       fecha          TEXT NOT NULL,
+       CHECK (moneda = 'USD' OR tasa IS NOT NULL)
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_importacion_movimientos ON importacion_movimientos (importacion_id, id)',
+    /* La idempotencia de registrar un cobro: la misma referencia (el
+       número de la transferencia, el id del pago) no entra dos veces
+       para el mismo concepto y sentido. */
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_importacion_movimientos_ref
+       ON importacion_movimientos (importacion_id, sentido, concepto, referencia)
+       WHERE referencia IS NOT NULL`,
+    `CREATE TRIGGER IF NOT EXISTS tr_importacion_movimientos_sin_update
+       BEFORE UPDATE ON importacion_movimientos
+       BEGIN SELECT RAISE(ABORT, 'importacion_movimientos es de solo añadir: corrija con un contramovimiento'); END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_importacion_movimientos_sin_delete
+       BEFORE DELETE ON importacion_movimientos
+       BEGIN SELECT RAISE(ABORT, 'importacion_movimientos es de solo añadir: corrija con un contramovimiento'); END`,
+
+    `CREATE TABLE IF NOT EXISTS importacion_aceptaciones (
+       id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+       importacion_id      TEXT NOT NULL REFERENCES importaciones(id),
+       condiciones_version TEXT NOT NULL,
+       desglose_huella     TEXT NOT NULL CHECK (length(desglose_huella) = 64),
+       limite_puja         INTEGER NOT NULL CHECK (typeof(limite_puja) = 'integer' AND limite_puja > 0),
+       usuario_id          TEXT NOT NULL,
+       ip                  TEXT,
+       fecha               TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_importacion_aceptaciones ON importacion_aceptaciones (importacion_id, id)',
+    `CREATE TRIGGER IF NOT EXISTS tr_importacion_aceptaciones_sin_update
+       BEFORE UPDATE ON importacion_aceptaciones
+       BEGIN SELECT RAISE(ABORT, 'importacion_aceptaciones es de solo añadir'); END`,
+    `CREATE TRIGGER IF NOT EXISTS tr_importacion_aceptaciones_sin_delete
+       BEFORE DELETE ON importacion_aceptaciones
+       BEGIN SELECT RAISE(ABORT, 'importacion_aceptaciones es de solo añadir'); END`,
+
+    /* Mismo patrón que `documentos_anuncio`: el archivo en disco con un
+       nombre que genera el servidor, la base guarda la ruta relativa.
+       `formato` es el tipo MIME; `tipo`, qué documento es. */
+    `CREATE TABLE IF NOT EXISTS importacion_documentos (
+       id              TEXT PRIMARY KEY,
+       importacion_id  TEXT NOT NULL REFERENCES importaciones(id),
+       tipo            TEXT NOT NULL CHECK (tipo IN (
+         'informe_inspeccion', 'revision_datos', 'factura_subasta', 'conocimiento_embarque',
+         'liquidacion_aduana', 'endoso', 'acta_entrega', 'contrato_firmado',
+         'comprobante_tercero', 'otro')),
+       nombre          TEXT NOT NULL CHECK (length(nombre) BETWEEN 1 AND 120),
+       formato         TEXT NOT NULL CHECK (formato IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')),
+       bytes           INTEGER NOT NULL CHECK (bytes > 0),
+       ruta            TEXT NOT NULL UNIQUE
+                       CHECK (length(ruta) BETWEEN 1 AND 200 AND instr(ruta, '..') = 0
+                              AND substr(ruta, 1, 1) <> '/' AND instr(ruta, '\\') = 0),
+       visible_cliente INTEGER NOT NULL DEFAULT 0 CHECK (visible_cliente IN (0, 1)),
+       subido_por      TEXT,
+       creado          TEXT NOT NULL
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_importacion_documentos ON importacion_documentos (importacion_id)',
+
+    /* «Revisión de datos (no es una inspección)»: lo que comprueba la IA.
+       Nunca se llama inspección, ni en el nombre de la tabla. */
+    `CREATE TABLE IF NOT EXISTS importacion_revisiones_datos (
+       id                  TEXT PRIMARY KEY,
+       lote_id             TEXT NOT NULL REFERENCES importacion_lotes(id),
+       comprobaciones_json TEXT NOT NULL CHECK (json_valid(comprobaciones_json)),
+       resultado           TEXT NOT NULL CHECK (resultado IN ('sin_alertas', 'dudas', 'alertas')),
+       modelo_ia           TEXT,
+       fecha               TEXT NOT NULL,
+       decidido_por        TEXT,
+       decision            TEXT CHECK (decision IS NULL OR decision IN ('seguir', 'descartar')),
+       nota                TEXT
+     )`,
+    'CREATE INDEX IF NOT EXISTS ix_importacion_revisiones_lote ON importacion_revisiones_datos (lote_id)',
+
+    'ALTER TABLE pagos ADD COLUMN importacion_id TEXT',
+    'CREATE INDEX IF NOT EXISTS ix_pagos_importacion ON pagos (importacion_id)',
+  ]],
 ];
 
 /* Solo los nombres, para `tools/respaldo-antes-de-migrar.js` (#73), que

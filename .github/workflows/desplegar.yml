@@ -172,6 +172,8 @@ jobs:
         run: npm run tareas:probar
       - name: Solicitudes y trampa anti-spam
         run: npm run solicitudes:probar
+      - name: Migración de la importación asistida
+        run: npm run importacion-migracion:probar
 
   # Lo que necesita el sitio levantado: las auditorias y las dos pasadas
   # de puppeteer. Va aparte del job hermetico para que un fallo de
