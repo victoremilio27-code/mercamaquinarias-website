@@ -162,6 +162,8 @@ jobs:
         run: npm run s3:puro
       - name: Cabeceras de seguridad
         run: npm run cabeceras:puro
+      - name: Recogida de parches de Codex
+        run: npm run codex:puro
       - name: Correo puro
         run: npm run correo:puro
       - name: Todas las rutas de la API
