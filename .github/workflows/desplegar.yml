@@ -160,6 +160,16 @@ jobs:
         run: npm run mapa:puro
       - name: Cliente S3
         run: npm run s3:puro
+      - name: Cabeceras de seguridad
+        run: npm run cabeceras:puro
+      - name: Correo puro
+        run: npm run correo:puro
+      - name: Todas las rutas de la API
+        run: npm run rutas:probar
+      - name: Tanda diaria
+        run: npm run tareas:probar
+      - name: Solicitudes y trampa anti-spam
+        run: npm run solicitudes:probar
 
   # Lo que necesita el sitio levantado: las auditorias y las dos pasadas
   # de puppeteer. Va aparte del job hermetico para que un fallo de
@@ -222,6 +232,8 @@ jobs:
         run: npm run check
       - name: Movimiento
         run: npm run check:motion
+      - name: Accesibilidad
+        run: npm run auditar:accesibilidad
       # `always()` para que un fallo de auditoria no deje el job
       # esperando a un proceso vivo hasta agotar el tope de tiempo.
       - name: Parar el sitio

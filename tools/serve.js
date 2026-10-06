@@ -19,6 +19,7 @@ require('./entorno');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const fotos = require('./fotos');
 const videos = require('./videos');
@@ -77,6 +78,16 @@ function cacheDe(ext) {
    cualquier despliegue, que es justo cuando el navegador tiene que
    volver a pedirlo. */
 const etagDe = (est) => `W/"${est.size.toString(36)}-${est.mtimeMs.toString(36)}"`;
+
+/* Las páginas fijas se componen una vez por versión del archivo. Antes,
+   cualquier HTML que pasara por meta perdía su ETag y se releía para cada
+   visita; el canonical no cambia entre peticiones, así que hacerlo así
+   desperdiciaría justo la caché que protege las páginas más visitadas. */
+const FIJOS_COMPUESTOS = new Map();
+
+function etagDelContenido(datos) {
+  return `"${crypto.createHash('sha256').update(datos).digest('base64url')}"`;
+}
 
 /* QUÉ SE PUEDE PEDIR POR HTTP.
  *
@@ -449,6 +460,42 @@ const servidor = http.createServer((req, res) => {
     }
 
     const meta = api && ext === '.html' ? metadatos.para(ruta, consulta) : null;
+    if (meta && meta.fijo) {
+      const version = `${est.size}:${est.mtimeMs}`;
+      const guardado = FIJOS_COMPUESTOS.get(archivo);
+
+      const responder = (compuesto, etag) => {
+        const cabeceras = {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': cacheDe(ext),
+          ETag: etag,
+          'Last-Modified': new Date(est.mtimeMs).toUTCString(),
+        };
+        if (req.headers['if-none-match'] === etag) {
+          res.writeHead(304, cabeceras);
+          res.end();
+          console.log(`304  ${ruta} (compuesto)`);
+          return;
+        }
+        res.writeHead(200, cabeceras);
+        res.end(compuesto);
+        console.log(`200  ${ruta} (compuesto)`);
+      };
+
+      if (guardado && guardado.version === version) {
+        responder(guardado.datos, guardado.etag);
+        return;
+      }
+
+      fs.readFile(archivo, 'utf8', (err, html) => {
+        if (err) { res.writeHead(404).end('No existe'); return; }
+        const datos = Buffer.from(metadatos.aplicar(html, meta));
+        const etag = etagDelContenido(datos);
+        FIJOS_COMPUESTOS.set(archivo, { version, datos, etag });
+        responder(datos, etag);
+      });
+      return;
+    }
     if (meta) {
       fs.readFile(archivo, 'utf8', (err, html) => {
         if (err) { res.writeHead(404).end('No existe'); return; }

@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 
 const RAIZ = path.resolve(__dirname, '..');
-const BANDEJA = path.join(RAIZ, '.tmp', 'correos');
+const BANDEJA = process.env.MERCA_CORREOS || path.join(RAIZ, '.tmp', 'correos');
 
 /* ── Buzones ────────────────────────────────────────────────
  *
@@ -300,14 +300,15 @@ function plantillaCodigo({ codigo, tipo, nombre, minutos }) {
  * decía «12 de 12 entregados» y en la bandeja había diez. */
 let secuencia = 0;
 
-function porArchivo({ para, asunto, texto, html, responderA = BUZONES.general, adjuntos = [] }) {
+function porArchivo({ para, asunto, texto, html, responderA = BUZONES.general, adjuntos = [], cabeceras = {} }) {
   fs.mkdirSync(BANDEJA, { recursive: true });
   const sello = new Date().toISOString().replace(/[:.]/g, '-');
   const n = String(++secuencia).padStart(3, '0');
   const base = path.join(BANDEJA, `${sello}-${n}-${para.replace(/[^\w.@-]/g, '_')}`);
   const archivo = `${base}.txt`;
+  const cabecerasTexto = Object.entries(cabeceras).map(([nombre, valor]) => `${nombre}: ${valor}`).join('\n');
   fs.writeFileSync(archivo,
-    `Para: ${para}\nDe: ${REMITENTE}\nResponder a: ${responderA}\nAsunto: ${asunto}\n\n${texto}\n`, 'utf8');
+    `Para: ${para}\nDe: ${REMITENTE}\nResponder a: ${responderA}\nAsunto: ${asunto}\n${cabecerasTexto}${cabecerasTexto ? '\n' : ''}\n${texto}\n`, 'utf8');
 
   // La versión HTML se guarda aparte para poder abrirla en el navegador
   // y ver cómo va a llegar, sin gastar un envío real.
@@ -355,7 +356,7 @@ function partirRemitente(cadena) {
   return m ? { name: m[1] || undefined, email: m[2] } : { email: String(cadena).trim() };
 }
 
-function porBrevo({ para, asunto, texto, html, responderA = BUZONES.general, adjuntos = [] }) {
+function porBrevo({ para, asunto, texto, html, responderA = BUZONES.general, adjuntos = [], cabeceras = {} }) {
   const clave = process.env.BREVO_API_KEY;
   if (!clave) throw new Error('Falta BREVO_API_KEY');
 
@@ -366,6 +367,7 @@ function porBrevo({ para, asunto, texto, html, responderA = BUZONES.general, adj
     subject: asunto,
     textContent: texto,
     ...(html ? { htmlContent: html } : {}),
+    ...(Object.keys(cabeceras).length ? { headers: cabeceras } : {}),
     /* Brevo los quiere en base64 con su nombre. Van dentro del JSON,
        así que el cuerpo crece un 33 % sobre el peso real del archivo:
        un comprobante son 3 KB, no hay problema, pero conviene saberlo
@@ -410,6 +412,16 @@ function porBrevo({ para, asunto, texto, html, responderA = BUZONES.general, adj
 
 const TRANSPORTES = { archivo: porArchivo, brevo: porBrevo };
 
+/* Un salto de línea en el asunto permitiría inyectar cabeceras: se
+   cambian los caracteres de control por espacios y se acota el largo. */
+function limpiarAsunto(asunto) {
+  return String(asunto ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 150);
+}
+
 /* Nunca lanza: un fallo del correo no debe tumbar la operación que lo
    provocó. Devuelve si se entregó para que quien llame decida.
 
@@ -423,7 +435,11 @@ function enviar(mensaje) {
     return { entregado: false, error: 'transporte desconocido' };
   }
   try {
-    const r = transporte(mensaje);
+    // El asunto puede contener nombres, empresas o búsquedas escritos por el
+    // usuario. Se limpia justo antes del transporte para cubrir sin excepción
+    // todas las plantillas actuales y las que se añadan después.
+    const seguro = { ...mensaje, asunto: limpiarAsunto(mensaje.asunto) };
+    const r = transporte(seguro);
     return r && typeof r.catch === 'function'
       ? r.catch((e) => {
         console.error('correo: no se pudo enviar a', mensaje.para, '·', e.message);
@@ -1232,6 +1248,9 @@ function enviarAlertaBusqueda({ para, nombre, resumen, anuncios, restantes = 0, 
   return enviar({
     para,
     responderA: BUZONES.soporte,
+    // No se añade List-Unsubscribe-Post: el enlace abre una página que pide
+    // confirmar por POST; no es un punto de baja de un solo clic.
+    cabeceras: { 'List-Unsubscribe': `<${enlaceBaja}>` },
     asunto: `Nuevo equipo para su búsqueda: ${resumen}`,
     texto: [
       saludo, '', `Encontramos ${anuncios.length + restantes} equipo(s) nuevo(s) para su búsqueda: ${resumen}.`, '',

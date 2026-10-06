@@ -370,8 +370,9 @@ const contactosDe = (idAnuncio) => db.abrir()
 
   const fotos = require('./fotos.js');
   const disco = (ruta) => fs.existsSync(fotos.archivoDe(ruta));
-  const rutas = ['/fotos/2026-09/c1.jpg', '/fotos/2026-09/c1-m.jpg', '/fotos/2026-09/c2.jpg',
-    '/fotos/2026-09/c3.jpg', '/fotos/2026-09/propia.jpg'];
+  // Con nombres como los de fotos.guardar: archivoDe ya no acepta otros (#134).
+  const rutas = Array.from({ length: 5 },
+    () => `/fotos/2026-09/${require('crypto').randomBytes(16).toString('hex')}.jpg`);
   fs.mkdirSync(path.join(process.env.MERCA_FOTOS, '2026-09'), { recursive: true });
   rutas.forEach((r) => fs.writeFileSync(fotos.archivoDe(r), 'jpg de prueba'));
 

@@ -17,6 +17,39 @@ let SESION = {
   sucursales: [], verificado: false, telefono: null, sms: false,
 };
 
+function mensajePorEstado(codigo, reintentarDespues) {
+  switch (codigo) {
+    case 400:
+      return 'Revise los datos del formulario e inténtelo de nuevo.';
+    case 401:
+      return 'Su sesión terminó. Inicie sesión de nuevo.';
+    case 403:
+    case 404:
+      return 'No encontramos lo que busca o no tiene permiso para verlo.';
+    case 409:
+      return 'Esto cambió mientras tanto. Recargue la página e inténtelo de nuevo.';
+    case 413:
+      return 'El archivo o los datos son demasiado grandes.';
+    case 429: {
+      const segundos = Number(reintentarDespues);
+      if (reintentarDespues !== null && reintentarDespues !== '' &&
+          Number.isFinite(segundos) && segundos >= 0) {
+        const minutos = Math.max(1, Math.ceil(segundos / 60));
+        return `Demasiados intentos seguidos. Espere ${minutos} ${minutos === 1 ? 'minuto' : 'minutos'} y vuelva a intentarlo.`;
+      }
+      return 'Demasiados intentos seguidos. Espere unos minutos y vuelva a intentarlo.';
+    }
+    case 500:
+      return 'Algo falló de nuestro lado. Inténtelo de nuevo en unos minutos.';
+    case 502:
+    case 503:
+    case 504:
+      return 'El sitio no responde en este momento. Inténtelo de nuevo en unos minutos.';
+    default:
+      return 'No se pudo completar la operación';
+  }
+}
+
 /* Envoltura de fetch contra /api.
    · Lanza un Error con `.codigo` y el mensaje del servidor en 4xx.
    · Devuelve null si el servidor no está: quien llama decide.
@@ -39,7 +72,10 @@ async function api(ruta, { metodo = 'GET', cuerpo, silencioso = false } = {}) {
 
   if (!respuesta.ok) {
     if (silencioso) return null;
-    const err = new Error((datos && datos.error) || 'No se pudo completar la operación');
+    const mensaje = datos && datos.error
+      ? datos.error
+      : mensajePorEstado(respuesta.status, respuesta.headers.get('Retry-After'));
+    const err = new Error(mensaje);
     err.codigo = respuesta.status;
     throw err;
   }

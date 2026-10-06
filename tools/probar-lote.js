@@ -181,10 +181,15 @@ function pedir(url, cookie) {
   const jsonConflicto = JSON.parse(conflicto.cuerpo);
   ok(conflicto.codigo === 409 && jsonConflicto.error === 'Faltan papeles'
     && jsonConflicto.faltan.join(',') === 'MM-1', 'el 409 conserva el mensaje y la lista faltan');
-  lote.armarPaquete = () => { throw Object.assign(new Error('Fecha irregular'), { codigo: 500 }); };
+  lote.armarPaquete = () => { throw Object.assign(new Error('Hay fechas irregulares: MM-1.'), { codigo: 500 }); };
   const interno = await pedir('/api/admin/lote-contador/2025-03.zip', cookie);
-  ok(interno.codigo === 500 && JSON.parse(interno.cuerpo).error === 'Fecha irregular',
+  ok(interno.codigo === 500 && JSON.parse(interno.cuerpo).error === 'Hay fechas irregulares: MM-1.',
     'el 500 conserva el mensaje de armarPaquete');
+  // Cualquier otro fallo interno sale genérico (issue #136): no se filtra el texto de SQLite.
+  lote.armarPaquete = () => { throw new Error('SQLITE_BUSY: database is locked'); };
+  const opaco = await pedir('/api/admin/lote-contador/2025-03.zip', cookie);
+  ok(opaco.codigo === 500 && JSON.parse(opaco.cuerpo).error === 'Error del servidor',
+    'un fallo interno cualquiera no enseña su mensaje');
   lote.armarPaquete = armarOriginal;
 
   console.log('\n6. No existe ningún camino automático para el lote');

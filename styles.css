@@ -5242,3 +5242,91 @@ main > .envoltura > section.panel {
   .captura__panel { padding: 14px; }
   .captura__marco { min-height: 380px; }
 }
+
+/* La ficha impresa se entrega al comprador sin controles, publicidad ni
+   elementos flotantes; el papel conserva solo los datos que puede evaluar. */
+@media print {
+  @page { margin: 15mm; }
+
+  *, *::before, *::after {
+    color: #171919 !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  html, body, #contenido {
+    background: #fff !important;
+    color: #171919 !important;
+  }
+
+  .cab,
+  .pie,
+  .chat,
+  .nav-movil,
+  .panel--filtros,
+  .velo-filtros,
+  .filtros__abrir,
+  .muestra-barra,
+  .captura,
+  .pub,
+  .anuncio--columna,
+  .publicar__lado,
+  .fila--resultados > .panel:first-child,
+  .miga,
+  #similaresPanel,
+  .galeria,
+  .videos,
+  .detalle__bloque:has(.videos),
+  .detalle__cat,
+  .detalle__panel > .etiqueta,
+  .detalle__acciones,
+  .detalle__compartir,
+  .detalle__estado,
+  .detalle__panel > .detalle__condiciones,
+  .contactos,
+  .detalle__aviso,
+  .documentos-ficha__tipo,
+  .documentos-ficha__datos > span {
+    display: none !important;
+  }
+
+  body { padding: 0 !important; }
+  main, main > .envoltura, #detalle { width: 100%; max-width: none; margin: 0; padding: 0; }
+
+  .detalle {
+    display: flex;
+    flex-direction: column;
+    gap: 4mm;
+  }
+  .detalle > div, .detalle__panel { display: contents; }
+
+  .detalle__titulo { order: 1; margin: 0; font-size: 22pt; }
+  .detalle__precio { order: 2; margin: 0; font-size: 19pt; }
+  .detalle__sitio { order: 3; margin: 0; }
+  .detalle__disponibilidad { order: 4; margin: 0; }
+  .detalle__foto {
+    order: 5;
+    width: 100%;
+    max-width: 165mm;
+    margin: 2mm auto;
+    border: 1px solid #bbb;
+    border-radius: 0;
+    break-inside: avoid;
+  }
+  .ficha-tecnica { order: 6; margin-top: 0; }
+  .detalle__implementos { order: 7; }
+  .detalle__bloque:has(.panel__texto) { order: 8; }
+  #documentosFicha { order: 9; }
+  .detalle__dealer { order: 10; margin: 0; }
+  .nota-verificado { order: 11; margin: 0; }
+
+  .ficha-tecnica > div, table tr,
+  .detalle__implementos, .documentos-ficha > li, .nota-verificado {
+    break-inside: avoid;
+  }
+
+  .documentos-ficha__enlace { padding: 0; border: 0; }
+  .documentos-ficha__datos { display: block; }
+}

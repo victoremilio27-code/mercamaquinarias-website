@@ -2522,6 +2522,7 @@ const ROTULO_SERVICIO = {
 function montarCotizaciones() {
   $$('form[data-cotizacion]').forEach((form) => {
     const servicio = form.dataset.servicio || 'alquiler';
+    const pintadoEn = Date.now();
 
     /* El rótulo sale de `data-rotulo` si el campo lo trae, y si no de
        su propia etiqueta: así el correo dice «Provincia de la obra» y
@@ -2562,7 +2563,7 @@ function montarCotizaciones() {
       // solicitud sirve de algo, y el servidor los exige.
       const detalle = {};
       Object.entries(valores).forEach(([k, v]) => {
-        if (['Nombre', 'Teléfono', 'Correo', 'Empresa'].includes(k)) return;
+        if (['Nombre', 'Teléfono', 'Correo', 'Empresa', 'sitio_web'].includes(k)) return;
         detalle[etiquetaDe(k)] = v;
       });
       return { valores, detalle };
@@ -2593,6 +2594,8 @@ function montarCotizaciones() {
             telefono: valores['Teléfono'] || '',
             correo: valores.Correo || '',
             empresa: valores.Empresa || '',
+            sitio_web: valores.sitio_web || '',
+            ms_formulario: Date.now() - pintadoEn,
             detalle,
           },
         });
