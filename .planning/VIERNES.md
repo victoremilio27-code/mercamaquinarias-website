@@ -25,12 +25,14 @@ Para gastar poco: **no leas los issues ni los parches a mano.** Todo lo que sea 
 
 ## 1. Disparar la oleada 7 (ya, entera a la vez)
 
-Ocho tareas, sin archivos de código compartidos; solo `package.json` recibe una línea de cada una.
+Quince tareas (las ocho primeras de la tabla más siete de las auditorías del 2026-10-06), sin archivos de código
+compartidos entre sí (comprobado issue por issue); solo `package.json` recibe una línea de algunas de las ocho
+primeras.
 
 Para **cada** issue de la tabla: (a) pega el comentario de abajo, tal cual, en una sola línea; (b) ponle la
 etiqueta `en-curso`.
 
-Pegar (idéntico en los ocho):
+Pegar (idéntico en los quince):
 
 ```text
 @codex implementa este issue tal como está descrito, siguiendo AGENTS.md, y entrega el parche como dice «Entrega».
@@ -50,8 +52,22 @@ Pegar (idéntico en los ocho):
 Etiquetas: con la API de GitHub desde la nube, `mcp__github__issue_write` (método `update`, `labels` con las que ya
 tiene más `en-curso`). Hay que mandar **la lista completa** de etiquetas, no solo la nueva.
 
-<!-- AÑADIR: issues nuevos de la oleada 7 que salgan de las dos auditorías en curso. Una fila por issue en la tabla
-de arriba (mismo comentario «Pegar» de arriba) y su comando de verificación en la sección 4. -->
+Issues de las auditorías del 2026-10-06 (mismo comentario «Pegar», misma etiqueta `en-curso`). Se comprobó que
+ninguno comparte archivo con otro de la oleada ni con los #154-#161: por eso todos van en la 7.
+
+| # | Tarea | Archivos que toca |
+|---|---|---|
+| #167 | API: tope de contraseñas por correo, cookie mal formada, suelo de disco para fotos | `tools/api.js`, `tools/probar-seguridad.js` (no `fotos.js`: lo cambia #158) |
+| #171 | CSS: ficha móvil con el precio arriba, panel de admin a 390 px, retoques del móvil | `styles.css` (solo) |
+| #172 | Portada y ficha: nombres de marca, teléfonos con formato, mosaico de Grúas, «Equipos similares» | `assets/app.js`, `assets/perfil.js`, `assets/panel.js` |
+| #173 | Textos: «Más contratado» en un solo plan, «usted» en vez de «tú», teléfono obligatorio | `assets/planes.js`, `assets/publicar.js`, `publicar.html`, `alquiler.html`, `contacto.html`, `tools/meta.js`, `tools/auditar-flujos.js` |
+| #174 | `cuenta.html`: validar en el orden del formulario y no consultar al servidor vacío | `assets/cuenta.js` |
+| #175 | `alertas.html`: sin caja verde vacía y error en rojo | `alertas.html`, `assets/alertas.js` |
+| #176 | Accesibilidad: `h3` del pie a `h2` (6 avisos) | `panel.html`, `dealer.html`, `404.html`, `mi-pagina.html` |
+
+Solapes mirados y descartados: #167 prohíbe tocar `fotos.js` (lo toca #158) y `db.js`; #173 y #176 reparten los
+`.html` sin repetir ninguno; #174 solo lee `auditar-flujos.js` (lo edita #173); #171 es el único que toca
+`styles.css`; #172 es el único que toca `app.js`. Quien toca `api.js` después es #151 (oleada 8): va tras #167.
 
 ## 2. Disparar la oleada 8 (cuando cada base esté en `main`)
 
@@ -86,7 +102,14 @@ se encarga en el **PR de la base**, nunca en el issue. En ese PR pega, cambiando
 @codex implementa el issue #150 sobre esta rama, tal como está descrito, siguiendo AGENTS.md, y entrega el parche como dice «Entrega».
 ```
 
-<!-- AÑADIR: issues nuevos de la oleada 8 de las auditorías; anota de qué base dependen y en qué orden. -->
+Las auditorías no añaden issues a la oleada 8. Dos órdenes que sí cambian por ellas:
+
+- **#151 va después de que entre la tanda 7**, porque #167 también edita `tools/api.js` (el PR de la tanda 7 se
+  fusiona antes de encargar #151; si no, #151 se encarga sobre el `main` nuevo y no hay choque).
+- **#168 (fiscal, lo hace Claude) va después de #150**: los dos tocan `tools/facturas.js`. Ver «Lo de Claude y lo de
+  Victor» al final.
+
+Fuera del viernes: #152 y #153 (importación) se quedan para después del 14.
 
 ## 3. Recoger (a cualquier hora, cuantas veces haga falta)
 
@@ -95,7 +118,7 @@ Todo con `tools/codex.js`. Carpeta de trabajo: `/tmp/parches` (cualquiera vale).
 1. Ver qué ha contestado Codex, sin leer nada:
 
    ```bash
-   node tools/codex.js estado 154 155 156 157 158 159 160 161
+   node tools/codex.js estado 154 155 156 157 158 159 160 161 167 171 172 173 174 175 176
    ```
 
    Una línea por issue. `OK` = respuesta posterior al último encargo con un parche entero (empieza por `From `,
@@ -112,14 +135,14 @@ Todo con `tools/codex.js`. Carpeta de trabajo: `/tmp/parches` (cualquiera vale).
 3. Bajar los parches (no aplica nada):
 
    ```bash
-   node tools/codex.js bajar 154 155 156 157 158 159 160 161 --dir /tmp/parches
+   node tools/codex.js bajar 154 155 156 157 158 159 160 161 167 171 172 173 174 175 176 --dir /tmp/parches
    ```
 
 4. Rama de la tanda desde `main` actualizado y aplicar en el **orden de abajo**:
 
    ```bash
    git fetch origin && git checkout -b codex/tanda-7 origin/main
-   node tools/codex.js aplicar 159 154 160 161 157 156 155 158 --dir /tmp/parches
+   node tools/codex.js aplicar 159 154 160 161 157 171 176 175 174 172 173 156 155 158 167 --dir /tmp/parches
    ```
 
    `aplicar` hace `git am --keep-cr -3` en el orden dado y, si uno falla, `git am --abort`, lo anota y sigue con el
@@ -142,7 +165,12 @@ node tools/codex.js estado 150 151 152 153
 node tools/codex.js aplicar 150 151 153 152 --dir /tmp/parches
 ```
 
-<!-- AÑADIR: orden de aplicación de los issues nuevos (los de menos archivos compartidos primero). -->
+**Orden de los siete issues de las auditorías** (ya incluido en el comando de arriba): primero los que tocan un
+solo archivo o un grupo propio de archivos (#171 `styles.css`, #176 los cuatro `.html`, #175 `alertas.*`, #174
+`cuenta.js`), luego los que tocan varios (#172 `app.js`, `perfil.js`, `panel.js`; #173 textos y `meta.js`), y
+**#167 el último** porque toca `tools/api.js` y su prueba. Ninguno comparte archivo con otro, así que un fallo no
+arrastra a los demás; si uno falla, se devuelve y se sigue. Las tandas se pueden partir en dos PR si hace falta
+(oleada antigua y auditorías), pero siempre antes de encargar #151.
 
 ### Si un parche no aplica
 
@@ -194,7 +222,18 @@ for s in ncf-unico:probar sin-aplicar:probar sin-aplicar-api:probar importacion:
 done
 ```
 
-<!-- AÑADIR: los `npm run` de las pruebas de los issues nuevos de las auditorías (están en su «Terminado cuando»). -->
+Los «Terminado cuando» de #167, #173, #174, #175 y #176 usan solo pruebas que ya están en la lista de CI de arriba
+(`seguridad:probar`, `cuenta:probar`, `telefono:probar`, `rutas:probar`, `publicacion:probar`, `medios:puro`,
+`meta:probar`, `precios:probar`, `alertas:puro`, `busquedas-api:probar`, `dealer:probar`, `check:encoding`). Lo único
+que no está en esa lista es `check:contraste` (#171); además corre:
+
+```bash
+npm run check:contraste
+grep -rn "Elige cómo\|Contáctanos\|Cuéntanos" *.html assets tools   # (#173) no debe devolver nada
+```
+
+Y comprueba que #167 amplió `tools/probar-seguridad.js` (87 comprobaciones hoy: debe haber más) y que no tocó
+`tools/fotos.js`, `tools/db.js` ni `deploy/`.
 
 Todo lo que dé `FALLA` se arregla o se devuelve; **nunca** se silencia ni se salta una prueba. En #150 las
 pruebas de `ncf-unico:probar` las escribió Claude: Codex no las puede haber tocado; compruébalo con
@@ -239,7 +278,9 @@ npm run carga -- --concurrencia 40 --segundos 15 --pid "$(lsof -t -i :8080 | hea
 `humo` debe pasar entero (y salir con 1 con el servidor parado). En `carga`, si alguna ruta da 5xx,
 **no** se arregla dentro del parche: se apunta ruta y error para Claude y se decide si hace falta algo antes del 14.
 
-<!-- AÑADIR: comandos de navegador o de humo/carga que traigan los issues nuevos de las auditorías. -->
+Con el sitio arrancado y antes de pararlo, lo que piden #171-#176 además de `auditar` y `auditar:accesibilidad`
+(que ya se corren arriba): `npm run check:motion` (#171, ya incluido) y, para #176, que `auditar:accesibilidad` salga
+**sin ningún** `aviso:orden-encabezados`. Ningún issue nuevo trae comandos de humo ni de carga.
 
 ### 4.3 Revisar el diff (solo lo que cambió)
 
@@ -269,7 +310,21 @@ A **390 y 1280 px**, en **tema claro y oscuro**, con el sitio arrancado como arr
   menciona un teléfono ni precios fuera de `modelo-comercial.md`.
 - Cualquier página tocada: nada de «cupos» en texto visible y nada de «TuEquipoRD».
 
-<!-- AÑADIR: qué mirar a ojo de los issues nuevos de las auditorías (página, tema, ancho). -->
+Auditorías (390 y 1280 px, claro y oscuro):
+
+- **#171** `equipo.html?id=<cualquiera>` a 390 px: orden fotos y miniaturas, luego título, precio, ficha técnica y
+  teléfonos, luego documentos y descripción. Consola de administración a 390 px sin desborde horizontal. A 1280 px
+  la ficha no cambia.
+- **#172** `index.html`: la franja «Marcas» dice «John Deere» y «CASE», no «JOHN_DEERE»; teléfonos como
+  `(809) 555-1201` en la ficha, `dealer.html?d=maquinarias-del-caribe` y el panel del dealer (sucursales); mosaico de
+  Grúas con foto de categoría; «Equipos similares» con contenido.
+- **#173** `planes.html`: la cinta «Más contratado» solo en Destacado, igual que en `publicar.html`; ningún
+  «Elige», «Contáctanos» ni «Cuéntanos» en pantalla; el teléfono obligatorio no dice «Opcional».
+- **#174** `cuenta.html`: «Crear cuenta» vacío enfoca y dice «Escriba su nombre y apellido.»; «Entrar» vacío no
+  hace petición (mira la pestaña de red) y dice «Escriba su correo y su contraseña.»
+- **#175** `alertas.html` sin parámetros: sin franja verde vacía; `alertas.html?baja=testigo-que-no-existe`: el error
+  sale en rojo; «Mis alertas en el panel» sigue siendo un enlace a `panel.html`.
+- **#176** el pie de `panel.html`, `dealer.html`, `404.html` y `mi-pagina.html` se ve igual que antes.
 
 ### 4.5 Lo que Claude añade al recoger la oleada 7
 
@@ -318,8 +373,21 @@ Es trabajo propio de Claude (no se delega), en la misma rama o en un PR aparte:
    esperar y, solo si hay algo nuevo, su bloque «Para Victor».
    Si queda tiempo en la sesión: «Listo para revisión si quieres» (sin revisión grande si no la pide).
 
+## Lo de Claude y lo de Victor (no se encarga a Codex)
+
+| # | Quién | Qué | Cuándo |
+|---|---|---|---|
+| #168 | Claude | Fiscal: `tomarNcf` exige `usa_sitio = 1` y la nota de crédito B04 pasa a una transacción. Pruebas primero en `tools/probar-facturas.js`. Antes, comprobar en el respaldo de producción que B01, B04 (y B02 si está cargada) tienen `usa_sitio = 1`. | **Después de que #150 entre en `main`**: los dos tocan `tools/facturas.js` y #150 es la base del orden fiscal. |
+| #169 | Claude + Victor | `deploy/nginx.conf`: fiarse de `CF-Connecting-IP` solo si la conexión viene de Cloudflare. Claude abre el PR; **Victor lo fusiona y aplica los pasos en el servidor** (recargar nginx, probar entrando directo a la IP). | PR de Claude cuando haya hueco; no se delega. |
+| #170 | Claude + Victor | Unidades de systemd: renombrar a `mercamaquinarias-informes@.service`, corregir el `cp` del README y fijar `MERCA_FOTOS` y `MERCA_VIDEOS` en la tanda diaria. **Victor lo comprueba y reinstala en el VPS** (`daemon-reload`, activar los dos temporizadores, `--seco informe-semanal`). | Mismo PR que #169 o aparte; la comprobación en el VPS va primero. |
+| #177 | Victor | Decisiones del frontend: redes del pie, buzones, asistente sin clave, espacios publicitarios, «Más contratado» y lo demás de su lista. Mientras no conteste, se queda como está. | Cuando pueda; no bloquea el viernes. |
+
+Ninguno de los cuatro entra en las tandas de Codex ni en sus PR. #169 y #170 tocan `deploy/` y producción: nunca se
+delegan.
+
 ## Qué no se hace el viernes
 
+- #152 y #153 (importación) se quedan para después del 14.
 - No se toca el PR #9 (video en anuncios, en pausa a propósito).
 - No se encarga **nada** que dependa de una base no fusionada en el issue (se hace en el PR de la base).
 - Nada de precios fuera de `.planning/research/modelo-comercial.md`; nada de enviar a un contador; ningún teléfono.
