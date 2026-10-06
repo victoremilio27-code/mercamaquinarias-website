@@ -10,7 +10,8 @@
 # por mucho que se repita).
 #
 # Con CardNet apagado la tarea no hace nada, así que instalarla antes de
-# encender la pasarela es inocuo. El despliegue automático NO la instala.
+# encender la pasarela es inocuo. Desde #147 la instala el despliegue
+# automático (deploy/desplegar-mercamaquinarias) con el sitio ya arriba.
 
 [Unit]
 Description=MercaMaquinarias — conciliación de pagos con tarjeta
