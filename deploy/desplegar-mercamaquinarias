@@ -71,12 +71,39 @@ fi
 
 systemctl restart "$SERVICIO"
 
+# #66 (#147). La conciliacion de pagos con tarjeta cada 10 minutos.
+# Antes habia que instalarla a mano y nadie lo hizo: un aviso de CardNet
+# perdido en un reinicio dejaba el pago pendiente para siempre. Se copian
+# las dos unidades solo si cambiaron (cmp), y se activa el temporizador.
+# Con MERCA_CARDNET sin fijar la tarea sale con 0 sin llamar a nadie, asi
+# que activarla antes de encender CardNet es inocuo.
+#
+# Va DESPUES de comprobar que el sitio responde y no lo tumba: si falla,
+# el sitio nuevo ya esta arriba y solo se avisa.
+UNIDADES=/etc/systemd/system
+instalarTemporizadorPagos() {
+  local cambio=0 u
+  for u in mercamaquinarias-pagos.service mercamaquinarias-pagos.timer; do
+    if ! cmp -s "$REPO/deploy/$u" "$UNIDADES/$u"; then
+      install -m 644 "$REPO/deploy/$u" "$UNIDADES/$u" || return 1
+      cambio=1
+    fi
+  done
+  if [ "$cambio" = 1 ]; then systemctl daemon-reload || return 1; fi
+  systemctl enable --now mercamaquinarias-pagos.timer >/dev/null 2>&1 || return 1
+}
+
 # Se espera a que levante en vez de dormir una cantidad fija: arrancar
 # tarda distinto segun lo que haya que migrar en la base.
 for _ in $(seq 1 "$INTENTOS"); do
   sleep 1
   if curl -fsS -o /dev/null --max-time 3 "$SALUD"; then
     echo "Sitio arriba: $(version)"
+    if instalarTemporizadorPagos; then
+      echo "Conciliacion de pagos: mercamaquinarias-pagos.timer activo"
+    else
+      echo "AVISO: no se pudo instalar mercamaquinarias-pagos.timer (el sitio sigue arriba)" >&2
+    fi
     exit 0
   fi
 done

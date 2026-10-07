@@ -519,7 +519,9 @@ responde 404.
 Cada 10 minutos, `mercamaquinarias-pagos` completa los pagos cuyo aviso o
 cuya confirmación del navegador se perdieron, y el descuadre sale en el
 informe a gerencia. Es inocuo con CardNet apagado: la tarea responde
-«CardNet apagado» y no llama a nadie.
+«CardNet apagado» y no llama a nadie. Desde #147 lo instala y activa el
+despliegue automático (una vez reinstalado el script en `/usr/local/bin`, ver
+«Qué hace el despliegue»); a mano sería:
 
 ```bash
 cp /var/www/mercamaquinarias/deploy/mercamaquinarias-pagos.service /etc/systemd/system/
@@ -681,6 +683,9 @@ Las migraciones de `tools/db.js` se aplican solas al arrancar.
    propósito: es lo único que corre como root):
    `install -m 755 /var/www/mercamaquinarias/deploy/desplegar-mercamaquinarias /usr/local/bin/`.
 4. Reinicia `mercamaquinarias` y espera hasta 15 s a que el sitio responda.
+   Con el sitio arriba, instala `mercamaquinarias-pagos.service` y `.timer` si cambiaron
+   (`daemon-reload`, `enable --now` del temporizador; #147). Si eso falla solo avisa: el
+   sitio no se toca. Con `MERCA_CARDNET` sin fijar, la tarea sale con 0 sin hacer nada.
 5. **Si no responde, vuelve solo a la versión anterior** y la reinicia.
    Ojo: eso devuelve el código, no la base (para eso está el respaldo del paso 3). Las migraciones son de ida;
    como solo añaden, una versión anterior sigue arrancando, pero una

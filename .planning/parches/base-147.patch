@@ -1,0 +1,589 @@
+From cbdff9426d34682ddd383ff1151c230a18c7ec8b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 16:12:15 +0000
+Subject: [PATCH 1/3] devolverCobroSinAplicar: cerrar un cobro de CardNet
+ aprobado sin aplicar (#147)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Estado devuelto, evento devuelto-manual y fila de bitácora
+(pago.devolver-sin-aplicar) en la misma transacción de enNombreDe. No
+emite NCF ni B04, no toca capacidad y no llama a CardNet: el dinero se
+devuelve en su portal. Errores con e.codigo: 404, 400 (motivo de 10 a
+500), 409 (procesador, estado, sin evento, con factura, ya devuelto).
+
+Acepta pendiente y rechazado: un aprobado tardío sobre un pago
+reemplazado queda rechazado con el mismo evento. El listado de cobros
+de la consola trae sinAplicar por fila y el informe deja de enseñar los
+ya devueltos. Sin migración: pagos.estado ya admite devuelto.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ tools/db.js | 96 +++++++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 90 insertions(+), 6 deletions(-)
+
+diff --git a/tools/db.js b/tools/db.js
+index 8dced31..9541112 100644
+--- a/tools/db.js
++++ b/tools/db.js
+@@ -2681,6 +2681,7 @@ const ACCIONES_BITACORA = Object.freeze({
+   'pagina.editar': 'Página del dealer editada en su nombre',
+   'pago.transferencia_recibida': 'Transferencia marcada como recibida',
+   'pago.transferencia_anulada': 'Transferencia anulada sin cobro',
++  'pago.devolver-sin-aplicar': 'Cobro con tarjeta aprobado sin aplicar, devuelto',
+   'cuenta.recuperar': 'Cuenta recuperada: correo cambiado tras comprobar identidad',
+ });
+ 
+@@ -4037,17 +4038,24 @@ function filasDeCobros(donde, args, limite) {
+     SELECT p.id, p.organizacion_id, o.nombre AS organizacion, p.referencia, p.procesador, p.estado,
+            p.base, p.ajuste, p.ajuste_tasa, p.subtotal, p.itbis, p.itbis_tasa, p.total,
+            p.creado, p.confirmado, p.intencion, p.anuncio_id,
+-           NULLIF(TRIM(COALESCE(a.marca, '') || ' ' || COALESCE(a.modelo, '')), '') AS anuncio_titulo
++           NULLIF(TRIM(COALESCE(a.marca, '') || ' ' || COALESCE(a.modelo, '')), '') AS anuncio_titulo,
++           EXISTS (SELECT 1 FROM pagos_eventos e
++                    WHERE e.pago_id = p.id AND e.tipo = 'aprobado-sin-aplicar') AS sin_aplicar
+       FROM pagos p
+       JOIN organizaciones o ON o.id = p.organizacion_id
+       LEFT JOIN anuncios a ON a.id = p.anuncio_id
+      WHERE ${donde}
+      ORDER BY p.creado DESC, p.rowid DESC LIMIT ?`).all(...args, topeConsola(limite))
+-    .map(({ intencion, ...p }) => {
++    .map(({ intencion, sin_aplicar: sinEvento, ...p }) => {
+       const i = intencionDe({ intencion });
+       /* `automatica`: la renovación que cobró sola la tarea diaria (06-08), para que la consola de
+-         solo lectura la distinga de la que pagó el cliente a mano. */
+-      return { ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null, automatica: !!i.automatica };
++         solo lectura la distinga de la que pagó el cliente a mano.
++         `sinAplicar` (#147): CardNet lo aprobó y no se pudo aplicar, y todavía no se ha marcado
++         devuelto; es la fila en la que la consola ofrece «Marcar devuelto» (#151). */
++      return {
++        ...p, concepto: i.concepto || 'Membresía', tipo: i.tipo || null, automatica: !!i.automatica,
++        sinAplicar: !!sinEvento && p.estado !== 'devuelto',
++      };
+     });
+ }
+ 
+@@ -4503,10 +4511,86 @@ function cobrosSinAplicar() {
+   return abrir().prepare(`SELECT p.id, p.referencia, p.total, p.estado, p.organizacion_id,
+                                  MIN(e.creado) AS fecha
+                             FROM pagos_eventos e JOIN pagos p ON p.id = e.pago_id
+-                           WHERE e.tipo = 'aprobado-sin-aplicar'
++                           WHERE e.tipo = 'aprobado-sin-aplicar' AND p.estado <> 'devuelto'
+                            GROUP BY p.id ORDER BY MIN(e.id)`).all();
+ }
+ 
++/* #66 (#147). El personal cierra un cobro `aprobado-sin-aplicar` después
++ * de devolver el dinero en el portal de CardNet.
++ *
++ * Hasta ahora no había forma de cerrarlo: el banco cobró, no se otorgó
++ * nada ni se emitió comprobante, y el informe lo seguía enseñando para
++ * siempre como «hay que devolverlo». Esto solo DEJA CONSTANCIA:
++ *   - NO emite NCF ni nota de crédito: no hubo comprobante que anular, y
++ *     una B04 sin original sería un documento fiscal de algo que no
++ *     ocurrió. Si el pago tiene factura, lo que toca es la B04 desde
++ *     Facturas, no esto (409).
++ *   - NO toca capacidad ni membresías: nunca se otorgaron.
++ *   - NO llama a CardNet: la devolución del dinero se hace en su portal
++ *     (CardNet está apagado y sin certificar, y una devolución por API
++ *     que falle a medias dejaría el dinero en el aire).
++ *
++ * Vale para un pago `pendiente` o `rechazado`: un aprobado de CardNet que
++ * llega sobre un pago ya rechazado (`reemplazado`, `abandonado`) queda
++ * `rechazado` con el mismo evento (ver `cobrosSinAplicar`), y es el mismo
++ * dinero que devolver. Lo que lo distingue es el EVENTO, no el estado.
++ *
++ * Estado, evento y bitácora en una sola transacción (`enNombreDe`): sin
++ * anotación no hay devolución, y una devolución que falla no deja nada.
++ * Repetirla responde 409 «Ya está devuelto» sin escribir. */
++const MOTIVO_DEVOLUCION = { minimo: 10, maximo: 500 };
++
++function devolverCobroSinAplicar({ idPago, idAdmin, motivo, ip } = {}) {
++  const pago = idPago ? pagoPorId(idPago) : null;
++  if (!pago) throw errorCodigo('Ese pago no existe', 404);
++
++  const texto = String(motivo == null ? '' : motivo).trim();
++  if (texto.length < MOTIVO_DEVOLUCION.minimo || texto.length > MOTIVO_DEVOLUCION.maximo) {
++    throw errorCodigo(`Escriba el motivo de la devolución (de ${MOTIVO_DEVOLUCION.minimo} a ${MOTIVO_DEVOLUCION.maximo} caracteres).`, 400);
++  }
++
++  const d = abrir();
++  return enNombreDe({
++    idAdmin, idOrganizacion: pago.organizacion_id, accion: 'pago.devolver-sin-aplicar',
++    objetoTipo: 'pago', objetoId: pago.id, motivo: texto, ip,
++  }, () => {
++    // Se relee dentro de la transacción: otro pudo resolverlo entre medias.
++    const actual = pagoPorId(pago.id);
++    if (actual.estado === 'devuelto') throw errorCodigo('Ya está devuelto.', 409);
++    if (actual.procesador !== 'cardnet') {
++      throw errorCodigo('Solo se devuelve así un cobro con tarjeta (CardNet).', 409);
++    }
++    if (actual.estado !== 'pendiente' && actual.estado !== 'rechazado') {
++      throw errorCodigo(`Ese pago está ${actual.estado}: no es un cobro sin aplicar.`, 409);
++    }
++    const sinAplicar = d.prepare(`SELECT 1 FROM pagos_eventos
++                                   WHERE pago_id = ? AND tipo = 'aprobado-sin-aplicar' LIMIT 1`).get(actual.id);
++    if (!sinAplicar) {
++      throw errorCodigo('Ese cobro no consta como aprobado sin aplicar: no hay nada que devolver.', 409);
++    }
++    if (facturaDePago(actual.id)) {
++      throw errorCodigo('Ese pago tiene comprobante: para devolverlo, anúlelo con una nota de crédito en Facturas.', 409);
++    }
++
++    const t = ahora();
++    const hecho = d.prepare(`UPDATE pagos SET estado = 'devuelto', actualizado = ?
++                              WHERE id = ? AND estado = ?`).run(t, actual.id, actual.estado);
++    if (hecho.changes !== 1) throw errorCodigo('Ese pago cambió mientras tanto. Recargue la lista.', 409);
++
++    anotarEventoPago({
++      pagoId: actual.id, procesador: actual.procesador, origen: 'consola', tipo: 'devuelto-manual',
++      cuerpo: { motivo: texto, idAdmin, estadoAnterior: actual.estado },
++    });
++
++    const despues = pagoPorId(actual.id);
++    return {
++      antes: { estado: actual.estado },
++      despues: { estado: despues.estado, referencia: despues.referencia, total: despues.total },
++      resultado: despues,
++    };
++  });
++}
++
+ /* ── Membresía de las cuentas internas ──────────────────────
+    Las cuentas del equipo no compran capacidad. Se les da una única
+    membresía Premium sin límite y sin fecha de fin, creada la primera
+@@ -7157,7 +7241,7 @@ module.exports = {
+   eventosDePago, huboIntentoDeCobro, intencionAplicable, activarRenovacionConTarjeta, desactivarRenovacion,
+   reprogramarRenovacion, suscripcionesPorRenovar, anotarIntentoRenovacion, clienteDeRenovacion,
+   anuncioUnicoDeSuscripcion, suscripcionesPorAvisar, anotarAvisoRenovacion, tarjetasPorVencer,
+-  anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar,
++  anotarAvisoVencimiento, pagosCardnetPorReconciliar, descuadresEntre, pagosCardnetAtascados, cobrosSinAplicar, devolverCobroSinAplicar,
+   facturasDe, comprobantesDelPeriodo, sumaDelPeriodo, fechasIrregulares,
+   facturas, validarMes, marcarEnviada, sumarIntentoEnvio, anotarPdf, marcarAnulada,
+   abrir, id, ahora, hoy, sumarDias, sumarMeses, aSlug, huella, purgar,
+-- 
+2.43.0
+
+
+From b6b45c24a5bb92f435658f2e00567d55790762d9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 16:12:16 +0000
+Subject: [PATCH 2/3] =?UTF-8?q?Pruebas=20de=20la=20devoluci=C3=B3n=20sin?=
+ =?UTF-8?q?=20aplicar:=20sin-aplicar:probar,=20en=20CI=20(#147)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Cada requisito con su código y sin escribir nada al rechazar, el efecto,
+nada fiscal, la repetición, que un devuelto no revive (confirmarPago,
+aprobado tardío, conciliación) y que la tarea reconciliar sale con 0 sin
+CardNet.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ .github/workflows/desplegar.yml |   2 +
+ package.json                    |   1 +
+ tools/probar-sin-aplicar.js     | 256 ++++++++++++++++++++++++++++++++
+ 3 files changed, 259 insertions(+)
+ create mode 100644 tools/probar-sin-aplicar.js
+
+diff --git a/.github/workflows/desplegar.yml b/.github/workflows/desplegar.yml
+index 87ddad0..a333492 100644
+--- a/.github/workflows/desplegar.yml
++++ b/.github/workflows/desplegar.yml
+@@ -128,6 +128,8 @@ jobs:
+         run: npm run respaldo:probar
+       - name: Pagos
+         run: npm run pagos:probar
++      - name: Cobro aprobado sin aplicar
++        run: npm run sin-aplicar:probar
+       - name: Metricas del vendedor
+         run: npm run metricas:probar
+       - name: Transferencia
+diff --git a/package.json b/package.json
+index b12795a..abb37d1 100644
+--- a/package.json
++++ b/package.json
+@@ -37,6 +37,7 @@
+     "facturas:probar": "node tools/probar-facturas.js",
+     "ncf-unico:probar": "node tools/probar-ncf-unico.js",
+     "pagos:probar": "node tools/probar-pagos.js",
++    "sin-aplicar:probar": "node tools/probar-sin-aplicar.js",
+     "medios:puro": "node --test tools/medios.prueba.js",
+     "transferencia:probar": "node tools/probar-transferencia.js",
+     "publicacion:probar": "node tools/probar-publicacion.js",
+diff --git a/tools/probar-sin-aplicar.js b/tools/probar-sin-aplicar.js
+new file mode 100644
+index 0000000..f60e404
+--- /dev/null
++++ b/tools/probar-sin-aplicar.js
+@@ -0,0 +1,256 @@
++/**
++ * probar-sin-aplicar.js — devolver un cobro aprobado sin aplicar (#66, base #147).
++ *
++ *   node tools/probar-sin-aplicar.js
++ *
++ * POR QUÉ EXISTE
++ *
++ * CardNet puede aprobar un cobro que ya no se puede aplicar (la membresía
++ * venció entre medias, el pago se había reemplazado). El dinero entró y no
++ * se otorgó nada ni se emitió comprobante. `db.devolverCobroSinAplicar`
++ * deja constancia de que el personal lo devolvió en el portal de CardNet.
++ * Lo que se fija aquí:
++ *   - cada requisito con su código (400, 404, 409), y que un rechazo no
++ *     escribe NADA (ni estado, ni evento, ni bitácora);
++ *   - el efecto: estado `devuelto`, evento `devuelto-manual` y una fila de
++ *     bitácora, juntos;
++ *   - que no se emite comprobante ni se consume ningún NCF (no hubo
++ *     comprobante que anular: una B04 sin original sería un documento de
++ *     algo que no ocurrió), ni se toca la capacidad;
++ *   - que repetirla es 409 sin escribir;
++ *   - que un pago devuelto no revive: ni `confirmarPago`, ni un aprobado
++ *     tardío de CardNet (`resolver`), ni la conciliación otorgan o emiten;
++ *   - que la tarea `reconciliar` del temporizador sale con 0 sin CardNet.
++ *
++ * Base DESECHABLE en `.tmp/prueba-sin-aplicar/`, correo en archivo y sin red.
++ */
++
++const fs = require('fs');
++const path = require('path');
++const { spawnSync } = require('child_process');
++
++/* El entorno ANTES de cargar db.js: la ruta de la base se resuelve al
++   importarlo. Hecho después, la prueba escribiría en la base equivocada. */
++const BANCO = path.join(__dirname, '..', '.tmp', 'prueba-sin-aplicar');
++fs.rmSync(BANCO, { recursive: true, force: true });
++fs.mkdirSync(BANCO, { recursive: true });
++
++process.env.MERCA_DB = path.join(BANCO, 'prueba.db');
++process.env.MERCA_FACTURAS = path.join(BANCO, 'facturas');
++process.env.MERCA_CORREO = 'archivo';
++process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
++// Que un .env local no encienda CardNet a mitad de prueba.
++process.env.MERCA_ENV = path.join(BANCO, 'no-existe.env');
++for (const k of Object.keys(process.env)) {
++  if (k.startsWith('MERCA_CARDNET')) delete process.env[k];
++}
++
++const db = require('./db');
++const pagos = require('./pagos');
++const cardnet = require('./cardnet');
++
++let intentosDeRed = 0;
++cardnet._transporte = () => {
++  intentosDeRed++;
++  throw new Error('la prueba intentó salir a la red');
++};
++
++let fallos = 0;
++function ok(condicion, texto) {
++  if (!condicion) fallos++;
++  console.log(`  ${condicion ? 'OK   ' : 'FALLA'}  ${texto}`);
++}
++
++function lanza(fn) {
++  try { fn(); return null; } catch (e) { return e; }
++}
++
++const d = db.abrir();
++const uno = (sql, ...a) => d.prepare(sql).get(...a);
++const n = (sql, ...a) => d.prepare(sql).get(...a).n;
++
++/* ── Siembra ─────────────────────────────────────────────── */
++
++function cuenta(correo, nombre) {
++  const { idUsuario } = db.crearCuenta({
++    correo, clave: 'UnaClaveLargaYSegura9', nombre, telefono: '8095550000', tipo: 'particular',
++  });
++  return { idUsuario, org: db.organizacionDe(idUsuario) };
++}
++
++const admin = cuenta('admin@ejemplo.test', 'Administradora de Prueba');
++db.marcarAdmin('admin@ejemplo.test', true);
++const normal = cuenta('normal@ejemplo.test', 'Usuario Normal');
++const cliente = cuenta('cliente@ejemplo.test', 'Cliente de Prueba');
++const ID_ORG = cliente.org.id;
++
++db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 1, hasta: 500, vence: '2099-12-31', usaSitio: true });
++db.cargarSecuencia({ tipo: 'B02', nombre: 'Consumo', desde: 1, hasta: 500, vence: '2099-12-31', usaSitio: true });
++db.cargarSecuencia({ tipo: 'B04', nombre: 'Notas de crédito', desde: 1, hasta: 500, vence: '2099-12-31', usaSitio: true });
++
++let correlativo = 0;
++/* Un pago como lo deja `pagos.resolver` tras un aprobado que no se pudo
++   aplicar: en `estado`, con el evento `aprobado-sin-aplicar`. */
++function pago({ procesador = 'cardnet', estado = 'pendiente', sinAplicar = true } = {}) {
++  correlativo++;
++  const idPago = `pago-sa-${correlativo}`;
++  const intencion = JSON.stringify({
++    tipo: 'compra', idPlan: 'plan-inexistente', concepto: 'Membresía de prueba',
++    cliente: { razonSocial: 'Cliente de Prueba' }, correoCliente: 'cliente@ejemplo.test',
++  });
++  d.prepare(`INSERT INTO pagos (id, organizacion_id, subtotal, itbis, total, estado, referencia,
++               procesador, creado, intencion)
++             VALUES (?, ?, 3090, 556, 3646, ?, ?, ?, ?, ?)`)
++    .run(idPago, ID_ORG, estado, `SA-${correlativo}`, procesador, new Date().toISOString(), intencion);
++  if (sinAplicar) {
++    db.anotarEventoPago({
++      pagoId: idPago, procesador, origen: 'notificacion', tipo: 'aprobado-sin-aplicar',
++      cuerpo: { referencia: `SA-${correlativo}`, causa: 'prueba' },
++    });
++  }
++  return idPago;
++}
++
++const MOTIVO = 'Devuelto en el portal de CardNet, operación 123456.';
++const devolver = (idPago, extra = {}) => db.devolverCobroSinAplicar({
++  idPago, idAdmin: admin.idUsuario, motivo: MOTIVO, ip: '201.4.4.4', ...extra,
++});
++
++/* Todo lo que una devolución podría escribir, para comprobar que un
++   rechazo no deja nada y que un acierto no toca lo fiscal. */
++function foto(idPago) {
++  return {
++    estado: idPago ? (uno('SELECT estado FROM pagos WHERE id = ?', idPago) || {}).estado : null,
++    eventos: n('SELECT COUNT(*) AS n FROM pagos_eventos'),
++    bitacora: n('SELECT COUNT(*) AS n FROM bitacora_admin'),
++    facturas: n('SELECT COUNT(*) AS n FROM facturas'),
++    ncf: d.prepare('SELECT tipo, siguiente FROM secuencias_ncf ORDER BY tipo, desde').all()
++      .map((s) => `${s.tipo}:${s.siguiente}`).join(' '),
++    suscripciones: n('SELECT COUNT(*) AS n FROM suscripciones'),
++  };
++}
++const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
++
++function rechaza(titulo, codigo, fn, idPago, texto) {
++  const antes = foto(idPago);
++  const e = lanza(fn);
++  ok(!!e && e.codigo === codigo && (!texto || texto.test(e.message)),
++    `${titulo}: ${codigo}${e ? ` «${e.message}»` : ' (no lanzó)'}`);
++  ok(igual(foto(idPago), antes), `${titulo}: no escribe nada`);
++}
++
++(async () => {
++  console.log('\n1. Requisitos, cada uno con su código');
++  rechaza('pago inexistente', 404, () => devolver('no-existe'), null);
++  rechaza('sin idPago', 404, () => db.devolverCobroSinAplicar({ idAdmin: admin.idUsuario, motivo: MOTIVO }), null);
++
++  const pMotivo = pago();
++  rechaza('motivo de 9 caracteres', 400, () => devolver(pMotivo, { motivo: '123456789' }), pMotivo);
++  rechaza('motivo de espacios que recortado es corto', 400, () => devolver(pMotivo, { motivo: '   corto     ' }), pMotivo);
++  rechaza('motivo de 501 caracteres', 400, () => devolver(pMotivo, { motivo: 'x'.repeat(501) }), pMotivo);
++  rechaza('sin motivo', 400, () => devolver(pMotivo, { motivo: undefined }), pMotivo);
++  rechaza('quien no es administrador', 404, () => devolver(pMotivo, { idAdmin: normal.idUsuario }), pMotivo);
++
++  const pTransf = pago({ procesador: 'transferencia' });
++  rechaza('pago de transferencia', 409, () => devolver(pTransf), pTransf, /CardNet/);
++
++  const pAprobado = pago({ estado: 'aprobado' });
++  rechaza('pago aprobado', 409, () => devolver(pAprobado), pAprobado, /aprobado/);
++
++  const pSinEvento = pago({ sinAplicar: false });
++  rechaza('pendiente sin evento aprobado-sin-aplicar', 409, () => devolver(pSinEvento), pSinEvento, /no consta/);
++
++  const pConFactura = pago();
++  const t = new Date().toISOString();
++  d.prepare(`INSERT INTO facturas (id, pago_id, organizacion_id, numero, tipo, concepto, subtotal, itbis, total, moneda, fecha, creada)
++             VALUES ('factura-sa', ?, ?, 'MM-2099-000001', 'recibo', 'Prueba', 3090, 556, 3646, 'DOP', ?, ?)`)
++    .run(pConFactura, ID_ORG, t, t);
++  rechaza('con comprobante emitido', 409, () => devolver(pConFactura), pConFactura, /nota de crédito/);
++
++  console.log('\n2. El caso bueno: estado, evento y bitácora juntos, nada fiscal');
++  const pBueno = pago();
++  const antes = foto(pBueno);
++  let r = null;
++  const e = lanza(() => { r = devolver(pBueno, { motivo: `   ${MOTIVO}   ` }); });
++  ok(!e, `no lanza${e ? `: ${e.message}` : ''}`);
++  ok(!!r && r.id === pBueno && r.estado === 'devuelto', 'devuelve el pago ya devuelto');
++  ok(uno('SELECT estado FROM pagos WHERE id = ?', pBueno).estado === 'devuelto', 'el pago queda devuelto');
++
++  const ev = db.eventosDePago(pBueno).filter((x) => x.tipo === 'devuelto-manual');
++  ok(ev.length === 1 && ev[0].origen === 'consola' && ev[0].procesador === 'cardnet',
++    'un evento devuelto-manual con origen consola');
++  ok(ev.length === 1 && ev[0].cuerpo && ev[0].cuerpo.motivo === MOTIVO && ev[0].cuerpo.idAdmin === admin.idUsuario,
++    'el evento guarda el motivo recortado y el id del administrador');
++
++  const fila = uno("SELECT * FROM bitacora_admin WHERE accion = 'pago.devolver-sin-aplicar' AND objeto_id = ?", pBueno);
++  ok(!!fila && fila.objeto_tipo === 'pago' && fila.organizacion_id === ID_ORG && fila.admin_id === admin.idUsuario
++    && fila.motivo === MOTIVO && fila.ip === '201.4.4.4',
++  'una fila de bitácora: acción, pago, organización, administrador, motivo e IP');
++  ok(!!fila && JSON.parse(fila.antes).estado === 'pendiente' && JSON.parse(fila.despues).estado === 'devuelto',
++    'la bitácora dice de qué estado a qué estado');
++  ok(db.ACCIONES_BITACORA['pago.devolver-sin-aplicar'] !== undefined, 'la acción está en el catálogo de la bitácora');
++
++  const despues = foto(pBueno);
++  ok(despues.bitacora === antes.bitacora + 1 && despues.eventos === antes.eventos + 1,
++    `una fila de bitácora y un evento más (+${despues.bitacora - antes.bitacora}, +${despues.eventos - antes.eventos})`);
++  ok(despues.facturas === antes.facturas && despues.ncf === antes.ncf,
++    `ningún comprobante ni NCF consumido (${despues.ncf})`);
++  ok(despues.suscripciones === antes.suscripciones, 'no toca membresías ni capacidad');
++  ok(intentosDeRed === 0, 'no llama a CardNet');
++
++  console.log('\n3. Repetirla: 409 «Ya está devuelto» sin escribir');
++  rechaza('segunda vez', 409, () => devolver(pBueno), pBueno, /Ya está devuelto/);
++
++  console.log('\n4. Un pago rechazado con el evento (reemplazado y aprobado tarde) también se cierra');
++  const pRechazado = pago({ estado: 'rechazado' });
++  let r2 = null;
++  const e2 = lanza(() => { r2 = devolver(pRechazado); });
++  ok(!e2 && r2 && r2.estado === 'devuelto', `rechazado → devuelto${e2 ? `: ${e2.message}` : ''}`);
++  const fila2 = uno("SELECT antes FROM bitacora_admin WHERE accion = 'pago.devolver-sin-aplicar' AND objeto_id = ?", pRechazado);
++  ok(!!fila2 && JSON.parse(fila2.antes).estado === 'rechazado', 'la bitácora guarda que venía de rechazado');
++
++  console.log('\n5. Lo que ve el personal');
++  const abierto = pago();
++  const consola = db.cobrosParaConsola({}).cobros;
++  const deFila = (id) => consola.find((c) => c.id === id) || {};
++  ok(deFila(abierto).sinAplicar === true, 'el cobro sin aplicar abierto trae sinAplicar en la consola');
++  ok(deFila(pBueno).sinAplicar === false && deFila(pBueno).estado === 'devuelto', 'el devuelto ya no ofrece devolverlo');
++  ok(deFila(pSinEvento).sinAplicar === false, 'un pendiente cualquiera tampoco');
++  const informe = db.cobrosSinAplicar().map((x) => x.id);
++  ok(informe.includes(abierto) && !informe.includes(pBueno) && !informe.includes(pRechazado),
++    'el informe deja de enseñar los devueltos y sigue enseñando el abierto');
++
++  console.log('\n6. Un pago devuelto no revive');
++  let antesRevivir = foto(pBueno);
++  const conf = pagos.confirmarPago(pBueno);
++  ok(conf.pago.estado === 'devuelto' && conf.comprobante === null, 'confirmarPago no lo aprueba ni emite');
++  ok(igual(foto(pBueno), antesRevivir), 'confirmarPago no escribe nada');
++
++  antesRevivir = foto(pBueno);
++  const tarde = pagos.resolver(db.pagoPorId(pBueno), { resultado: 'aprobado', origen: 'notificacion', procesadorId: 'P-TARDE' });
++  ok(db.pagoPorId(pBueno).estado === 'devuelto' && !tarde.comprobante, 'un aprobado tardío de CardNet no lo aprueba ni emite');
++  const trasTarde = foto(pBueno);
++  ok(trasTarde.facturas === antesRevivir.facturas && trasTarde.ncf === antesRevivir.ncf
++    && trasTarde.suscripciones === antesRevivir.suscripciones && trasTarde.eventos === antesRevivir.eventos,
++  'ni comprobante, ni NCF, ni capacidad, ni otro evento aprobado-sin-aplicar');
++
++  const futuro = new Date(Date.now() + 86400000);
++  ok(!db.pagosCardnetPorReconciliar({ minutos: 0, ahora: futuro }).some((p) => p.id === pBueno),
++    'la conciliación no lo vuelve a mirar');
++  const rec = await pagos.reconciliar({ minutos: 0, ahora: futuro });
++  ok(rec.apagado === true && igual(foto(pBueno), trasTarde), 'pagos.reconciliar con CardNet apagado no toca nada');
++
++  console.log('\n7. La tarea del temporizador sin CardNet');
++  const tarea = spawnSync(process.execPath, ['--no-warnings', path.join(__dirname, 'tareas.js'), 'reconciliar'],
++    { env: process.env, encoding: 'utf8' });
++  ok(tarea.status === 0 && /CardNet apagado/.test(tarea.stdout),
++    `tools/tareas.js reconciliar sale con ${tarea.status}: ${(tarea.stdout || tarea.stderr || '').trim().split(/\r?\n/).pop()}`);
++  ok(igual(foto(pBueno), trasTarde), 'y no escribe nada');
++
++  ok(intentosDeRed === 0, 'ninguna llamada a la red en toda la prueba');
++  console.log(`\n${fallos ? `${fallos} comprobación(es) fallaron` : 'Todo en orden'}`);
++  process.exit(fallos ? 1 : 0);
++})().catch((e) => {
++  console.error(e);
++  process.exit(1);
++});
+-- 
+2.43.0
+
+
+From 1ca9fd225fa976d50825a1554a0d51fedc40d0ab Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 6 Oct 2026 16:12:16 +0000
+Subject: [PATCH 3/3] =?UTF-8?q?El=20despliegue=20instala=20el=20temporizad?=
+ =?UTF-8?q?or=20de=20conciliaci=C3=B3n=20de=20pagos=20(#147)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Con el sitio ya arriba copia mercamaquinarias-pagos.service y .timer si
+cambiaron, daemon-reload y enable --now. Si falla solo avisa. Hay que
+reinstalar el script en /usr/local/bin una vez para que tome efecto.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01X8cYa9cxu9LZxGa4aGw3aU
+---
+ deploy/README.md                      |  7 ++++++-
+ deploy/desplegar-mercamaquinarias     | 27 +++++++++++++++++++++++++++
+ deploy/mercamaquinarias-pagos.service |  3 ++-
+ 3 files changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/deploy/README.md b/deploy/README.md
+index 61ebb4c..faac4b7 100644
+--- a/deploy/README.md
++++ b/deploy/README.md
+@@ -519,7 +519,9 @@ responde 404.
+ Cada 10 minutos, `mercamaquinarias-pagos` completa los pagos cuyo aviso o
+ cuya confirmación del navegador se perdieron, y el descuadre sale en el
+ informe a gerencia. Es inocuo con CardNet apagado: la tarea responde
+-«CardNet apagado» y no llama a nadie.
++«CardNet apagado» y no llama a nadie. Desde #147 lo instala y activa el
++despliegue automático (una vez reinstalado el script en `/usr/local/bin`, ver
++«Qué hace el despliegue»); a mano sería:
+ 
+ ```bash
+ cp /var/www/mercamaquinarias/deploy/mercamaquinarias-pagos.service /etc/systemd/system/
+@@ -681,6 +683,9 @@ Las migraciones de `tools/db.js` se aplican solas al arrancar.
+    propósito: es lo único que corre como root):
+    `install -m 755 /var/www/mercamaquinarias/deploy/desplegar-mercamaquinarias /usr/local/bin/`.
+ 4. Reinicia `mercamaquinarias` y espera hasta 15 s a que el sitio responda.
++   Con el sitio arriba, instala `mercamaquinarias-pagos.service` y `.timer` si cambiaron
++   (`daemon-reload`, `enable --now` del temporizador; #147). Si eso falla solo avisa: el
++   sitio no se toca. Con `MERCA_CARDNET` sin fijar, la tarea sale con 0 sin hacer nada.
+ 5. **Si no responde, vuelve solo a la versión anterior** y la reinicia.
+    Ojo: eso devuelve el código, no la base (para eso está el respaldo del paso 3). Las migraciones son de ida;
+    como solo añaden, una versión anterior sigue arrancando, pero una
+diff --git a/deploy/desplegar-mercamaquinarias b/deploy/desplegar-mercamaquinarias
+index 269dd91..cd2b04d 100644
+--- a/deploy/desplegar-mercamaquinarias
++++ b/deploy/desplegar-mercamaquinarias
+@@ -71,12 +71,39 @@ fi
+ 
+ systemctl restart "$SERVICIO"
+ 
++# #66 (#147). La conciliacion de pagos con tarjeta cada 10 minutos.
++# Antes habia que instalarla a mano y nadie lo hizo: un aviso de CardNet
++# perdido en un reinicio dejaba el pago pendiente para siempre. Se copian
++# las dos unidades solo si cambiaron (cmp), y se activa el temporizador.
++# Con MERCA_CARDNET sin fijar la tarea sale con 0 sin llamar a nadie, asi
++# que activarla antes de encender CardNet es inocuo.
++#
++# Va DESPUES de comprobar que el sitio responde y no lo tumba: si falla,
++# el sitio nuevo ya esta arriba y solo se avisa.
++UNIDADES=/etc/systemd/system
++instalarTemporizadorPagos() {
++  local cambio=0 u
++  for u in mercamaquinarias-pagos.service mercamaquinarias-pagos.timer; do
++    if ! cmp -s "$REPO/deploy/$u" "$UNIDADES/$u"; then
++      install -m 644 "$REPO/deploy/$u" "$UNIDADES/$u" || return 1
++      cambio=1
++    fi
++  done
++  if [ "$cambio" = 1 ]; then systemctl daemon-reload || return 1; fi
++  systemctl enable --now mercamaquinarias-pagos.timer >/dev/null 2>&1 || return 1
++}
++
+ # Se espera a que levante en vez de dormir una cantidad fija: arrancar
+ # tarda distinto segun lo que haya que migrar en la base.
+ for _ in $(seq 1 "$INTENTOS"); do
+   sleep 1
+   if curl -fsS -o /dev/null --max-time 3 "$SALUD"; then
+     echo "Sitio arriba: $(version)"
++    if instalarTemporizadorPagos; then
++      echo "Conciliacion de pagos: mercamaquinarias-pagos.timer activo"
++    else
++      echo "AVISO: no se pudo instalar mercamaquinarias-pagos.timer (el sitio sigue arriba)" >&2
++    fi
+     exit 0
+   fi
+ done
+diff --git a/deploy/mercamaquinarias-pagos.service b/deploy/mercamaquinarias-pagos.service
+index 1edaa0c..6516c1d 100644
+--- a/deploy/mercamaquinarias-pagos.service
++++ b/deploy/mercamaquinarias-pagos.service
+@@ -10,7 +10,8 @@
+ # por mucho que se repita).
+ #
+ # Con CardNet apagado la tarea no hace nada, así que instalarla antes de
+-# encender la pasarela es inocuo. El despliegue automático NO la instala.
++# encender la pasarela es inocuo. Desde #147 la instala el despliegue
++# automático (deploy/desplegar-mercamaquinarias) con el sitio ya arriba.
+ 
+ [Unit]
+ Description=MercaMaquinarias — conciliación de pagos con tarjeta
+-- 
+2.43.0
+

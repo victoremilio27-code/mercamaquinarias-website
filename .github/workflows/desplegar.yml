@@ -128,6 +128,8 @@ jobs:
         run: npm run respaldo:probar
       - name: Pagos
         run: npm run pagos:probar
+      - name: Cobro aprobado sin aplicar
+        run: npm run sin-aplicar:probar
       - name: Metricas del vendedor
         run: npm run metricas:probar
       - name: Transferencia
