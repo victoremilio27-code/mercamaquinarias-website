@@ -70,6 +70,7 @@
     "servicios:probar": "node --test tools/servicios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
+    "servidor:probar": "node tools/probar-servidor.js",
     "bitacora:probar": "node tools/probar-bitacora.js",
     "cuenta:probar": "node tools/probar-cuenta.js",
     "busquedas:probar": "node tools/probar-busquedas.js",
