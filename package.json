@@ -34,6 +34,8 @@
     "tareas:probar": "node tools/probar-tareas.js",
     "respaldo": "node tools/tareas.js respaldo",
     "respaldo:probar": "node tools/probar-respaldo.js",
+    "respaldo:ensayar": "node tools/ensayo-restauracion.js",
+    "ensayo-restauracion:probar": "node tools/probar-ensayo-restauracion.js",
     "correo:probar": "node tools/probar-correo.js",
     "correo:puro": "node --test tools/correo.prueba.js",
     "seguridad:probar": "node tools/probar-seguridad.js",
