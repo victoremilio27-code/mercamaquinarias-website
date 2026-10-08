@@ -691,11 +691,48 @@ function regenerarPdfsPendientes({ limite = 200, emisor = correo.EMPRESA } = {})
 }
 
 /* Nota de crédito que anula un comprobante. El original no se toca:
-   solo se le anota quién lo anuló. */
+   solo se le anota quién lo anuló.
+ *
+ * De una pieza (#168). Antes tomaba el B04, creaba la nota, anulaba el
+ * original y la ruta pasaba el pago a `devuelto`, cada cosa por su lado,
+ * y el PDF se dibujaba sin `try`. Si la inserción fallaba, el B04 quedaba
+ * gastado sin comprobante; si fallaba el PDF, la nota y la anulación ya
+ * estaban escritas pero la ruta respondía 500 sin llegar a devolver el
+ * pago, y el reintento contestaba 409 «ya está anulado»: el pago se
+ * quedaba `aprobado` para siempre con su B04 emitido.
+ *
+ * Ahora la comprobación, el número, la nota, la anulación y el pago
+ * devuelto van en una sola `enTransaccionInmediata`: o queda todo o no
+ * queda nada, y el B04 vuelve a la secuencia. El PDF va fuera y después,
+ * como en `emitirPorPago`; si falla, `regenerarPdfsPendientes` lo recoge. */
 function emitirNotaCredito(original, { motivo, emisor = correo.EMPRESA } = {}) {
   if (!original) return null;
   if (original.anulado_por) return db.facturaPorId(original.anulado_por);
 
+  const emision = db.enTransaccionInmediata(() => {
+    /* Se vuelve a leer con el bloqueo tomado: lo que trae quien llama
+       pudo leerse antes de que otra petición lo anulara. */
+    const vigente = db.facturaPorId(original.id);
+    if (vigente && vigente.anulado_por) return { yaEsta: db.facturaPorId(vigente.anulado_por) };
+    return { nueva: emitirNotaEnTransaccion(original, { motivo, emisor }) };
+  });
+  if (emision.yaEsta) return emision.yaEsta;
+  const { idNota, numero } = emision.nueva;
+
+  try {
+    const { fila, emisor: emisorGuardado } = paraDibujar(db.facturaPorId(idNota), emisor);
+    const bytes = dibujar(fila, { emisor: emisorGuardado });
+    db.anotarPdf(idNota, guardarPdf(numero, fila.fecha, bytes));
+  } catch (e) {
+    console.error(`facturas: la nota ${numero} quedó emitida sin PDF · ${e.message}`);
+  }
+
+  return db.facturaPorId(idNota);
+}
+
+/* Lo que va dentro de la transacción de `emitirNotaCredito`. Aparte solo
+   para que se lea; no se llama desde ningún otro sitio. */
+function emitirNotaEnTransaccion(original, { motivo, emisor }) {
   const ncf = db.tomarNcf('B04');
 
   /* Sin B04 no hay nota de crédito que valga.
@@ -748,12 +785,9 @@ function emitirNotaCredito(original, { motivo, emisor = correo.EMPRESA } = {}) {
   });
 
   db.marcarAnulada(original.id, idNota);
+  if (original.pago_id) db.marcarPagoDevuelto(original.pago_id);
 
-  const { fila, emisor: emisorGuardado } = paraDibujar(db.facturaPorId(idNota), emisor);
-  const bytes = dibujar(fila, { emisor: emisorGuardado });
-  db.anotarPdf(idNota, guardarPdf(numero, fila.fecha, bytes));
-
-  return db.facturaPorId(idNota);
+  return { idNota, numero };
 }
 
 /* ── Envío ──────────────────────────────────────────────── */
