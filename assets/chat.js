@@ -124,6 +124,13 @@
   const historial = [];      // solo en memoria; ver cabecera
   let esperando = false;
   let abierto = false;
+  let ultimoActivador = lanzador;
+
+  function reflejarEstado() {
+    document.querySelectorAll('[data-accion-asistente], #chatAbrir').forEach((boton) => {
+      boton.setAttribute('aria-expanded', String(abierto));
+    });
+  }
 
   /* ── Pintado ────────────────────────────────────────────── */
 
@@ -202,10 +209,11 @@
 
   /* ── Abrir y cerrar ─────────────────────────────────────── */
 
-  function abrir() {
+  function abrir(activador = lanzador) {
     abierto = true;
+    ultimoActivador = activador;
     panel.hidden = false;
-    lanzador.setAttribute('aria-expanded', 'true');
+    reflejarEstado();
     // El panel se monta vacío y se llena la primera vez que se abre:
     // así una visita que nunca lo abre no paga ni un nodo de más.
     if (!log.children.length) {
@@ -218,11 +226,18 @@
   function cerrar() {
     abierto = false;
     panel.hidden = true;
-    lanzador.setAttribute('aria-expanded', 'false');
-    lanzador.focus();
+    reflejarEstado();
+    ultimoActivador.focus();
   }
 
-  lanzador.addEventListener('click', () => (abierto ? cerrar() : abrir()));
+  function alternar(activador = lanzador) {
+    if (abierto) cerrar();
+    else abrir(activador);
+  }
+
+  window.alternarAsistente = alternar;
+  reflejarEstado();
+  lanzador.addEventListener('click', () => alternar(lanzador));
   $('chatCerrar').addEventListener('click', cerrar);
 
   document.addEventListener('keydown', (ev) => {

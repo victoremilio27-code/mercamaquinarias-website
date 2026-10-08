@@ -4793,7 +4793,7 @@ section[aria-labelledby="t-buscar"] { display: none; }
 /* ═══ Móvil ═══ */
 @media (max-width: 700px) {
   :root { --pad: 16px; }
-  body { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
+  body { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
   .envoltura { width: 100%; padding-inline: var(--pad); }
   .cab { position: sticky; top: 0; z-index: 60; }
   .cab__inner { min-height: 64px; padding: 10px var(--pad); gap: 10px; }
@@ -4849,13 +4849,12 @@ section[aria-labelledby="t-buscar"] { display: none; }
   .pie { padding-bottom: 25px; }
   .cab__toggle { min-width: 44px; min-height: 44px; }
   .chat { right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 110; }
+  .chat__lanzador { display: none; }
   .chat__panel { position: fixed; left: 16px; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); width: auto; height: min(560px, calc(100dvh - 180px - env(safe-area-inset-bottom))); }
 
   .nav-movil {
-    /* Una columna por enlace, no cinco fijas. app.js construye
-       cuatro, asi que la quinta quedaba vacia: los iconos se
-       apinaban a la izquierda y sobraba un hueco a la derecha, en
-       el elemento de navegacion principal del telefono. */
+    /* Una columna por elemento mantiene «Publicar» en el centro tanto
+       si Ayuda abre el asistente como si lleva al correo. */
     position: fixed; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
     left: max(14px, env(safe-area-inset-left)); right: max(14px, env(safe-area-inset-right));
     bottom: max(12px, env(safe-area-inset-bottom)); z-index: 100;
@@ -4863,7 +4862,7 @@ section[aria-labelledby="t-buscar"] { display: none; }
     background: var(--app-vidrio); border: 1px solid var(--app-line); border-radius: 24px;
     box-shadow: var(--app-sombra); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   }
-  .nav-movil a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 0; color: var(--app-text); border-radius: 18px; font-size: 10px; font-weight: 600; }
+  .nav-movil > * { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 0; padding: 0; color: var(--app-text); background: transparent; border: 0; border-radius: 18px; font: inherit; font-size: 10px; font-weight: 600; cursor: pointer; }
   .nav-movil svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .nav-movil a:nth-child(3) { color: #151515; background: var(--app-accent); margin: -15px 3px 4px; border: 5px solid var(--app-bg); border-radius: 22px; }
   .nav-movil .is-activo:not(:nth-child(3)) { background: var(--app-soft); color: var(--app-text); }
