@@ -15,6 +15,7 @@
     "check:motion": "node tools/check-motion.js",
     "check:contraste": "node tools/check-contraste.js",
     "cabeceras:puro": "node --test tools/cabeceras.prueba.js",
+    "despliegue:puro": "node --test tools/despliegue.prueba.js",
     "codex": "node tools/codex.js",
     "codex:puro": "node --test tools/codex.prueba.js",
     "favicon": "node tools/make-favicon.js",
