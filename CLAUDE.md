@@ -11,9 +11,8 @@ léelo al empezar una sesión nueva, antes de explorar a ciegas.
 ## Cómo se trabaja con Victor
 
 - **El proyecto se llama MercaMaquinarias.** "TuEquipoRD" es el nombre viejo: sobrevive
-  solo en la carpeta local, en la migración que renombra los datos antiguos, en la clave
-  del borrador viejo de `assets/publicar.js` y en la redirección del dominio viejo. No
-  lo uses para nada nuevo.
+  solo en la carpeta local, en la migración que renombra los datos antiguos y en la clave
+  del borrador viejo de `assets/publicar.js`. No lo uses para nada nuevo.
 - Todo en español. Decide tú lo técnico y reversible; agrupa en una sola tanda las
   preguntas que solo él puede contestar (datos reales, pagos, algo irreversible).
 - **Se trabaja por fases en orden fijo** (`.planning/ROADMAP.md`): lanzamiento →

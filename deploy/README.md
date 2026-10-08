@@ -228,10 +228,6 @@ nginx -t && systemctl reload nginx
 los únicos de quienes nginx se cree la cabecera `CF-Connecting-IP` (#169).
 Sin ese archivo, `nginx -t` falla y no se recarga nada.
 
-Si el sitio viene de otro dominio, `deploy/nginx-dominio-viejo.conf`
-lo redirige entero al nuevo con un 301. Es temporal y el propio archivo
-explica cómo quitarlo.
-
 El servicio ya arranca con `MERCA_HTTPS=1`, que marca las cookies de
 sesión como `Secure`. Eso **solo funciona una vez que el certificado
 está puesto**: si entras por HTTP puro con esa variable activa, el

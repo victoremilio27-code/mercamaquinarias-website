@@ -74,7 +74,7 @@ This is a deliberate, explicitly-documented architectural policy — the project
 **Production:**
 - Target: a single Ubuntu 24.04 VPS (documented in `deploy/README.md`), not a PaaS/serverless platform.
 - Node process runs under systemd (`deploy/mercamaquinarias.service`), listening only on `127.0.0.1:8080`.
-- Nginx (`deploy/nginx.conf`, `deploy/nginx-dominio-viejo.conf`) reverse-proxies ports 80/443 to the Node process and terminates TLS (Let's Encrypt via certbot).
+- Nginx (`deploy/nginx.conf`) reverse-proxies ports 80/443 to the Node process and terminates TLS (Let's Encrypt via certbot).
 - SQLite database file lives outside the repo in production (`/var/lib/mercamaquinarias/mercamaquinarias.db`) so `git pull` never touches it; likewise photos/videos/invoices live under `/var/lib/mercamaquinarias/{fotos,videos,facturas}`.
 - Deployment is push-to-deploy: merging to `main` triggers `.github/workflows/desplegar.yml`, which SSHes in as a restricted `deploy` user and runs the single allowed command `/usr/local/bin/desplegar-mercamaquinarias` (`deploy/desplegar-mercamaquinarias`), which does `git fetch` + `git merge --ff-only`, restarts the systemd service, health-checks it, and auto-rolls-back on failure.
 - Production is the VPS, fronted by Cloudflare (verified live 2026-09-25). The old Vercel placeholder project that routed everything to `proximamente.html` is no longer in the serving path; `vercel.json` and `proximamente.html` remain in the repo only as leftovers to delete — see `deploy/VERCEL.md`.
