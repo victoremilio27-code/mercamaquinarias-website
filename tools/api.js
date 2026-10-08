@@ -3315,6 +3315,7 @@ const guardarEnlacesEnNombre = enNombreDelDealer('enlaces', nucleoEnlaces);
    pagar. */
 const listarPlanes = (req, res) => responder(res, 200, {
   planes: db.planes(),
+  masContratado: db.planMasContratado(),
   itbis: precios.ITBIS,
   duraciones: precios.DURACIONES,
   cuposPorUnoGratis: precios.CUPOS_POR_UNO_GRATIS,

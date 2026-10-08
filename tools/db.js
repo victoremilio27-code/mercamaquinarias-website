@@ -3334,6 +3334,31 @@ const planes = () =>
   abrir().prepare('SELECT * FROM planes WHERE activo = 1 ORDER BY orden').all()
     .map(conPrecioVigente);
 
+/* La cinta «Más contratado» era fija y no la respaldaba ningún dato
+   (#177). Exigimos un mínimo para que unas pocas compras no parezcan
+   una tendencia, y ante un empate no elegimos al azar: solo puede
+   haber una cinta y debe corresponder a una mayoría real. */
+function planMasContratado({ ahora: instante = ahora(), dias = 90, minimo = 5 } = {}) {
+  const limite = sumarDias(-dias, new Date(instante));
+  const filas = abrir().prepare(`
+    SELECT s.plan_id AS id, COUNT(*) AS contrataciones
+      FROM pagos p
+      JOIN suscripciones s ON s.id = p.suscripcion_id
+      JOIN planes pl ON pl.id = s.plan_id AND pl.activo = 1
+     WHERE p.estado = 'aprobado'
+       AND p.total > 0
+       AND p.suscripcion_id IS NOT NULL
+       AND COALESCE(p.confirmado, p.creado) >= ?
+       AND COALESCE(p.confirmado, p.creado) <= ?
+     GROUP BY s.plan_id
+     ORDER BY contrataciones DESC`).all(limite, new Date(instante).toISOString());
+
+  const total = filas.reduce((suma, fila) => suma + fila.contrataciones, 0);
+  if (total < minimo || !filas.length) return null;
+  if (filas[1] && filas[1].contrataciones === filas[0].contrataciones) return null;
+  return filas[0].id;
+}
+
 const planPorId = (idPlan) =>
   conPrecioVigente(abrir().prepare('SELECT * FROM planes WHERE id = ?').get(idPlan));
 
@@ -7287,7 +7312,7 @@ module.exports = {
   publicidadVigente, publicidadCompleta, publicidadPorId,
   crearPublicidad, actualizarPublicidad, borrarPublicidad, sumarImpresiones, sumarClic,
   sucursalesDe, sucursal, crearSucursal, actualizarSucursal, desactivarSucursal, marcarPrincipal,
-  planes, planPorId, suscripcionActiva, suscripcionesDe, suscripcion,
+  planes, planMasContratado, planPorId, suscripcionActiva, suscripcionesDe, suscripcion,
   suscripcionConHueco, comprarCupos, ampliarCupos, membresiaInterna,
   registrarCobro, aprobarPago, rechazarPago, pagosPendientesDe, pagosParaConsola,
   publicacionesParaConsola, cobrosParaConsola, renovacionesParaConsola,
