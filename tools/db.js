@@ -6673,7 +6673,13 @@ function tomarNcf(tipo) {
   const d = abrir();
 
   for (let intento = 0; intento < 5; intento++) {
-    const s = d.prepare('SELECT * FROM secuencias_ncf WHERE tipo = ? AND activa = 1').get(tipo);
+    /* `usa_sitio = 1` (#168): una secuencia «solo contabilidad» es del
+       contador, que gasta esos números por fuera. Antes solo se miraba
+       `activa`, y un rango cargado desde la consola sin marcar «la usa el
+       sitio» empezaba a gastarse aquí sin que `secuenciasBajas` avisara
+       al agotarse: el mismo NCF en dos comprobantes ante la DGII. Para el
+       sitio, una secuencia así es como si no existiera. */
+    const s = d.prepare('SELECT * FROM secuencias_ncf WHERE tipo = ? AND activa = 1 AND usa_sitio = 1').get(tipo);
     if (!s) return null;
     if (s.siguiente > s.hasta) return null;          // agotada
 

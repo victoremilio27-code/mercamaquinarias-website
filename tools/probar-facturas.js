@@ -32,6 +32,7 @@ process.env.MERCA_FACTURAS = path.join(BANCO, 'facturas');
 
 const db = require('./db');
 const facturas = require('./facturas');
+const pdf = require('./pdf');
 const api = require('./api');
 const { EventEmitter } = require('events');
 
@@ -80,6 +81,43 @@ function pedir(url, cabeceras) {
 
     api.manejar(req, res, new URL(url, 'http://localhost').pathname);
     setImmediate(() => req.emit('end'));
+  });
+}
+
+/* Lo mismo para un POST con cuerpo JSON: la anulación (#168) se prueba
+   por la ruta y no por la función, porque el pago se quedaba `aprobado`
+   justo en el tramo de la ruta que venía después de emitir la nota. */
+function enviarPost(url, cabeceras, cuerpo) {
+  return new Promise((resolver) => {
+    const req = new EventEmitter();
+    req.method = 'POST';
+    req.url = url;
+    req.headers = { 'user-agent': 'prueba-facturas', 'content-type': 'application/json', ...cabeceras };
+    req.socket = { remoteAddress: '127.0.0.1' };
+    req.destroy = () => {};
+
+    const res = {
+      codigo: 0,
+      cabeceras: {},
+      setHeader() {},
+      writeHead(codigo, headers = {}) {
+        res.codigo = codigo;
+        res.cabeceras = headers;
+        return res;
+      },
+      destroy() {},
+      end(texto) {
+        let json = null;
+        try { json = JSON.parse(texto || 'null'); } catch { /* no era JSON */ }
+        resolver({ codigo: res.codigo, json });
+      },
+    };
+
+    api.manejar(req, res, new URL(url, 'http://localhost').pathname);
+    setImmediate(() => {
+      req.emit('data', Buffer.from(JSON.stringify(cuerpo || {})));
+      req.emit('end');
+    });
   });
 }
 
@@ -320,6 +358,123 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
     ok(bloqueado, 'la base no deja reescribir el dibujo de un comprobante');
     const html = facturas.comoHtml(viejo, { emisor: otroEmisor });
     ok(html.includes('Otro domicilio'), 'un comprobante sin dibujo guardado se dibuja como antes');
+  }
+
+  /* #168 (1) — Una secuencia «solo contabilidad» (`usa_sitio = 0`) es del
+     contador: el sitio no la toca. Antes `tomarNcf` solo miraba `activa`,
+     así que una B02 cargada desde la consola sin marcar «la usa el sitio»
+     empezaba a gastarse sin que `secuenciasBajas` avisara de nada, y el
+     mismo NCF acababa en dos comprobantes ante la DGII. */
+  console.log('\n── Secuencias «solo contabilidad» (#168) ──');
+  {
+    const siguienteDe = (tipo) => {
+      const d = conexion();
+      const fila = d.prepare('SELECT siguiente FROM secuencias_ncf WHERE tipo = ? AND activa = 1').get(tipo);
+      d.close();
+      return fila ? fila.siguiente : null;
+    };
+    const marcarUsaSitio = (tipo, valor) => {
+      const d = conexion();
+      d.prepare('UPDATE secuencias_ncf SET usa_sitio = ? WHERE tipo = ? AND activa = 1').run(valor, tipo);
+      d.close();
+    };
+
+    marcarUsaSitio('B02', 0);
+    const b02Antes = siguienteDe('B02');
+    ok(db.tomarNcf('B02') === null, 'tomarNcf no da un número de una B02 marcada «solo contabilidad»');
+    const pSoloConta = pago({ subtotal: 2000, itbis: 360, total: 2360, referencia: 'PRUEBA-168-B02' });
+    const fSoloConta = facturas.emitirPorPago(pSoloConta, { concepto: 'Plan Estándar · 1 cupo · 30 días', cliente: {} });
+    ok(fSoloConta.tipo === 'recibo' && !fSoloConta.ncf,
+      `sin B02 del sitio el pago cae al recibo, como si no hubiera secuencia (tipo=${fSoloConta.tipo} ncf=${fSoloConta.ncf})`);
+    ok(siguienteDe('B02') === b02Antes, `la B02 del contador no avanza (${b02Antes} → ${siguienteDe('B02')})`);
+    marcarUsaSitio('B02', 1);
+
+    /* Y con la B04: una devolución no puede gastar un número del contador.
+       Se responde como sin B04, antes de tocar el original. */
+    const pB04 = pago({ subtotal: 7000, itbis: 1260, total: 8260, referencia: 'PRUEBA-168-B04' });
+    const fB04 = facturas.emitirPorPago(pB04, {
+      concepto: 'Plan Destacado · 2 cupos · 30 días',
+      cliente: { razonSocial: 'Constructora del Este, S.R.L.', rnc: '130123456' },
+    });
+    marcarUsaSitio('B04', 0);
+    const b04Antes = siguienteDe('B04');
+    let errorB04 = null;
+    try { facturas.emitirNotaCredito(db.facturaPorId(fB04.id), { motivo: 'Prueba #168' }); } catch (e) { errorB04 = e; }
+    ok(!!errorB04 && errorB04.codigo === 409, `sin B04 del sitio la nota no se emite (${errorB04 ? errorB04.message : 'se emitió'})`);
+    ok(siguienteDe('B04') === b04Antes && !db.facturaPorId(fB04.id).anulado_por,
+      'ni se gasta el B04 del contador ni se anula el original');
+    marcarUsaSitio('B04', 1);
+  }
+
+  /* #168 (2) — La nota de crédito, de una pieza. Antes tomaba el B04,
+     creaba la nota y anulaba el original cada cosa por su lado, y dibujaba
+     el PDF sin `try`: un fallo a mitad dejaba un B04 gastado sin
+     comprobante, y un fallo del PDF devolvía 500 con la nota ya emitida,
+     sin pasar el pago a `devuelto`; el reintento contestaba 409 «ya está
+     anulado» y el pago se quedaba `aprobado` para siempre. */
+  console.log('\n── La nota de crédito es atómica (#168) ──');
+  {
+    const d0 = conexion();
+    const siguienteB04 = () => {
+      const fila = d0.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B04' AND activa = 1").get();
+      return fila ? fila.siguiente : null;
+    };
+    const notasDe = (idPago) => d0.prepare(
+      "SELECT * FROM facturas WHERE pago_id = ? AND tipo = 'nota_credito'").all(idPago);
+    const estadoPago = (idPago) => d0.prepare('SELECT estado FROM pagos WHERE id = ?').get(idPago).estado;
+    const facturaConB01 = (referencia) => {
+      const p = pago({ subtotal: 7000, itbis: 1260, total: 8260, referencia });
+      return facturas.emitirPorPago(p, {
+        concepto: 'Plan Destacado · 2 cupos · 30 días',
+        cliente: { razonSocial: 'Constructora del Este, S.R.L.', rnc: '130123456' },
+      });
+    };
+
+    for (const [paso, nombre] of [['crearFactura', 'la inserción de la nota'], ['marcarAnulada', 'la anulación del original']]) {
+      const f = facturaConB01(`PRUEBA-168-${paso}`);
+      const antes = siguienteB04();
+      const real = db[paso];
+      db[paso] = () => { throw new Error(`fallo simulado en ${paso}`); };
+      let error = null;
+      try { facturas.emitirNotaCredito(db.facturaPorId(f.id), { motivo: 'Prueba #168' }); } catch (e) { error = e; } finally { db[paso] = real; }
+      ok(!!error, `si falla ${nombre}, el error llega al que llama`);
+      ok(siguienteB04() === antes, `si falla ${nombre}, el B04 no se gasta (${antes} → ${siguienteB04()})`);
+      ok(notasDe(f.pago_id).length === 0 && !db.facturaPorId(f.id).anulado_por && estadoPago(f.pago_id) === 'aprobado',
+        `si falla ${nombre}, no queda nota, el original sigue vigente y el pago aprobado`);
+    }
+
+    /* El PDF falla: la nota, la anulación y el pago devuelto quedan
+       escritos igual, la ruta responde 201 y el papel se repone después. */
+    const f = facturaConB01('PRUEBA-168-PDF');
+    const antes = siguienteB04();
+    const documentoReal = pdf.documento;
+    const errorReal = console.error;
+    pdf.documento = () => { throw new Error('fallo simulado al dibujar'); };
+    console.error = () => {};
+    let r;
+    try {
+      r = await enviarPost(`/api/admin/facturas/${f.id}/anular`, cabeceras, { motivo: 'Prueba #168' });
+    } finally {
+      pdf.documento = documentoReal;
+      console.error = errorReal;
+    }
+    const notas = notasDe(f.pago_id);
+    ok(r.codigo === 201, `si falla el PDF la anulación responde 201 (respondió ${r.codigo})`);
+    ok(notas.length === 1 && /^B04/.test(notas[0].ncf || '') && siguienteB04() === antes + 1,
+      `la nota queda emitida con su B04 (${notas.map((n) => n.ncf).join(', ') || 'ninguna'})`);
+    ok(notas.length === 1 && db.facturaPorId(f.id).anulado_por === notas[0].id, 'el original queda anulado por esa nota');
+    ok(estadoPago(f.pago_id) === 'devuelto', `el pago queda devuelto (estado=${estadoPago(f.pago_id)})`);
+    ok(notas.length === 1 && !notas[0].ruta_pdf, 'la nota queda sin PDF, pendiente de reponer');
+
+    const repuesta = facturas.regenerarPdfsPendientes({ limite: 1000 });
+    const nota168 = notas.length ? db.facturaPorId(notas[0].id) : null;
+    ok(!!nota168 && repuesta.hechos.includes(nota168.numero) && !!nota168.ruta_pdf
+      && fs.existsSync(facturas.rutaAbsoluta(nota168.ruta_pdf)),
+    'regenerarPdfsPendientes le dibuja el PDF después');
+
+    const otra = await enviarPost(`/api/admin/facturas/${f.id}/anular`, cabeceras, { motivo: 'Otra vez' });
+    ok(otra.codigo === 409 && notasDe(f.pago_id).length === 1, 'un segundo intento no emite otra nota');
+    d0.close();
   }
 
   console.log();

@@ -2326,8 +2326,10 @@ const anularFactura = conAdmin(async (req, res, ctx, idFactura) => {
   if (f.tipo === 'nota_credito') return fallo(res, 400, 'Una nota de crédito no se anula');
   if (f.anulado_por) return fallo(res, 409, 'Ese comprobante ya está anulado');
 
+  /* El pago pasa a `devuelto` DENTRO de la emisión, en la misma
+     transacción que la nota (#168). Aquí iba después, y un fallo del PDF
+     entre medias dejaba la nota emitida con el pago `aprobado`. */
   const nota = facturas.emitirNotaCredito(f, { motivo: texto(c.motivo, 200) });
-  if (f.pago_id) db.marcarPagoDevuelto(f.pago_id);
 
   const dueno = f.organizacion_id && db.propietarioDe(f.organizacion_id);
   /* Sin esperarla, pero con catch: es una promesa suelta, y una que
