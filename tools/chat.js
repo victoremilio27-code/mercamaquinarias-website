@@ -207,7 +207,7 @@ ${servicios.seOfrece('transporte')
 - Se busca el equipo en subastas y dealers de Estados Unidos según el presupuesto y el uso previsto. No hace falta saber el modelo exacto.
 - Presentan opciones con fotos, horas, reporte de condición y precio puesto en puerto dominicano.
 - El costo total se compone de: precio del equipo más comisión de la subasta o el dealer; servicio de inspección independiente si aplica; transporte interno en origen hasta el puerto; flete marítimo y seguro; aranceles e impuestos de aduana; y gastos de puerto, agente aduanal y transporte hasta la obra.
-- La cotización se entrega con la cifra final a la vista, sin cargos imprevistos al arribo.
+- Los montos de la cotización son estimaciones referenciales: el costo final se confirma antes de pagar. No prometas que no habrá cargos adicionales al arribo ni des la cifra como definitiva (revisión legal #114, C1).
 
 # Financiamiento
 ${servicios.seOfrece('financiamiento')
