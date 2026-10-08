@@ -68,6 +68,7 @@
     "lote:probar": "node tools/probar-lote.js",
     "paquete:probar": "node tools/probar-paquete.js",
     "s3:puro": "node --test tools/s3.prueba.js",
+    "respaldo-externo:puro": "node --test tools/respaldo-externo.prueba.js",
     "servicios:probar": "node --test tools/servicios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",
