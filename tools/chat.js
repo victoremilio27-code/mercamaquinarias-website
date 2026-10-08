@@ -141,6 +141,14 @@ const SMS_ENCENDIDO = [
   '- «Olvidé mi contraseña» manda el código solo al correo. Con sesión, en «Seguridad de la cuenta» puede cambiar la contraseña con un código a su correo o por SMS.',
 ].join('\n');
 
+/* Igual que el SMS, CardNet se puede encender sin reiniciar el proceso.
+   No basta con mirar MERCA_CARDNET: la pasarela solo está disponible
+   cuando también están sus dos llaves, como exige su propio módulo. */
+const cardnetActivo = () => require('./cardnet').activo();
+
+const PAGO_TRANSFERENCIA = '- Por ahora el pago se hace por transferencia bancaria. Al confirmar, el sitio muestra los datos y una referencia que debe poner en el concepto. El anuncio se publica cuando MercaMaquinarias confirma el ingreso.';
+const PAGO_CARDNET = '- Puede pagar con tarjeta mediante CardNet o por transferencia bancaria. Si transfiere, al confirmar el sitio muestra los datos y una referencia que debe poner en el concepto. El anuncio se publica cuando se confirma el pago.';
+
 function sistema() {
   return `Eres el asistente de soporte de MercaMaquinarias, un portal dominicano de maquinaria y equipo pesado. Ayudas a quien visita la página a entender cómo funciona el sitio y a llegar a la sección que necesita.
 
@@ -165,6 +173,18 @@ ${tarifas()}
 - Agregar publicaciones activas a mitad de ciclo se cobra solo por los días que queden hasta el vencimiento.
 - Una publicación activa o pausada ocupa capacidad. Pausar NO la libera. Marcar el equipo vendido o retirarlo, sí, y entonces esa capacidad vuelve a quedar disponible sin volver a pagarla.
 - Los anuncios y las publicaciones se administran desde el panel (/panel.html).
+
+# Guardados, búsquedas y ficha de los equipos
+- En la ficha de un equipo puede pulsar «Guardar». Queda guardado en este navegador, sin necesidad de una cuenta, y puede verlo en Equipos guardados (/guardados.html).
+- En el catálogo (/equipos.html) puede filtrar por las especificaciones disponibles para el tipo de máquina y por implemento.
+- Con una cuenta puede pulsar «Guardar esta búsqueda» en el catálogo. Sus búsquedas aparecen como «Mis alertas» en el panel (/panel.html); cuando haya equipos nuevos que coincidan, recibe un correo. Puede borrar la alerta en el panel o darse de baja desde el enlace del propio correo, en Administrar alerta (/alertas.html).
+- La ficha (/equipo.html) puede incluir documentos que subió el dueño del anuncio: informes de inspección, manuales o facturas de mantenimiento. Se admiten PDF e imágenes JPG, PNG o WebP, hasta 4 MB cada archivo, 4 documentos y 10 MB por anuncio.
+- La ficha solo muestra teléfonos confirmados con un código e indica si se verificaron por SMS o desde el correo verificado de la cuenta. Antes de pagar, consulte Señales de estafa (/estafas.html); la verificación no garantiza quién responde ni que la operación sea legítima.
+
+# Cuenta, pagos y vencimientos
+- En el panel (/panel.html), «Eliminar mi cuenta» borra sus datos, sus anuncios con sus fotos, videos y documentos, y su página de empresa si es el único miembro. Los comprobantes fiscales y los pagos se conservan porque la ley lo exige. Si tiene un plan, pierde los días que le queden.
+${cardnetActivo() ? PAGO_CARDNET : PAGO_TRANSFERENCIA}
+- Los anuncios que vencen reciben avisos por correo 7, 3 y 1 día antes. Para renovar, use «Renovar anuncio» o «Renovar plan» en el panel (/panel.html); el nuevo período se suma al final del actual.
 
 # Alquiler de equipos (/alquiler.html)
 - Es flota propia de MercaMaquinarias, no equipos de terceros.
