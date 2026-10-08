@@ -3,6 +3,7 @@
  *
  *   node tools/seed.js          # crea cuentas, dealers y anuncios
  *   node tools/seed.js --vaciar # borra lo sembrado y no siembra
+ *   node tools/seed.js --demo-en-produccion # válvula consciente para ensayos
  *
  * POR QUÉ EXISTE ESTE ARCHIVO
  * Antes el sitio traía dos docenas de equipos y cinco dealers escritos
@@ -19,16 +20,28 @@
  * comportan igual que los de un anunciante real: se abren, se
  * contactan, cuentan métricas y caducan.
  *
- * En producción no se ejecuta nunca. Todo lo que crea lleva el correo
- * en @demo.mercamaquinarias.do, y --vaciar lo borra por ahí sin tocar
- * una sola cuenta real.
+ * La demostración se niega a correr en producción. Si un servidor de
+ * ensayo necesita esos datos, --demo-en-produccion deja constancia de
+ * que se está abriendo la válvula conscientemente. Todo lo que crea
+ * lleva el correo en @demo.mercamaquinarias.do, y --vaciar lo borra por
+ * ahí sin tocar una sola cuenta real.
  */
 
+const path = require('path');
 const db = require('./db');
 const precios = require('../assets/precios.js');
 
 const DOMINIO = 'demo.mercamaquinarias.do';
 const CLAVE = 'demostracion2026';
+
+function pareceProduccion(entorno = process.env) {
+  if (entorno.NODE_ENV === 'production') return 'NODE_ENV indica un entorno de producción.';
+  if (entorno.MERCA_HTTPS === '1') return 'MERCA_HTTPS indica un entorno de producción.';
+  if (entorno.MERCA_DB && path.resolve(entorno.MERCA_DB).startsWith('/var/lib/')) {
+    return 'MERCA_DB apunta a /var/lib/, donde vive la base de producción.';
+  }
+  return null;
+}
 
 /* ── Fotografías ────────────────────────────────────────────
    SVG en data URI, la misma forma en que el asistente de publicación
@@ -395,6 +408,16 @@ function sembrarFlota() {
 }
 
 if (require.main === module) {
+  const siembraCompleta = !process.argv.includes('--vaciar') && !process.argv.includes('--solo-flota');
+  const motivo = siembraCompleta && !process.argv.includes('--demo-en-produccion')
+    ? pareceProduccion()
+    : null;
+  if (motivo) {
+    console.error(`${motivo} No se sembrará la demostración. Para sembrar el inventario real use --solo-flota.`);
+    process.exitCode = 1;
+    return;
+  }
+
   db.abrir();
   if (process.argv.includes('--vaciar')) {
     const n = vaciar();
@@ -419,4 +442,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { sembrar, vaciar, sembrarFlota };
+module.exports = { sembrar, vaciar, sembrarFlota, pareceProduccion };

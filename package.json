@@ -89,6 +89,7 @@
     "contactos:probar": "node tools/probar-contactos.js",
     "catalogo:probar": "node tools/probar-catalogo.js",
     "db:flota": "node tools/seed.js --solo-flota",
+    "seed-guarda:probar": "node tools/probar-seed-guarda.js",
     "taxonomia": "node tools/verificar-taxonomia.js"
   },
   "engines": {
