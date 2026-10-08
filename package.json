@@ -43,6 +43,7 @@
     "pagos:probar": "node tools/probar-pagos.js",
     "sin-aplicar:probar": "node tools/probar-sin-aplicar.js",
     "medios:puro": "node --test tools/medios.prueba.js",
+    "imagen-limpia:puro": "node --test tools/imagen-limpia.prueba.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
     "publicacion:probar": "node tools/probar-publicacion.js",
     "pdf:puro": "node --test tools/pdf.prueba.js",

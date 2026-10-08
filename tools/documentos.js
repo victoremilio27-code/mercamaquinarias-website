@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { limpiar } = require('./imagen-limpia');
 
 const RAIZ = path.resolve(__dirname, '..');
 const CARPETA = path.resolve(process.env.MERCA_DOCUMENTOS || path.join(RAIZ, '.tmp', 'documentos'));
@@ -33,14 +34,16 @@ function tipoDe(buffer) {
 function guardar(buffer) {
   const tipo = tipoDe(buffer);
   if (!tipo) throw new Error('El tipo de documento no está admitido');
+  const bufferLimpio = limpiar(buffer);
+  if (!bufferLimpio) throw new Error('El tipo de documento no está admitido');
 
   const mes = new Date().toISOString().slice(0, 7);
   const destino = path.join(CARPETA, mes);
   fs.mkdirSync(destino, { recursive: true });
   const nombre = `${crypto.randomUUID()}.${tipo.ext}`;
-  fs.writeFileSync(path.join(destino, nombre), buffer);
+  fs.writeFileSync(path.join(destino, nombre), bufferLimpio);
 
-  return { ruta: `${mes}/${nombre}`, tipo: tipo.mime, bytes: buffer.length };
+  return { ruta: `${mes}/${nombre}`, tipo: tipo.mime, bytes: bufferLimpio.length };
 }
 
 function archivoDe(ruta) {
