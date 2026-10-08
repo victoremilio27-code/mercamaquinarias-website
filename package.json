@@ -37,6 +37,7 @@
     "correo:puro": "node --test tools/correo.prueba.js",
     "seguridad:probar": "node tools/probar-seguridad.js",
     "rutas:probar": "node tools/probar-rutas.js",
+    "apagado:probar": "node tools/probar-apagado.js",
     "chat:probar": "node tools/prueba-chat.js",
     "facturas:probar": "node tools/probar-facturas.js",
     "ncf-unico:probar": "node tools/probar-ncf-unico.js",
