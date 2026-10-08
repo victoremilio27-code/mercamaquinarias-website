@@ -1153,9 +1153,54 @@ function cobroHTML(p) {
       <span class="sol__fecha">${fechaHora(p.creado)}</span>
     </div>
     <p class="sol__meta">${esc(p.concepto || 'Membresía')}${p.anuncio_titulo ? ` · Anuncio: ${esc(p.anuncio_titulo)}` : ''}</p>
-    <p class="sol__meta">${esc(TIPOS_COBRO_ROTULO[p.tipo] || 'Membresía')}${p.tipo === 'renovacion' ? ` ${p.automatica ? '(Automática)' : '(Manual)'}` : ''} · ${esc(METODOS_ROTULO[p.procesador] || p.procesador)} · ${esc(ESTADOS_COBRO_ROTULO[p.estado] || p.estado)}</p>
+    <p class="sol__meta">${esc(TIPOS_COBRO_ROTULO[p.tipo] || 'Membresía')}${p.tipo === 'renovacion' ? ` ${p.automatica ? '(Automática)' : '(Manual)'}` : ''} · ${esc(METODOS_ROTULO[p.procesador] || p.procesador)} · ${p.sinAplicar ? 'Aprobado sin aplicar' : esc(ESTADOS_COBRO_ROTULO[p.estado] || p.estado)}</p>
     <p class="sol__meta num">Base ${esc(importePago(p.base ?? p.subtotal))} · ${p.base == null ? 'sin ajuste' : `Ajuste ${esc(importePago(p.ajuste))}`} · ITBIS ${esc(importePago(p.itbis))} · Total ${esc(importePago(p.total))}</p>
+    ${p.sinAplicar ? `<div class="sol__acciones">
+      <button type="button" class="btn btn--ambar btn--chico" data-cobro-devolver>Marcar devuelto</button>
+    </div>` : ''}
   </li>`;
+}
+
+function abrirDevolucionSinAplicar(fila) {
+  if (fila.querySelector('.sol__motivo')) return;
+  const formulario = document.createElement('form');
+  formulario.className = 'sol__motivo';
+  formulario.innerHTML = `
+    <p class="sol__meta sol__meta--aviso">Devuelva primero el dinero en el portal de CardNet. Esto solo deja constancia: no mueve dinero ni emite comprobante.</p>
+    <label class="campo-v"><span>Motivo de la devolución</span>
+      <textarea minlength="10" maxlength="500" required></textarea></label>
+    <p class="acceso__aviso" data-error-devolucion hidden></p>
+    <div class="sol__acciones">
+      <button type="submit" class="btn btn--ambar btn--chico">Confirmar</button>
+      <button type="button" class="btn btn--linea btn--chico" data-cobro-cancelar>Cancelar</button>
+    </div>`;
+  fila.appendChild(formulario);
+  formulario.querySelector('textarea').focus();
+}
+
+async function confirmarDevolucionSinAplicar(formulario) {
+  const fila = formulario.closest('.sol');
+  const motivo = formulario.querySelector('textarea').value.trim();
+  const error = formulario.querySelector('[data-error-devolucion]');
+  const boton = formulario.querySelector('button[type="submit"]');
+  if (motivo.length < 10 || motivo.length > 500) {
+    error.textContent = 'Escriba el motivo de la devolución (de 10 a 500 caracteres).';
+    error.hidden = false;
+    return;
+  }
+  boton.disabled = true;
+  error.hidden = true;
+  try {
+    await api(`/admin/pagos/${encodeURIComponent(fila.dataset.id)}/devolver-sin-aplicar`, {
+      metodo: 'POST', cuerpo: { motivo },
+    });
+    await cargarCobrosConsola();
+    cargarBitacora();
+  } catch (e) {
+    error.textContent = e.message || 'No se pudo marcar el cobro como devuelto.';
+    error.hidden = false;
+    boton.disabled = false;
+  }
 }
 
 async function cargarCobrosConsola() {
@@ -1210,6 +1255,17 @@ function montarConsolaLectura() {
     cargarPublicacionesConsola();
   }
   if ($('#listaCobros')) {
+    $('#listaCobros').addEventListener('click', (ev) => {
+      const cancelar = ev.target.closest('button[data-cobro-cancelar]');
+      if (cancelar) return cancelar.closest('.sol__motivo').remove();
+      const boton = ev.target.closest('button[data-cobro-devolver]');
+      if (boton) abrirDevolucionSinAplicar(boton.closest('.sol'));
+    });
+    $('#listaCobros').addEventListener('submit', (ev) => {
+      if (!ev.target.matches('.sol__motivo')) return;
+      ev.preventDefault();
+      confirmarDevolucionSinAplicar(ev.target);
+    });
     $('#filtrosCobros').addEventListener('click', (ev) => {
       const boton = ev.target.closest('button[data-cobros-tipo]');
       if (!boton) return;

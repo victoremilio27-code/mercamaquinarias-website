@@ -2382,6 +2382,25 @@ const listarRenovacionesAdmin = conAdmin((req, res, ctx, consulta) => {
   return responder(res, 200, db.renovacionesParaConsola({ limite: q.get('limite') }));
 });
 
+const devolverCobroSinAplicar = conAdmin(async (req, res, ctx, idPago) => {
+  const c = await leerCuerpo(req);
+  try {
+    const pago = db.devolverCobroSinAplicar({
+      idPago,
+      idAdmin: ctx.usuario.id,
+      motivo: c.motivo,
+      ip: origen(req),
+    });
+    return responder(res, 200, { ok: true, pago });
+  } catch (e) {
+    return falloDe(res, e, 'devolver cobro sin aplicar');
+  }
+});
+/* La función de db.js escribe esta acción dentro de la misma transacción
+   que cambia el pago; la marca permite que la guarda de rutas lo compruebe
+   sin envolverla otra vez en conAdminEnNombreDe. */
+devolverCobroSinAplicar.bitacora = 'pago.devolver-sin-aplicar';
+
 /* D-07, el pendiente que dejó anotado la fase 3. Sumar los cupos a
    una membresía vencida los regalaría sin plazo, y convertir la
    ampliación en una compra nueva sería decidir por el cliente qué
@@ -5972,6 +5991,7 @@ const RUTAS = [
   ['GET',  /^\/api\/admin\/publicaciones$/,             listarPublicacionesAdmin],
   ['GET',  /^\/api\/admin\/cobros$/,                     listarCobrosAdmin],
   ['GET',  /^\/api\/admin\/renovaciones$/,                listarRenovacionesAdmin],
+  ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/devolver-sin-aplicar$/, devolverCobroSinAplicar],
   ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/recibido$/, marcarTransferenciaRecibida],
   ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/anular$/,   anularTransferencia],
   ['GET',  /^\/api\/admin\/solicitudes$/,               listarSolicitudes],

@@ -42,6 +42,7 @@
     "ncf-unico:probar": "node tools/probar-ncf-unico.js",
     "pagos:probar": "node tools/probar-pagos.js",
     "sin-aplicar:probar": "node tools/probar-sin-aplicar.js",
+    "sin-aplicar-api:probar": "node tools/probar-sin-aplicar-api.js",
     "medios:puro": "node --test tools/medios.prueba.js",
     "imagen-limpia:puro": "node --test tools/imagen-limpia.prueba.js",
     "transferencia:probar": "node tools/probar-transferencia.js",
