@@ -36,6 +36,11 @@ const REDES_PERFIL = {
   },
 };
 
+function formatoTelefono(v) {
+  const d = String(v).replace(/\D/g, '');
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : v;
+}
+
 function sucursalHTML(s) {
   const donde = [s.municipio, s.provincia].filter(Boolean).join(', ');
   /* El horario y el WhatsApp llevaban meses guardándose y no se
@@ -50,7 +55,7 @@ function sucursalHTML(s) {
       <span class="sucursal__meta">${esc(donde || 'República Dominicana')}${s.direccion ? ` · ${esc(s.direccion)}` : ''}</span>
       ${s.horario ? `<span class="sucursal__meta">${esc(s.horario)}</span>` : ''}
     </span>
-    ${s.telefono ? `<a class="sucursal__tel num" href="tel:${esc(String(s.telefono).replace(/\D/g, ''))}">${esc(s.telefono)}</a>` : ''}
+    ${s.telefono ? `<a class="sucursal__tel num" href="tel:${esc(String(s.telefono).replace(/\D/g, ''))}">${esc(formatoTelefono(s.telefono))}</a>` : ''}
     ${s.whatsapp ? `<a class="sucursal__tel num" href="https://wa.me/1${esc(String(s.whatsapp).replace(/\D/g, ''))}" rel="noopener">WhatsApp</a>` : ''}
   </li>`;
 }

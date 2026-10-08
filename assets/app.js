@@ -342,7 +342,7 @@ function montarMosaicoCategorias() {
     const foto = fotos.length ? alAzar(fotos) : null;
     const fotosEditoriales = {
       excavadoras: 'brand_assets/generated/categoria-excavadoras-v2.webp',
-      retroexcavadoras: 'brand_assets/generated/categoria-excavadoras-v2.webp',
+      retroexcavadoras: 'brand_assets/categorias/16-retroexcavadoras.webp',
       bulldozers: 'brand_assets/generated/categoria-bulldozers-v2.webp',
       compactadoras: 'brand_assets/generated/categoria-compactadoras-v2.webp',
       camiones: 'brand_assets/generated/categoria-camiones-v2.webp',
@@ -356,7 +356,10 @@ function montarMosaicoCategorias() {
     // Fotos de estudio en todos los tamaños: el escritorio usa ya la
     // misma estética que el móvil.
     const esMovil = matchMedia('(max-width: 700px)').matches;
-    const fotoVisible = fotosEditoriales[c.id] || (foto && foto.foto)
+    const renderCategoria = RENDERS_CATEGORIA[c.id]
+      ? `brand_assets/categorias/${RENDERS_CATEGORIA[c.id]}`
+      : null;
+    const fotoVisible = fotosEditoriales[c.id] || renderCategoria || (foto && foto.foto)
       || 'brand_assets/generated/categoria-cargadores-v2.webp';
 
     /* El render repite la categoría escrita justo debajo: es decorativo. */
@@ -443,7 +446,7 @@ function montarMarcas() {
 
   cont.innerHTML = activas
     .map(({ marca, total }) =>
-      `<li><a href="equipos.html?marca=${encodeURIComponent(marca)}" title="${total} ${total === 1 ? 'equipo' : 'equipos'}">${esc(marca)}</a></li>`)
+      `<li><a href="equipos.html?marca=${encodeURIComponent(marca)}" title="${total} ${total === 1 ? 'equipo' : 'equipos'}">${esc(nombreMarca(marca))}</a></li>`)
     .join('');
   const nota = $('#marcasNota');
   if (nota) {
@@ -984,6 +987,10 @@ function contactosHTML(e) {
   // Los números dominicanos viajan a diez dígitos; WhatsApp los quiere
   // en formato internacional.
   const soloDigitos = (n) => String(n).replace(/\D/g, '');
+  const telefonoVisible = (n) => {
+    const d = soloDigitos(n);
+    return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : n;
+  };
   const internacional = (n) => {
     const d = soloDigitos(n);
     return d.length === 10 ? '1' + d : d;
@@ -1006,7 +1013,7 @@ function contactosHTML(e) {
       const whats = tipo === 'whatsapp' || tipo === 'ambos';
       return `<div class="contactos__fila">
         <span class="contactos__num">
-          <b class="num">${esc(t.numero)}</b>
+          <b class="num">${esc(telefonoVisible(t.numero))}</b>
           <span class="contactos__nota">${esc(viaTexto(t))}</span>
           ${t.nota ? `<span class="contactos__nota">${esc(t.nota)}</span>` : ''}
         </span>
@@ -1399,6 +1406,7 @@ async function montarDetalle() {
   }
 
   if (!e) {
+    $('#similaresPanel')?.remove();
     cont.innerHTML = `<div class="vacio">
       <h1 class="vacio__titulo">El anuncio ya no está disponible</h1>
       <p class="vacio__texto">Es posible que el equipo se haya vendido o que el anunciante retirara la publicación.</p>
@@ -2275,7 +2283,7 @@ function montarSeguimiento() {
     if (pos.estado === 'desconocido') {
       lienzo.innerHTML = '';
       datos.innerHTML = `<p class="seguimiento__vacio">
-        No encontramos el envío <b>${esc(codigo)}</b>. Revisa el código o escríbenos
+        No encontramos el envío <b>${esc(codigo)}</b>. Revise el código o escríbanos
         y lo localizamos: el código figura en el correo de confirmación de la reserva.</p>`;
       return;
     }
