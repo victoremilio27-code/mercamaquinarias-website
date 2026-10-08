@@ -653,6 +653,12 @@ function montarCuenta() {
   // Quien ya entró no tiene nada que hacer aquí (salvo revertir: puede
   // ser justo quien tomó la cuenta, o el dueño desde otro equipo).
   cargarSesion().then(() => {
+    // Antes se prometía el SMS aunque estuviera apagado (#177). Lo enciende
+    // correo.smsActivo() en el servidor; aquí solo se refleja su estado.
+    if (SESION.sms) {
+      el('new-telefono-ayuda').hidden = false;
+      el('new-telefono').setAttribute('aria-describedby', 'new-telefono-ayuda');
+    }
     if (haySesion() && testigoRevertir === null) { location.replace(destinoTrasEntrar()); return; }
   });
 }
