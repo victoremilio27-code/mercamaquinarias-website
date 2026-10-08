@@ -168,7 +168,9 @@ test('nginx incluye Cloudflare y declara el dominio vigente', () => {
     `${relativo(archivo)}:${numeroDeLinea(texto, /^\s*server_name/m)}: falta mercamaquinarias.com en server_name`);
 });
 
-test('ningún bloque server nombra un dominio ajeno', { todo: 'nginx-dominio-viejo.conf aún conserva la redirección temporal de tuequipord.com' }, () => {
+/* Era un «todo» mientras vivía la redirección del dominio viejo; #193 borró
+   ese .conf, así que ahora la comprobación es de verdad. */
+test('ningún bloque server nombra un dominio ajeno', () => {
   for (const archivo of archivosDespliegue.filter((actual) => actual.endsWith('.conf'))) {
     const texto = leer(archivo);
     for (const bloque of texto.matchAll(/\bserver\s*\{[\s\S]*?\n\}/g)) {
