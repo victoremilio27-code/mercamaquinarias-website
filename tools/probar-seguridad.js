@@ -32,6 +32,7 @@ process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 const db = require('./db.js');
 const api = require('./api.js');
 const facturas = require('./facturas.js');
+const fotos = require('./fotos.js');
 
 let bien = 0;
 let mal = 0;
@@ -127,6 +128,64 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     && accesoInexistente.codigo === accesoIncorrecto.codigo
     && JSON.stringify(accesoInexistente.datos) === JSON.stringify(accesoIncorrecto.datos),
   'correo inexistente y clave incorrecta reciben el mismo código y cuerpo');
+
+  const { idUsuario: idVictima } = db.crearCuenta({
+    correo: 'victima@ejemplo.test', clave: 'ClaveCorrectaDeVictima9',
+    nombre: 'Víctima de prueba', telefono: '8095551001', tipo: 'particular',
+  });
+  const { idUsuario: idAtacante } = db.crearCuenta({
+    correo: 'atacante@ejemplo.test', clave: 'ClaveCorrectaDeAtacante9',
+    nombre: 'Atacante de prueba', telefono: '8095551002', tipo: 'particular',
+  });
+  const ipCompartida = { 'cf-connecting-ip': '1.2.3.4' };
+  let bloqueoVictima = null;
+  let accesoAtacante = null;
+  for (let ronda = 0; ronda < 5 && !bloqueoVictima; ronda++) {
+    for (let intento = 0; intento < 9; intento++) {
+      const respuesta = await pedir({
+        metodo: 'POST', url: '/api/cuenta/entrar',
+        cuerpo: { correo: ' VICTIMA@EJEMPLO.TEST ', clave: `ClaveIncorrecta${ronda}-${intento}` },
+        cabeceras: ipCompartida,
+      });
+      if (respuesta.codigo === 429) {
+        bloqueoVictima = respuesta;
+        break;
+      }
+    }
+    accesoAtacante = await pedir({
+      metodo: 'POST', url: '/api/cuenta/entrar',
+      cuerpo: { correo: 'atacante@ejemplo.test', clave: 'ClaveCorrectaDeAtacante9' },
+      cabeceras: ipCompartida,
+    });
+  }
+  comprobar(bloqueoVictima && bloqueoVictima.codigo === 429,
+    'otra cuenta no reinicia el tope por correo de la victima');
+  comprobar(accesoAtacante && accesoAtacante.codigo === 200,
+    'el atacante sigue pudiendo entrar a su propia cuenta desde la misma IP');
+  comprobar(!!idVictima && !!idAtacante, 'las dos cuentas del escenario existen');
+
+  let accesoDesconocido;
+  for (let intento = 0; intento <= 10; intento++) {
+    accesoDesconocido = await pedir({
+      metodo: 'POST', url: '/api/cuenta/entrar',
+      cuerpo: { correo: ' nadie-mas@ejemplo.test ', clave: `ClaveIncorrecta${intento}` },
+      cabeceras: { 'cf-connecting-ip': '1.2.3.5' },
+    });
+  }
+  comprobar(accesoDesconocido.codigo === 429
+    && JSON.stringify(accesoDesconocido.datos) === JSON.stringify(bloqueoVictima.datos),
+  'un correo inexistente recibe el mismo 429 después de diez intentos');
+
+  const cookieAjenaRota = await pedir({
+    url: '/api/anuncios', cabeceras: { cookie: 'otra=%E0%A4%A' },
+  });
+  const cookieSesionRota = await pedir({
+    url: '/api/sesion', cabeceras: { cookie: 'te_sesion=%' },
+  });
+  comprobar(cookieAjenaRota.codigo === 200,
+    'una cookie ajena mal formada no tumba el catálogo público');
+  comprobar(cookieSesionRota.codigo === 200 && cookieSesionRota.datos.usuario === null,
+    'una cookie de sesión mal formada se ignora y responde sin sesión');
 
   const creado = db.crearAnuncio({
     idOrg: org.id,
@@ -416,6 +475,24 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
     + 'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
+  const archivosDeFotos = () => fs.existsSync(fotos.CARPETA)
+    ? fs.readdirSync(fotos.CARPETA, { recursive: true })
+      .filter((nombre) => fs.statSync(path.join(fotos.CARPETA, nombre)).isFile()).length
+    : 0;
+  const medirEspacioReal = api._bytesLibresFotos;
+  const archivosAntes = archivosDeFotos();
+  api._bytesLibresFotos = () => 100 * 1024 * 1024;
+  const sinEspacio = await pedir({
+    metodo: 'POST', url: '/api/fotos', cuerpo: { completa: PNG }, cabeceras: conSesion,
+  });
+  comprobar(sinEspacio.codigo === 507
+    && sinEspacio.datos.error === 'No hay espacio en el servidor para más fotos. Avise al equipo de MercaMaquinarias.',
+  'con menos de 500 MB libres se rechaza la foto con 507');
+  comprobar(archivosDeFotos() === archivosAntes,
+    'al rechazarla por espacio no se escribe ningún archivo');
+
+  api._bytesLibresFotos = () => null;
+
   const subida = await pedir({
     metodo: 'POST',
     url: '/api/fotos',
@@ -423,7 +500,8 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     cabeceras: conSesion,
   });
   comprobar(subida.codigo === 201 && /^\/fotos\//.test(subida.datos.completa || ''),
-    'una foto subida al sitio devuelve su ruta /fotos/...');
+    'si el espacio no se puede medir, la foto se guarda como siempre');
+  api._bytesLibresFotos = medirEspacioReal;
   const rutaBuena = subida.datos.completa;
 
   /* Lo que se colaba: las imágenes en base64 dentro del propio JSON del

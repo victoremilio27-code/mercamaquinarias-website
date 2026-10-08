@@ -388,9 +388,14 @@ function montarCuenta() {
   el('formEntrar').addEventListener('submit', (ev) => {
     ev.preventDefault();
     opcionesAcceso = null;
+    const correo = el('ent-correo').value.trim();
     claveAcceso = el('ent-clave').value;
+    if (!correo || !claveAcceso) {
+      el(!correo ? 'ent-correo' : 'ent-clave').focus();
+      return mostrarAviso('Escriba su correo y su contraseña.');
+    }
     enviar(el('formEntrar'), '/cuenta/entrar', {
-      correo: el('ent-correo').value.trim(),
+      correo,
       clave: claveAcceso,
     }, seguir);
   });
@@ -414,13 +419,9 @@ function montarCuenta() {
     const dealer = (tipo.querySelector('input:checked') || {}).value === 'dealer';
     const clave = el('new-clave').value;
 
-    if (clave.length < 10) return mostrarAviso('La contraseña debe tener al menos 10 caracteres.');
-    /* Una errata al teclear algo que no se ve deja la cuenta creada con
-       una clave que su dueño no conoce, y la única salida es el correo
-       de recuperación. */
-    if (el('new-clave2').value !== clave) {
-      el('new-clave2').focus();
-      return mostrarAviso('Las dos contraseñas no coinciden.');
+    if (!el('new-nombre').value.trim()) {
+      el('new-nombre').focus();
+      return mostrarAviso('Escriba su nombre y apellido.');
     }
     /* El celular es obligatorio para todos: el servidor responde 400
        sin él. Antes el formulario lo dejaba vacío y el registro caía
@@ -428,6 +429,22 @@ function montarCuenta() {
     if (!celularValido(el('new-telefono').value)) {
       el('new-telefono').focus();
       return mostrarAviso(AVISO_CELULAR);
+    }
+    const correo = el('new-correo').value.trim();
+    if (!correo || !correo.includes('@')) {
+      el('new-correo').focus();
+      return mostrarAviso('Escriba un correo electrónico válido.');
+    }
+    if (clave.length < 10) {
+      el('new-clave').focus();
+      return mostrarAviso('La contraseña debe tener al menos 10 caracteres.');
+    }
+    /* Una errata al teclear algo que no se ve deja la cuenta creada con
+       una clave que su dueño no conoce, y la única salida es el correo
+       de recuperación. */
+    if (el('new-clave2').value !== clave) {
+      el('new-clave2').focus();
+      return mostrarAviso('Las dos contraseñas no coinciden.');
     }
     const telEmpresa = el('new-telefono-empresa').value.trim();
     if (dealer && telEmpresa && telEmpresa.replace(/\D/g, '').length !== 10) {
@@ -458,7 +475,7 @@ function montarCuenta() {
     }
 
     const cuerpo = {
-      correo: el('new-correo').value.trim(),
+      correo,
       clave,
       nombre: el('new-nombre').value.trim(),
       telefono: el('new-telefono').value.trim(),

@@ -567,51 +567,68 @@ function paraDibujar(f, emisor = correo.EMPRESA) {
  * guardado. Emitir y notificar son dos cosas distintas y fallan por
  * motivos distintos. */
 function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = correo.EMPRESA }) {
-  const yaEsta = db.facturaDePago(pago.id);
-  if (yaEsta) return yaEsta;                    // no se emite dos veces
+  let emision;
+  try {
+    emision = db.enTransaccionInmediata(() => {
+      const yaEsta = db.facturaDePago(pago.id);
+      if (yaEsta) return { factura: yaEsta };
 
-  const decision = decidirTipo({ quiereFiscal: !!cliente.rnc });
+      const decision = decidirTipo({ quiereFiscal: !!cliente.rnc });
+      const { id: idFactura, numero } = db.crearFactura({
+        pagoId: pago.id,
+        organizacionId: pago.organizacion_id,
+        tipo: decision.tipo,
+        ncf: decision.ncf,
+        ncfVencimiento: decision.vence || null,
+        razonSocial: cliente.razonSocial || null,
+        rnc: cliente.rnc || null,
+        direccion: cliente.direccion || null,
+        telefono: cliente.telefono || null,
+        correo: cliente.correo || null,
+        concepto,
+        subtotal: pago.subtotal,
+        itbis: pago.itbis,
+        /* La tasa se deduce de lo cobrado, no de la constante: si un día el
+           ITBIS cambia, un pago viejo que se facture tarde tiene que
+           llevar la tasa con la que se cobró.
 
-  const { id: idFactura, numero } = db.crearFactura({
-    pagoId: pago.id,
-    organizacionId: pago.organizacion_id,
-    tipo: decision.tipo,
-    ncf: decision.ncf,
-    ncfVencimiento: decision.vence || null,
-    razonSocial: cliente.razonSocial || null,
-    rnc: cliente.rnc || null,
-    direccion: cliente.direccion || null,
-    telefono: cliente.telefono || null,
-    correo: cliente.correo || null,
-    concepto,
-    subtotal: pago.subtotal,
-    itbis: pago.itbis,
-    /* La tasa se deduce de lo cobrado, no de la constante: si un día el
-       ITBIS cambia, un pago viejo que se facture tarde tiene que
-       llevar la tasa con la que se cobró.
+           Desde la fase 05.1 el pago guarda esa tasa, y es la que manda.
+           Deducirla ya no sirve: el subtotal lleva dentro el ajuste y el
+           ITBIS se redondea a pesos, así que 593 / 3296 da 0,1799 y el
+           comprobante habría guardado una tasa que no es la legal, sin
+           poder corregirse después. Los pagos anteriores, sin tasa
+           guardada, siguen deduciéndola como siempre. */
+        itbisTasa: pago.itbis_tasa != null
+          ? pago.itbis_tasa
+          : (pago.subtotal ? Math.round((pago.itbis / pago.subtotal) * 10000) / 10000 : precios.ITBIS),
+        total: pago.total,
+        moneda: pago.moneda || 'DOP',
+        condicionPago: 'Pagado',
+        metodoPago: pago.procesador || null,
+        referenciaPago: pago.referencia || null,
+        periodoServicio: detalle.periodo || null,
+        /* La fecha del comprobante es cuando entró el dinero, no cuando se
+           pidió el cobro: una transferencia confirmada días después caería
+           en el mes equivocado. Los pagos anteriores a `confirmado` no la
+           tienen y usan `creado`, como siempre. */
+        fecha: pago.confirmado || pago.creado,
+        dibujo: instantanea(detalle, emisor),
+      });
+      return { idFactura, numero, decision };
+    });
+  } catch (e) {
+    /* El bloqueo inmediato cierra la carrera normal. El índice es la
+       última barrera para cualquier camino que inserte por fuera: solo
+       su choque por pago se convierte en una lectura; todo lo demás es
+       un fallo real y se relanza. */
+    if (!/UNIQUE constraint failed: facturas\.pago_id/i.test(e.message)) throw e;
+    const yaEsta = db.facturaDePago(pago.id);
+    if (!yaEsta) throw e;
+    return yaEsta;
+  }
 
-       Desde la fase 05.1 el pago guarda esa tasa, y es la que manda.
-       Deducirla ya no sirve: el subtotal lleva dentro el ajuste y el
-       ITBIS se redondea a pesos, así que 593 / 3296 da 0,1799 y el
-       comprobante habría guardado una tasa que no es la legal, sin
-       poder corregirse después. Los pagos anteriores, sin tasa
-       guardada, siguen deduciéndola como siempre. */
-    itbisTasa: pago.itbis_tasa != null
-      ? pago.itbis_tasa
-      : (pago.subtotal ? Math.round((pago.itbis / pago.subtotal) * 10000) / 10000 : precios.ITBIS),
-    total: pago.total,
-    moneda: pago.moneda || 'DOP',
-    condicionPago: 'Pagado',
-    metodoPago: pago.procesador || null,
-    referenciaPago: pago.referencia || null,
-    periodoServicio: detalle.periodo || null,
-    /* La fecha del comprobante es cuando entró el dinero, no cuando se
-       pidió el cobro: una transferencia confirmada días después caería
-       en el mes equivocado. Los pagos anteriores a `confirmado` no la
-       tienen y usan `creado`, como siempre. */
-    fecha: pago.confirmado || pago.creado,
-    dibujo: instantanea(detalle, emisor),
-  });
+  if (emision.factura) return emision.factura;
+  const { idFactura, numero, decision } = emision;
 
   /* El PDF va APARTE y a prueba de fallos.
    *

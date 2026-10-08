@@ -2998,7 +2998,10 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
     border-top: 1px solid var(--linea-dark);
   }
   .cab__nav.is-abierto { display: flex; }
-  .cab__nav a { padding: 11px 2px; border-bottom: 1px solid var(--linea-dark); }
+  /* El menú móvil quedaba pegado al borde y su llamada a publicar
+     heredaba la alineación de los enlaces; el relleno deja una zona
+     cómoda y centra el texto dentro de cada botón. */
+  .cab__nav a { padding: 11px 14px; border-bottom: 1px solid var(--linea-dark); text-align: center; }
   .cab__nav a:hover { border-bottom-color: var(--linea-dark); }
 
   .fila--dos { grid-template-columns: minmax(0, 1fr); }
@@ -3011,6 +3014,14 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
   .fila--resultados > .panel:first-child { position: static; }
   .rejilla--panel { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .detalle { grid-template-columns: minmax(0, 1fr); }
+  /* Al apilar la ficha, el contenedor de medios dejaba el título y el
+     precio después de la descripción. `contents` permite intercalar el
+     panel sin alterar las dos columnas del escritorio. */
+  .detalle > div:first-child { display: contents; }
+  .detalle__foto { order: 1; }
+  .detalle .galeria { order: 2; }
+  .detalle__panel { order: 3; }
+  .detalle .videos, .detalle__bloque { order: 4; }
   .financiadoras { grid-template-columns: minmax(0, 1fr); }
   .planes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .categorias-todas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -3046,6 +3057,11 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
   .rastreo input { flex: 1; width: auto; min-width: 0; }
   .planes { grid-template-columns: minmax(0, 1fr); }
   .panel__cabeza .duracion { width: 100%; justify-content: center; }
+  /* En el primer paso, el selector rozaba la última línea explicativa. */
+  #duracionPublicar { margin-top: 12px; }
+  /* Las tarjetas de planes necesitan separar el último beneficio de su
+     llamada a publicar cuando quedan en una sola columna. */
+  .plan-op__boton { margin-top: 14px; }
   .campos { grid-template-columns: minmax(0, 1fr); }
   .marcas__nota { margin-left: 0; white-space: normal; }
 
@@ -3069,6 +3085,8 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
   .tarjetas-metrica { grid-template-columns: minmax(0, 1fr); }
   .plan-estado { grid-template-columns: minmax(0, 1fr); }
   .pagina--panel { flex-direction: column; align-items: stretch; }
+  /* Tres acciones administrativas no caben en 390 px en una sola fila. */
+  .pagina__acciones { flex-wrap: wrap; }
   .pagina__acciones .btn { flex: 1; }
   .perfil { grid-template-columns: minmax(0, 1fr); }
   .sucursal { grid-template-columns: auto minmax(0, 1fr); }
@@ -4410,7 +4428,15 @@ body.sin-scroll { overflow: hidden; }
 @media (max-width: 560px) {
   .chat { right: 12px; bottom: 12px; }
   .chat__lanzador { padding: 12px 12px 15px; }
-  .chat__lanzador-txt { display: none; }
+  /* El texto sigue nombrando el botón para lectores de pantalla aunque
+     visualmente el lanzador móvil conserve únicamente el icono. */
+  .chat__lanzador-txt {
+    position: absolute;
+    width: 1px; height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 
   .chat__panel {
     position: fixed;

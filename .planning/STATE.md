@@ -42,6 +42,22 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
+**OLEADAS 7 Y 8 PUBLICADAS (2026-10-08, rama `codex/tanda-7`, un solo PR):** entraron las 17 tareas: #154 (`humo`),
+#155, #156 (asistente), #157, #158 (metadatos fuera de las imágenes), #159 (`deploy/mantenimiento.html`), #160 (`carga`),
+#161, #167 (accesos, cookies, espacio de fotos), #171-#176 (auditorías del frontend), #150 (fiscal: `emitirPorPago`
+dentro de `enTransaccionInmediata`, revisado línea a línea; `ncf-unico:probar` en verde) y #151 (marcar devuelto un
+cobro sin aplicar; `bitacora:probar` y `sin-aplicar-api:probar` en verde). No quedó nada fuera. Arreglos de Claude al
+recoger: `medios:puro` usaba firmas sueltas de 3-4 bytes que #158 ya rechaza (ahora imágenes mínimas válidas); el pie
+de `equipo.html` pasa a h2 (al quitar «similares» en un anuncio inexistente quedaba h3 tras h1);
+`mantenimiento.html` normalizado a LF; `error_page 502 503 504` conectado en `deploy/nginx.conf` (necesita
+recargar nginx en el VPS); en CI: `ncf-unico`, `sin-aplicar-api`, `respaldo-externo`, `legales`, `imagen-limpia`,
+`servidor` y `humo` contra producción tras desplegar. `carga` a 10 y 40 de concurrencia: sin 5xx, p99 < 100 ms,
+RSS < 200 MiB: no hace falta nada antes del 14.
+**Pendientes de Claude:** #168 (fiscal: `tomarNcf` exige `usa_sitio = 1` y B04 en transacción; ahora que #150 está en
+`main`); PR #180 (importación) después del 14. **Pendientes de Victor:** los pasos en el servidor de #179 (nginx con
+cortafuegos/Cloudflare y unidades systemd) más recargar nginx por la página de mantenimiento; #177 (decisiones del
+frontend); activar la protección de `main`.
+
 **OLEADA 6 PUBLICADA (2026-10-06):** PR de `codex/tanda-6` con las 12 tareas: #131 (fuera `proximamente.html`,
 `vercel.json` y `deploy/VERCEL.md`; «cupos» ya no sale en ningún texto visible, solo en identificadores, clases y
 comentarios; `legal.html` cambió dos frases a «capacidad de publicaciones activas» y **NO se subió la versión legal**:

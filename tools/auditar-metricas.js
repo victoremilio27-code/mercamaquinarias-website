@@ -270,7 +270,7 @@ async function salir(p) {
           /* Fase 05.2, D-16: la copia es un borrador más y pasa por el
              pago. Un particular sin capacidad libre —la cuenta sembrada
              tiene sus cupos llenos— ya no cae directo en la ficha: cae
-             en el paso «Elige cómo publicar este equipo», con el aviso de
+             en el paso «Elija cómo publicar este equipo», con el aviso de
              la copia, y la ficha se llena al elegir plan (el borrador
              nuevo nace en el servidor con los datos de la copia). Con
              capacidad libre, el recorrido de siempre. */

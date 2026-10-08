@@ -1062,6 +1062,11 @@ const telefonoDominicano = (v) => {
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 };
 
+const formatoTelefono = (v) => {
+  const d = String(v).replace(/\D/g, '');
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : v;
+};
+
 function sucursalAdminHTML(s) {
   const donde = [s.municipio, s.provincia].filter(Boolean).join(', ');
   return `<li class="suc-admin${s.principal ? ' suc-admin--principal' : ''}" data-id="${esc(s.id)}">
@@ -1071,7 +1076,7 @@ function sucursalAdminHTML(s) {
         ${s.principal && !/principal/i.test(s.nombre)
           ? '<span class="pastilla pastilla--azul">Oficina principal</span>' : ''}</b>
       <span class="suc-admin__meta">${esc(s.direccion || 'Sin dirección')}${donde ? ` · ${esc(donde)}` : ''}</span>
-      <span class="suc-admin__meta num">${esc(s.telefono || 'Sin teléfono')}${s.whatsapp ? ` · WhatsApp ${esc(s.whatsapp)}` : ''}${s.horario ? ` · ${esc(s.horario)}` : ''}</span>
+      <span class="suc-admin__meta num">${esc(s.telefono ? formatoTelefono(s.telefono) : 'Sin teléfono')}${s.whatsapp ? ` · WhatsApp ${esc(formatoTelefono(s.whatsapp))}` : ''}${s.horario ? ` · ${esc(s.horario)}` : ''}</span>
     </span>
     <span class="suc-admin__acciones">
       <button type="button" class="btn-tabla" data-editar>Editar</button>

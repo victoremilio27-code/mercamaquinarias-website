@@ -157,7 +157,13 @@ function leerCookies(req) {
   const salida = {};
   crudo.split(';').forEach((par) => {
     const i = par.indexOf('=');
-    if (i > 0) salida[par.slice(0, i).trim()] = decodeURIComponent(par.slice(i + 1).trim());
+    if (i <= 0) return;
+    try {
+      salida[par.slice(0, i).trim()] = decodeURIComponent(par.slice(i + 1).trim());
+    } catch {
+      /* Una cookie ajena con un porcentaje incompleto hacía lanzar
+         decodeURIComponent y dejaba toda la API en 500 hasta borrarla. */
+    }
   });
   return salida;
 }
@@ -497,12 +503,18 @@ async function registro(req, res) {
 async function entrar(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
+  const correoNormalizado = String(c.correo || '').trim().toLowerCase();
 
   if (!db.permitir(`acceso:${ip}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
     return fallo(res, 429, 'Demasiados intentos desde esta conexión. Espere unos minutos.');
   }
+  /* Limpiar el tope por IP al acertar permitía que cualquier otra cuenta
+     reiniciara también los intentos acumulados contra este correo. */
+  if (!db.permitir(`acceso-correo:${correoNormalizado}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
+    return fallo(res, 429, 'Demasiados intentos desde esta conexión. Espere unos minutos.');
+  }
 
-  const u = db.usuarioPorCorreo(c.correo);
+  const u = db.usuarioPorCorreo(correoNormalizado);
   const claveValida = await db.verificarClave(
     String(c.clave || ''), u && u.clave_hash, u && u.clave_sal);
 
@@ -514,6 +526,7 @@ async function entrar(req, res) {
   }
 
   db.limpiarIntentos(`acceso:${ip}`);
+  db.limpiarIntentos(`acceso-correo:${correoNormalizado}`);
 
   // Correo sin confirmar: se retoma la verificación pendiente.
   if (!u.correo_verificado) {
@@ -1507,6 +1520,20 @@ const registrarDealer = conSesion(async (req, res, ctx) => {
 
 /* ── Rutas: fotografías ─────────────────────────────────── */
 
+const MINIMO_LIBRE_FOTOS = 500 * 1024 * 1024;
+
+/* Si no se puede medir, no se bloquea la subida: fallar cerrado aquí
+   dejaría sin fotos al sitio por un problema transitorio del sistema. */
+function bytesLibresFotos() {
+  try {
+    fs.mkdirSync(fotos.CARPETA, { recursive: true });
+    const est = fs.statfsSync(fotos.CARPETA);
+    return est.bavail * est.bsize;
+  } catch {
+    return null;
+  }
+}
+
 /* Sube un par de imágenes ya reducidas por el navegador y devuelve sus
    rutas. Se guardan en disco y la base solo se queda con la ruta: ver
    el porqué, con los números medidos, en la cabecera de fotos.js.
@@ -1519,6 +1546,10 @@ const subirFoto = conSesion(async (req, res, ctx) => {
   }
 
   const c = await leerCuerpo(req);
+  const libres = module.exports._bytesLibresFotos();
+  if (libres !== null && libres < MINIMO_LIBRE_FOTOS) {
+    return fallo(res, 507, 'No hay espacio en el servidor para más fotos. Avise al equipo de MercaMaquinarias.');
+  }
   try {
     // La miniatura es opcional: si el navegador no pudo generarla, la
     // completa sirve para las dos cosas y se ve igual, solo pesa más.
@@ -2350,6 +2381,25 @@ const listarRenovacionesAdmin = conAdmin((req, res, ctx, consulta) => {
   const q = consulta || new URLSearchParams();
   return responder(res, 200, db.renovacionesParaConsola({ limite: q.get('limite') }));
 });
+
+const devolverCobroSinAplicar = conAdmin(async (req, res, ctx, idPago) => {
+  const c = await leerCuerpo(req);
+  try {
+    const pago = db.devolverCobroSinAplicar({
+      idPago,
+      idAdmin: ctx.usuario.id,
+      motivo: c.motivo,
+      ip: origen(req),
+    });
+    return responder(res, 200, { ok: true, pago });
+  } catch (e) {
+    return falloDe(res, e, 'devolver cobro sin aplicar');
+  }
+});
+/* La función de db.js escribe esta acción dentro de la misma transacción
+   que cambia el pago; la marca permite que la guarda de rutas lo compruebe
+   sin envolverla otra vez en conAdminEnNombreDe. */
+devolverCobroSinAplicar.bitacora = 'pago.devolver-sin-aplicar';
 
 /* D-07, el pendiente que dejó anotado la fase 3. Sumar los cupos a
    una membresía vencida los regalaría sin plazo, y convertir la
@@ -5941,6 +5991,7 @@ const RUTAS = [
   ['GET',  /^\/api\/admin\/publicaciones$/,             listarPublicacionesAdmin],
   ['GET',  /^\/api\/admin\/cobros$/,                     listarCobrosAdmin],
   ['GET',  /^\/api\/admin\/renovaciones$/,                listarRenovacionesAdmin],
+  ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/devolver-sin-aplicar$/, devolverCobroSinAplicar],
   ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/recibido$/, marcarTransferenciaRecibida],
   ['POST', /^\/api\/admin\/pagos\/([\w-]+)\/anular$/,   anularTransferencia],
   ['GET',  /^\/api\/admin\/solicitudes$/,               listarSolicitudes],
@@ -5981,4 +6032,7 @@ async function manejar(req, res, ruta) {
   return fallo(res, 404, 'Ruta inexistente');
 }
 
-module.exports = { manejar, ITBIS, RUTAS, ESCRITURAS_ADMIN_PROPIAS };
+module.exports = {
+  manejar, ITBIS, RUTAS, ESCRITURAS_ADMIN_PROPIAS,
+  _bytesLibresFotos: bytesLibresFotos,
+};

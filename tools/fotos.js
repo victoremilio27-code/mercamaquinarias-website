@@ -38,6 +38,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { limpiar } = require('./imagen-limpia');
 
 const RAIZ = path.resolve(__dirname, '..');
 
@@ -112,6 +113,10 @@ function guardar(dataUri) {
   if (!firma) {
     throw Object.assign(new Error('Solo se admiten imágenes JPG, PNG o WebP'), { codigo: 400 });
   }
+  const bytesLimpios = limpiar(bytes);
+  if (!bytesLimpios) {
+    throw Object.assign(new Error('Solo se admiten imágenes JPG, PNG o WebP'), { codigo: 400 });
+  }
 
   // Repartidas en subcarpetas por mes: un directorio con cien mil
   // archivos es lento de listar y molesto de respaldar.
@@ -120,7 +125,7 @@ function guardar(dataUri) {
   fs.mkdirSync(destino, { recursive: true });
 
   const nombre = `${crypto.randomBytes(16).toString('hex')}.${firma.ext}`;
-  fs.writeFileSync(path.join(destino, nombre), bytes);
+  fs.writeFileSync(path.join(destino, nombre), bytesLimpios);
 
   return `${RUTA_PUBLICA}/${mes}/${nombre}`;
 }

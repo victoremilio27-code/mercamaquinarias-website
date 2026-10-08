@@ -72,10 +72,14 @@ async function montarBajaAlerta() {
     try {
       const respuesta = await api('/busquedas/baja', { metodo: 'POST', cuerpo: { testigo } });
       boton.hidden = true;
+      estado.classList.add('acceso__aviso--bien');
       estado.textContent = `Listo: ya no le avisaremos de «${respuesta.resumen}».`;
+      estado.hidden = false;
     } catch (_) {
       boton.hidden = true;
+      estado.classList.remove('acceso__aviso--bien');
       estado.textContent = 'Este enlace no es válido o ya no está disponible.';
+      estado.hidden = false;
     }
   });
 }

@@ -310,7 +310,7 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
      registrado, sin cupos, fuera mandado a planes.html y que esa página
      «explicara qué es un cupo». Con el modelo nuevo no hay a dónde
      mandarlo ni cupo que explicar: /publicar.html empieza por el paso
-     «Elige cómo publicar este equipo», el borrador nace en el servidor
+     «Elija cómo publicar este equipo», el borrador nace en el servidor
      al elegir plan, y el particular no lee la palabra «cupo». Las dos
      comprobaciones viejas se sustituyen por su equivalente, no se
      quitan: que el asistente se abra para quien no tiene capacidad, y
@@ -330,8 +330,8 @@ async function registrar(p, { tipo, correo, nombre, extra = {} }) {
 
   const pasoPlan = await p.$eval('.paso[data-paso="plan"]',
     (el) => ({ visible: !el.hidden, texto: el.innerText })).catch(() => null);
-  if (pasoPlan && pasoPlan.visible && /Elige cómo publicar este equipo/.test(pasoPlan.texto)) {
-    ok('empieza por «Elige cómo publicar este equipo»');
+  if (pasoPlan && pasoPlan.visible && /Elija cómo publicar este equipo/.test(pasoPlan.texto)) {
+    ok('empieza por «Elija cómo publicar este equipo»');
   } else {
     anota('publicar', 'flujo', 'el paso del plan no es lo primero que ve el particular sin capacidad');
   }

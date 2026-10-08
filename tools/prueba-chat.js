@@ -91,6 +91,56 @@ const respuestaBuena = (txt) => ({ estado: 200, datos: { stop_reason: 'end_turn'
   comprobar(!/RD\$0\b/.test(sis), 'el plan gratis no se anuncia como «RD$0»');
   comprobar(/SIN COSTO/.test(sis), 'el plan gratis se anuncia como sin costo');
 
+  /* Oleada 7: las funciones que ya existen en el sitio también tienen que
+     estar en el contexto del asistente, con la ruta donde se usan. */
+  ['/guardados.html', '/equipos.html', '/panel.html', '/alertas.html', '/equipo.html', '/estafas.html']
+    .forEach((ruta) => comprobar(sis.includes(ruta), `el prompt incluye la ruta ${ruta}`));
+  comprobar(/Guardar esta búsqueda/.test(sis) && /Mis alertas/.test(sis)
+    && /enlace del propio correo/.test(sis),
+  'explica guardar una búsqueda, recibir el aviso y darse de baja desde el correo');
+  comprobar(/especificaciones disponibles/.test(sis) && /por implemento/.test(sis),
+    'explica los filtros técnicos del catálogo');
+  comprobar(/PDF e imágenes JPG, PNG o WebP/.test(sis) && /4 MB cada archivo/.test(sis)
+    && /4 documentos/.test(sis) && /10 MB por anuncio/.test(sis) && /dueño del anuncio/.test(sis),
+  'explica quién adjunta documentos y sus tipos y topes');
+  comprobar(/solo muestra teléfonos confirmados/.test(sis) && /Señales de estafa/.test(sis),
+    'explica los contactos verificados y enlaza la guía de estafas');
+  comprobar(/Eliminar mi cuenta/.test(sis) && /comprobantes fiscales y los pagos se conservan/.test(sis)
+    && /pierde los días/.test(sis), 'explica el alcance de eliminar la cuenta');
+  comprobar(/7, 3 y 1 día/.test(sis) && /Renovar anuncio/.test(sis) && /Renovar plan/.test(sis),
+    'explica los avisos de vencimiento y cómo renovar');
+  comprobar(!/(?:809|829|849)[- .]?\d{3}[- .]?\d{4}/.test(sis),
+    'el prompt no contiene ningún teléfono dominicano completo');
+
+  const cardnetAntes = Object.fromEntries(Object.entries(process.env)
+    .filter(([nombre]) => nombre.startsWith('MERCA_CARDNET')));
+  try {
+    Object.keys(process.env).filter((nombre) => nombre.startsWith('MERCA_CARDNET'))
+      .forEach((nombre) => { delete process.env[nombre]; });
+    const cardnetApagado = chat.sistema();
+    comprobar(/por ahora el pago se hace por transferencia bancaria/i.test(cardnetApagado)
+      && !/puede pagar con tarjeta/i.test(cardnetApagado),
+    'CardNet apagado: solo ofrece pagar por transferencia');
+
+    process.env.MERCA_CARDNET = 'lab';
+    process.env.MERCA_CARDNET_LLAVE_PUB = 'publica-de-prueba';
+    process.env.MERCA_CARDNET_LLAVE_PRIV = 'privada-de-prueba';
+    const cardnetEncendido = chat.sistema();
+    comprobar(/puede pagar con tarjeta mediante CardNet/i.test(cardnetEncendido)
+      && /transferencia bancaria/.test(cardnetEncendido),
+    'CardNet encendido: ofrece tarjeta y transferencia');
+  } finally {
+    Object.keys(process.env).filter((nombre) => nombre.startsWith('MERCA_CARDNET'))
+      .forEach((nombre) => { delete process.env[nombre]; });
+    Object.assign(process.env, cardnetAntes);
+  }
+
+  const servicios = require('../assets/servicios.js');
+  comprobar(!servicios.seOfrece('transporte') && !servicios.seOfrece('financiamiento')
+    && /NO ofrece el servicio de transporte/.test(sis)
+    && /NO ofrece el directorio de financiamiento/.test(sis),
+  'mientras los interruptores están apagados, no ofrece transporte ni financiamiento');
+
   /* Fase 10.1: las cuentas. Cada camino con su sitio exacto, y el límite
      de lo que el asistente jamás hace desde el chat. */
   comprobar(/«Olvidé mi contraseña»/.test(sis) && /Olvidó la contraseña/.test(sis),

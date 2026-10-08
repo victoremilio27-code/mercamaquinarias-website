@@ -682,6 +682,42 @@ las imágenes: son archivos y crecen mucho más rápido que la base.
 Restaurar solo la base dejaría cada anuncio apuntando a una foto que
 ya no existe.
 
+## Respaldo fuera del VPS
+
+La tarea diaria puede enviar la base cifrada a cualquier almacenamiento
+compatible con S3. No se ha elegido proveedor: Victor debe elegirlo y crear el
+cubo. Hasta entonces la integración queda apagada y el respaldo local sigue
+funcionando.
+
+1. Cree credenciales limitadas a escribir objetos en el cubo de respaldos.
+2. Configure `MERCA_S3_ENDPOINT`, `MERCA_S3_CUBO`, `MERCA_S3_CLAVE`,
+   `MERCA_S3_SECRETO` y, si corresponde, `MERCA_S3_REGION` en el entorno del
+   servicio. Genere `MERCA_RESPALDO_CLAVE` con:
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+3. Guarde esa clave también fuera del VPS, separada de los respaldos. Sin ella
+   ninguna copia cifrada se puede restaurar.
+4. En el proveedor, configure una regla de caducidad que elimine los objetos de
+   `respaldos/` después de 30 días. El código no borra objetos remotos.
+
+### Restauración de prueba
+
+Descargue una copia `.cifrado` del proveedor en una máquina con Node 22.5 o
+superior y haga la prueba fuera de la base en servicio:
+
+```bash
+export MERCA_RESPALDO_CLAVE='<clave guardada fuera del VPS>'
+node tools/respaldo-externo.js descifrar respaldo.db.cifrado restauracion.db
+```
+
+La orden descifra por flujos, abre `restauracion.db` en solo lectura, ejecuta
+`PRAGMA integrity_check` y cuenta los anuncios. Debe imprimir
+`integrity_check: ok`; cualquier otro resultado sale con código 1. Borre la
+copia restaurada cuando termine la comprobación, pues ya no está cifrada.
+
 ## Actualizar el sitio
 
 **No hace falta entrar al servidor.** Al fusionar un Pull Request en `main`,

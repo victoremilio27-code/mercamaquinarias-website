@@ -324,14 +324,22 @@ function copiarFacturas(origen, destino) {
  *
  * Se prueba abrir la copia antes de darla por buena. Un respaldo que
  * nunca se verifica es una carpeta que ocupa disco. */
-function respaldar() {
+async function respaldar() {
   const sello = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   const destino = path.join(RESPALDOS, `mercamaquinarias-${sello}.db`);
   const destinoFacturas = path.join(RESPALDOS, 'facturas');
 
   if (SECO) {
     const { copiadas, total } = copiarFacturas(CARPETA_FACTURAS, destinoFacturas);
-    return anotar('respaldo', `escribiría ${destino} · copiaría ${copiadas} de ${total} PDF`);
+    anotar('respaldo', `escribiría ${destino} · copiaría ${copiadas} de ${total} PDF`);
+    const externo = require('./respaldo-externo');
+    if (!require('./s3').configurada(process.env)) {
+      return anotar('respaldo externo', 'omitido: almacenamiento S3 no configurado');
+    }
+    if (!/^[0-9a-fA-F]{64}$/.test(process.env.MERCA_RESPALDO_CLAVE || '')) {
+      return anotar('respaldo externo', 'omitido: MERCA_RESPALDO_CLAVE falta o no es válida');
+    }
+    return anotar('respaldo externo', `subiría a ${externo.claveRemota(destino)}`);
   }
 
   fs.mkdirSync(RESPALDOS, { recursive: true });
@@ -357,6 +365,21 @@ function respaldar() {
   const kb = Math.round(fs.statSync(destino).size / 1024);
   anotar('respaldo', `${path.basename(destino)} · ${kb} KB · ${n} anuncios · íntegro`
     + ` · ${copiadas} de ${total} PDF copiado(s)`);
+
+  // Solo sale la base: los PDF no se suben porque se regeneran desde
+  // facturas.dibujo; duplicarlos expondría otra copia de los comprobantes.
+  try {
+    const externo = await require('./respaldo-externo').subirRespaldo(destino);
+    if (externo.omitido) {
+      anotar('respaldo externo', `omitido: ${externo.motivo}`);
+    } else {
+      anotar('respaldo externo', `${externo.clave} · ${externo.bytes} bytes cifrados`);
+    }
+  } catch (error) {
+    // La copia local queda disponible aunque el proveedor remoto falle.
+    anotar('respaldo externo', `falló la subida: ${error.message}`);
+    throw error;
+  }
 
   // Rotación: se conservan los últimos RESPALDOS_MAX.
   const viejos = fs.readdirSync(RESPALDOS)
