@@ -2640,7 +2640,7 @@ function pintarVistaPrevia() {
   if (!caja) return;
 
   const e = estado.equipo;
-  const titulo = [e.anio, e.marca, e.modelo].filter(Boolean).join(' ') || 'Tu equipo';
+  const titulo = [e.anio, e.marca, e.modelo].filter(Boolean).join(' ') || 'Su equipo';
   const uso = soloDigitos(e.uso) ? `${miles(Number(soloDigitos(e.uso)))} ${e.unidad}` : 'Uso pendiente';
   // El distintivo depende del nivel: el del plan elegido en modo
   // publicación, el del cupo que vaya a ocupar en modo capacidad.

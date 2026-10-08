@@ -226,7 +226,7 @@ function tarjetaNivel(n) {
       <span class="plan-op__cabeza">
         ${n.perfil_publico
           ? '<span class="plan-op__cinta plan-op__cinta--membresia">Con página propia</span>'
-          : n.destacado
+          : n.destacado && !n.perfil_publico
             ? '<span class="plan-op__cinta">Más contratado</span>'
             : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
         <span class="plan-op__nombre">${esc(n.nombre)}</span>
@@ -262,7 +262,7 @@ function tarjetaNivelPublicacion(n) {
   return `<li>
     <div class="plan-op${n.destacado && !n.perfil_publico ? ' plan-op--sugerido' : ''}">
       <span class="plan-op__cabeza">
-        ${n.destacado
+        ${n.destacado && !n.perfil_publico
           ? '<span class="plan-op__cinta">Más contratado</span>'
           : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
         <span class="plan-op__nombre">Publicación ${esc(n.nombre)}</span>
@@ -403,7 +403,7 @@ function aplicarModo() {
   $$('[data-modo]').forEach((el) => { el.hidden = (el.dataset.modo === 'capacidad') !== capacidad; });
 
   const titulo = $('#t-niveles');
-  if (titulo) titulo.innerHTML = capacidad ? '<em>Elija</em> su nivel' : 'Elige cómo publicar este equipo';
+  if (titulo) titulo.innerHTML = capacidad ? '<em>Elija</em> su nivel' : 'Elija cómo publicar este equipo';
 
   // El enlace «¿Es un particular?» es para quien todavía no decidió
   // qué es: un dealer con sesión ya sabe que compra capacidad, y
@@ -742,7 +742,7 @@ async function montarPlanes() {
   const cupos = Number(params().get('cupos'));
   if (cupos > 0) CUPOS_PEDIDOS = Math.min(cupos, CUPO_MAXIMO);
   $('#cuantosCupos').value = String(CUPOS_PEDIDOS);
-  $('#ahorro60Planes').textContent = `Ahorra ${ahorro60()} %`;
+  $('#ahorro60Planes').textContent = `Ahorre ${ahorro60()} %`;
 
   pintarMisCupos();
   pintarRecordatorio();

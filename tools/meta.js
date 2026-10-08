@@ -181,7 +181,7 @@ function deCategoria(id) {
   if (!encontrada) return null;
 
   const titulo = `${encontrada.nombre} en venta en República Dominicana | MercaMaquinarias`;
-  const descripcion = `Encuentra ${encontrada.nombre.toLowerCase()} en venta en República Dominicana en MercaMaquinarias.`;
+  const descripcion = `Encuentre ${encontrada.nombre.toLowerCase()} en venta en República Dominicana en MercaMaquinarias.`;
   const url = `${SITIO}/equipos.html?categoria=${encodeURIComponent(id)}`;
   return { titulo, descripcion, imagen: IMAGEN_MARCA, url, tipo: 'website' };
 }
