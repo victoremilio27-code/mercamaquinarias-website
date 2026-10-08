@@ -17,11 +17,25 @@ test.after(() => fs.rmSync(raizTemporal, { recursive: true, force: true }));
 
 const dataUri = (tipo, bytes, parametros = '') => `data:${tipo}${parametros};base64,${bytes.toString('base64')}`;
 
+/* Desde #158 `fotos.guardar` recorre la imagen entera para quitarle los
+   metadatos y rechaza la que no puede recorrer. Las firmas sueltas de
+   antes (tres o cuatro bytes) ya no son imágenes que se puedan guardar:
+   aquí van las más pequeñas que sí son válidas de punta a punta. */
+function webpMinimo() {
+  const datos = Buffer.from('contenido');
+  const webp = Buffer.concat([
+    Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8L'),
+    Buffer.from([datos.length, 0, 0, 0]), datos, Buffer.from([0]),
+  ]);
+  webp.writeUInt32LE(webp.length - 8, 4);
+  return webp;
+}
+
 const formatos = {
   fotos: [
-    ['JPEG', 'image/jpeg', Buffer.from([0xFF, 0xD8, 0xFF])],
-    ['PNG', 'image/png', Buffer.from([0x89, 0x50, 0x4E, 0x47])],
-    ['WebP', 'image/webp', Buffer.from('RIFF\0\0\0\0WEBPcontenido', 'binary')],
+    ['JPEG', 'image/jpeg', Buffer.from([0xFF, 0xD8, 0xFF, 0xD9])],
+    ['PNG', 'image/png', Buffer.from('89504E470D0A1A0A0000000049454E44AE426082', 'hex')],
+    ['WebP', 'image/webp', webpMinimo()],
   ],
   videos: [
     ['MP4', 'video/mp4', Buffer.from('\0\0\0\0ftypcontenido', 'binary')],
