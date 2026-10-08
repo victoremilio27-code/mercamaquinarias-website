@@ -65,6 +65,7 @@
     "busquedas-api:probar": "node tools/probar-busquedas-api.js",
     "alertas:tarea": "node tools/probar-alertas-tarea.js",
     "rango:puro": "node --test tools/rango.prueba.js",
+    "orden-scripts:puro": "node --test tools/orden-scripts.prueba.js",
     "f607:puro": "node --test tools/formato607.prueba.js",
     "especificaciones:puro": "node --test tools/especificaciones.prueba.js",
     "mapa:puro": "node --test tools/mapa.prueba.js",
