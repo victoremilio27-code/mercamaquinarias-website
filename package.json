@@ -62,6 +62,7 @@
     "precios:probar": "node --test tools/precios.prueba.js",
     "lote:puro": "node --test tools/lote.prueba.js",
     "reglas:puro": "node --test tools/reglas.prueba.js",
+    "redes:puro": "node --test tools/redes.prueba.js",
     "legales:puro": "node --test tools/legales.prueba.js",
     "alertas:puro": "node --test tools/alertas.prueba.js",
     "busquedas-api:probar": "node tools/probar-busquedas-api.js",
