@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node tools/serve.js --port 8080",
+    "humo": "node tools/humo.js",
     "shot": "node tools/screenshot.js --url http://127.0.0.1:8080/",
     "shot:fold": "node tools/screenshot.js --url http://127.0.0.1:8080/ --width 1440 --clip",
     "check": "node tools/check-links.js",
