@@ -73,7 +73,10 @@ test('elige el respaldo más reciente y calcula su antigüedad', (t) => {
 
 test('produce cada aviso solo al romper su umbral', (t) => {
   const { base, respaldos } = preparar(t);
-  const ahora = Date.now();
+  /* En segundos enteros: utimes no guarda siempre los milisegundos, y con
+     Date.now() el respaldo «de 30 horas justas» salía a veces una fracción
+     más viejo y la prueba fallaba una de cada pocas veces. */
+  const ahora = Math.floor(Date.now() / 1000) * 1000;
   const respaldo = path.join(respaldos, 'mercamaquinarias-2026-10-01-05-00-00.db');
   fs.writeFileSync(respaldo, 'copia');
   fs.utimesSync(respaldo, new Date(ahora - 31 * 3_600_000), new Date(ahora - 31 * 3_600_000));
