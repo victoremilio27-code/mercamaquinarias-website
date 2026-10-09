@@ -1886,6 +1886,17 @@ function verificarCodigo({ correo, tipo, codigo }) {
   return { ok: true, usuario_id: fila.usuario_id };
 }
 
+/* Si hay un código de ese tipo todavía utilizable (sin consumir, sin
+   vencer y con intentos). Solo lectura. Lo usa el reenvío del código de
+   acceso: que haya uno vivo prueba que alguien dio la contraseña hace
+   minutos (auditoría 2026-10, SEG-PERMISOS-03). */
+function hayCodigoVivo(correo, tipo) {
+  return !!abrir().prepare(`
+    SELECT 1 FROM codigos
+     WHERE correo = ? AND tipo = ? AND consumido = 0 AND expira > ? AND intentos < ?
+     LIMIT 1`).get(String(correo).trim().toLowerCase(), tipo, ahora(), MAX_INTENTOS_CODIGO);
+}
+
 const marcarCorreoVerificado = (idUsuario) =>
   abrir().prepare('UPDATE usuarios SET correo_verificado = 1 WHERE id = ?').run(idUsuario);
 
@@ -7315,7 +7326,7 @@ module.exports = {
   VIAS_CAMBIO_CLAVE, anotarCambioClave, revertirCambioClave,
   usuarioPorCorreo, usuarioPorId, crearCuenta, organizacionDe, sucursalPrincipal,
   abrirSesion, sesion, cerrarSesion, cerrarTodoDe,
-  crearCodigo, verificarCodigo, marcarCorreoVerificado,
+  crearCodigo, verificarCodigo, hayCodigoVivo, marcarCorreoVerificado,
   /* Contactos verificados: ningún teléfono sin verificar sale en un anuncio. */
   normalizarNumero, pedirCodigoContacto, confirmarCodigoContacto,
   numerosVerificados, contactosDe, marcarContactoVerificado,

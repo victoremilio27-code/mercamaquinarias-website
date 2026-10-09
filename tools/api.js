@@ -704,7 +704,17 @@ async function reenviar(req, res) {
   const tipo = ['verificacion', 'acceso', 'restablecer'].includes(c.tipo) ? c.tipo : 'verificacion';
   const u = db.usuarioPorCorreo(c.correo);
 
-  if (u) emitirCodigo({ correo: u.correo, tipo, idUsuario: u.id, nombre: u.nombre });
+  /* Auditoría 2026-10 (SEG-PERMISOS-03): con los códigos de «acceso» y de
+     «verificacion», `verificar` abre sesión. Reenviarlos a cualquiera
+     dejaba entrar con solo el correo, sin contraseña y en silencio (sin el
+     aviso ni el «no fui yo» de restablecer), y encadenado con `verificar`
+     decía qué correos tienen cuenta. El de acceso solo se reenvía si hay
+     uno vivo: alguien dio la contraseña hace minutos. El de verificación,
+     solo a una cuenta que aún no lo está. La respuesta es la misma. */
+  const procede = u && (tipo === 'restablecer'
+    || (tipo === 'verificacion' && !u.correo_verificado)
+    || (tipo === 'acceso' && db.hayCodigoVivo(u.correo, 'acceso')));
+  if (procede) emitirCodigo({ correo: u.correo, tipo, idUsuario: u.id, nombre: u.nombre });
 
   return responder(res, 202, { mensaje: 'Si esa cuenta existe, le enviamos un código nuevo.' });
 }
