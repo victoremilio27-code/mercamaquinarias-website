@@ -20,6 +20,7 @@
    ═══════════════════════════════════════════════════════════ */
 
 let NIVELES_PLAN = [];
+let MAS_CONTRATADO = null;
 let MIS_CUPOS = [];
 let EXENTA_PLAN = false;
 let NIVEL_ELEGIDO = '';
@@ -204,6 +205,7 @@ function pintarMisCupos() {
 
 function tarjetaNivel(n) {
   const elegido = n.id === NIVEL_ELEGIDO;
+  const sugerido = n.id === MAS_CONTRATADO;
   /* Antes la tarjeta enseñaba el precio antes de ITBIS y el resumen lo
      desglosaba (auditoría §4.6); ahora la tarjeta ya enseña el precio
      final, sacado de la misma fórmula que cobra el servidor —nunca una
@@ -221,13 +223,13 @@ function tarjetaNivel(n) {
   ].filter(Boolean);
 
   return `<li>
-    <label class="plan-op${elegido ? ' plan-op--elegido' : ''}${n.destacado && !n.perfil_publico ? ' plan-op--sugerido' : ''}">
+    <label class="plan-op${elegido ? ' plan-op--elegido' : ''}${sugerido ? ' plan-op--sugerido' : ''}">
       <input type="radio" name="nivel" value="${esc(n.id)}"${elegido ? ' checked' : ''}>
       <span class="plan-op__cabeza">
-        ${n.perfil_publico
-          ? '<span class="plan-op__cinta plan-op__cinta--membresia">Con página propia</span>'
-          : n.destacado && !n.perfil_publico
-            ? '<span class="plan-op__cinta">Más contratado</span>'
+        ${sugerido
+          ? '<span class="plan-op__cinta">Más contratado</span>'
+          : n.perfil_publico
+            ? '<span class="plan-op__cinta plan-op__cinta--membresia">Con página propia</span>'
             : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
         <span class="plan-op__nombre">${esc(n.nombre)}</span>
       </span>
@@ -246,6 +248,7 @@ function tarjetaNivel(n) {
    el plan y los días elegidos. Sin el rasgo de "página pública": esa
    solo la usa un dealer aprobado, y aquí no hay ninguno. */
 function tarjetaNivelPublicacion(n) {
+  const sugerido = n.id === MAS_CONTRATADO;
   const total = precioCompra({ precioUnitario: unitario(n), cupo: 1, dias: DIAS_PLAN }).total;
 
   const rasgos = [
@@ -260,9 +263,9 @@ function tarjetaNivelPublicacion(n) {
   const href = `publicar.html?plan=${encodeURIComponent(n.id)}&dias=${DIAS_PLAN}`;
 
   return `<li>
-    <div class="plan-op${n.destacado && !n.perfil_publico ? ' plan-op--sugerido' : ''}">
+    <div class="plan-op${sugerido ? ' plan-op--sugerido' : ''}">
       <span class="plan-op__cabeza">
-        ${n.destacado && !n.perfil_publico
+        ${sugerido
           ? '<span class="plan-op__cinta">Más contratado</span>'
           : '<span class="plan-op__hueco" aria-hidden="true"></span>'}
         <span class="plan-op__nombre">Publicación ${esc(n.nombre)}</span>
@@ -717,6 +720,7 @@ async function montarPlanes() {
 
   const catalogo = await api('/planes', { silencioso: true });
   NIVELES_PLAN = (catalogo && catalogo.planes) || [];
+  MAS_CONTRATADO = (catalogo && catalogo.masContratado) || null;
   METODOS_PAGO = (catalogo && Array.isArray(catalogo.metodosPago)) ? catalogo.metodosPago : [];
 
   if (haySesion()) {

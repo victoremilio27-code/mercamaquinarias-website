@@ -16,7 +16,7 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-10-06) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-10-08) — EMPIEZA AQUÍ
 
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
@@ -41,6 +41,20 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
 4. **Despachar la siguiente:** quitar `bloqueado` a lo desbloqueado, encargar con `@codex` todos los issues
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
+
+**OLEADA 9 PUBLICADA (2026-10-08, rama `codex/tanda-9`):** entraron las 14 tareas: #184 (apagado ordenado),
+#185 (la siembra de demostración no toca producción), #186 (`despliegue:puro`), #187 (`reglas-negocio:puro`), #188
+(`sesion:puro`, `tema:puro`), #189 (`orden-scripts:puro`), #190 (`admin-cli:probar`), #191 (`respaldo:ensayar` sobre una
+copia temporal), #192 (`estado:puro`), #193 (fuera la redirección del dominio viejo), #196 (pie sin redes mientras no haya
+cuentas: `assets/redes.js`), #197 (el registro solo promete SMS con el SMS encendido), #198 (cinta «Más contratado»
+calculada con pagos aprobados de 90 días, mínimo 5 y sin empate; consulta de solo lectura, sin migración; con la base de
+demostración no sale) y #181 (barra móvil de cinco: Publicar al centro, Ayuda abre el asistente, burbuja oculta en
+móvil). Comprobado a 390 y 1280 px, claro y oscuro: el final de la página y el chat abierto quedan por encima de la barra.
+Arreglos de Claude: conflictos de `package.json` (#187, #192); `despliegue.prueba.js` deja de marcar como «todo» la
+comprobación de dominios ajenos (con #193 dentro ya se cumple, y su mención del nombre viejo rompía `reglas:puro`);
+C1 de #114: fuera «sin cargos imprevistos al arribo» en `importar.html` y el asistente, ahora «estimaciones
+referenciales; el costo final se confirma antes de pagar» (sin subir la versión legal). Todo lo nuevo, en CI. Encargados
+después de fusionar: #194 y #195.
 
 **OLEADAS 7 Y 8 PUBLICADAS (2026-10-08, rama `codex/tanda-7`, un solo PR):** entraron las 17 tareas: #154 (`humo`),
 #155, #156 (asistente), #157, #158 (metadatos fuera de las imágenes), #159 (`deploy/mantenimiento.html`), #160 (`carga`),

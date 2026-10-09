@@ -2713,19 +2713,30 @@ const anotar = (idAnuncio, tipo) =>
 function montarNavMovil() {
   if (document.querySelector('.nav-movil')) return;
   const pagina = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+  const iconoAyuda = '<path d="M20.5 12.2c0 3.9-3.8 7-8.5 7-1 0-2-.15-2.9-.42L4 20.5l1.3-3.3A6.5 6.5 0 0 1 3.5 12.2c0-3.9 3.8-7 8.5-7s8.5 3.1 8.5 7z"/>';
+  const asistenteApagado = typeof window.asistenteActivo === 'function'
+    && !window.asistenteActivo();
   const items = [
     ['index.html', 'Inicio', '<path d="M3 11.5 12 4l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z"/><path d="M8.5 21v-6h7v6"/>'],
     ['equipos.html', 'Equipos', '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'],
     ['publicar.html', 'Publicar', '<path d="M12 3v18M3 12h18"/>'],
+    asistenteApagado ? ['contacto.html', 'Ayuda', iconoAyuda] : null,
     ['cuenta.html', 'Cuenta', '<circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>'],
   ];
   const activo = ['categorias.html', 'equipo.html'].includes(pagina) ? 'equipos.html' : pagina;
   const nav = document.createElement('nav');
   nav.className = 'nav-movil';
   nav.setAttribute('aria-label', 'Navegación móvil');
-  nav.innerHTML = items.map(([href, nombre, trazos]) =>
-    `<a href="${href}"${activo === href ? ' class="is-activo" aria-current="page"' : ''}><svg viewBox="0 0 24 24" aria-hidden="true">${trazos}</svg><span>${nombre}</span></a>`
-  ).join('');
+  nav.innerHTML = items.map((item) => {
+    if (!item) {
+      return `<button type="button" aria-label="Abrir el asistente" aria-expanded="false" data-accion-asistente><svg viewBox="0 0 24 24" aria-hidden="true">${iconoAyuda}</svg><span>Ayuda</span></button>`;
+    }
+    const [href, nombre, trazos] = item;
+    const etiqueta = href === 'contacto.html' ? ' aria-label="Escríbanos por correo"' : '';
+    return `<a href="${href}"${etiqueta}${activo === href ? ' class="is-activo" aria-current="page"' : ''}><svg viewBox="0 0 24 24" aria-hidden="true">${trazos}</svg><span>${nombre}</span></a>`;
+  }).join('');
+  const ayuda = nav.querySelector('[data-accion-asistente]');
+  if (ayuda) ayuda.addEventListener('click', () => window.alternarAsistente?.(ayuda));
   document.body.appendChild(nav);
 }
 

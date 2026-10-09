@@ -1587,6 +1587,7 @@ const esParticularCuenta = () => !!(haySesion() && SESION.organizacion
    las dos no se puede saber si esta cuenta tiene sitio libre. */
 let MODO = 'capacidad';
 let PLANES = [];
+let MAS_CONTRATADO = null;
 let METODOS_PAGO = [];
 /* Tarjetas guardadas, texto de la renovación automática y total del
    pedido: lo primero y lo segundo salen de GET /api/membresias (solo con
@@ -1612,6 +1613,7 @@ function decidirModo({ conUrl = true } = {}) {
 async function cargarPlanes() {
   const r = await api('/planes', { silencioso: true });
   PLANES = (r && r.planes) || [];
+  MAS_CONTRATADO = (r && r.masContratado) || null;
   METODOS_PAGO = (r && Array.isArray(r.metodosPago)) ? r.metodosPago : [];
 }
 
@@ -1624,8 +1626,8 @@ async function cargarPlanes() {
    script. */
 function tarjetaPlanPublicar(n) {
   const elegido = n.id === estado.planElegido;
-  // El mismo criterio que planes.js: la cinta es del Destacado, no del Premium.
-  const sugerido = n.destacado && !n.perfil_publico;
+  // El mismo criterio que planes.js: manda el plan respaldado por los pagos reales.
+  const sugerido = n.id === MAS_CONTRATADO;
   const unitario = n.precio_vigente != null ? n.precio_vigente : n.precio;
   const total = precioCompra({ precioUnitario: unitario, cupo: 1, dias: estado.diasElegidos }).total;
 

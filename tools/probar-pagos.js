@@ -358,7 +358,57 @@ const pendienteDeCompra = (etiqueta, cupo = 1) => db.registrarCobro({
   idOrg: ID_ORG, cobro: cobroDe(3500 * cupo, etiqueta), intencion: intencionCompra(cupo, 30),
 });
 
+const pagoDePlan = (plan, etiqueta, { aprobar = true } = {}) => {
+  const base = plan === 'premium' ? 5500 : 3200;
+  const pago = db.registrarCobro({
+    idOrg: ID_ORG,
+    cobro: cobroDe(base, etiqueta),
+    intencion: { ...intencionCompra(1, 30), idPlan: plan },
+  });
+  if (aprobar) {
+    db.aprobarPago(pago.id);
+    ejecuta("UPDATE pagos SET creado = '2024-12-31T12:00:00.000Z', confirmado = '2024-12-31T12:00:00.000Z' WHERE id = ?", pago.id);
+  }
+  return db.pagoPorId(pago.id);
+};
+
 (async () => {
+  console.log('\n9b. La cinta Más contratado sale de pagos aprobados recientes');
+  const instante = '2025-01-01T00:00:00.000Z';
+  ok(db.planMasContratado({ ahora: instante }) === null, 'sin pagos devuelve null');
+
+  for (let i = 0; i < 4; i++) pagoDePlan('destacado', `POPULAR-4-${i}`);
+  ok(db.planMasContratado({ ahora: instante }) === null, 'cuatro contrataciones no alcanzan el mínimo');
+
+  pagoDePlan('premium', 'POPULAR-MAYORIA');
+  ok(db.planMasContratado({ ahora: instante }) === 'destacado', 'cinco pagos con mayoría clara eligen Destacado');
+
+  for (let i = 0; i < 3; i++) pagoDePlan('premium', `POPULAR-EMPATE-${i}`);
+  ok(db.planMasContratado({ ahora: instante }) === null, 'un empate en el primer puesto devuelve null');
+
+  ejecuta("DELETE FROM pagos WHERE referencia LIKE 'PRUEBA-POPULAR-%'");
+  ejecuta("DELETE FROM suscripciones WHERE organizacion_id = ?", ID_ORG);
+
+  pagoDePlan('destacado', 'POPULAR-PENDIENTE', { aprobar: false });
+  const rechazado = pagoDePlan('destacado', 'POPULAR-RECHAZADO', { aprobar: false });
+  db.rechazarPago(rechazado.id);
+  const viejo = pagoDePlan('premium', 'POPULAR-VIEJO');
+  ejecuta("UPDATE pagos SET creado = '2024-06-01T00:00:00.000Z', confirmado = '2024-06-01T00:00:00.000Z' WHERE id = ?", viejo.id);
+  db.comprarCupos({
+    idOrg: ID_ORG, idPlan: 'estandar', cupo: 1, dias: 30,
+    cobro: cobroDe(0, 'POPULAR-CERO'),
+  });
+  for (let i = 0; i < 5; i++) pagoDePlan('destacado', `POPULAR-VALIDO-${i}`);
+  ok(db.planMasContratado({ ahora: instante }) === 'destacado',
+    'pendiente, rechazado, total cero y anterior a 90 días no cuentan');
+
+  const catalogoPopular = await pedir({ url: '/api/planes' });
+  const clavesConteo = Object.keys(catalogoPopular.datos || {}).filter((k) => /conteo|contrataciones/i.test(k));
+  ok(catalogoPopular.codigo === 200
+    && Object.prototype.hasOwnProperty.call(catalogoPopular.datos || {}, 'masContratado')
+    && clavesConteo.length === 0,
+  `GET /api/planes trae solo el id público: ${catalogoPopular.datos && catalogoPopular.datos.masContratado}`);
+
   console.log('\n10. Confirmar un pendiente otorga la membresía y emite su comprobante');
   db.cargarSecuencia({
     tipo: 'B02', nombre: 'Consumidor final', desde: 1, hasta: 50,

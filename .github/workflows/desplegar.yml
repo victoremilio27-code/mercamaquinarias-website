@@ -186,6 +186,28 @@ jobs:
         run: npm run imagen-limpia:puro
       - name: Lista blanca del servidor
         run: npm run servidor:probar
+      - name: Apagado ordenado del servidor
+        run: npm run apagado:probar
+      - name: La siembra de demostracion no toca produccion
+        run: npm run seed-guarda:probar
+      - name: Archivos de despliegue
+        run: npm run despliegue:puro
+      - name: Reglas de negocio que no se negocian
+        run: npm run reglas-negocio:puro
+      - name: Contratos de sesion
+        run: npm run sesion:puro
+      - name: Contratos del tema
+        run: npm run tema:puro
+      - name: Orden de los scripts de cada pagina
+        run: npm run orden-scripts:puro
+      - name: Consola de administracion por linea de comandos
+        run: npm run admin-cli:probar
+      - name: Ensayo de restauracion de un respaldo
+        run: npm run ensayo-restauracion:probar
+      - name: Estado del sistema
+        run: npm run estado:puro
+      - name: Redes del pie
+        run: npm run redes:puro
 
   # Lo que necesita el sitio levantado: las auditorias y las dos pasadas
   # de puppeteer. Va aparte del job hermetico para que un fallo de

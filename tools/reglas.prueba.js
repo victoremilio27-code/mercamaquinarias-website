@@ -107,7 +107,6 @@ test(`el nombre viejo TuEquipo${'RD'} solo permanece en los archivos autorizados
   const permitidos = new Set([
     'CLAUDE.md',
     'assets/publicar.js',
-    'deploy/nginx-dominio-viejo.conf',
     'tools/db.js',
   ]);
   const errores = [];

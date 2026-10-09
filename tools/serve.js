@@ -556,3 +556,36 @@ servidor.listen(args.port, args.host, () => {
   console.log(`API         ${api ? 'activa en /api' : 'desactivada'}`);
   console.log('Ctrl+C para detener.\n');
 });
+
+let apagandose = false;
+
+function apagar(senal) {
+  if (apagandose) {
+    console.log(`Apagado ya en curso; se ignora ${senal}.`);
+    return;
+  }
+  apagandose = true;
+  console.log(`Apagado ordenado iniciado por ${senal}.`);
+
+  let cortadas = null;
+  servidor.close(() => {
+    const detalle = cortadas === null ? '' : `; ${cortadas} conexión(es) restante(s) cortada(s)`;
+    console.log(`Apagado ordenado terminado${detalle}.`);
+    process.exit(0);
+  });
+  servidor.closeIdleConnections();
+
+  /* systemd da margen de sobra, pero una conexión defectuosa no puede
+     dejar un despliegue esperando indefinidamente. El temporizador no
+     mantiene vivo al proceso cuando ya terminaron todas las peticiones. */
+  setTimeout(() => {
+    servidor.getConnections((error, cantidad) => {
+      cortadas = error ? 0 : cantidad;
+      console.log(`Tope de apagado alcanzado; se cortan ${cortadas} conexión(es).`);
+      servidor.closeAllConnections();
+    });
+  }, 10_000).unref();
+}
+
+process.on('SIGTERM', () => apagar('SIGTERM'));
+process.on('SIGINT', () => apagar('SIGINT'));
