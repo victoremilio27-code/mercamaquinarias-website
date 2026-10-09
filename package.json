@@ -81,6 +81,7 @@
     "s3:puro": "node --test tools/s3.prueba.js",
     "respaldo-externo:puro": "node --test tools/respaldo-externo.prueba.js",
     "estado:puro": "node --test tools/estado.prueba.js",
+    "estado-api:probar": "node tools/probar-estado-api.js",
     "servicios:probar": "node --test tools/servicios.prueba.js",
     "facturas:secuencias": "node tools/facturas.js secuencias",
     "dealer:probar": "node tools/probar-pagina-dealer.js",

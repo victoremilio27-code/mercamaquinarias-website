@@ -1824,6 +1824,62 @@ function montarPub() {
 
 /* ── Arranque ───────────────────────────────────────────── */
 
+function formatoBytes(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+  const unidades = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let valor = Number(n);
+  let unidad = 0;
+  while (Math.abs(valor) >= 1024 && unidad < unidades.length - 1) {
+    valor /= 1024;
+    unidad++;
+  }
+  const numero = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false })
+    .format(valor).replace('.', ',');
+  return `${numero} ${unidades[unidad]}`;
+}
+
+function detalleCarpetas(carpetas) {
+  return Object.entries(carpetas || {}).map(([nombre, datos]) => {
+    if (!datos || datos.error) return `${nombre}: no disponible`;
+    return `${nombre}: ${Number(datos.archivos)} archivo(s), ${formatoBytes(datos.bytes)}`;
+  }).join(' · ') || '—';
+}
+
+function pintarEstadoSistema(datos) {
+  const base = datos.base && !datos.base.error
+    ? `${formatoBytes(datos.base.bytes)} · WAL ${formatoBytes(datos.base.wal)}` : 'No disponible';
+  const disco = datos.disco && !datos.disco.error
+    ? `${formatoBytes(datos.disco.libres)} libres de ${formatoBytes(datos.disco.total)} (${Number(datos.disco.porcentajeLibre).toLocaleString('es-DO', { maximumFractionDigits: 1 })} %)`
+    : 'No disponible';
+  const respaldo = datos.respaldo && !datos.respaldo.error
+    ? `${esc(datos.respaldo.nombre)} · ${formatoBytes(datos.respaldo.bytes)} · hace ${Number(datos.respaldo.antiguedadHoras).toLocaleString('es-DO', { maximumFractionDigits: 1 })} h`
+    : (datos.respaldo === null ? 'Ninguno' : 'No disponible');
+  $('#estadoSistema').innerHTML = `
+    <tr><th>Base</th><td>${base}</td></tr>
+    <tr><th>Disco</th><td>${disco}</td></tr>
+    <tr><th>Último respaldo</th><td>${respaldo}</td></tr>
+    <tr><th>Carpetas</th><td>${esc(detalleCarpetas(datos.carpetas))}</td></tr>`;
+  const avisos = datos.avisos || [];
+  $('#avisosEstado').textContent = avisos.join(' ');
+  $('#avisosEstado').hidden = avisos.length === 0;
+  $('#estadoGenerado').textContent = datos.generado
+    ? `Actualizado ${new Date(datos.generado).toLocaleString('es-DO')}` : '';
+}
+
+async function cargarEstadoSistema() {
+  const boton = $('#actualizarEstado');
+  boton.disabled = true;
+  try {
+    const datos = await api('/admin/estado');
+    pintarEstadoSistema(datos);
+  } catch (e) {
+    $('#avisosEstado').textContent = e.message;
+    $('#avisosEstado').hidden = false;
+  } finally {
+    boton.disabled = false;
+  }
+}
+
 async function montarAdmin() {
   if (!document.getElementById('adminContenido')) return;
 
@@ -1842,6 +1898,8 @@ async function montarAdmin() {
 
   $('#adminCargando').hidden = true;
   $('#adminContenido').hidden = false;
+  $('#actualizarEstado').addEventListener('click', cargarEstadoSistema);
+  cargarEstadoSistema();
 
   /* Se filtra por `data-estado` y no por la clase del contenedor: hay
      dos bloques de filtros en la página —el de solicitudes y el de la
