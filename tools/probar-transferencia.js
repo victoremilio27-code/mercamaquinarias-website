@@ -1180,6 +1180,48 @@ db.cargarSecuencia({
     ok(llamadasDemo33 === 0, `el procesador demo se llamó ${llamadasDemo33} vez/veces en la sección 33`);
   }
 
+  /* Auditoría 2026-10 (FISCAL-1): con CardNet apagado, apagar la
+     transferencia (MERCA_TRANSFERENCIA=0, como decía el README, o un
+     tecleo en una de las cinco variables) dejaba `demo` como método de
+     cobro EN PRODUCCIÓN: cualquier visitante publicaba sin pagar y cada
+     compra con RNC gastaba un B01 real. En producción, sin un cobro de
+     verdad no se vende nada: 503 y ningún pago anotado. */
+  console.log('\n34. En producción, sin transferencia ni CardNet no hay cobro: ni demo ni pago');
+  {
+    const entornoAntes = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    espiarDemo();
+    try {
+      apagar();
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '[]', `apagada en producción: ${JSON.stringify(pagos.metodosDeCobro())}`);
+      encender({ MERCA_TRANSFERENCIA: '0' });
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '[]', `MERCA_TRANSFERENCIA=0 en producción: ${JSON.stringify(pagos.metodosDeCobro())}`);
+      encender({ MERCA_TRANSFERENCIA_CUENTA: '000-ABC-000' });
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '[]', 'una variable mal tecleada en producción: sin métodos');
+      {
+        const e = lanza(() => pagos.procesadorDeCobro());
+        ok(!!e && e.codigo === 503 && /no está disponible/.test(e.message),
+          `sin pedido: ${e ? `${e.codigo} ${e.message}` : 'NO lanzó'}`);
+        const e2 = lanza(() => pagos.procesadorDeCobro('demo'));
+        ok(!!e2, `pide demo: ${e2 ? e2.codigo : 'NO lanzó: demo al alcance del comprador'}`);
+      }
+      apagar();
+      const antes = pagosTotales();
+      const antesFact = facturasTotales();
+      const r = await comprar({ plan: 'destacado', cupo: 1, dias: 30 });
+      ok(r.codigo === 503 && /no está disponible/.test((r.datos || {}).error || ''),
+        `comprar sin método en producción: ${r.codigo} ${(r.datos || {}).error}`);
+      ok(pagosTotales() === antes && facturasTotales() === antesFact,
+        `no queda pago ni factura: pagos +${pagosTotales() - antes}, facturas +${facturasTotales() - antesFact}`);
+      ok(llamadasDemo === 0, `demo se llamó ${llamadasDemo} vez/veces`);
+      encender();
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '["transferencia"]', 'encendida en producción: solo transferencia');
+    } finally {
+      soltarDemo();
+      if (entornoAntes === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = entornoAntes;
+    }
+  }
+
   apagar();
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);

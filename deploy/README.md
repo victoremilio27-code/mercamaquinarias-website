@@ -446,12 +446,20 @@ sigue exactamente como antes. La cuenta tiene que ser **en pesos
    (nunca su valor): corrígela y reinicia otra vez.
 
 3. Para apagarla sin borrar los datos, añade `MERCA_TRANSFERENCIA=0` y
-   reinicia.
+   reinicia. **Con CardNet apagado, eso deja el sitio sin cobro:** toda
+   compra con importe responde «El pago no está disponible en este
+   momento», el registro dice al arrancar `pagos: no hay ningún método de
+   cobro` y la consola lo enseña en «Estado del sistema». Lo gratis (la
+   promoción del Estándar) sigue funcionando. Hasta la auditoría de
+   2026-10 apagarla devolvía el sitio al cobro de demostración, que
+   aprueba sin dinero y gasta NCF reales: en producción eso ya no pasa.
 
 **Qué cambia al encenderla.** El procesador de demostración, que aprueba
 siempre, deja de estar al alcance del comprador. Desde ese momento toda
 compra con importe queda **pendiente** hasta que el personal la marque
 como recibida en la consola; hasta entonces no hay cupos ni comprobante.
+En producción (`NODE_ENV=production`, lo fija la unidad de systemd) el
+procesador de demostración no existe nunca, esté encendida o no.
 
 ## 10c. Cobro con tarjeta (CardNet)
 

@@ -122,6 +122,23 @@ test('aísla los errores de lectura y nunca lanza', (t) => {
   assert.match(estado.carpetas.perdida.error, /no such file|no se puede encontrar/i);
 });
 
+/* Auditoría 2026-10 (FISCAL-1): que el sitio no pueda cobrar, o que cobre
+   con `demo`, tiene que verse en la consola y no solo en el registro. */
+test('en producción avisa si no hay método de cobro o si está el de demostración', (t) => {
+  const { base, respaldos } = preparar(t);
+  const llamar = (metodosPago, produccion) => estadoDelSistema({
+    archivoBase: base, carpetaRespaldos: respaldos, fsx: fsConDisco(80, 100), metodosPago, produccion,
+  });
+  const sinCobro = llamar([], true);
+  assert.deepEqual(sinCobro.pagos, { metodos: [] });
+  assert.ok(sinCobro.avisos.some((aviso) => /no puede cobrar/.test(aviso)));
+  assert.ok(llamar(['demo'], true).avisos.some((aviso) => /demostración/.test(aviso)));
+  assert.ok(!llamar(['transferencia'], true).avisos.some((aviso) => /cobr|demostración/.test(aviso)));
+  assert.ok(!llamar(['demo'], false).avisos.some((aviso) => /cobr|demostración/.test(aviso)),
+    'fuera de producción, demo es lo normal');
+  assert.equal(llamar(undefined, true).pagos, undefined, 'sin el dato, no se inventa nada');
+});
+
 test('formatea bytes con unidades de 1024 y coma decimal', () => {
   assert.equal(formatoBytes(0), '0 B');
   assert.equal(formatoBytes(1023), '1023 B');

@@ -68,6 +68,15 @@ if (Object.keys(process.env).some((k) => k.startsWith('MERCA_TRANSFERENCIA_') &&
   console.warn(`transferencia: apagada; faltan o no validan ${transferencia.faltantes().join(', ')}`);
 }
 
+/* En producción sin ningún cobro de verdad, toda compra con importe
+   responde 503 (`pagos.metodosDeCobro`, FISCAL-1 de la auditoría
+   2026-10). Es lo seguro, pero el sitio deja de vender: que se lea en
+   el registro al arrancar, también cuando se apagó con
+   MERCA_TRANSFERENCIA=0, que el aviso de arriba no cubre. */
+if (process.env.NODE_ENV === 'production' && !pagos.metodosDeCobro().length) {
+  console.warn('pagos: no hay ningún método de cobro (ni transferencia ni CardNet); las compras con importe responden 503.');
+}
+
 const { ITBIS } = precios;
 const COOKIE = 'te_sesion';
 const COOKIE_EQUIPO = 'te_equipo';
@@ -276,6 +285,8 @@ const verEstadoDelSistema = conSesion((req, res, ctx) => {
     archivoBase: process.env.MERCA_DB || path.join(raiz, 'db', 'mercamaquinarias.db'),
     carpetaRespaldos,
     carpetas,
+    metodosPago: pagos.metodosDeCobro(),
+    produccion: process.env.NODE_ENV === 'production',
   });
   return responder(res, 200, { ...estado, generado: new Date().toISOString() },
     { 'Cache-Control': 'no-store' });
