@@ -37,8 +37,10 @@ const transferencia = require('./transferencia');
 const cardnet = require('./cardnet');
 const lote = require('./lote');
 const alertas = require('./alertas');
+const { estadoDelSistema } = require('./estado');
 const crypto = require('crypto');
 const fs = require('fs');
+const path = require('path');
 
 /* CardNet, igual que la transferencia: si alguien lo pidió (`lab` o
    `produccion`) y aun así no está encendido, es porque falta una llave o
@@ -247,6 +249,36 @@ const conAdmin = (manejador) => conSesion((req, res, ctx, ...resto) => {
   const u = db.usuarioPorId(ctx.usuario.id);
   if (!u || !u.es_admin) return fallo(res, 404, 'No existe');
   return manejador(req, res, ctx, ...resto);
+});
+
+/* Esta lectura operativa sí distingue una sesión válida sin permiso: el
+   contrato de la consola necesita separar 401 de 403 sin relajar la misma
+   marca `es_admin` que protege el resto de las lecturas administrativas. */
+const verEstadoDelSistema = conSesion((req, res, ctx) => {
+  const u = db.usuarioPorId(ctx.usuario.id);
+  if (!u || !u.es_admin) return fallo(res, 403, 'No tiene permiso');
+
+  const raiz = path.resolve(__dirname, '..');
+  const carpetaRespaldos = process.env.MERCA_RESPALDOS || path.join(raiz, '.tmp', 'respaldos');
+  const carpetas = {
+    fotos: process.env.MERCA_FOTOS || path.join(raiz, '.tmp', 'fotos'),
+    videos: process.env.MERCA_VIDEOS || path.join(raiz, '.tmp', 'videos'),
+    documentos: process.env.MERCA_DOCUMENTOS || path.join(raiz, '.tmp', 'documentos'),
+    facturas: process.env.MERCA_FACTURAS || path.join(raiz, '.tmp', 'facturas'),
+  };
+  /* Son las mismas carpetas de trabajo que sus módulos crean al escribir.
+     Prepararlas aquí evita que una instalación todavía vacía convierta su
+     ruta absoluta en parte del diagnóstico que recibe el navegador. */
+  for (const carpeta of [carpetaRespaldos, ...Object.values(carpetas)]) {
+    fs.mkdirSync(carpeta, { recursive: true });
+  }
+  const estado = estadoDelSistema({
+    archivoBase: process.env.MERCA_DB || path.join(raiz, 'db', 'mercamaquinarias.db'),
+    carpetaRespaldos,
+    carpetas,
+  });
+  return responder(res, 200, { ...estado, generado: new Date().toISOString() },
+    { 'Cache-Control': 'no-store' });
 });
 
 /* Escrituras de un administrador EN NOMBRE DE otra organización.
@@ -5812,6 +5844,7 @@ const verSalud = (req, res) => {
 
 const RUTAS = [
   ['GET',  /^\/api\/salud$/,              verSalud],
+  ['GET',  /^\/api\/admin\/estado$/,       verEstadoDelSistema],
   ['POST', /^\/api\/cuenta\/registro$/,     registro],
   ['POST', /^\/api\/cuenta\/entrar$/,       entrar],
   ['POST', /^\/api\/cuenta\/verificar$/,    verificar],

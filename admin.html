@@ -74,6 +74,22 @@
       </div>
     </header>
 
+    <section class="panel" aria-labelledby="t-estado-sistema">
+      <div class="panel__cabeza">
+        <h2 class="panel__titulo panel__titulo--limpio" id="t-estado-sistema"><em>Estado</em> del sistema</h2>
+        <button type="button" class="btn btn--linea btn--chico" id="actualizarEstado">Actualizar</button>
+      </div>
+
+      <p class="acceso__aviso" id="avisosEstado" role="alert" hidden></p>
+      <div class="tabla-envoltura">
+        <table class="tabla-legales">
+          <thead><tr><th>Recurso</th><th>Estado</th></tr></thead>
+          <tbody id="estadoSistema"></tbody>
+        </table>
+      </div>
+      <p class="panel__meta" id="estadoGenerado"></p>
+    </section>
+
     <section class="panel" aria-labelledby="t-cola">
       <div class="panel__cabeza">
         <h2 class="panel__titulo panel__titulo--limpio" id="t-cola"><em>Cola</em> de revisión</h2>
