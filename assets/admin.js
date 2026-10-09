@@ -2192,7 +2192,7 @@ function pintarFacturasAdmin(datos) {
         <a class="btn btn--linea btn--chico" href="/api/facturas/${esc(f.id)}.pdf" target="_blank" rel="noopener">PDF</a>
         <button type="button" class="btn btn--linea btn--chico" data-factura="${esc(f.id)}" data-accion="reenviar">Reenviar</button>
         ${f.tipo !== 'nota_credito' && !f.anulado_por
-    ? `<button type="button" class="btn btn--linea btn--chico" data-factura="${esc(f.id)}" data-accion="anular">Anular</button>`
+    ? `<button type="button" class="btn btn--linea btn--chico" data-factura="${esc(f.id)}" data-accion="anular"${f.ncf ? '' : ' data-sin-ncf="1"'}>Anular</button>`
     : ''}
       </td>
     </tr>`;
@@ -2296,11 +2296,16 @@ async function montarFacturasAdmin() {
     const { factura, accion } = boton.dataset;
 
     if (accion === 'anular') {
-      /* Anular emite una nota de crédito con su NCF, y eso consume un
-         número autorizado que no se recupera. Por eso se pregunta. */
+      /* Anular un comprobante fiscal emite una nota de crédito con su NCF,
+         y eso consume un número autorizado que no se recupera. Por eso se
+         pregunta. Un recibo sin NCF se anula sin gastar ninguno
+         (auditoría 2026-10): el aviso no puede prometer un NCF. */
+      const sinNcf = boton.dataset.sinNcf === '1';
       const motivo = prompt('¿Por qué se anula este comprobante?\n\n'
-        + 'Se emitirá una nota de crédito con su propio NCF. El comprobante original\n'
-        + 'NO se borra: queda marcado como anulado.');
+        + (sinNcf
+          ? 'Es un recibo sin NCF: se anulará con una anulación interna, sin gastar ningún NCF.\n'
+          : 'Se emitirá una nota de crédito con su propio NCF. ')
+        + 'El comprobante original NO se borra: queda marcado como anulado.');
       if (motivo === null) return;
 
       boton.disabled = true;
@@ -2309,7 +2314,7 @@ async function montarFacturasAdmin() {
           metodo: 'POST', cuerpo: { motivo },
         });
         if (!r) throw new Error('No hay conexión con el servidor.');
-        aviso(`Nota de crédito ${r.nota.numero} emitida.`, true);
+        aviso(`${r.nota.ncf ? 'Nota de crédito' : 'Anulación'} ${r.nota.numero} emitida.`, true);
         cargarFacturasAdmin();
       } catch (e) { aviso(e.message); boton.disabled = false; }
       return;

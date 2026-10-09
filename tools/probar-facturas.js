@@ -477,6 +477,63 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
     d0.close();
   }
 
+  /* Auditoría 2026-10 (FISCAL-2). Mientras no haya B02, todo particular
+     recibe un recibo sin NCF, y anularlo gastaba un B04 (quedan diez) que
+     «modificaba» un documento sin NCF: la norma no lo admite y el 607 lo
+     deja fuera, así que quedaba un NCF emitido y nunca declarado. Ahora
+     un recibo se anula con una anulación interna, también sin NCF: no
+     toca la B04, deja el recibo anulado (sin reescribirlo) y el pago
+     devuelto, y su papel no presume de nada ante la DGII. */
+  console.log('\n── Anular un recibo sin NCF no gasta un B04 (auditoría 2026-10) ──');
+  {
+    const d0 = conexion();
+    const siguienteB04 = () => {
+      const fila = d0.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B04' AND activa = 1").get();
+      return fila ? fila.siguiente : null;
+    };
+    d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 0 WHERE tipo = 'B02'").run();
+    const pRec = pago({ subtotal: 3296, itbis: 593, total: 3889, referencia: 'PRUEBA-AUD-RECIBO' });
+    const rec = facturas.emitirPorPago(pRec, { concepto: 'Publicación Destacado · 30 días', cliente: { razonSocial: 'Julio Pérez' } });
+    d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 1 WHERE tipo = 'B02'").run();
+    ok(rec.tipo === 'recibo' && !rec.ncf, `de partida, un recibo sin NCF (${rec.numero})`);
+
+    const htmlRecibo = facturas.comoHtml(db.facturaPorId(rec.id));
+    ok(!/Comprobante fiscal emitido conforme/.test(htmlRecibo) && /no constituye comprobante fiscal/.test(htmlRecibo),
+      'la vista web de un recibo no dice que sea comprobante fiscal');
+    const htmlB01 = facturas.comoHtml(db.facturaPorId(f2.id));
+    ok(/crédito fiscal/.test(htmlB01) && !/no constituye comprobante fiscal/.test(htmlB01),
+      'la de una B01 sigue diciendo a qué da derecho');
+
+    const b04Antes = siguienteB04();
+    const r = await enviarPost(`/api/admin/facturas/${rec.id}/anular`, cabeceras, { motivo: 'Devolución al particular' });
+    const anulacion = r.json && r.json.nota ? db.facturaPorId(r.json.nota.id) : null;
+    ok(r.codigo === 201, `la anulación de un recibo responde 201 (respondió ${r.codigo}${r.json && r.json.error ? `: ${r.json.error}` : ''})`);
+    ok(siguienteB04() === b04Antes, `no gasta B04 (${b04Antes} → ${siguienteB04()})`);
+    ok(!!anulacion && anulacion.tipo === 'nota_credito' && !anulacion.ncf && !anulacion.ncf_vencimiento,
+      `la anulación es interna, sin NCF (${anulacion ? `${anulacion.numero} ncf=${anulacion.ncf}` : 'ninguna'})`);
+    ok(!!anulacion && anulacion.ncf_modificado === rec.numero && anulacion.total === rec.total,
+      'cita el número del recibo y su importe');
+    const recDespues = db.facturaPorId(rec.id);
+    ok(!!anulacion && recDespues.anulado_por === anulacion.id && recDespues.total === rec.total && !recDespues.ncf,
+      'el recibo queda anulado por ella, sin reescribirse');
+    ok(d0.prepare('SELECT estado FROM pagos WHERE id = ?').get(pRec.id).estado === 'devuelto', 'el pago queda devuelto');
+    if (anulacion) {
+      const htmlAnulacion = facturas.comoHtml(anulacion);
+      ok(!/DGII/.test(htmlAnulacion) && /ANULACIÓN DE RECIBO/.test(htmlAnulacion) && /SIN VALOR FISCAL/.test(htmlAnulacion),
+        'su papel dice «Anulación de recibo», sin valor fiscal y sin nombrar a la DGII');
+    }
+
+    /* Una B01 sigue anulándose con su B04, como siempre. */
+    const pB01 = pago({ subtotal: 7000, itbis: 1260, total: 8260, referencia: 'PRUEBA-AUD-B01' });
+    const fB01 = facturas.emitirPorPago(pB01, {
+      concepto: 'Plan Destacado · 2 cupos · 30 días',
+      cliente: { razonSocial: 'Constructora del Este, S.R.L.', rnc: '130123456' },
+    });
+    const nB01 = facturas.emitirNotaCredito(db.facturaPorId(fB01.id), { motivo: 'Prueba' });
+    ok(/^B04/.test(nB01.ncf || '') && siguienteB04() === b04Antes + 1, `una B01 se anula con B04 (${nB01.ncf})`);
+    d0.close();
+  }
+
   console.log();
   console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
   console.log();
