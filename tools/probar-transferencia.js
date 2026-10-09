@@ -1222,6 +1222,47 @@ db.cargarSecuencia({
     }
   }
 
+  /* Auditoría 2026-10 (FISCAL-4 y FISCAL-5). Un tecleo en el RNC daba una
+     B01 irreversible que el cliente no podía usar y que el 607 reportaba
+     con un RNC inexistente; la cédula de una persona física, que la DGII
+     admite como RNC, se rechazaba. Y con la B01 agotada o vencida, quien
+     pedía comprobante con RNC pagaba y recibía un recibo sin aviso. Todo
+     se comprueba ANTES de anotar el pago. */
+  console.log('\n35. Pagar con RNC: dígito verificador, cédula y sin B01');
+  {
+    encender();
+    const quien = cuentaConLegales('rnc-transferencia@prueba.invalid', 'Comprador con RNC');
+    const conRnc = (rnc) => ({
+      plan: 'destacado', cupo: 1, dias: 30, conRnc: true, rnc,
+      razonSocial: 'Comprador de Prueba, S.R.L.', direccionFiscal: 'Calle Primera 1, Santo Domingo',
+    });
+    db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 1, hasta: 50, vence: '2027-12-31', usaSitio: true });
+
+    let antes = pagosTotales();
+    let r = await comprar(conRnc('131279750'), quien);
+    ok(r.codigo === 400 && /RNC|cédula/.test((r.datos || {}).error || '') && pagosTotales() === antes,
+      `RNC con el dígito verificador mal: ${r.codigo} ${(r.datos || {}).error}`);
+    r = await comprar(conRnc('00100000018'), quien);
+    ok(r.codigo === 400 && pagosTotales() === antes, `cédula con el dígito verificador mal: ${r.codigo} ${(r.datos || {}).error}`);
+    r = await comprar(conRnc('12345'), quien);
+    ok(r.codigo === 400 && pagosTotales() === antes, `5 dígitos: ${r.codigo}`);
+    r = await comprar(conRnc('1-31-27975-9'), quien);
+    ok(r.codigo === 202 && pagosTotales() === antes + 1, `RNC válido escrito con guiones: ${r.codigo} ${(r.datos || {}).error || ''}`);
+    r = await comprar(conRnc('001-0000001-7'), quien);
+    ok(r.codigo === 202 && pagosTotales() === antes + 2, `cédula válida (persona física): ${r.codigo} ${(r.datos || {}).error || ''}`);
+
+    ejecuta("UPDATE secuencias_ncf SET siguiente = hasta + 1 WHERE tipo = 'B01'");
+    antes = pagosTotales();
+    r = await comprar(conRnc('131279759'), quien);
+    ok(r.codigo === 409 && /RNC/.test((r.datos || {}).error || '') && pagosTotales() === antes,
+      `sin B01, pagar con RNC es un 409 sin pago: ${r.codigo} ${(r.datos || {}).error}`);
+    r = await comprar({ plan: 'destacado', cupo: 1, dias: 30 }, quien);
+    ok(r.codigo === 202, `sin B01, pagar sin RNC sigue funcionando: ${r.codigo}`);
+    ejecuta("UPDATE secuencias_ncf SET siguiente = 1, vence = '2026-01-01' WHERE tipo = 'B01'");
+    r = await comprar(conRnc('131279759'), quien);
+    ok(r.codigo === 409, `con la B01 vencida, también 409: ${r.codigo}`);
+  }
+
   apagar();
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);

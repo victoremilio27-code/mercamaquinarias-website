@@ -810,12 +810,12 @@ async function montarPlanes() {
  * no la tenía: quien pegara el número en su formato oficial, con
  * guiones, veía cómo el navegador se lo cortaba y el servidor se lo
  * rechazaba después sin decirle qué había pasado. Ahora se quedan los
- * nueve dígitos y da igual cómo lo escriba. */
+ * dígitos (nueve del RNC u once de la cédula) y da igual cómo lo escriba. */
 function montarMascaraRnc() {
   const campo = document.getElementById('fac-rnc');
   if (!campo) return;
   campo.addEventListener('input', () => {
-    campo.value = campo.value.replace(/\D/g, '').slice(0, 9);
+    campo.value = campo.value.replace(/\D/g, '').slice(0, 11);
   });
 }
 

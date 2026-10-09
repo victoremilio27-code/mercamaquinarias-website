@@ -3587,14 +3587,27 @@ function avisarTransferenciaPedida(ctx, { referencia, total, concepto }) {
  *
  * Se validan ANTES de cobrar: descubrir que el RNC está mal después
  * de haber cobrado obliga a emitir una nota de crédito por un error
- * de tecleo. El RNC se comprueba con la misma función que el alta de
- * dealer, que es la que sabe cuántos dígitos tiene. La comparten la
- * compra de capacidad y el pago de la publicación del particular: dos
- * copias acabarían aceptando en una un RNC que la otra rechaza. */
-function clienteDeCompra(c, ctx) {
+ * de tecleo. La comparten la compra de capacidad y el pago de la
+ * publicación del particular: dos copias acabarían aceptando en una un
+ * RNC que la otra rechaza.
+ *
+ * Auditoría 2026-10: el documento se comprueba con su dígito verificador
+ * y se admite la cédula de una persona física (FISCAL-5,
+ * `facturas.documentoFiscal`); y si hoy no hay B01 que dar, se dice
+ * ANTES de cobrar con un 409 (FISCAL-4): antes la empresa pagaba y
+ * recibía un recibo sin crédito fiscal. Con importe cero no se emite
+ * nada que pueda quedarse sin número, así que no se mira. */
+function clienteDeCompra(c, ctx, total = 1) {
   if (!c.conRnc) return { cliente: { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo } };
-  const rnc = rncValido(c.rnc);
-  if (!rnc) return { error: 'El RNC tiene 9 dígitos' };
+  const rnc = facturas.documentoFiscal(c.rnc);
+  if (!rnc) return { error: 'Revise el RNC (9 dígitos) o la cédula (11 dígitos): el número no es válido.' };
+  if (total > 0 && !db.ncfDisponible('B01')) {
+    return {
+      codigo: 409,
+      error: 'Ahora mismo no podemos emitir comprobante con RNC. Puede pagar sin RNC '
+        + `o escribirnos a ${correo.BUZONES.facturacion}.`,
+    };
+  }
   if (!texto(c.razonSocial, 160)) return { error: 'Escriba la razón social para la factura' };
   if (!texto(c.direccionFiscal, 200) || String(c.direccionFiscal).trim().length < 8) {
     return { error: 'Escriba la dirección fiscal para la factura' };
@@ -3792,8 +3805,8 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
   const tarjeta = tarjetaPedida(res, c, org, cobro);
   if (tarjeta === false) return undefined;
 
-  const fiscal = clienteDeCompra(c, ctx);
-  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  const fiscal = clienteDeCompra(c, ctx, cobro.total);
+  if (fiscal.error) return fallo(res, fiscal.codigo || 400, fiscal.error);
   const { cliente } = fiscal;
 
   /* Sin importe no hay nada que esperar ni que declarar: se otorga al
@@ -4717,8 +4730,8 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
     referencia: pagos.referenciaCobro(),
   };
 
-  const fiscal = clienteDeCompra(c, ctx);
-  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  const fiscal = clienteDeCompra(c, ctx, cobro.total);
+  if (fiscal.error) return fallo(res, fiscal.codigo || 400, fiscal.error);
   const { cliente } = fiscal;
 
   /* Importe cero (la promoción del Estándar, D-11): aprobado al
@@ -4899,7 +4912,7 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
      número de días que mande el navegador no se mira, ni para
      rechazarlo. */
   const fiscal = clienteDeCompra(c, ctx);
-  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  if (fiscal.error) return fallo(res, fiscal.codigo || 400, fiscal.error);
   const { cliente } = fiscal;
   /* Renovar a mano y renovar solo cobran lo mismo porque salen de la
      misma función (R-04): `pagos.cobroDeRenovacion`. */

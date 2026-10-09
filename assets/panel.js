@@ -1892,7 +1892,7 @@ async function montarPanel() {
     });
   });
   $('#ren-rnc').addEventListener('input', (ev) => {
-    ev.target.value = ev.target.value.replace(/\D+/g, '');
+    ev.target.value = ev.target.value.replace(/\D+/g, '').slice(0, 11);
   });
 
   $('#filasAnuncios').addEventListener('click', (ev) => {

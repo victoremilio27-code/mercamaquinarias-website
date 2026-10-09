@@ -534,6 +534,53 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
     d0.close();
   }
 
+  /* Auditoría 2026-10 (FISCAL-5): el documento del cliente de una B01. */
+  console.log('\n── RNC y cédula con su dígito verificador (auditoría 2026-10) ──');
+  {
+    const casos = [
+      ['131279759', '131279759'], ['1-31-27975-9', '131279759'], ['131279750', null],
+      ['00100000017', '00100000017'], ['001-0000001-7', '00100000017'], ['00100000018', null],
+      ['13127975', null], ['1312797590', null], ['13127975A', null], ['', null], [null, null],
+    ];
+    for (const [entrada, esperado] of casos) {
+      const r = facturas.documentoFiscal(entrada);
+      ok(r === esperado, `documentoFiscal(${JSON.stringify(entrada)}) = ${JSON.stringify(r)}`);
+    }
+  }
+
+  /* Auditoría 2026-10 (FISCAL-4): si la B01 se acaba entre el pedido y la
+     confirmación, el cliente con RNC recibe un recibo. Eso no puede
+     enterarse nadie a fin de mes: gerencia y facturación lo saben al
+     momento, con la referencia, para regularizarlo. */
+  console.log('\n── Una empresa que se queda sin B01 avisa al momento (auditoría 2026-10) ──');
+  {
+    const correoMod = require('./correo');
+    const real = correoMod.avisarInternamente;
+    const avisos = [];
+    correoMod.avisarInternamente = (aviso) => { avisos.push(aviso); return Promise.resolve({ entregado: true }); };
+    const d0 = conexion();
+    try {
+      ok(db.ncfDisponible('B01') === true, 'con B01 cargada, ncfDisponible dice que sí');
+      d0.prepare("UPDATE secuencias_ncf SET siguiente = hasta + 1 WHERE tipo = 'B01'").run();
+      ok(db.ncfDisponible('B01') === false, 'agotada, ncfDisponible dice que no y no gasta nada');
+      const p = pago({ subtotal: 3296, itbis: 593, total: 3889, referencia: 'PRUEBA-AUD-SINB01' });
+      const f = facturas.emitirPorPago(p, {
+        concepto: 'Publicación Destacado · 30 días',
+        cliente: { razonSocial: 'Constructora del Este, S.R.L.', rnc: '131279759' },
+      });
+      ok(f.tipo === 'recibo' && !f.ncf && f.agotada === 'B01', `sale el recibo (tipo=${f.tipo})`);
+      const aviso = avisos[0];
+      ok(avisos.length === 1 && aviso.buzon === 'gerencia' && aviso.copia === 'facturacion',
+        `un aviso a gerencia con copia aparte a facturación (${avisos.map((a) => `${a.buzon}+${a.copia}`).join(', ')})`);
+      ok(!!aviso && aviso.texto.includes(f.numero) && aviso.texto.includes('PRUEBA-AUD-SINB01') && /B01/.test(aviso.asunto),
+        'el aviso cita el recibo, la referencia y la B01');
+      d0.prepare("UPDATE secuencias_ncf SET siguiente = 1 WHERE tipo = 'B01'").run();
+    } finally {
+      correoMod.avisarInternamente = real;
+      d0.close();
+    }
+  }
+
   console.log();
   console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
   console.log();

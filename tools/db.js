@@ -6655,6 +6655,20 @@ function historialAceptaciones({ documento, limite = 200 } = {}) {
 
 /* ── Comprobantes ───────────────────────────────────────── */
 
+/* Si `tomarNcf(tipo)` daría un número AHORA, sin gastarlo: las mismas
+   condiciones (activa, la usa el sitio, con números y sin vencer). Solo
+   lectura. Lo usa la compra con RNC para decir que no ANTES de cobrar
+   (auditoría 2026-10, FISCAL-4): antes, con la B01 agotada o vencida, la
+   empresa pagaba y recibía un recibo sin aviso. Entre esta pregunta y la
+   emisión otro pago puede llevarse el último número; ese caso lo cubre
+   el aviso de `facturas.emitirPorPago`. */
+function ncfDisponible(tipo) {
+  const s = abrir().prepare(
+    'SELECT siguiente, hasta, vence FROM secuencias_ncf WHERE tipo = ? AND activa = 1 AND usa_sitio = 1').get(tipo);
+  if (!s || s.siguiente > s.hasta) return false;
+  return !(s.vence && s.vence < hoy());
+}
+
 /* Toma el siguiente NCF de una secuencia y lo marca como consumido.
  *
  * VA EN UNA TRANSACCIÓN, y no es paranoia: dos pagos que entren en el
@@ -7265,7 +7279,7 @@ module.exports = {
   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
   eliminarCuenta, bloqueoEliminarCuenta,
-  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, enTransaccionInmediata, facturaPorId, facturaDePago, ultimosDatosFiscales,
+  tomarNcf, ncfDisponible, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, enTransaccionInmediata, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,
   borrarMetodoPago, enlazarMetodoPago, anotarResultadoTarjeta, anotarRespuestaProcesador, anotarEventoPago,

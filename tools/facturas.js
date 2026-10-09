@@ -516,6 +516,36 @@ const leerPdf = (relativa) => {
 
 /* ── Emisión ────────────────────────────────────────────── */
 
+/* El documento fiscal del cliente de una B01: RNC de 9 dígitos o cédula
+ * de 11 (una persona física factura con su cédula). Devuelve solo los
+ * dígitos, o null.
+ *
+ * Auditoría 2026-10 (FISCAL-5): antes bastaban 9 dígitos cualesquiera, y
+ * un tecleo daba una B01 irreversible que el cliente no podía usar y que
+ * el 607 reportaba con un RNC inexistente; la cédula se rechazaba. Ahora
+ * se exige el dígito verificador: el del RNC es el módulo 11 de la DGII
+ * (pesos 7, 9, 8, 6, 5, 4, 3, 2) y el de la cédula, Luhn (pesos 1 y 2).
+ * El alta de dealer sigue con su propio `rncValido` en api.js. */
+function documentoFiscal(valor) {
+  const d = String(valor == null ? '' : valor).replace(/[\s-]/g, '');
+  if (!/^\d+$/.test(d)) return null;
+  if (d.length === 9) {
+    const pesos = [7, 9, 8, 6, 5, 4, 3, 2];
+    const resto = pesos.reduce((s, p, i) => s + p * Number(d[i]), 0) % 11;
+    const verificador = resto === 0 ? 2 : resto === 1 ? 1 : 11 - resto;
+    return verificador === Number(d[8]) ? d : null;
+  }
+  if (d.length === 11) {
+    let suma = 0;
+    for (let i = 0; i < 10; i++) {
+      const producto = Number(d[i]) * (i % 2 === 0 ? 1 : 2);
+      suma += producto > 9 ? producto - 9 : producto;
+    }
+    return (10 - (suma % 10)) % 10 === Number(d[10]) ? d : null;
+  }
+  return null;
+}
+
 /* Qué tipo de comprobante corresponde, y con qué NCF.
  *
  * Aquí es donde vive la consecuencia de que falte el B02: si el cliente
@@ -669,7 +699,36 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
     console.error(`facturas: ${numero} quedó emitida sin PDF · ${e.message}`);
   }
 
+  if (decision.agotada) avisarSinB01(db.facturaPorId(idFactura), pago);
   return { ...db.facturaPorId(idFactura), agotada: decision.agotada };
+}
+
+/* Auditoría 2026-10 (FISCAL-4): una empresa pidió comprobante con RNC y,
+   porque la B01 se acabó o venció entre el pedido y la confirmación,
+   recibió un recibo. La compra ya se niega antes de cobrar si no hay B01
+   (`clienteDeCompra` en api.js); esto cubre la carrera. Antes solo lo
+   decía el aviso diario a facturación, y nadie sabía a quién regularizar.
+   Va a gerencia (quien pide el rango a la DGII) con copia aparte a
+   facturación, sin esperar: un correo que falla no deshace el cobro. */
+function avisarSinB01(recibo, pago) {
+  try {
+    const envio = correo.avisarInternamente({
+      buzon: 'gerencia',
+      copia: 'facturacion',
+      asunto: `URGENTE: sin B01, ${recibo.numero} salió como recibo a ${recibo.razon_social || 'una empresa'}`,
+      texto: [
+        `El cliente pidió comprobante con RNC ${recibo.rnc || ''} y no quedaba ninguna B01 vigente con números.`,
+        `Se emitió el recibo ${recibo.numero} (sin valor fiscal) por el cobro ${pago.referencia || pago.id}.`,
+        '',
+        'Hay que cargar el rango nuevo de B01 y regularizar a este cliente.',
+      ].join('\n'),
+    });
+    if (envio && typeof envio.catch === 'function') {
+      envio.catch((e) => console.error(`facturas: no salió el aviso de B01 agotada · ${e.message}`));
+    }
+  } catch (e) {
+    console.error(`facturas: no salió el aviso de B01 agotada · ${e.message}`);
+  }
 }
 
 /* Vuelve a dibujar los comprobantes que quedaron sin papel.
@@ -970,7 +1029,7 @@ module.exports = {
   CARPETA, TITULOS, FECHA_HORA_RD, fechaCorta,
   dibujar, comoHtml, guardarPdf, leerPdf, rutaAbsoluta,
   emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, pendientesDeRegularizar, decidirTipo,
-  reponerPdfsDe, regenerarPdfsPendientes,
+  reponerPdfsDe, regenerarPdfsPendientes, documentoFiscal,
 };
 
 /* ── Línea de comandos ──────────────────────────────────── */
