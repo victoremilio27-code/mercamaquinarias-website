@@ -60,6 +60,16 @@ const SERVICIOS = {
   },
 };
 
+/* El asistente está apagado hasta que esté configurada la clave de
+   Anthropic: sin ella solo responde que no puede ayudar. Es una bandera,
+   no código muerto; después de poner ANTHROPIC_API_KEY, se enciende
+   cambiando `activo` a `true` y se despliega. */
+const ASISTENTE = { activo: false };
+
+if (typeof window !== 'undefined') {
+  window.asistenteActivo = () => ASISTENTE.activo;
+}
+
 const seOfrece = (cual) => !!(SERVICIOS[cual] && SERVICIOS[cual].activo);
 
 /* Las páginas que hoy no deben servirse, para que el servidor las
@@ -76,5 +86,11 @@ const serviciosQueAdmitenSolicitud = () => [
 ];
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { SERVICIOS, seOfrece, paginasApagadas, serviciosQueAdmitenSolicitud };
+  module.exports = {
+    SERVICIOS,
+    ASISTENTE,
+    seOfrece,
+    paginasApagadas,
+    serviciosQueAdmitenSolicitud,
+  };
 }

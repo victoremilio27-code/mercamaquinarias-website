@@ -16,13 +16,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const servicios = require('../assets/servicios.js');
-const { SERVICIOS, seOfrece, paginasApagadas, serviciosQueAdmitenSolicitud } = servicios;
+const {
+  SERVICIOS,
+  ASISTENTE,
+  seOfrece,
+  paginasApagadas,
+  serviciosQueAdmitenSolicitud,
+} = servicios;
 
-test('se carga con require() y expone las cuatro piezas', () => {
+test('se carga con require() y expone las piezas de servicios', () => {
   assert.equal(typeof SERVICIOS, 'object');
   assert.equal(typeof seOfrece, 'function');
   assert.equal(typeof paginasApagadas, 'function');
   assert.equal(typeof serviciosQueAdmitenSolicitud, 'function');
+});
+
+test('el asistente se exporta y hoy está apagado', () => {
+  assert.equal(typeof ASISTENTE, 'object');
+  assert.equal(typeof ASISTENTE.activo, 'boolean');
+  assert.equal(ASISTENTE.activo, false);
 });
 
 test('alquiler e importación se ofrecen; transporte y financiamiento no', () => {
