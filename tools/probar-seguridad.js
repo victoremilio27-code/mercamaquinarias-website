@@ -876,6 +876,35 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   comprobar(cabeceras.cabecerasDe({ 'X-Otra': 'a' })['X-Otra'] === 'a', 'las cabeceras extra se conservan');
   Object.assign(process.env, entornoCardnet);
 
+  /* ── Escrituras desde otro sitio (auditoría 2026-10) ─────── */
+  /* La cookie SameSite=Lax ya frenaba el CSRF con sesión, pero no el de
+     inicio de sesión: un formulario de otro sitio (text/plain con forma de
+     JSON) mandaba a /api/cuenta/verificar la cuenta y el código del
+     atacante, y el navegador de la víctima quedaba dentro de la cuenta del
+     atacante, donde publicaría sus datos. Una escritura cuyo Origin no es
+     el propio sitio se rechaza; sin Origin (servidores, pruebas) sigue. */
+  console.log('\nEscrituras que vienen de otro sitio');
+  const verificarDesde = (origin) => pedir({
+    metodo: 'POST', url: '/api/cuenta/verificar',
+    cuerpo: { correo: 'victima@ejemplo.test', tipo: 'acceso', codigo: '000000' },
+    cabeceras: { host: 'mercamaquinarias.com', 'cf-connecting-ip': '7.7.7.7', ...(origin ? { origin } : {}) },
+  });
+  let csrf = await verificarDesde('https://sitio-malo.example');
+  comprobar(csrf.codigo === 403, `Origin ajeno: 403 (${csrf.codigo})`);
+  csrf = await verificarDesde('null');
+  comprobar(csrf.codigo === 403, `Origin «null» (iframe aislado): 403 (${csrf.codigo})`);
+  csrf = await verificarDesde('https://mercamaquinarias.com');
+  comprobar(csrf.codigo === 400, `el propio sitio llega a la ruta (${csrf.codigo})`);
+  csrf = await verificarDesde(null);
+  comprobar(csrf.codigo === 400, `sin Origin (un servidor) también (${csrf.codigo})`);
+  const lectura = await pedir({ url: '/api/anuncios', cabeceras: { host: 'mercamaquinarias.com', origin: 'https://sitio-malo.example' } });
+  comprobar(lectura.codigo === 200, 'una lectura desde otro sitio no se toca');
+  const aviso = await pedir({
+    metodo: 'POST', url: '/api/pagos/cardnet/notificacion', cuerpo: {},
+    cabeceras: { host: 'mercamaquinarias.com', origin: 'https://lab.cardnet.com.do' },
+  });
+  comprobar(aviso.codigo !== 403, `la notificación de CardNet no pasa por esta guarda (${aviso.codigo})`);
+
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
 })();

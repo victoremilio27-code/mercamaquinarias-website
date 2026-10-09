@@ -6081,7 +6081,37 @@ const RUTAS = [
   ['POST', /^\/api\/admin\/solicitudes\/([\w-]+)$/,     resolverSolicitud],
 ];
 
+/* Escrituras que vienen de otro sitio (auditoría 2026-10).
+ *
+ * La cookie SameSite=Lax ya frena el CSRF CON sesión, pero no el de inicio
+ * de sesión: un formulario de otro sitio (text/plain con forma de JSON)
+ * mandaba a /api/cuenta/verificar la cuenta y el código del atacante, y el
+ * navegador de la víctima quedaba dentro de la cuenta del atacante, donde
+ * después publicaría sus propios datos. Todo navegador manda Origin en una
+ * escritura de otro sitio; si su host no es el de la petición (nginx pasa
+ * `Host $host`), no se atiende. Sin Origin (servidores, pruebas, curl)
+ * sigue como siempre. «null» es un iframe aislado o una redirección
+ * ajena: tampoco es el sitio.
+ *
+ * La notificación de CardNet llega de su servidor y queda fuera a
+ * propósito: tiene su propia verificación. */
+const SIN_GUARDA_DE_ORIGEN = new Set(['/api/pagos/cardnet/notificacion']);
+function escrituraDeOtroSitio(req, ruta) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || SIN_GUARDA_DE_ORIGEN.has(ruta)) return false;
+  const origin = req.headers.origin;
+  if (origin === undefined) return false;
+  try {
+    return new URL(origin).host !== String(req.headers.host || '');
+  } catch {
+    return true;
+  }
+}
+
 async function manejar(req, res, ruta) {
+  if (escrituraDeOtroSitio(req, ruta)) {
+    return fallo(res, 403, 'Esta petición no viene de mercamaquinarias.com.');
+  }
+
   // Los parámetros de consulta llegan al manejador después de lo que
   // capture su patrón, así que una ruta sin capturas los recibe en el
   // cuarto argumento y una con una captura, en el quinto.
