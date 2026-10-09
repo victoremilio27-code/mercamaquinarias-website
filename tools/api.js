@@ -548,16 +548,28 @@ async function entrar(req, res) {
   const ip = origen(req);
   const correoNormalizado = String(c.correo || '').trim().toLowerCase();
 
+  /* Un solo mensaje para los dos topes (IP y cuenta): si fueran distintos,
+     comparar las respuestas diría qué tope saltó y, con él, algo de la
+     cuenta. Y ya no culpa a «esta conexión», que no siempre era la causa. */
+  const DEMASIADOS = 'Demasiados intentos. Espere unos minutos o recupere su contraseña.';
   if (!db.permitir(`acceso:${ip}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
-    return fallo(res, 429, 'Demasiados intentos desde esta conexión. Espere unos minutos.');
+    return fallo(res, 429, DEMASIADOS);
   }
-  /* Limpiar el tope por IP al acertar permitía que cualquier otra cuenta
-     reiniciara también los intentos acumulados contra este correo. */
-  if (!db.permitir(`acceso-correo:${correoNormalizado}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
-    return fallo(res, 429, 'Demasiados intentos desde esta conexión. Espere unos minutos.');
-  }
-
   const u = db.usuarioPorCorreo(correoNormalizado);
+
+  /* Limpiar el tope por IP al acertar permitía que cualquier otra cuenta
+     reiniciara también los intentos acumulados contra este correo.
+
+     Auditoría 2026-10: ese tope por cuenta lo agota cualquiera con diez
+     contraseñas falsas desde diez IP, y dejaba fuera al dueño aunque
+     viniera con la correcta, desde su equipo de confianza y desde su IP.
+     Desde un equipo recordado de ESA cuenta (`te_equipo`, que no se puede
+     inventar) no se aplica; el de la IP, sí. */
+  const equipoConocido = !!u && db.dispositivoDeConfianza(leerCookies(req)[COOKIE_EQUIPO], u.id);
+  if (!equipoConocido
+    && !db.permitir(`acceso-correo:${correoNormalizado}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
+    return fallo(res, 429, DEMASIADOS);
+  }
   const claveValida = await db.verificarClave(
     String(c.clave || ''), u && u.clave_hash, u && u.clave_sal);
 

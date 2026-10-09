@@ -732,6 +732,30 @@ async function bloqueReenviar() {
   comprobar(r.codigo === 200, 'el reenviado abre la sesión');
 }
 
+/* ── 9. Un atacante no deja fuera al dueño (auditoría 2026-10) ── */
+/* Diez contraseñas falsas desde diez IP agotaban el tope por cuenta y el
+   dueño, con su contraseña, su equipo de confianza y su propia IP,
+   recibía 429 «Demasiados intentos desde esta conexión». Desde su equipo
+   de confianza ese tope no le aplica; el de su IP, sí. */
+async function bloqueBloqueoAjeno() {
+  console.log('\nUn atacante no deja fuera al dueño desde su equipo de confianza');
+  const lola = cuenta('lola@ejemplo.test', 'Lola Prueba');
+  const equipo = db.recordarDispositivo(lola.idUsuario, 'Prueba de equipo');
+  for (let i = 0; i < 12; i++) {
+    await post('/api/cuenta/entrar', { correo: lola.correo, clave: `mala-${i}-xxxxxxxx` }, como(null));
+  }
+  let r = await post('/api/cuenta/entrar', { correo: lola.correo, clave: CLAVE }, como(null));
+  comprobar(r.codigo === 429 && !/conexión/.test(r.datos.error),
+    `desde un equipo nuevo sigue el tope de la cuenta, sin culpar a la conexión (${r.codigo} «${r.datos && r.datos.error}»)`);
+  r = await post('/api/cuenta/entrar', { correo: lola.correo, clave: CLAVE },
+    { cookie: `te_equipo=${equipo}`, 'cf-connecting-ip': nuevaIp() });
+  comprobar(r.codigo === 200 && r.datos.usuario && r.datos.usuario.correo === lola.correo,
+    `desde su equipo de confianza el dueño entra (${r.codigo})`);
+  r = await post('/api/cuenta/entrar', { correo: lola.correo, clave: 'mala-otra-xxxxxxx' },
+    { cookie: `te_equipo=${equipo}`, 'cf-connecting-ip': nuevaIp() });
+  comprobar(r.codigo === 401, 'y con una contraseña mala desde ese equipo sigue siendo 401');
+}
+
 async function principal() {
   await bloqueCambioCorreo();
   await bloqueDealer();
@@ -741,6 +765,7 @@ async function principal() {
   await bloqueAdmin();
   await bloqueEliminar();
   await bloqueReenviar();
+  await bloqueBloqueoAjeno();
 
   console.log(`\n${bien} ok, ${mal} MAL`);
   process.exit(mal ? 1 : 0);
