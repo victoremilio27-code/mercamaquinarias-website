@@ -238,6 +238,7 @@ async function avisarNcf() {
      números se arregla pidiendo un rango nuevo; que venza el plazo,
      también, pero con la prisa de una fecha en el calendario. */
   const porQue = (s) => {
+    if (s.sinSecuencia) return 'no hay ninguna secuencia activa marcada «la usa el sitio»';
     if (s.vencida) return `VENCIDA el ${s.vence}`;
     if (s.porVencer) return `vence el ${s.vence}`;
     return `quedan ${s.quedan} de ${s.hasta - s.desde + 1}`;
@@ -247,12 +248,20 @@ async function avisarNcf() {
   if (SECO) return anotar('ncf', `avisaría: ${detalle}`);
 
   /* El asunto cambia cuando queda uno: ese correo ya no es un recordatorio,
-     es que el próximo cobro sale sin comprobante fiscal. */
+     es que el próximo cobro sale sin comprobante fiscal. Dice «vencida o
+     agotada» porque una vencida también es crítica y antes salía como «se
+     agota».
+
+     Va a gerencia, que es quien pide el rango a la DGII por el contador,
+     con copia aparte a facturación (auditoría 2026-10, FISCAL-9): antes
+     solo iba a facturación y el aviso de 30 días no llegaba a quien tiene
+     que actuar. */
   const critico = bajas.some((s) => s.critica);
 
   await correo.avisarInternamente({
-    buzon: 'facturacion',
-    asunto: `${critico ? 'URGENTE: se agota la secuencia' : 'Se están acabando los comprobantes fiscales'}`
+    buzon: 'gerencia',
+    copia: 'facturacion',
+    asunto: `${critico ? 'URGENTE: secuencia vencida o agotada' : 'Se están acabando los comprobantes fiscales'}`
       + ` · ${bajas.map((s) => s.tipo).join(', ')}`,
     texto: [
       'Estas secuencias de comprobantes piden atención:',

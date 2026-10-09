@@ -982,6 +982,7 @@ async function enviar(factura, { correoCliente } = {}) {
  * correo tiene que llegar a una bandeja donde signifique algo. */
 /* La fecha de hoy y la de dentro de N días, como las guarda la base. */
 const enDias = (n) => new Date(Date.now() + n * 24 * 3600 * 1000).toISOString().slice(0, 10);
+const TIPOS_DEL_SITIO = ['B01', 'B04'];
 
 function secuenciasBajas() {
   /* Treinta días de margen para el vencimiento: pedir una autorización
@@ -989,8 +990,21 @@ function secuenciasBajas() {
      enterarse tarde. */
   const hoy = enDias(0);
   const dentroDeUnMes = enDias(30);
+  const todas = db.secuenciasNcf();
 
-  return db.secuenciasNcf()
+  /* Auditoría 2026-10 (FISCAL-6): el sitio emite siempre B01 (empresas)
+     y B04 (anulaciones). Si de alguno no queda ninguna secuencia activa
+     que use el sitio, el aviso es crítico; antes solo se miraban las filas
+     del sitio, y sin ninguna se respondía «todas con margen». La B02 no
+     está: que falte es lo sabido desde el lanzamiento. */
+  const sinSecuencia = TIPOS_DEL_SITIO
+    .filter((tipo) => !todas.some((s) => s.tipo === tipo && s.activa && s.usa_sitio))
+    .map((tipo) => ({
+      tipo, nombre: tipo, quedan: 0, umbral: AVISAR_BAJO,
+      porAgotarse: true, porVencer: false, vencida: false, critica: true, sinSecuencia: true,
+    }));
+
+  return todas
     .filter((s) => s.activa && s.usa_sitio)
     .map((s) => {
       /* Se avisa por dos motivos distintos y conviene saber cuál: que
@@ -1011,7 +1025,8 @@ function secuenciasBajas() {
         critica: s.quedan <= AVISAR_CRITICO || vencida,
       };
     })
-    .filter((s) => s.porAgotarse || s.porVencer);
+    .filter((s) => s.porAgotarse || s.porVencer)
+    .concat(sinSecuencia);
 }
 
 /* Comprobantes emitidos sin NCF, a la espera de que llegue la secuencia

@@ -574,7 +574,53 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
         `un aviso a gerencia con copia aparte a facturación (${avisos.map((a) => `${a.buzon}+${a.copia}`).join(', ')})`);
       ok(!!aviso && aviso.texto.includes(f.numero) && aviso.texto.includes('PRUEBA-AUD-SINB01') && /B01/.test(aviso.asunto),
         'el aviso cita el recibo, la referencia y la B01');
-      d0.prepare("UPDATE secuencias_ncf SET siguiente = 1 WHERE tipo = 'B01'").run();
+      d0.prepare("UPDATE secuencias_ncf SET siguiente = desde WHERE tipo = 'B01' AND activa = 1").run();
+    } finally {
+      correoMod.avisarInternamente = real;
+      d0.close();
+    }
+  }
+
+  /* Auditoría 2026-10 (FISCAL-6 y FISCAL-9). Cargar el rango que sustituirá
+     al que vence el 2026-11-30 sin marcar «la usa el sitio» desactivaba la
+     B01 que funcionaba (solo hay un rango activo por tipo), todas las
+     empresas pasaban a recibir recibo y el aviso diario decía «todas las
+     secuencias con margen», porque solo miraba filas del sitio. Y ese aviso
+     iba solo a facturación, nunca a quien pide el rango a la DGII. */
+  console.log('\n── Cargar el rango nuevo no apaga la B01 y el aviso llega a gerencia (auditoría 2026-10) ──');
+  {
+    const correoMod = require('./correo');
+    const tareas = require('./tareas');
+    const real = correoMod.avisarInternamente;
+    const avisos = [];
+    const d0 = conexion();
+    const filaSitio = (tipo) => d0.prepare(
+      'SELECT * FROM secuencias_ncf WHERE tipo = ? AND activa = 1 AND usa_sitio = 1').get(tipo);
+    try {
+      const antes = filaSitio('B01');
+      let e = null;
+      try {
+        db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, vence: '2027-12-31', usaSitio: false });
+      } catch (x) { e = x; }
+      ok(!!e && e.codigo === 400 && /usa el sitio/.test(e.message), `un rango de B01 sin «la usa el sitio» se rechaza (${e ? e.message : 'se cargó'})`);
+      ok(!!antes && !!filaSitio('B01') && filaSitio('B01').id === antes.id, 'y la B01 del sitio sigue activa');
+      const nueva = db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, vence: '2027-12-31', usaSitio: true });
+      ok(nueva.nueva && !!filaSitio('B01') && filaSitio('B01').id === nueva.id, 'marcado, el rango nuevo sustituye al anterior');
+      const b13 = db.cargarSecuencia({ tipo: 'B13', nombre: 'Gastos menores', desde: 500, hasta: 600, usaSitio: false });
+      ok(b13.usa_sitio === 0, 'un tipo que el sitio no usa se sigue cargando «solo contabilidad»');
+
+      d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 0 WHERE tipo = 'B04' AND activa = 1").run();
+      const b04 = facturas.secuenciasBajas().find((s) => s.tipo === 'B04');
+      ok(!!b04 && b04.critica && b04.sinSecuencia, 'sin ninguna B04 del sitio, el aviso diario lo marca como crítico');
+
+      correoMod.avisarInternamente = (aviso) => { avisos.push(aviso); return Promise.resolve({ entregado: true }); };
+      await tareas.TAREAS.ncf();
+      const aviso = avisos[0];
+      ok(avisos.length === 1 && aviso.buzon === 'gerencia' && aviso.copia === 'facturacion',
+        `el aviso de NCF va a gerencia con copia aparte a facturación (${avisos.map((a) => `${a.buzon}+${a.copia}`).join(', ') || 'ninguno'})`);
+      ok(!!aviso && /URGENTE/.test(aviso.asunto) && /vencida o agotada/.test(aviso.asunto) && /B04/.test(aviso.texto)
+        && /ninguna secuencia/.test(aviso.texto), `asunto: ${aviso ? aviso.asunto : '—'}`);
+      d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 1 WHERE tipo = 'B04' AND activa = 1").run();
     } finally {
       correoMod.avisarInternamente = real;
       d0.close();

@@ -6758,6 +6758,19 @@ function cargarSecuencia({ tipo, nombre, desde, hasta, vence = null, activa = tr
     throw Object.assign(new Error('El vencimiento va como AAAA-MM-DD'), { codigo: 400 });
   }
 
+  /* Auditoría 2026-10 (FISCAL-6): solo hay un rango activo por tipo, así
+     que cargar el que sustituye al que vence el 2026-11-30 SIN marcar «la
+     usa el sitio» (una casilla desmarcada, o la línea de comandos sin
+     --usa-sitio) desactivaba la B01 que funcionaba y todas las empresas
+     pasaban a recibir recibo, sin aviso. Si el sitio ya emite ese tipo,
+     el rango nuevo tiene que llevar la marca; para pasarlo a «solo
+     contabilidad» a propósito, se desactiva antes el actual. */
+  if (activa && !usaSitio
+    && d.prepare('SELECT 1 FROM secuencias_ncf WHERE tipo = ? AND activa = 1 AND usa_sitio = 1').get(t)) {
+    throw Object.assign(new Error(`El sitio emite ${t} desde la secuencia activa: marque «la usa el sitio» `
+      + 'en el rango nuevo, o desactive antes la actual si de verdad pasa a ser solo de contabilidad.'), { codigo: 400 });
+  }
+
   const yaEsta = d.prepare('SELECT * FROM secuencias_ncf WHERE tipo = ? AND desde = ?').get(t, a);
   if (yaEsta) {
     d.prepare(`UPDATE secuencias_ncf SET vence = ?, activa = ?, usa_sitio = ?, nombre = ?
