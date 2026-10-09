@@ -206,6 +206,8 @@ jobs:
         run: npm run ensayo-restauracion:probar
       - name: Estado del sistema
         run: npm run estado:puro
+      - name: Estado del sistema en la consola (API)
+        run: npm run estado-api:probar
       - name: Redes del pie
         run: npm run redes:puro
 
