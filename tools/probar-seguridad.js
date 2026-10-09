@@ -905,6 +905,66 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
   });
   comprobar(aviso.codigo !== 403, `la notificación de CardNet no pasa por esta guarda (${aviso.codigo})`);
 
+  /* ── La cuota de correo (auditoría 2026-10) ─────────────── */
+  /* Si Brevo se agota dejan de salir los códigos de acceso y los
+     comprobantes de todo el sitio. Dos grifos abiertos: los topes por IP
+     usaban la IPv6 entera, y todo cliente tiene un /64 (2^64 direcciones),
+     así que 100 altas desde un /64 eran 100 correos a direcciones ajenas;
+     y /api/eventos, sin sesión, mandaba un «Alguien pidió su contacto»
+     por evento con solo cambiar el User-Agent. */
+  console.log('\nLa cuota de correo: topes por /64 y avisos de contacto');
+  const alta = (n, ip) => pedir({
+    metodo: 'POST', url: '/api/cuenta/registro',
+    cuerpo: { correo: `seis-${n}@ejemplo.test`, clave: 'ClaveLargaDePrueba9', nombre: 'Seis Prueba', telefono: '8095550000', tipo: 'particular' },
+    cabeceras: { 'cf-connecting-ip': ip },
+  });
+  const codigosAltas = [];
+  for (let n = 1; n <= 6; n++) codigosAltas.push((await alta(n, `2001:db8:aa:1::${n}`)).codigo);
+  comprobar(codigosAltas[5] === 429, `seis altas desde seis direcciones del mismo /64: la sexta es 429 (${codigosAltas.join(',')})`);
+  const otroBloque = await alta(7, '2001:db8:aa:2::1');
+  comprobar(otroBloque.codigo !== 429, `otro /64 estrena su propia cuenta (${otroBloque.codigo})`);
+  const enLargo = await alta(8, '2001:0db8:00aa:0001:0000:0000:0000:0009');
+  comprobar(enLargo.codigo === 429, `la misma red escrita sin abreviar cuenta igual (${enLargo.codigo})`);
+
+  const correoMod = require('./correo.js');
+  const avisarReal = correoMod.enviarContactoRecibido;
+  let avisosContacto = 0;
+  correoMod.enviarContactoRecibido = () => { avisosContacto++; return Promise.resolve({ entregado: true }); };
+  try {
+    for (let n = 1; n <= 10; n++) {
+      await pedir({
+        metodo: 'POST', url: '/api/eventos', cuerpo: { anuncio: idAnuncio, tipo: 'telefono' },
+        cabeceras: { 'cf-connecting-ip': `2001:db8:bb:1::${n}`, 'user-agent': `navegador-${n}` },
+      });
+    }
+    comprobar(avisosContacto === 1, `diez contactos desde un /64 con diez User-Agent: un solo correo al dueño (${avisosContacto})`);
+    for (let n = 1; n <= 15; n++) {
+      await pedir({
+        metodo: 'POST', url: '/api/eventos', cuerpo: { anuncio: idAnuncio, tipo: 'whatsapp' },
+        cabeceras: { 'cf-connecting-ip': `203.0.113.${n}`, 'user-agent': 'navegador' },
+      });
+    }
+    comprobar(avisosContacto <= 10, `quince personas distintas en un día: como mucho diez correos por anuncio (${avisosContacto})`);
+
+    const otro = db.crearAnuncio({
+      idOrg: org.id, usuarioId: idUsuario, categoria: 'camiones', subcategoria: 'cam-volteo',
+      marca: 'peterbilt', modelo: '567', anio: 2019, condicion: 'usado', usoValor: 1, usoUnidad: 'km',
+      descripcion: 'Borrador para la prueba de eventos.', provincia: 'santo-domingo', precio: 100000,
+      moneda: 'DOP', vence: db.sumarDias(30), telefonos: [{ numero: '(809) 555-1234', tipo: 'ambos', nota: null }],
+    });
+    const idOtro = otro.idAnuncio || otro.id || otro;
+    db.abrir().prepare("UPDATE anuncios SET estado = 'borrador' WHERE id = ?").run(idOtro);
+    const antes = avisosContacto;
+    const enBorrador = await pedir({
+      metodo: 'POST', url: '/api/eventos', cuerpo: { anuncio: idOtro, tipo: 'telefono' },
+      cabeceras: { 'cf-connecting-ip': '198.51.100.77' },
+    });
+    comprobar(enBorrador.codigo === 202 && enBorrador.datos.contado === false && avisosContacto === antes,
+      `un evento sobre un anuncio que no está activo ni cuenta ni avisa (${enBorrador.codigo}, contado=${enBorrador.datos && enBorrador.datos.contado})`);
+  } finally {
+    correoMod.enviarContactoRecibido = avisarReal;
+  }
+
   console.log(`\n${bien} bien, ${mal} mal\n`);
   process.exit(mal ? 1 : 0);
 })();

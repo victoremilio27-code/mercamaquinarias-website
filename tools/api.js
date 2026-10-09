@@ -217,6 +217,29 @@ const origen = (req) => {
   return cadena[cadena.length - 1] || req.socket.remoteAddress || 'desconocido';
 };
 
+/* La clave de los TOPES por origen (auditoría 2026-10, SEG-PERMISOS-08).
+   Una IPv4 cuenta por sí sola; una IPv6, por su /64: todo proveedor da
+   un /64 entero a cada cliente (2^64 direcciones), y con la dirección
+   completa como clave cada petición estrenaba contador. Así salieron 100
+   altas y 100 correos de verificación a direcciones ajenas en 5 s, que
+   es la cuota de Brevo y con ella los códigos de todo el sitio. Solo
+   para `db.permitir`: lo que se guarda (aceptaciones, bitácora) sigue
+   siendo `origen(req)`, la dirección entera. */
+function claveDeIp(direccion) {
+  const ip = String(direccion || '').toLowerCase().split('%')[0];
+  const mapeada = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+  if (mapeada) return mapeada[1];
+  if (!ip.includes(':')) return ip;
+  const [izquierda, derecha] = ip.split('::');
+  const izq = izquierda ? izquierda.split(':') : [];
+  const der = derecha === undefined ? [] : (derecha ? derecha.split(':') : []);
+  const faltan = 8 - izq.length - der.length;
+  if (derecha === undefined ? izq.length !== 8 : faltan < 0) return ip;
+  const grupos = [...izq, ...Array(derecha === undefined ? 0 : faltan).fill('0'), ...der];
+  return `${grupos.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+const claveDeOrigen = (req) => claveDeIp(origen(req));
+
 const equipoDescrito = (req) => String(req.headers['user-agent'] || '').slice(0, 200);
 
 /* ── Sesión y permisos ──────────────────────────────────── */
@@ -420,7 +443,7 @@ async function registro(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
 
-  if (!db.permitir(`registro:${ip}`, LIMITES.registro.tope, LIMITES.registro.minutos)) {
+  if (!db.permitir(`registro:${claveDeOrigen(req)}`, LIMITES.registro.tope, LIMITES.registro.minutos)) {
     return fallo(res, 429, 'Demasiadas cuentas creadas desde esta conexión. Inténtelo más tarde.');
   }
 
@@ -552,7 +575,7 @@ async function entrar(req, res) {
      comparar las respuestas diría qué tope saltó y, con él, algo de la
      cuenta. Y ya no culpa a «esta conexión», que no siempre era la causa. */
   const DEMASIADOS = 'Demasiados intentos. Espere unos minutos o recupere su contraseña.';
-  if (!db.permitir(`acceso:${ip}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
+  if (!db.permitir(`acceso:${claveDeOrigen(req)}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
     return fallo(res, 429, DEMASIADOS);
   }
   const u = db.usuarioPorCorreo(correoNormalizado);
@@ -645,7 +668,7 @@ async function verificar(req, res) {
   const tipo = ['verificacion', 'acceso'].includes(c.tipo) ? c.tipo : 'verificacion';
   const destino = String(c.correo || '').trim().toLowerCase();
 
-  if (!db.permitir(`verificar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`verificar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -709,7 +732,7 @@ async function reenviar(req, res) {
      cinco por cuenta y cuarto de hora, un guion manda veinte avisos por
      hora a cada anunciante y de paso agota la cuota del proveedor, con
      lo que dejan de salir los códigos legítimos y los comprobantes. */
-  if (!db.permitir(`reenviar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`reenviar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
   }
 
@@ -739,7 +762,7 @@ async function recuperar(req, res) {
   /* El mismo tope por IP que su vecina, y por el mismo motivo: sin él,
      esta ruta sirve para mandarle a medio directorio un «alguien quiere
      cambiar su contraseña» cada quince minutos. */
-  if (!db.permitir(`recuperar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`recuperar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
   }
 
@@ -763,7 +786,7 @@ async function restablecer(req, res) {
   const c = await leerCuerpo(req);
   const destino = String(c.correo || '').trim().toLowerCase();
 
-  if (!db.permitir(`restablecer:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`restablecer:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -870,7 +893,7 @@ const confirmarCambioCorreo = conSesion(async (req, res, ctx) => {
 async function revertirCorreo(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
-  if (!db.permitir(`revertir:${ip}`, 10, 15)) {
+  if (!db.permitir(`revertir:${claveDeOrigen(req)}`, 10, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -916,7 +939,7 @@ const enlaceNoFuiYoClave = (testigo) => `${correo.SITIO}/cuenta.html?revertir-cl
 async function revertirClave(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
-  if (!db.permitir(`revertir-clave:${ip}`, 10, 15)) {
+  if (!db.permitir(`revertir-clave:${claveDeOrigen(req)}`, 10, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -1086,7 +1109,7 @@ const borrarBusquedaApi = conSesion((req, res, ctx, idBusqueda) => {
 
 const darDeBajaBusquedaApi = async (req, res) => {
   const ip = origen(req);
-  if (!db.permitir(`baja-busqueda:${ip}`, 20, 15)) {
+  if (!db.permitir(`baja-busqueda:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere un rato.');
   }
   const cuerpo = await leerCuerpo(req);
@@ -1149,7 +1172,7 @@ function topesSms({ numero, ip, idUsuario }) {
   if (!db.permitir(`sms-num-d:${numero}`, 10, 1440)) {
     return 'Ese número ya recibió demasiados SMS hoy. Use el correo o inténtelo mañana.';
   }
-  if (!db.permitir(`sms-ip:${ip}`, 10, 60)) {
+  if (!db.permitir(`sms-ip:${claveDeIp(ip)}`, 10, 60)) {
     return 'Demasiadas peticiones desde esta conexión. Espere una hora y vuelva a intentarlo.';
   }
   if (idUsuario && !db.permitir(`sms-cuenta:${idUsuario}`, 5, 60)) {
@@ -1270,7 +1293,7 @@ const verificarTelefono = conSesion(async (req, res, ctx) => {
 const confirmarTelefono = conSesion(async (req, res, ctx) => {
   if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
   const c = await leerCuerpo(req);
-  if (!db.permitir(`telefono-confirmar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`telefono-confirmar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
   const proposito = c.proposito;
@@ -1317,7 +1340,7 @@ const MENSAJE_RECUPERACION = 'Recibimos su solicitud. Si los datos corresponden 
 async function pedirRecuperacion(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
-  if (!db.permitir(`recuperacion:${ip}`, 3, 60)) {
+  if (!db.permitir(`recuperacion:${claveDeOrigen(req)}`, 3, 60)) {
     return fallo(res, 429, 'Demasiadas solicitudes desde esta conexión. Inténtelo más tarde.');
   }
 
@@ -1801,7 +1824,7 @@ async function crearSolicitudServicio(req, res) {
 
   // El mismo tope que el registro: un humano no manda seis cotizaciones
   // en una hora, un guion sí.
-  if (!db.permitir(`servicio:${ip}`, 6, 60)) {
+  if (!db.permitir(`servicio:${claveDeOrigen(req)}`, 6, 60)) {
     return fallo(res, 429, 'Demasiadas solicitudes desde esta conexión. Inténtelo más tarde.');
   }
 
@@ -1878,7 +1901,7 @@ async function crearSolicitudServicio(req, res) {
  * en cada petición. */
 async function conversarConSoporte(req, res) {
   const ip = origen(req);
-  if (!db.permitir(`chat:${ip}`, LIMITES.chat.tope, LIMITES.chat.minutos)) {
+  if (!db.permitir(`chat:${claveDeOrigen(req)}`, LIMITES.chat.tope, LIMITES.chat.minutos)) {
     return fallo(res, 429, 'Ha hecho muchas consultas seguidas. Espere unos minutos '
       + `o escríbanos a ${chat.CORREO_GENERAL}.`);
   }
@@ -5718,7 +5741,7 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
   const idOrg = ctx.organizacion.id;
   if (!db.permitir(`contacto-codigo:${idOrg}:${numero}`, 5, 60)
     || !db.permitir(`contacto-org:${idOrg}`, 20, 60)
-    || !db.permitir(`contacto-ip:${origen(req)}`, 30, 60)) {
+    || !db.permitir(`contacto-ip:${claveDeOrigen(req)}`, 30, 60)) {
     return fallo(res, 429, 'Ha pedido demasiados códigos. Espere una hora y vuelva a intentarlo.');
   }
 
@@ -5780,7 +5803,7 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
 const confirmarContacto = conSesion(async (req, res, ctx) => {
   if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
   const c = await leerCuerpo(req);
-  if (!db.permitir(`contacto-confirmar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`contacto-confirmar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -5816,7 +5839,7 @@ async function evento(req, res, ctx) {
      valor es siempre 127.0.0.1, así que la huella del visitante
      colapsaba y cincuenta personas distintas contaban como una. */
   const ip = origen(req);
-  if (!db.permitir(`evento:${ip}`, LIMITES.eventos.tope, LIMITES.eventos.minutos)) {
+  if (!db.permitir(`evento:${claveDeOrigen(req)}`, LIMITES.eventos.tope, LIMITES.eventos.minutos)) {
     return fallo(res, 429, 'Demasiadas peticiones desde esta conexión');
   }
 
@@ -5833,7 +5856,17 @@ async function evento(req, res, ctx) {
      trescientos correos y la cuota del proveedor agotada.
 
      Las vistas no avisan; serían decenas de correos diarios. */
-  if (resultado === 'contado' && (tipo === 'telefono' || tipo === 'whatsapp')) {
+  /* Auditoría 2026-10 (SEG-PERMISOS-01): la huella es IP + navegador, así
+     que cambiar el User-Agent en cada petición contaba como persona nueva
+     y, sin sesión, un guion mandaba un correo por evento al anunciante
+     (cientos por hora desde una IP) hasta agotar la cuota de Brevo, y con
+     ella los códigos y comprobantes de todo el sitio. El contacto se sigue
+     contando igual; el CORREO, como mucho uno por origen (/64 en IPv6) y
+     anuncio al día, y diez por anuncio al día. */
+  const avisar = resultado === 'contado' && (tipo === 'telefono' || tipo === 'whatsapp')
+    && db.permitir(`aviso-contacto:${idAnuncio}:${claveDeOrigen(req)}`, 1, 1440)
+    && db.permitir(`aviso-contacto:${idAnuncio}`, 10, 1440);
+  if (avisar) {
     const dueno = db.duenoDeAnuncio(idAnuncio);
     if (dueno) {
       correo.enviarContactoRecibido({

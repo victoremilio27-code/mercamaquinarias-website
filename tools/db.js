@@ -5832,7 +5832,13 @@ function anotarEvento(idAnuncio, tipo, visitante) {
   const columna = COLUMNA_EVENTO[tipo];
   if (!columna) return 'invalido';
   const d = abrir();
-  if (!d.prepare('SELECT 1 FROM anuncios WHERE id = ?').get(idAnuncio)) return 'invalido';
+  const anuncio = d.prepare('SELECT estado FROM anuncios WHERE id = ?').get(idAnuncio);
+  if (!anuncio) return 'invalido';
+  /* Auditoría 2026-10: un borrador, un anuncio pausado o uno vendido no
+     recibe contactos ni visitas (se aceptaban, también sobre un borrador
+     ajeno, y avisaban al dueño). No es un error del visitante: quien
+     llama responde 202 sin contar. */
+  if (anuncio.estado !== 'activo') return 'inactivo';
 
   const dia = hoy();
 
