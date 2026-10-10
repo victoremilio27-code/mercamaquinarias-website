@@ -100,6 +100,12 @@ function ejecuta(sql, ...args) {
 /* Una fecha a `dias` de ahora (negativo = pasado), en ISO como las de
    la base. Fraccionaria a propósito: los recordatorios cuentan horas. */
 const enDias = (dias) => new Date(Date.now() + dias * DIA).toISOString();
+/* Mañana a mediodía, hora dominicana. Antes era «dentro de 20 horas», que
+   entre las 00:00 y las 04:00 de RD cae todavía hoy: el aviso de 1 día no
+   salía y la prueba fallaba según la hora a la que corriera el CI. */
+const RD = 4 * 60 * 60 * 1000;
+const mananaMediodiaRD = () => new Date(
+  (Math.floor((Date.now() - RD) / DIA) + 1) * DIA + RD + 12 * 60 * 60 * 1000).toISOString();
 
 let contador = 0;
 const nuevoId = (etiqueta) => `${etiqueta}-${SELLO}-${++contador}`;
@@ -647,7 +653,7 @@ db.cargarSecuencia({
     const idSusc = nuevaSuscripcion({ idOrg: Q.idOrg, plan: 'estandar', cupo: 10, fin: enDias(30) });
     const a7 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(6.5) });
     const a3 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(2.5) });
-    const a1 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(20 / 24) });
+    const a1 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: mananaMediodiaRD() });
     const a9 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'activo', vence: enDias(9) });
     const aVendido = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'vendido', vence: enDias(2.5) });
     const aPausado = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, estado: 'pausado', vence: enDias(2.5) });
@@ -659,7 +665,7 @@ db.cargarSecuencia({
     const tipoDe = (idA) => (lista.find((x) => x.id === idA) || {}).tipo || null;
     ok(tipoDe(a7) === '7d', `a 6,5 días → ${tipoDe(a7)}`);
     ok(tipoDe(a3) === '3d', `a 2,5 días → ${tipoDe(a3)}`);
-    ok(tipoDe(a1) === '1d', `a 20 horas → ${tipoDe(a1)}`);
+    ok(tipoDe(a1) === '1d', `mañana → ${tipoDe(a1)}`);
     ok(tipoDe(a9) === null, `a 9 días → ${tipoDe(a9) || 'no sale'}`);
     ok(![aVendido, aPausado, aVencido].some((x) => tipoDe(x)),
       `vendido, pausado y vencido no salen (${[aVendido, aPausado, aVencido].map(tipoDe).join(', ')})`);
