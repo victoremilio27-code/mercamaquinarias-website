@@ -56,8 +56,34 @@ const app0 = segmentoJpeg(0xE0, Buffer.from('JFIF'));
 const app1 = segmentoJpeg(0xE1, Buffer.from('Exif\0\0GPS casa'));
 const app2 = segmentoJpeg(0xE2, Buffer.from('ICC_PROFILE'));
 const app14 = segmentoJpeg(0xEE, Buffer.from('Adobe'));
+const dqt = segmentoJpeg(0xDB, Buffer.from([0]));
+const sof0 = segmentoJpeg(0xC0, Buffer.from([8, 0, 1, 0, 1, 1, 1, 0x11, 0]));
+const dht = segmentoJpeg(0xC4, Buffer.from([0]));
 const sosYDatos = Buffer.concat([segmentoJpeg(0xDA, Buffer.from([1, 2, 3, 4])), Buffer.from([5, 0xFF, 0, 6, 0xFF, 0xD9])]);
-const jpegConExif = Buffer.concat([Buffer.from([0xFF, 0xD8]), app0, app1, app2, app14, sosYDatos]);
+const jpegConExif = Buffer.concat([
+  Buffer.from([0xFF, 0xD8]), app0, app1, app2, app14, dqt, sof0, dht, sosYDatos,
+]);
+
+test('JPEG rechaza marcadores nulos, longitudes imposibles y SOS sin SOF', () => {
+  assert.doesNotThrow(() => limpiar(Buffer.from([0xFF, 0xD8, 0xFF, 0x00])));
+  assert.equal(limpiar(Buffer.from([0xFF, 0xD8, 0xFF, 0x00])), null);
+
+  const longitudImposible = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0xFF, 0xFF]);
+  assert.doesNotThrow(() => limpiar(longitudImposible));
+  assert.equal(limpiar(longitudImposible), null);
+
+  const sinImagen = Buffer.concat([
+    Buffer.from([0xFF, 0xD8]), segmentoJpeg(0xDA, Buffer.alloc(0)), Buffer.from('<html><script>'),
+  ]);
+  assert.equal(limpiar(sinImagen), null);
+});
+
+test('JPEG mínimo con SOF antes de SOS sigue pasando', () => {
+  const minimo = Buffer.concat([
+    Buffer.from([0xFF, 0xD8]), app0, dqt, sof0, dht, sosYDatos,
+  ]);
+  assert.deepEqual(limpiar(minimo), minimo);
+});
 
 test('JPEG quita metadatos sin alterar perfiles ni datos comprimidos', () => {
   const salida = limpiar(jpegConExif);

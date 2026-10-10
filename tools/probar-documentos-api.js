@@ -114,6 +114,17 @@ async function probar() {
   } });
   comprobar(r.codigo === 415 && r.datos.motivo === 'tipo', 'rechaza HTML aunque se anuncie como PDF');
 
+  for (const [nombre, jpeg] of [
+    ['marcador nulo', Buffer.from([0xFF, 0xD8, 0xFF, 0x00])],
+    ['longitud imposible', Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0xFF, 0xFF])],
+  ]) {
+    r = await pedir({ metodo: 'POST', url: `/api/anuncios/${anuncio}/documentos`, testigo: ana.testigo, cuerpo: {
+      nombre: `${nombre}.jpg`, archivo: dataUrl('image/jpeg', jpeg),
+    } });
+    comprobar(r.codigo === 415 && r.datos.error === 'El tipo de documento no está admitido',
+      `JPEG con ${nombre} devuelve 415`);
+  }
+
   r = await pedir({ metodo: 'POST', url: `/api/anuncios/${anuncio}/documentos`, testigo: ana.testigo, cuerpo: {
     nombre: 'vacío.pdf', archivo: dataUrl('application/pdf', Buffer.alloc(0)),
   } });
