@@ -893,6 +893,31 @@ const pagoDePlan = (plan, etiqueta, { aprobar = true } = {}) => {
     `GET /api/membresias: ${lista.length} con siguiente · ${lista.length ? Object.keys(lista[0].siguiente).join(', ') : ''}`);
   }
 
+  console.log('\n28. El informe cuenta la devolución el día de la nota de crédito, no el del pago (FISCAL-8)');
+  {
+    /* Un pago de hace 40 días devuelto hoy caía en el informe de hace 40
+       días, que ya se mandó: la devolución no salía en ninguno. */
+    const original = consulta(`SELECT f.id, f.pago_id FROM facturas f JOIN pagos p ON p.id = f.pago_id
+                                WHERE p.estado = 'aprobado' AND f.tipo <> 'nota_credito'
+                                  AND f.anulado_por IS NULL ORDER BY f.fecha LIMIT 1`);
+    ok(!!original, 'hay un comprobante vigente con su pago');
+    if (original) {
+      const viejo = new Date(Date.now() - 40 * 86400000).toISOString();
+      const diaViejo = diaDe(viejo);
+      ejecuta('UPDATE pagos SET creado = ?, confirmado = ?, actualizado = ? WHERE id = ?', viejo, viejo, viejo, original.pago_id);
+      const devueltosEntre = (desde, hasta) => db.informe({ desde, hasta }).dinero.devueltos.n;
+      const antesHoy = devueltosEntre(HOY, HOY);
+      const antesViejo = devueltosEntre(diaViejo, diaViejo);
+
+      facturas.emitirNotaCredito(db.facturaPorId(original.id), { motivo: 'prueba FISCAL-8' });
+      const pago = consulta('SELECT estado, actualizado FROM pagos WHERE id = ?', original.pago_id);
+      ok(pago.estado === 'devuelto', `el pago queda devuelto (${pago.estado})`);
+      ok(diaDe(pago.actualizado || '') === HOY, `marcarPagoDevuelto anota cuándo (${pago.actualizado})`);
+      ok(devueltosEntre(HOY, HOY) === antesHoy + 1, 'el informe de hoy cuenta la devolución');
+      ok(devueltosEntre(diaViejo, diaViejo) === antesViejo, 'el del día del pago no la cuenta');
+    }
+  }
+
   console.log();
   console.log(fallos ? `${fallos} de ${comprobaciones} comprobación(es) fallidas` : `Todo correcto (${comprobaciones} comprobaciones)`);
   process.exitCode = fallos ? 1 : 0;

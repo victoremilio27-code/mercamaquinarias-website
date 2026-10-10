@@ -5045,7 +5045,7 @@ function anunciosDelSitemap() {
   return abrir().prepare(sql).all(soloUsados(sql, parametros));
 }
 
-function buscarAnuncios(f = {}) {
+function buscarAnuncios(f = {}, opciones = {}) {
   const d = abrir();
   const { donde, parametros } = filtrosCatalogo(f);
   parametros.ahora = ahora();
@@ -5055,9 +5055,10 @@ function buscarAnuncios(f = {}) {
   const sqlConteo = `SELECT COUNT(*) AS n FROM anuncios a WHERE ${donde}`;
   const total = d.prepare(sqlConteo).get(soloUsados(sqlConteo, parametros)).n;
 
-  const porPagina = Math.min(Number(f.porPagina) || POR_PAGINA, POR_PAGINA_MAX);
+  const topePagina = opciones.sinTope ? 500 : POR_PAGINA_MAX;
+  const porPagina = Math.min(Math.max(1, Math.trunc(Number(f.porPagina)) || POR_PAGINA), topePagina);
   const paginas = Math.max(1, Math.ceil(total / porPagina));
-  const pagina = Math.min(Math.max(1, Number(f.pagina) || 1), paginas);
+  const pagina = Math.min(Math.max(1, Math.trunc(Number(f.pagina)) || 1), paginas);
   // Solo claves propias: `ORDENES_SQL['constructor']` es una función
   // heredada de Object, se interpolaba en el ORDER BY y `?orden=toString`
   // tumbaba el catálogo público con un 500.
@@ -5089,7 +5090,7 @@ function buscarAnuncios(f = {}) {
 
 /* Atajo para quien solo quiere una lista corta (portada, perfil de
    dealer, equipos similares). */
-const anunciosPublicos = (f = {}) => buscarAnuncios(f).anuncios;
+const anunciosPublicos = (f = {}, opciones = {}) => buscarAnuncios(f, opciones).anuncios;
 
 /* Cifras de la portada y del directorio. Todas salen de la base: si
    no hay nada publicado, dicen cero y la interfaz lo dice también.
@@ -5908,7 +5909,7 @@ function contactosDeOrganizacion(idOrg, { anuncio, canal, limite = 100 } = {}) {
   const p = { org: idOrg };
   if (anuncio) { donde.push('c.anuncio_id = :anuncio'); p.anuncio = String(anuncio); }
   if (canal) { donde.push('c.canal = :canal'); p.canal = String(canal); }
-  p.limite = Math.min(Math.max(1, Number(limite) || 100), 200);
+  p.limite = Math.min(Math.max(1, Math.trunc(Number(limite)) || 100), 200);
 
   return abrir().prepare(`
     SELECT c.id, c.anuncio_id, c.canal, c.dia, c.creado,
@@ -6047,8 +6048,17 @@ function informe({ desde, hasta }) {
                      FROM pagos WHERE estado = 'aprobado'
                       AND COALESCE(confirmado, creado) >= ? AND COALESCE(confirmado, creado) <= ?`,
         desde, `${hasta}T23:59:59Z`),
-      devueltos: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
-                        FROM pagos WHERE estado = 'devuelto' AND creado >= ? AND creado <= ?`,
+      /* Una devolución cuenta el día de su nota de crédito (o anulación
+         interna), no el del pago (FISCAL-8): un pago del mes pasado
+         devuelto hoy caía en el informe del mes pasado, que ya se había
+         mandado, y no salía en ninguno. Una devolución sin comprobante
+         (cobro sin aplicar) cuenta el día que se marcó. */
+      devueltos: uno(`SELECT COUNT(*) AS n, COALESCE(SUM(p.total), 0) AS total
+                        FROM pagos p
+                       WHERE p.estado = 'devuelto'
+                         AND COALESCE((SELECT MIN(f.fecha) FROM facturas f
+                                        WHERE f.pago_id = p.id AND f.tipo = 'nota_credito'),
+                                      p.actualizado, p.creado) BETWEEN ? AND ?`,
         desde, `${hasta}T23:59:59Z`),
     },
 
@@ -6956,7 +6966,7 @@ const propietarioDe = (idOrg) => abrir().prepare(`
 /* Un pago devuelto. No se borra: cambia de estado, y la nota de crédito
    queda enlazada al comprobante original. */
 const marcarPagoDevuelto = (idPago) => abrir().prepare(
-  "UPDATE pagos SET estado = 'devuelto' WHERE id = ?").run(idPago);
+  "UPDATE pagos SET estado = 'devuelto', actualizado = ? WHERE id = ?").run(ahora(), idPago);
 
 const facturaPorId = (idFactura) => abrir().prepare('SELECT * FROM facturas WHERE id = ?').get(idFactura);
 const facturaDePago = (idPago) => abrir().prepare(
@@ -7215,6 +7225,10 @@ const TOPES_DOCUMENTOS = Object.freeze({
   bytesPorAnuncio: 10 * MB,
   bytesTotal: (Number(process.env.MERCA_DOCUMENTOS_TOPE_MB) > 0
     ? Number(process.env.MERCA_DOCUMENTOS_TOPE_MB) : 100) * MB,
+  /* Sin este tope, un solo particular gratis llenaba los 100 MB globales
+     con PDF en borradores y nadie más podía adjuntar (SEG-PERMISOS-04). */
+  bytesPorOrganizacion: (Number(process.env.MERCA_DOCUMENTOS_TOPE_ORG_MB) > 0
+    ? Number(process.env.MERCA_DOCUMENTOS_TOPE_ORG_MB) : 20) * MB,
 });
 const TIPOS_DOCUMENTO = Object.freeze(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 
@@ -7251,6 +7265,10 @@ function motivoSinDocumento({ idAnuncio, idOrg, tipo, bytes }) {
   const delAnuncio = bytesDocumentos(d, idAnuncio);
   if (delAnuncio.n >= TOPES_DOCUMENTOS.porAnuncio) return 'tope-cantidad';
   if (delAnuncio.b + n > TOPES_DOCUMENTOS.bytesPorAnuncio) return 'tope-anuncio';
+  const deOrganizacion = d.prepare(`SELECT COALESCE(SUM(x.bytes), 0) AS b
+      FROM documentos_anuncio x JOIN anuncios a ON a.id = x.anuncio_id
+      WHERE a.organizacion_id = ?`).get(idOrg);
+  if (deOrganizacion.b + n > TOPES_DOCUMENTOS.bytesPorOrganizacion) return 'tope-organizacion';
   if (bytesDocumentos(d).b + n > TOPES_DOCUMENTOS.bytesTotal) return 'tope-total';
   return null;
 }
@@ -7282,7 +7300,7 @@ function documentosDe(idAnuncio, idOrg = null) {
   const d = abrir();
   const a = d.prepare('SELECT estado, organizacion_id FROM anuncios WHERE id = ?').get(idAnuncio);
   if (!a) return null;
-  if (a.estado === 'borrador' && (!idOrg || a.organizacion_id !== idOrg)) return null;
+  if (a.estado !== 'activo' && (!idOrg || a.organizacion_id !== idOrg)) return null;
   return d.prepare('SELECT * FROM documentos_anuncio WHERE anuncio_id = ? ORDER BY creado, id')
     .all(idAnuncio).map(documentoPublico);
 }
@@ -7296,7 +7314,7 @@ function documentoParaDescargar(idAnuncio, idDocumento, idOrg = null) {
                        JOIN anuncios a ON a.id = x.anuncio_id
                        WHERE x.id = ? AND x.anuncio_id = ?`).get(idDocumento, idAnuncio);
   if (!f) return null;
-  if (f.estado === 'borrador' && (!idOrg || f.organizacion_id !== idOrg)) return null;
+  if (f.estado !== 'activo' && (!idOrg || f.organizacion_id !== idOrg)) return null;
   return { id: f.id, nombre: f.nombre, tipo: f.tipo, bytes: f.bytes, ruta: f.ruta };
 }
 

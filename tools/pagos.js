@@ -257,6 +257,7 @@ function avisarAnuncioPublicado({ idAnuncio, para, nombre, idPlan }) {
       idAnuncio,
       vence: a.vence,
       plan: plan ? plan.nombre : null,
+      telefonoVerificado: (a.telefonos || []).some((t) => t.verificado),
     })).catch((e) => console.error(`correo: anuncio publicado ${idAnuncio} · ${e.message}`));
   } catch (e) {
     console.error(`correo: anuncio publicado ${idAnuncio} · ${e.message}`);

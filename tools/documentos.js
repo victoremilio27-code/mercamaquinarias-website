@@ -31,11 +31,17 @@ function tipoDe(buffer) {
   return firma ? { mime: firma.mime, ext: firma.ext } : null;
 }
 
+function errorTipoNoAdmitido() {
+  const error = new Error('El tipo de documento no está admitido');
+  error.codigo = 415;
+  return error;
+}
+
 function guardar(buffer) {
   const tipo = tipoDe(buffer);
-  if (!tipo) throw new Error('El tipo de documento no está admitido');
+  if (!tipo) throw errorTipoNoAdmitido();
   const bufferLimpio = limpiar(buffer);
-  if (!bufferLimpio) throw new Error('El tipo de documento no está admitido');
+  if (!bufferLimpio) throw errorTipoNoAdmitido();
 
   const mes = new Date().toISOString().slice(0, 7);
   const destino = path.join(CARPETA, mes);

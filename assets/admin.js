@@ -1108,7 +1108,7 @@ function pintarFiltrosPublicaciones(recuentos) {
 }
 
 function publicacionHTML(a) {
-  const equipo = [a.marca, a.modelo, a.anio].filter((x) => x && String(x).trim()).join(' ') || 'Borrador sin datos';
+  const equipo = [a.marca_nombre || nombreMarca(a.marca), a.modelo, a.anio].filter((x) => x && String(x).trim()).join(' ') || 'Borrador sin datos';
   return `<li class="sol" data-id="${esc(a.id)}">
     <div class="sol__cabeza">
       <b class="sol__nombre">${esc(equipo)}</b>

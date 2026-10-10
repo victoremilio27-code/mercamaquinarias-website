@@ -88,6 +88,12 @@ function ejecuta(sql, ...args) {
 }
 
 const enDias = (dias) => new Date(Date.now() + dias * DIA).toISOString();
+/* Mañana a mediodía, hora dominicana. Antes era «dentro de 20 horas», que
+   entre las 00:00 y las 04:00 de RD cae todavía hoy: el aviso de 1 día no
+   salía y la prueba fallaba según la hora a la que corriera el CI. */
+const RD = 4 * 60 * 60 * 1000;
+const mananaMediodiaRD = () => new Date(
+  (Math.floor((Date.now() - RD) / DIA) + 1) * DIA + RD + 12 * 60 * 60 * 1000).toISOString();
 let contador = 0;
 const nuevoId = (etiqueta) => `${etiqueta}-${SELLO}-${++contador}`;
 
@@ -205,7 +211,7 @@ async function pasada(ids) {
     const idSusc = nuevaSuscripcion({ idOrg: Q.idOrg, plan: 'estandar', cupo: 10, fin: enDias(30) });
     const a7 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, vence: enDias(6.5) });
     const a3 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, vence: enDias(2.5) });
-    const a1 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, vence: enDias(20 / 24) });
+    const a1 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, vence: mananaMediodiaRD() });
     const a9 = nuevoAnuncio({ idOrg: Q.idOrg, idSusc, vence: enDias(9) });
     const ids = [a7, a3, a1, a9];
 

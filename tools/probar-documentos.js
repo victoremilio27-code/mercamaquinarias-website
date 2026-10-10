@@ -28,6 +28,7 @@ process.env.MERCA_DB = path.join(BANCO, 'prueba.db');
 process.env.MERCA_CORREO = 'archivo';
 process.env.MERCA_SECRETO = 'secreto-de-prueba-no-usar-en-produccion';
 process.env.MERCA_DOCUMENTOS_TOPE_MB = '20';
+process.env.MERCA_DOCUMENTOS_TOPE_ORG_MB = '12';
 
 const db = require('./db.js');
 
@@ -125,6 +126,21 @@ console.log('\n3 · Topes por anuncio y total');
   comprobar(e.documentos === 7 && e.bytes === 18 * MB + 1234 && e.tope === 20 * MB, 'espacioDocumentos suma todo');
 }
 
+console.log('\n3b · Tope por organización (SEG-PERMISOS-04)');
+{
+  /* Un solo particular gratis llenaba el tope total con PDF en borradores
+     y nadie más podía adjuntar. caro ya tiene 10 MB en un anuncio; aquí el
+     tope por organización es 12 MB (MERCA_DOCUMENTOS_TOPE_ORG_MB). */
+  comprobar(db.TOPES_DOCUMENTOS.bytesPorOrganizacion === 12 * MB, 'el tope por organización se lee de MERCA_DOCUMENTOS_TOPE_ORG_MB');
+  const caro = db.usuarioPorCorreo('caro-doc@ejemplo.test');
+  const org = db.organizacionDe(caro.id);
+  const idOtro = anuncioDe({ org });
+  const base = { idAnuncio: idOtro, idOrg: org.id, tipo: 'application/pdf' };
+  comprobar(db.motivoSinDocumento({ ...base, bytes: 2 * MB + 1 }) === 'tope-organizacion',
+    'otro anuncio de la misma cuenta no se salta el tope sumando anuncios');
+  comprobar(db.motivoSinDocumento({ ...base, bytes: 1 * MB }) === null, 'por debajo del tope, sí');
+}
+
 console.log('\n4 · La base rechaza rutas peligrosas aunque falle la API');
 {
   const eva = cuenta('eva-doc@ejemplo.test');
@@ -156,8 +172,12 @@ console.log('\n5 · Quién ve qué');
   comprobar(db.documentosDe(idBorrador, fran.org.id).length === 1, 'el dueño ve los de su borrador');
   comprobar(db.documentosDe(idBorrador, gil.org.id) === null && db.documentosDe(idBorrador) === null,
     'nadie más: un borrador no existe para otros');
-  comprobar(db.documentosDe(idPublicado).length === 1 && db.documentosDe(idVendido).length === 1,
-    'los de un anuncio publicado o vendido los ve cualquiera, sin sesión');
+  comprobar(db.documentosDe(idPublicado).length === 1, 'los de un anuncio publicado los ve cualquiera, sin sesión');
+  /* Antes un vendido (o pausado, retirado, vencido) enseñaba sus documentos
+     a cualquiera por el enlace (SEG-PERMISOS-02): ahora solo al dueño. */
+  comprobar(db.documentosDe(idVendido) === null && db.documentosDe(idVendido, gil.org.id) === null,
+    'los de un anuncio vendido, nadie más');
+  comprobar(db.documentosDe(idVendido, fran.org.id).length === 1, 'el dueño sí los ve en su vendido');
   comprobar(!('ruta' in db.documentosDe(idPublicado)[0]), 'la lista no lleva la ruta en disco');
   comprobar(db.documentosDe('no-hay') === null, 'un anuncio que no existe: null');
 

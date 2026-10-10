@@ -1124,7 +1124,7 @@ const fechaDominicana = (iso) => (iso
 /* Confirmación de publicación. Lleva el enlace a la ficha porque es lo
    primero que quiere hacer quien acaba de publicar: verla y
    compartirla. */
-const enviarAnuncioPublicado = ({ para, nombre, equipo, idAnuncio, vence, plan }) => enviar({
+const enviarAnuncioPublicado = ({ para, nombre, equipo, idAnuncio, vence, plan, telefonoVerificado = true }) => enviar({
   para,
   responderA: BUZONES.anuncios,
   asunto: `Su ${equipo} ya está publicado · MercaMaquinarias`,
@@ -1135,14 +1135,19 @@ const enviarAnuncioPublicado = ({ para, nombre, equipo, idAnuncio, vence, plan }
     plan ? `Plan: ${plan}` : null,
     vence ? `Vigente hasta el ${fecha(vence)}.` : 'Se mantiene publicado mientras la membresía siga activa.',
     '',
-    'Desde su panel puede editarlo, pausarlo, marcarlo como vendido y ver',
+    telefonoVerificado ? null : `Su anuncio no muestra ningún teléfono hasta que lo verifique (1 minuto): ${SITIO}/panel.html#panelContactos`,
+    telefonoVerificado ? null : '',
+    'Desde su panel puede pausarlo, marcarlo como vendido y ver',
     `cuánta gente lo está mirando: ${SITIO}/panel.html`, '',
     'MercaMaquinarias',
   ].filter((l) => l !== null).join('\n'),
   html: envoltura({
     titulo: 'Su equipo ya está publicado',
     saludo: nombre ? `Hola, ${nombre}:` : 'Hola:',
-    parrafos: ['Su anuncio está visible en el catálogo y cualquiera puede encontrarlo.'],
+    parrafos: [
+      'Su anuncio está visible en el catálogo y cualquiera puede encontrarlo.',
+      telefonoVerificado ? null : `Su anuncio no muestra ningún teléfono hasta que lo verifique (1 minuto): <a href="${SITIO}/panel.html#panelContactos">verificar teléfono</a>.`,
+    ].filter(Boolean),
     extra: tarjeta(`
       <div style="font-family:${TIPO};font-size:18px;font-weight:700;color:${AZUL};line-height:1.3">${esc(equipo)}</div>
       ${filas([
@@ -1150,8 +1155,8 @@ const enviarAnuncioPublicado = ({ para, nombre, equipo, idAnuncio, vence, plan }
     ['Vigente hasta', vence ? fecha(vence) : 'Mientras la membresía siga activa'],
   ])}`),
     accion: { texto: 'Ver el anuncio', url: `${SITIO}/equipo.html?id=${idAnuncio}` },
-    nota: `Desde <a href="${SITIO}/panel.html" style="color:${AMBAR}">su panel</a> puede editarlo, `
-      + 'pausarlo, marcarlo como vendido y ver cuánta gente lo está mirando.',
+    nota: `Desde <a href="${SITIO}/panel.html" style="color:${AMBAR}">su panel</a> puede pausarlo, `
+      + 'marcarlo como vendido y ver cuánta gente lo está mirando.',
   }),
 });
 
@@ -1377,7 +1382,7 @@ function enviarDatosTransferencia({ para, nombre, referencia, total, concepto, d
     ['Número de cuenta', datos.cuenta],
     ['Moneda', 'Pesos dominicanos (DOP)'],
   ];
-  const AVISO_FISCAL = 'Este correo no es un comprobante fiscal. El comprobante con NCF se lo enviamos '
+  const AVISO_FISCAL = 'Este correo no es un comprobante fiscal. Su comprobante se lo enviamos '
     + 'cuando confirmemos el ingreso en nuestra cuenta.';
 
   return enviar({

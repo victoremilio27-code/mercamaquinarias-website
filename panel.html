@@ -87,6 +87,10 @@
          celular (10.2). Texto y enlace los pone panel.js. -->
     <p class="acceso__aviso" id="avisoCelular" role="status" hidden></p>
 
+    <p class="realce" id="avisoTelefonoAnuncios" role="status" hidden>
+      Su anuncio no muestra ningún teléfono hasta que lo verifique. <a href="#panelContactos">Verificar teléfono</a>
+    </p>
+
     <section class="panel" id="panelPlan" aria-labelledby="t-plan"></section>
 
     <section class="panel" id="panelAlertas" aria-labelledby="t-alertas">
@@ -179,7 +183,7 @@
         <div class="filtros-panel" id="filtrosPanel" role="group" aria-label="Filtrar por estado"></div>
       </div>
       <div class="tabla-envoltura">
-        <table class="tabla-anuncios">
+        <table class="tabla-anuncios tabla-anuncios--gestion">
           <thead>
             <tr>
               <th scope="col">Equipo</th>

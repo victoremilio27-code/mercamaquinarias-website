@@ -274,6 +274,17 @@ function publicarEquipos(idOrg, idUsuario, cuantos) {
     'el de acceso no se publica');
   comprobar((despues.datos.anuncios || []).length === 5, 'y sus cinco equipos');
 
+  /* E2E-NEGOCIO-4: «publicada» no garantiza que se vea. El editor lo sabe
+     por `visible`, que sale de la misma consulta que la ruta pública. */
+  const conVista = (await pedir({ url: '/api/mi-pagina', cabeceras: sesionDealer })).datos;
+  comprobar(conVista.visible === true, 'publicada y visible: el editor recibe visible=true');
+  db.abrir().prepare('UPDATE organizaciones SET perfil_publico = 0 WHERE id = ?').run(org.id);
+  const oculta = (await pedir({ url: '/api/mi-pagina', cabeceras: sesionDealer })).datos;
+  const publicaOculta = await pedir({ url: `/api/dealers/${org.slug}` });
+  comprobar(oculta.pagina.estado_pagina === 'publicada' && oculta.visible === false && publicaOculta.codigo === 404,
+    'publicada pero sin perfil público: visible=false y la ruta pública da 404');
+  db.abrir().prepare('UPDATE organizaciones SET perfil_publico = 1 WHERE id = ?').run(org.id);
+
   /* ── Imágenes: solo las del sitio ────────────────────────── */
   console.log('\nEl logotipo y la portada');
   const ajena = await pedir({

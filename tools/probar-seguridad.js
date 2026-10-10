@@ -176,6 +176,35 @@ function pedir({ metodo = 'GET', url, cuerpo, trozos, cabeceras = {} }) {
     && JSON.stringify(accesoDesconocido.datos) === JSON.stringify(bloqueoVictima.datos),
   'un correo inexistente recibe el mismo 429 después de diez intentos');
 
+  /* E2E-CLIENTE-09: con el tope de códigos lleno, entrar respondía «Le
+     enviamos un código» sin mandar ninguno. Reenviar y recuperar siguen
+     respondiendo lo mismo: un 429 solo ahí delataría que la cuenta existe. */
+  for (const [correoTope, verificado] of [['tope-acceso@ejemplo.test', true], ['tope-verifica@ejemplo.test', false]]) {
+    const { idUsuario: idTope } = db.crearCuenta({
+      correo: correoTope, clave: 'ClaveDelTopeDeCodigos9', nombre: 'Tope de códigos', telefono: '8095551003', tipo: 'particular',
+    });
+    if (verificado) db.marcarCorreoVerificado(idTope);
+    for (let i = 0; i < 5; i++) db.permitir(`codigo:${correoTope}`, 5, 15);
+    const lleno = await pedir({
+      metodo: 'POST', url: '/api/cuenta/entrar',
+      cuerpo: { correo: correoTope, clave: 'ClaveDelTopeDeCodigos9' },
+      cabeceras: { 'cf-connecting-ip': '1.2.3.6' },
+    });
+    comprobar(lleno.codigo === 429 && /varios códigos en los últimos 15 minutos/.test(lleno.datos.error),
+      `entrar con el tope de códigos lleno (${verificado ? 'acceso' : 'verificación'}): ${lleno.codigo} «${lleno.datos.error}»`);
+  }
+  const reenvioLleno = await pedir({
+    metodo: 'POST', url: '/api/cuenta/recuperar', cuerpo: { correo: 'tope-acceso@ejemplo.test' },
+    cabeceras: { 'cf-connecting-ip': '1.2.3.7' },
+  });
+  const reenvioNadie = await pedir({
+    metodo: 'POST', url: '/api/cuenta/recuperar', cuerpo: { correo: 'nadie-tope@ejemplo.test' },
+    cabeceras: { 'cf-connecting-ip': '1.2.3.8' },
+  });
+  comprobar(reenvioLleno.codigo === 202 && reenvioNadie.codigo === 202
+    && reenvioLleno.datos.mensaje === reenvioNadie.datos.mensaje,
+  'recuperar con el tope lleno responde igual que con un correo que no existe');
+
   const cookieAjenaRota = await pedir({
     url: '/api/anuncios', cabeceras: { cookie: 'otra=%E0%A4%A' },
   });

@@ -11,6 +11,7 @@ function limpiarJpeg(buffer) {
 
   const partes = [Buffer.from(buffer.subarray(0, 2))];
   let posicion = 2;
+  let tieneSof = false;
 
   while (posicion < buffer.length) {
     const inicio = posicion;
@@ -38,10 +39,18 @@ function limpiarJpeg(buffer) {
     const fin = posicion + longitud;
 
     if (marcador === 0xDA) {
+      if (!tieneSof) return null;
       // Desde SOS los 0xFF también pueden pertenecer a los datos comprimidos.
       partes.push(Buffer.from(buffer.subarray(inicio)));
       return Buffer.concat(partes);
     }
+
+    // Los marcadores SOF admitidos por JPEG anuncian la imagen que después
+    // codifica SOS. D4, D8 y DC no son SOF aunque queden dentro del intervalo.
+    if ((marcador >= 0xC0 && marcador <= 0xC3)
+      || (marcador >= 0xC5 && marcador <= 0xC7)
+      || (marcador >= 0xC9 && marcador <= 0xCB)
+      || (marcador >= 0xCD && marcador <= 0xCF)) tieneSof = true;
 
     // APP0 conserva JFIF, APP2 conserva el perfil ICC y APP14 conserva la
     // transformación Adobe: quitarlos altera colores, sobre todo en JPEG CMYK.

@@ -141,7 +141,7 @@ async function montarAvisoLegal(para) {
   caja.className = 'aviso-legal';
   caja.setAttribute('role', 'status');
   caja.innerHTML = `
-    <p class="aviso-legal__titulo">Hay condiciones nuevas</p>
+    <p class="aviso-legal__titulo">${faltan.some((id) => !((SESION.legales.aceptado || {})[id])) ? 'Antes de continuar' : 'Hay condiciones nuevas'}</p>
     <p class="aviso-legal__texto">Para ${para === 'pagar' ? 'contratar un plan' : 'publicar un equipo'}
       hace falta aceptar ${nombres.join(' y ')}.</p>
     <div class="aviso-legal__acciones">
@@ -157,6 +157,7 @@ async function montarAvisoLegal(para) {
       const nueva = await api('/legales/aceptar', { metodo: 'POST', cuerpo: { documentos: faltan } });
       if (nueva) {
         SESION.legales = nueva.legales || SESION.legales;
+        document.dispatchEvent(new CustomEvent('legales-aceptadas'));
         caja.remove();
         return;
       }

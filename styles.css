@@ -2863,6 +2863,7 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
 .vigencia--membresia { color: var(--verde); font-weight: 600; }
 
 .col-acciones { text-align: right; white-space: nowrap; }
+.tabla-anuncios .col-acciones .acciones-fila { justify-content: flex-end; }
 .btn-tabla {
   padding: 5px 10px; margin-left: 4px;
   background: transparent; border: 1px solid var(--app-borde-control); border-radius: 4px;
@@ -2876,6 +2877,10 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
 
 .form-rnc { margin-top: 14px; }
 .form-rnc .btn { margin-top: 14px; }
+
+@media (max-width: 1280px) {
+  .tabla-anuncios .col-acciones { white-space: normal; }
+}
 
 /* ── Identidad del anunciante en el asistente ───────────── */
 
@@ -3036,6 +3041,31 @@ select:focus, .calc__campo input:focus, .rango input:focus { outline: none; bord
 }
 
 @media (max-width: 640px) {
+  #panelContenido .tabla-anuncios--gestion { display: block; }
+  #panelContenido .tabla-anuncios--gestion thead { display: none; }
+  #panelContenido .tabla-anuncios--gestion tbody { display: grid; gap: 12px; }
+  #panelContenido .tabla-anuncios--gestion tr {
+    display: block; padding: 10px; border: 1px solid var(--linea-suave); border-radius: 6px;
+  }
+  #panelContenido .tabla-anuncios--gestion th,
+  #panelContenido .tabla-anuncios--gestion td {
+    display: grid; grid-template-columns: minmax(82px, auto) minmax(0, 1fr); gap: 10px;
+    align-items: start; padding: 8px 0; text-align: left; border-bottom: 1px solid var(--linea-suave);
+  }
+  #panelContenido .tabla-anuncios--gestion th::before,
+  #panelContenido .tabla-anuncios--gestion td::before {
+    content: attr(data-label); font-size: 10.5px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--gris-acero);
+  }
+  #panelContenido .tabla-anuncios--gestion .celda-equipo { grid-template-columns: minmax(82px, auto) minmax(0, 1fr); }
+  #panelContenido .tabla-anuncios--gestion .celda-equipo > .celda-equipo__foto { display: none; }
+  #panelContenido .tabla-anuncios--gestion .col-num { text-align: left; }
+  #panelContenido .tabla-anuncios--gestion .col-acciones {
+    grid-template-columns: minmax(0, 1fr); border-bottom: 0; padding-bottom: 0;
+  }
+  #panelContenido .tabla-anuncios--gestion .col-acciones::before { display: none; }
+  #panelContenido .tabla-anuncios--gestion .col-acciones .acciones-fila { justify-content: flex-start; }
+  #panelContenido .tabla-anuncios--gestion .btn-tabla { margin: 0; }
   .fila--busqueda { grid-template-columns: minmax(0, 1fr); }
   .fila--busqueda > .panel:last-child { grid-column: auto; }
   .rejilla { grid-template-columns: repeat(2, minmax(0, 1fr)); }
