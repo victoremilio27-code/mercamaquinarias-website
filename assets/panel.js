@@ -437,8 +437,8 @@ function pagosEnEsperaHTML() {
   return `<section class="pagos-espera" aria-labelledby="t-pagos-espera">
     <h3 class="transferencia__titulo" id="t-pagos-espera">Pagos en espera de confirmación</h3>
     <p class="panel__texto">${esParticular()
-      ? 'Su anuncio se publica cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'
-      : 'Lo contratado aparecerá aquí cuando confirmemos el ingreso; le enviaremos el comprobante fiscal por correo.'}</p>
+      ? 'Su anuncio se publica cuando confirmemos el ingreso; le enviaremos su comprobante por correo.'
+      : 'Lo contratado aparecerá aquí cuando confirmemos el ingreso; le enviaremos su comprobante por correo.'}</p>
     ${PAGOS_PENDIENTES.map(tarjetaPagoEnEspera).join('')}
   </section>`;
 }
@@ -459,7 +459,8 @@ function tarjetaMetrica(icono_, valor, rotulo, detalle) {
 function pintarMetricas(resumen) {
   const t = resumen.totales || {};
   const activos = ANUNCIOS.filter((a) => a.estado === 'activo').length;
-  const inactivos = ANUNCIOS.length - activos;
+  const borradores = ANUNCIOS.filter((a) => a.estado === 'borrador').length;
+  const inactivos = ANUNCIOS.length - activos - borradores;
   const contactos = (t.telefono || 0) + (t.whatsapp || 0);
 
   /* La tasa de contacto es el dato que de verdad dice si un anuncio
@@ -501,7 +502,9 @@ function tarjetaPlanParticular(m) {
   const vigencia = vigenciaPlan(m);
   const capacidad = m.anuncios_incluidos == null
     ? `${m.ocupados} publicados · sin límite`
-    : `Capacidad para ${m.anuncios_incluidos} ${m.anuncios_incluidos === 1 ? 'equipo' : 'equipos'}, ${m.libres} ${m.libres === 1 ? 'disponible' : 'disponibles'}`;
+    : m.anuncios_incluidos === 1
+      ? (m.ocupados === 1 ? 'En uso por su equipo' : 'Lista para publicar un equipo')
+      : `Para ${m.anuncios_incluidos} equipos, ${m.libres} ${m.libres === 1 ? 'disponible' : 'disponibles'}`;
 
   return `<li class="membresia${m.libres === 0 ? ' membresia--llena' : ''}" data-membresia="${esc(m.id)}">
     <span class="membresia__cabeza">
@@ -766,7 +769,7 @@ function filaBorrador(a) {
          aria-label="Eliminar ${nombre}">Eliminar</button>`;
 
   return `<tr data-id="${esc(a.id)}">
-    <th scope="row" class="celda-equipo">
+    <th scope="row" class="celda-equipo" data-label="Equipo">
       <span class="celda-equipo__foto">${a.foto
         ? `<img src="${esc(a.foto)}" alt="${esc(`Foto de ${nombreDe(a)}`)}">`
         : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
@@ -774,12 +777,12 @@ function filaBorrador(a) {
         <a class="celda-equipo__nombre" href="publicar.html?borrador=${encodeURIComponent(a.id)}">${nombre}</a>
       </span>
     </th>
-    <td><span class="estado ${ESTADOS.borrador.clase}">${esc(estadoTexto)}</span></td>
-    <td class="col-num num">—</td>
-    <td class="col-num num">—</td>
-    <td>${plan}</td>
-    <td>—</td>
-    <td class="col-acciones">${acciones}</td>
+    <td data-label="Estado"><span class="estado ${ESTADOS.borrador.clase}">${esc(estadoTexto)}</span></td>
+    <td class="col-num num" data-label="Vistas">—</td>
+    <td class="col-num num" data-label="Contactos">—</td>
+    <td data-label="Plan">${plan}</td>
+    <td data-label="Vigencia">—</td>
+    <td class="col-acciones" data-label="Acciones"><span class="acciones-fila">${acciones}</span></td>
   </tr>`;
 }
 
@@ -793,7 +796,7 @@ function filaAnuncio(a) {
     : 'Sin precio';
 
   return `<tr data-id="${esc(a.id)}">
-    <th scope="row" class="celda-equipo">
+    <th scope="row" class="celda-equipo" data-label="Equipo">
       <span class="celda-equipo__foto">${a.foto
         ? `<img src="${esc(a.foto)}" alt="${esc(`Foto de ${nombreDe(a)}`)}">`
         : icono('i-hex-doble', 'fantasma fantasma--sm')}</span>
@@ -803,12 +806,12 @@ function filaAnuncio(a) {
         ${estadoSerieHTML(a)}
       </span>
     </th>
-    <td><span class="estado ${estado.clase}">${estado.nombre}</span></td>
-    <td class="col-num num">${miles(a.vistas || 0)}</td>
-    <td class="col-num num">${miles(contactos)}</td>
-    <td>${selectorPlan(a)}</td>
-    <td>${textoVigencia(a)}</td>
-    <td class="col-acciones">
+    <td data-label="Estado"><span class="estado ${estado.clase}">${estado.nombre}</span></td>
+    <td class="col-num num" data-label="Vistas">${miles(a.vistas || 0)}</td>
+    <td class="col-num num" data-label="Contactos">${miles(contactos)}</td>
+    <td data-label="Plan">${selectorPlan(a)}</td>
+    <td data-label="Vigencia">${textoVigencia(a)}</td>
+    <td class="col-acciones" data-label="Acciones"><span class="acciones-fila">
       ${accionRenovar(a)}
       ${a.estado === 'activo'
         ? '<button type="button" class="btn-tabla" data-accion="pausado">Pausar</button>'
@@ -828,6 +831,7 @@ function filaAnuncio(a) {
       ${a.estado !== 'vendido' ? botonDisponibilidad(a) : ''}
       <button type="button" class="btn-tabla btn-tabla--borrar" data-borrar="${esc(a.id)}"
         aria-label="Eliminar ${esc(nombreDe(a))}">Eliminar</button>
+      </span>
     </td>
   </tr>`;
 }
@@ -1143,18 +1147,28 @@ async function montarSucursales() {
 
     if (btn.hasAttribute('data-editar')) return abrirFormularioSucursal(s);
 
-    if (btn.hasAttribute('data-principal')) {
-      const r = await api(`/sucursales/${encodeURIComponent(idSucursal)}`, {
-        metodo: 'PATCH', cuerpo: { principal: true }, silencioso: true,
-      });
-      if (r) { SUCURSALES = r.sucursales; pintarSucursales(); }
-      return;
-    }
+    const aviso = $('#avisoSucursal');
+    try {
+      if (btn.hasAttribute('data-principal')) {
+        const r = await api(`/sucursales/${encodeURIComponent(idSucursal)}`, {
+          metodo: 'PATCH', cuerpo: { principal: true },
+        });
+        if (!r) throw new Error('No hay conexión con el servidor.');
+        SUCURSALES = r.sucursales;
+        pintarSucursales();
+        return;
+      }
 
-    if (btn.hasAttribute('data-quitar')) {
-      if (!confirm(`¿Retirar la sucursal ${s.nombre}? Sus anuncios publicados no se borran.`)) return;
-      const r = await api(`/sucursales/${encodeURIComponent(idSucursal)}`, { metodo: 'DELETE', silencioso: true });
-      if (r) { SUCURSALES = r.sucursales; pintarSucursales(); }
+      if (btn.hasAttribute('data-quitar')) {
+        if (!confirm(`¿Retirar la sucursal ${s.nombre}? Sus anuncios publicados no se borran.`)) return;
+        const r = await api(`/sucursales/${encodeURIComponent(idSucursal)}`, { metodo: 'DELETE' });
+        if (!r) throw new Error('No hay conexión con el servidor.');
+        SUCURSALES = r.sucursales;
+        pintarSucursales();
+      }
+    } catch (e) {
+      aviso.hidden = false;
+      aviso.textContent = e.message;
     }
   });
 
@@ -1498,32 +1512,37 @@ async function montarPanel() {
         + 'para publicar otro equipo sin volver a pagar.')) return;
 
     btn.disabled = true;
-    const r = await api(`/anuncios/${encodeURIComponent(idAnuncio)}`, {
-      metodo: 'PATCH', cuerpo: { estado }, silencioso: true,
-    });
-    if (!r) { btn.disabled = false; return; }
+    try {
+      const r = await api(`/anuncios/${encodeURIComponent(idAnuncio)}`, {
+        metodo: 'PATCH', cuerpo: { estado },
+      });
+      if (!r) throw new Error('No hay conexión con el servidor.');
 
-    const anuncio = ANUNCIOS.find((a) => a.id === idAnuncio);
-    if (anuncio) anuncio.estado = estado;
-    pintarFiltros();
-    pintarMetricas(datos.resumen || {});
-    await refrescarCupos();
+      const anuncio = ANUNCIOS.find((a) => a.id === idAnuncio);
+      if (anuncio) anuncio.estado = estado;
+      pintarFiltros();
+      pintarMetricas(datos.resumen || {});
+      await refrescarCupos();
 
-    // El dealer (y la exenta) lee el mismo aviso con el texto de D-07: lo
-    // vendido libera capacidad en su plan, no un pago aparte.
-    if (estado === 'vendido' && !esParticular()) {
-      avisoPlan(
-        'Este equipo fue vendido. Ahora puede publicar otro equipo con la capacidad disponible de su plan.',
-        false,
-        { href: 'publicar.html', texto: 'Publicar otro equipo' },
-      );
-    }
-    if (estado === 'vendido' && esParticular()) {
-      avisoPlan(
-        `Este equipo fue vendido. Ahora puedes publicar otro equipo${r.capacidadLibre ? ' con la capacidad disponible de tu plan.' : '.'}`,
-        false,
-        { href: 'publicar.html', texto: 'Publicar otro equipo' },
-      );
+      // El dealer (y la exenta) lee el mismo aviso con el texto de D-07: lo
+      // vendido libera capacidad en su plan, no un pago aparte.
+      if (estado === 'vendido' && !esParticular()) {
+        avisoPlan(
+          'Este equipo fue vendido. Ahora puede publicar otro equipo con la capacidad disponible de su plan.',
+          false,
+          { href: 'publicar.html', texto: 'Publicar otro equipo' },
+        );
+      }
+      if (estado === 'vendido' && esParticular()) {
+        avisoPlan(
+          `Este equipo fue vendido. Ahora puedes publicar otro equipo${r.capacidadLibre ? ' con la capacidad disponible de tu plan.' : '.'}`,
+          false,
+          { href: 'publicar.html', texto: 'Publicar otro equipo' },
+        );
+      }
+    } catch (e) {
+      btn.disabled = false;
+      avisoPlan(e.message);
     }
   });
 
@@ -2069,6 +2088,14 @@ async function montarPanel() {
   }
   $('#btnConfirmarAmpliar').addEventListener('click', confirmarAmpliacion);
 
+  document.addEventListener('legales-aceptadas', () => {
+    if (AMPLIAR_OBJETIVO) {
+      avisoAmp('');
+      pintarPrecioAmpliar();
+    }
+    if (RENOVAR_OBJETIVO) avisoRen('');
+  });
+
   /* Enlace panel.html?ampliar=<id>. El valor sale de la URL: solo abre si
      coincide EXACTAMENTE con una membresía de esta cuenta con límite y
      nunca se pinta (T-05.4-08). */
@@ -2094,6 +2121,12 @@ async function montarContactos() {
   if (!seccion || !lista || typeof VerificarContacto === 'undefined') return;
 
   const contactos = await VerificarContacto.cargar();
+  const avisoTelefonos = $('#avisoTelefonoAnuncios');
+  if (avisoTelefonos) {
+    const tieneActivo = ANUNCIOS.some((a) => a.estado === 'activo');
+    const tieneVerificado = (contactos || []).some((c) => c.verificado);
+    avisoTelefonos.hidden = !tieneActivo || tieneVerificado;
+  }
   if (!contactos || !contactos.length) {
     seccion.hidden = true;
     return;

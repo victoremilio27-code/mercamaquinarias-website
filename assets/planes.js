@@ -360,9 +360,9 @@ function pintarPedido() {
        </dl>
        ${selector}
        ${pagaPorTransferencia(ped, elegidoAhora)
-    ? `<p class="pedido__metodo" data-texto-transferencia><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
+    ? `<p class="pedido__metodo" data-texto-transferencia><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y su comprobante llegan cuando recibamos el ingreso.</p>`
     : (conTarjeta && porTransferencia()
-      ? `<p class="pedido__metodo" data-texto-transferencia hidden><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y el comprobante fiscal llegan cuando recibamos el ingreso.</p>`
+      ? `<p class="pedido__metodo" data-texto-transferencia hidden><b>Forma de pago: transferencia bancaria.</b> Le damos los datos y la referencia al confirmar; las publicaciones activas y su comprobante llegan cuando recibamos el ingreso.</p>`
       : '')}`;
 
   $('#btnContratar').textContent = textoBotonContratar(ped);
