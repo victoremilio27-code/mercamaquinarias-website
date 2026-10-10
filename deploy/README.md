@@ -173,7 +173,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name mercamaquinarias.com www.mercamaquinarias.com;
-    client_max_body_size 12M;
+    client_max_body_size 25M;
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
