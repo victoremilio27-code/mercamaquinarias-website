@@ -196,6 +196,7 @@ function estadoInicial() {
 
 let estado = estadoInicial();
 let borradorActualizado = null;
+let colaGuardado = Promise.resolve();
 let ultimoErrorGuardadoServidor = '';
 
 /* El borrador sobrevive a un cierre de pestaña. Las fotos van dentro:
@@ -1842,6 +1843,16 @@ async function guardarEnServidor(inmediato) {
   }
   clearTimeout(temporizadorGuardado);
 
+  /* En cola, uno detrás de otro: con `siActualizado`, dos guardados de
+     esta misma pestaña en vuelo a la vez mandarían el mismo sello y el
+     segundo recibiría el 409 de «otra pestaña» (y bloquearía el pago). */
+  const turno = colaGuardado.then(enviarGuardado);
+  colaGuardado = turno.catch(() => {});
+  return turno;
+}
+
+async function enviarGuardado() {
+  if (MODO !== 'publicacion' || !estado.idBorrador) return;
   try {
     const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}`, {
       metodo: 'PUT', cuerpo: cuerpoParaBorrador(),
@@ -1854,7 +1865,7 @@ async function guardarEnServidor(inmediato) {
     }
   } catch (e) {
     ultimoErrorGuardadoServidor = e.message || 'No se pudo guardar en su cuenta.';
-    if (e.codigo === 409 && /actualiz|otra pestaña|cambi[oó]/i.test(e.message || '')) {
+    if (e.codigo === 409 && /otra pestaña/i.test(e.message || '')) {
       avisoGuardadoDiscreto(e.message);
     } else if (e.codigo === 409) {
       // Pago en espera: se enseña la espera y se deja de ofrecer el
