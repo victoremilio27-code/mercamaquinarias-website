@@ -52,7 +52,15 @@ página, FISCAL-8 (devoluciones por fecha de la nota; Codex no lo hizo) y todas 
 Batería 70/70, las cuatro auditorías del navegador en verde y panel/mi-página mirados a 390 y 1280, claro y oscuro.
 **Lección:** pedir a Codex el parche con `git format-patch` *sin recortar*; si vuelve a llegar abreviado, aplicar a
 mano es más rápido que otra vuelta.
-**Siguiente (Claude, antes del 14):** relanzar la auditoría visual completa y la de operación que no terminaron.
+**Auditorías visual y de operación hechas (PR #209):** 96 capturas (22 páginas, 390/1280, claro/oscuro) sin
+desbordes ni errores; solo un fallo en la portada (línea del ahorro partida en columnas). En operación, nginx seguía
+en 12M con el video ya fusionado (PR #9): subido a 25M con prueba en `despliegue:puro`. Script de barrido en la
+carpeta de la sesión (no en el repo): puppeteer con `fullPage` y tiras de 1800 px para poder mirarlas.
+**BLOQUEANTE DEL LANZAMIENTO, solo Victor:** desde el PR #202 producción no cobra por `demo`, y en el VPS no hay datos
+de transferencia: `/api/planes` da `metodosPago: []` y **todo cobro con importe responde 503**. El humo de cada
+despliegue sale en rojo por eso (el sitio sí se actualiza: «Actualizar el droplet» en verde). Arreglo: las cinco
+`MERCA_TRANSFERENCIA_*` en `/etc/mercamaquinarias.env` (`deploy/README.md`, sección de la transferencia) y reiniciar.
+También en el VPS: copiar `deploy/nginx.conf` y recargar nginx (25M).
 No quedan issues `codex` para el lanzamiento: #152/#153 (fase 14) esperan sus bases #148/#149 y van después del 14.
 Las preguntas de la auditoría (abajo e informe) siguen pendientes de Victor.
 
