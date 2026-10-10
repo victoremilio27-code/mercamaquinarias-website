@@ -1886,6 +1886,17 @@ function verificarCodigo({ correo, tipo, codigo }) {
   return { ok: true, usuario_id: fila.usuario_id };
 }
 
+/* Si hay un código de ese tipo todavía utilizable (sin consumir, sin
+   vencer y con intentos). Solo lectura. Lo usa el reenvío del código de
+   acceso: que haya uno vivo prueba que alguien dio la contraseña hace
+   minutos (auditoría 2026-10, SEG-PERMISOS-03). */
+function hayCodigoVivo(correo, tipo) {
+  return !!abrir().prepare(`
+    SELECT 1 FROM codigos
+     WHERE correo = ? AND tipo = ? AND consumido = 0 AND expira > ? AND intentos < ?
+     LIMIT 1`).get(String(correo).trim().toLowerCase(), tipo, ahora(), MAX_INTENTOS_CODIGO);
+}
+
 const marcarCorreoVerificado = (idUsuario) =>
   abrir().prepare('UPDATE usuarios SET correo_verificado = 1 WHERE id = ?').run(idUsuario);
 
@@ -5020,6 +5031,20 @@ function filtrosCatalogo(f = {}) {
 const soloUsados = (sql, p) =>
   Object.fromEntries(Object.entries(p).filter(([clave]) => new RegExp(`:${clave}\\b`).test(sql)));
 
+/* Los anuncios del sitemap: el mismo filtro público y el mismo orden del
+   catálogo, pero solo id y fechas. El sitemap recorría el catálogo con
+   buscarAnuncios, de 60 en 60 y con sus subconsultas de fotos y su
+   recuento: con 5.000 anuncios eran 2 s con el único hilo de Node parado
+   mientras un buscador lo pedía (auditoría 2026-10). */
+function anunciosDelSitemap() {
+  const { donde, parametros } = filtrosCatalogo({});
+  parametros.ahora = ahora();
+  parametros.tasa = tasaUsd().tasa;
+  const sql = `SELECT a.id, a.actualizado, a.publicado FROM anuncios a WHERE ${donde}
+    ORDER BY ${ORDENES_SQL[ORDEN_POR_DEFECTO]}`;
+  return abrir().prepare(sql).all(soloUsados(sql, parametros));
+}
+
 function buscarAnuncios(f = {}) {
   const d = abrir();
   const { donde, parametros } = filtrosCatalogo(f);
@@ -5821,7 +5846,13 @@ function anotarEvento(idAnuncio, tipo, visitante) {
   const columna = COLUMNA_EVENTO[tipo];
   if (!columna) return 'invalido';
   const d = abrir();
-  if (!d.prepare('SELECT 1 FROM anuncios WHERE id = ?').get(idAnuncio)) return 'invalido';
+  const anuncio = d.prepare('SELECT estado FROM anuncios WHERE id = ?').get(idAnuncio);
+  if (!anuncio) return 'invalido';
+  /* Auditoría 2026-10: un borrador, un anuncio pausado o uno vendido no
+     recibe contactos ni visitas (se aceptaban, también sobre un borrador
+     ajeno, y avisaban al dueño). No es un error del visitante: quien
+     llama responde 202 sin contar. */
+  if (anuncio.estado !== 'activo') return 'inactivo';
 
   const dia = hoy();
 
@@ -6655,6 +6686,20 @@ function historialAceptaciones({ documento, limite = 200 } = {}) {
 
 /* ── Comprobantes ───────────────────────────────────────── */
 
+/* Si `tomarNcf(tipo)` daría un número AHORA, sin gastarlo: las mismas
+   condiciones (activa, la usa el sitio, con números y sin vencer). Solo
+   lectura. Lo usa la compra con RNC para decir que no ANTES de cobrar
+   (auditoría 2026-10, FISCAL-4): antes, con la B01 agotada o vencida, la
+   empresa pagaba y recibía un recibo sin aviso. Entre esta pregunta y la
+   emisión otro pago puede llevarse el último número; ese caso lo cubre
+   el aviso de `facturas.emitirPorPago`. */
+function ncfDisponible(tipo) {
+  const s = abrir().prepare(
+    'SELECT siguiente, hasta, vence FROM secuencias_ncf WHERE tipo = ? AND activa = 1 AND usa_sitio = 1').get(tipo);
+  if (!s || s.siguiente > s.hasta) return false;
+  return !(s.vence && s.vence < hoy());
+}
+
 /* Toma el siguiente NCF de una secuencia y lo marca como consumido.
  *
  * VA EN UNA TRANSACCIÓN, y no es paranoia: dos pagos que entren en el
@@ -6744,11 +6789,30 @@ function cargarSecuencia({ tipo, nombre, desde, hasta, vence = null, activa = tr
     throw Object.assign(new Error('El vencimiento va como AAAA-MM-DD'), { codigo: 400 });
   }
 
+  /* Auditoría 2026-10 (FISCAL-6): solo hay un rango activo por tipo, así
+     que cargar el que sustituye al que vence el 2026-11-30 SIN marcar «la
+     usa el sitio» (una casilla desmarcada, o la línea de comandos sin
+     --usa-sitio) desactivaba la B01 que funcionaba y todas las empresas
+     pasaban a recibir recibo, sin aviso. Si el sitio ya emite ese tipo,
+     el rango nuevo tiene que llevar la marca; para pasarlo a «solo
+     contabilidad» a propósito, se desactiva antes el actual. */
+  if (activa && !usaSitio
+    && d.prepare('SELECT 1 FROM secuencias_ncf WHERE tipo = ? AND activa = 1 AND usa_sitio = 1').get(t)) {
+    throw Object.assign(new Error(`El sitio emite ${t} desde la secuencia activa: marque «la usa el sitio» `
+      + 'en el rango nuevo, o desactive antes la actual si de verdad pasa a ser solo de contabilidad.'), { codigo: 400 });
+  }
+
   const yaEsta = d.prepare('SELECT * FROM secuencias_ncf WHERE tipo = ? AND desde = ?').get(t, a);
   if (yaEsta) {
+    /* Auditoría 2026-10 (E2E-NEGOCIO-2): recargar desde la consola sin
+       escribir la fecha le borraba el vencimiento, y con él la guarda de
+       tomarNcf contra emitir fuera de plazo: sin fecha nueva se conserva
+       la que tenía. Y reactivar un rango viejo lo dejaba activo junto al
+       nuevo; como en la carga de uno nuevo, el resto se desactiva. */
+    if (activa) d.prepare('UPDATE secuencias_ncf SET activa = 0 WHERE tipo = ? AND activa = 1 AND id <> ?').run(t, yaEsta.id);
     d.prepare(`UPDATE secuencias_ncf SET vence = ?, activa = ?, usa_sitio = ?, nombre = ?
                 WHERE id = ?`)
-      .run(vence, activa ? 1 : 0, usaSitio ? 1 : 0, nombre || yaEsta.nombre, yaEsta.id);
+      .run(vence || yaEsta.vence, activa ? 1 : 0, usaSitio ? 1 : 0, nombre || yaEsta.nombre, yaEsta.id);
     return { ...d.prepare('SELECT * FROM secuencias_ncf WHERE id = ?').get(yaEsta.id), nueva: false };
   }
 
@@ -7265,7 +7329,7 @@ module.exports = {
   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
   eliminarCuenta, bloqueoEliminarCuenta,
-  tomarNcf, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, enTransaccionInmediata, facturaPorId, facturaDePago, ultimosDatosFiscales,
+  anunciosDelSitemap, tomarNcf, ncfDisponible, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, enTransaccionInmediata, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,
   borrarMetodoPago, enlazarMetodoPago, anotarResultadoTarjeta, anotarRespuestaProcesador, anotarEventoPago,
@@ -7288,7 +7352,7 @@ module.exports = {
   VIAS_CAMBIO_CLAVE, anotarCambioClave, revertirCambioClave,
   usuarioPorCorreo, usuarioPorId, crearCuenta, organizacionDe, sucursalPrincipal,
   abrirSesion, sesion, cerrarSesion, cerrarTodoDe,
-  crearCodigo, verificarCodigo, marcarCorreoVerificado,
+  crearCodigo, verificarCodigo, hayCodigoVivo, marcarCorreoVerificado,
   /* Contactos verificados: ningún teléfono sin verificar sale en un anuncio. */
   normalizarNumero, pedirCodigoContacto, confirmarCodigoContacto,
   numerosVerificados, contactosDe, marcarContactoVerificado,

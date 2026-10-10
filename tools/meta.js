@@ -316,16 +316,9 @@ function sitemap() {
   }));
 
   try {
-    const anuncios = [];
-    let pagina = 1;
-    let resultado;
-    do {
-      resultado = db.buscarAnuncios({ porPagina: 60, pagina });
-      anuncios.push(...(resultado.anuncios || []));
-      pagina++;
-    } while (pagina <= resultado.paginas);
-
-    anuncios.forEach((a) => urls.push({
+    /* Una sola consulta ligera (auditoría 2026-10): recorrer el catálogo
+       de 60 en 60 tardaba 2 s con 5.000 anuncios. */
+    db.anunciosDelSitemap().forEach((a) => urls.push({
       loc: `${SITIO}/equipo.html?id=${encodeURIComponent(a.id)}`,
       prioridad: '0.8',
       frecuencia: 'weekly',

@@ -91,6 +91,8 @@ function estadoDelSistema({
   carpetas = {},
   ahora = Date.now(),
   fsx = fs,
+  metodosPago,
+  produccion = false,
 } = {}) {
   const base = intentar(() => estadoBase(archivoBase, fsx));
   const disco = intentar(() => estadoDisco(archivoBase, fsx));
@@ -118,7 +120,20 @@ function estadoDelSistema({
     avisos.push('El archivo WAL de la base supera los 100 MB.');
   }
 
-  return { base, disco, respaldo, carpetas: estadoCarpetas, avisos };
+  /* Auditoría 2026-10 (FISCAL-1): en producción, sin método de cobro el
+     sitio no vende, y con `demo` regala publicaciones y gasta NCF. Las
+     dos cosas se veían solo en el registro del servidor. */
+  const estado = { base, disco, respaldo, carpetas: estadoCarpetas, avisos };
+  if (Array.isArray(metodosPago)) {
+    estado.pagos = { metodos: [...metodosPago] };
+    if (produccion && !metodosPago.length) {
+      avisos.push('El sitio no puede cobrar: no hay transferencia ni CardNet encendidos.');
+    }
+    if (produccion && metodosPago.includes('demo')) {
+      avisos.push('El cobro de demostración está activo en producción: se aprueba sin dinero.');
+    }
+  }
+  return estado;
 }
 
 function formatoBytes(n) {

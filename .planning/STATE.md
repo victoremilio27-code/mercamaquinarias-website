@@ -16,7 +16,7 @@ progress:
 
 # Project State
 
-## Para retomar (actualizado 2026-10-08) — EMPIEZA AQUÍ
+## Para retomar (actualizado 2026-10-10) — EMPIEZA AQUÍ
 
 Prompt para abrir el próximo chat: *«Retoma MercaMaquinarias: lee CLAUDE.md y "Para retomar" de
 .planning/STATE.md y sigue.»*
@@ -41,6 +41,31 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
 4. **Despachar la siguiente:** quitar `bloqueado` a lo desbloqueado, encargar con `@codex` todos los issues
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
+
+**AUDITORÍA FINAL (2026-10-09/10) — informe completo en `.planning/AUDITORIA-2026-10.md`.** Batería de CI 70/70 y
+auditorías del navegador en verde antes de empezar; siete auditorías en paralelo (la visual y la de operación NO
+terminaron por el tope de uso: relanzarlas). Arreglos de Claude, cada uno con su prueba escrita antes, en el **PR #202**
+(rama `claude/mercamaquinarias-final-audit-0395pu`; se fusiona con CI en verde, autorizado; sin migraciones):
+FISCAL-1 crítico (en producción `demo` ya no cobra nunca: sin transferencia ni CardNet, 503), FISCAL-2 (anular un recibo
+sin NCF ya no gasta B04; la vista web de un recibo ya no dice «comprobante fiscal»), FISCAL-4/5/6/9 (sin B01 no se cobra
+con RNC; RNC con dígito verificador y cédula admitida; cargar el rango nuevo no apaga la B01; aviso de NCF a gerencia),
+SEG-03 (reenviar ya no abre sesión sin contraseña), bloqueo ajeno, CSRF de inicio de sesión (escrituras con `Origin`
+ajeno → 403), topes por /64 en IPv6 y un correo de contacto por persona y día, consola de comprobantes (avisos y
+secuencias que no pierden la fecha) y sitemap de 2 s a 20 ms.
+**Encargos a Codex (tanda 11), uno por grupo de archivos, sin solapes:** #203 (API: `tools/api.js`, `db.js`, `correo.js`,
+`pagos.js`), #204 (`assets/publicar.js`, `publicar.html`, `assets/sesion.js`), #205 (`assets/panel.js`, `planes.js`,
+`admin.js`, `admin.html`, `panel.html`, `styles.css`), #206 (`assets/mi-pagina.js`), #207 (`tools/imagen-limpia.js`,
+`documentos.js`). **Se encargan cuando #202 esté en `main`** (todos parten de él). Orden al aplicar: 207 206 205 204 203.
+Al recoger: #203 y #204 se cruzan en E2E-NEGOCIO-8 (`siActualizado`) y #204/#205 en el evento `legales-aceptadas`;
+mirar a ojo #205 y #206 a 390 y 1280 px, claro y oscuro.
+**Pendiente de Victor** (lista con preguntas y comandos en el informe): FISCAL-3 (corregir comprobantes, con
+migración: propuesta después del 14), crear `legal@` (lo da `legal.html` para los derechos de datos y no existe),
+editar un anuncio activo, cancelar una transferencia pedida y no pagada, «vendido» con franja o 404, rangos B01/B04
+que vencen el 30-11, promoción del Estándar en la capacidad de dealers, plan de Brevo y disco. Comprobar en vivo:
+`/api/planes` debe dar `"metodosPago":["transferencia"]`. #169 y #170 están resueltos en el código: cerrarlos cuando
+Victor confirme `systemctl list-timers 'mercamaquinarias*'` y `nginx -T` en el VPS.
+**Lección:** con siete agentes a la vez el tope de uso cortó tres veces; las salidas que dejan en la carpeta de la
+sesión se pueden retomar (el flujo guarda los resultados terminados), pero más vale lanzar menos a la vez.
 
 **OLEADA 9 PUBLICADA (2026-10-08, rama `codex/tanda-9`):** entraron las 14 tareas: #184 (apagado ordenado),
 #185 (la siembra de demostración no toca producción), #186 (`despliegue:puro`), #187 (`reglas-negocio:puro`), #188

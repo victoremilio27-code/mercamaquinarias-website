@@ -1180,6 +1180,89 @@ db.cargarSecuencia({
     ok(llamadasDemo33 === 0, `el procesador demo se llamó ${llamadasDemo33} vez/veces en la sección 33`);
   }
 
+  /* Auditoría 2026-10 (FISCAL-1): con CardNet apagado, apagar la
+     transferencia (MERCA_TRANSFERENCIA=0, como decía el README, o un
+     tecleo en una de las cinco variables) dejaba `demo` como método de
+     cobro EN PRODUCCIÓN: cualquier visitante publicaba sin pagar y cada
+     compra con RNC gastaba un B01 real. En producción, sin un cobro de
+     verdad no se vende nada: 503 y ningún pago anotado. */
+  console.log('\n34. En producción, sin transferencia ni CardNet no hay cobro: ni demo ni pago');
+  {
+    const entornoAntes = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    espiarDemo();
+    try {
+      apagar();
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '[]', `apagada en producción: ${JSON.stringify(pagos.metodosDeCobro())}`);
+      encender({ MERCA_TRANSFERENCIA: '0' });
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '[]', `MERCA_TRANSFERENCIA=0 en producción: ${JSON.stringify(pagos.metodosDeCobro())}`);
+      encender({ MERCA_TRANSFERENCIA_CUENTA: '000-ABC-000' });
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '[]', 'una variable mal tecleada en producción: sin métodos');
+      {
+        const e = lanza(() => pagos.procesadorDeCobro());
+        ok(!!e && e.codigo === 503 && /no está disponible/.test(e.message),
+          `sin pedido: ${e ? `${e.codigo} ${e.message}` : 'NO lanzó'}`);
+        const e2 = lanza(() => pagos.procesadorDeCobro('demo'));
+        ok(!!e2, `pide demo: ${e2 ? e2.codigo : 'NO lanzó: demo al alcance del comprador'}`);
+      }
+      apagar();
+      const antes = pagosTotales();
+      const antesFact = facturasTotales();
+      const r = await comprar({ plan: 'destacado', cupo: 1, dias: 30 });
+      ok(r.codigo === 503 && /no está disponible/.test((r.datos || {}).error || ''),
+        `comprar sin método en producción: ${r.codigo} ${(r.datos || {}).error}`);
+      ok(pagosTotales() === antes && facturasTotales() === antesFact,
+        `no queda pago ni factura: pagos +${pagosTotales() - antes}, facturas +${facturasTotales() - antesFact}`);
+      ok(llamadasDemo === 0, `demo se llamó ${llamadasDemo} vez/veces`);
+      encender();
+      ok(JSON.stringify(pagos.metodosDeCobro()) === '["transferencia"]', 'encendida en producción: solo transferencia');
+    } finally {
+      soltarDemo();
+      if (entornoAntes === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = entornoAntes;
+    }
+  }
+
+  /* Auditoría 2026-10 (FISCAL-4 y FISCAL-5). Un tecleo en el RNC daba una
+     B01 irreversible que el cliente no podía usar y que el 607 reportaba
+     con un RNC inexistente; la cédula de una persona física, que la DGII
+     admite como RNC, se rechazaba. Y con la B01 agotada o vencida, quien
+     pedía comprobante con RNC pagaba y recibía un recibo sin aviso. Todo
+     se comprueba ANTES de anotar el pago. */
+  console.log('\n35. Pagar con RNC: dígito verificador, cédula y sin B01');
+  {
+    encender();
+    const quien = cuentaConLegales('rnc-transferencia@prueba.invalid', 'Comprador con RNC');
+    const conRnc = (rnc) => ({
+      plan: 'destacado', cupo: 1, dias: 30, conRnc: true, rnc,
+      razonSocial: 'Comprador de Prueba, S.R.L.', direccionFiscal: 'Calle Primera 1, Santo Domingo',
+    });
+    db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 1, hasta: 50, vence: '2027-12-31', usaSitio: true });
+
+    let antes = pagosTotales();
+    let r = await comprar(conRnc('131279750'), quien);
+    ok(r.codigo === 400 && /RNC|cédula/.test((r.datos || {}).error || '') && pagosTotales() === antes,
+      `RNC con el dígito verificador mal: ${r.codigo} ${(r.datos || {}).error}`);
+    r = await comprar(conRnc('00100000018'), quien);
+    ok(r.codigo === 400 && pagosTotales() === antes, `cédula con el dígito verificador mal: ${r.codigo} ${(r.datos || {}).error}`);
+    r = await comprar(conRnc('12345'), quien);
+    ok(r.codigo === 400 && pagosTotales() === antes, `5 dígitos: ${r.codigo}`);
+    r = await comprar(conRnc('1-31-27975-9'), quien);
+    ok(r.codigo === 202 && pagosTotales() === antes + 1, `RNC válido escrito con guiones: ${r.codigo} ${(r.datos || {}).error || ''}`);
+    r = await comprar(conRnc('001-0000001-7'), quien);
+    ok(r.codigo === 202 && pagosTotales() === antes + 2, `cédula válida (persona física): ${r.codigo} ${(r.datos || {}).error || ''}`);
+
+    ejecuta("UPDATE secuencias_ncf SET siguiente = hasta + 1 WHERE tipo = 'B01'");
+    antes = pagosTotales();
+    r = await comprar(conRnc('131279759'), quien);
+    ok(r.codigo === 409 && /RNC/.test((r.datos || {}).error || '') && pagosTotales() === antes,
+      `sin B01, pagar con RNC es un 409 sin pago: ${r.codigo} ${(r.datos || {}).error}`);
+    r = await comprar({ plan: 'destacado', cupo: 1, dias: 30 }, quien);
+    ok(r.codigo === 202, `sin B01, pagar sin RNC sigue funcionando: ${r.codigo}`);
+    ejecuta("UPDATE secuencias_ncf SET siguiente = 1, vence = '2026-01-01' WHERE tipo = 'B01'");
+    r = await comprar(conRnc('131279759'), quien);
+    ok(r.codigo === 409, `con la B01 vencida, también 409: ${r.codigo}`);
+  }
+
   apagar();
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exit(fallos ? 1 : 0);

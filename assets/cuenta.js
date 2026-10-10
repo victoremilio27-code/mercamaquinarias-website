@@ -522,7 +522,11 @@ function montarCuenta() {
   });
 
   el('btnReenviar').addEventListener('click', async () => {
-    if (pendiente.via === 'sms') {
+    /* El código de acceso se pide otra vez CON la contraseña, por SMS o por
+       correo: desde la auditoría 2026-10 el servidor ya no reenvía uno de
+       acceso sin ella si el anterior venció, y la página diría «Le enviamos
+       un código nuevo» sin que saliera nada. */
+    if (pendiente.via === 'sms' || pendiente.tipo === 'acceso') {
       /* Sin `silencioso`: con él api() devuelve null ante un 429 o un 502
          en vez de lanzar, y la página diría «Le enviamos un código nuevo»
          sin haber enviado nada. */
@@ -532,7 +536,8 @@ function montarCuenta() {
       }
       try {
         const datos = await api('/cuenta/entrar', {
-          metodo: 'POST', cuerpo: { correo: pendiente.correo, clave: claveAcceso, via: 'sms' },
+          metodo: 'POST',
+          cuerpo: { correo: pendiente.correo, clave: claveAcceso, via: pendiente.via === 'sms' ? 'sms' : 'correo' },
         });
         if (!datos) return mostrarAviso('No hay conexión con el servidor. Inténtelo de nuevo.');
       } catch (e) {

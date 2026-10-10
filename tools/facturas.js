@@ -69,6 +69,44 @@ const TITULOS = {
   nota_credito: 'NOTA DE CRÉDITO',
 };
 
+/* Una nota de crédito sin NCF es la anulación interna de un recibo
+   (auditoría 2026-10, FISCAL-2): no es una nota de crédito fiscal y su
+   papel no puede llamarse así. */
+const anulacionDeRecibo = (f) => f.tipo === 'nota_credito' && !f.ncf;
+const tituloDe = (f) => (anulacionDeRecibo(f) ? 'ANULACIÓN DE RECIBO' : TITULOS[f.tipo]) || 'COMPROBANTE';
+
+/* El pie legal. Lo que hay que advertir cambia con el tipo: un recibo
+   no fiscal tiene que decir que no lo es, con todas las letras, y una
+   factura de crédito fiscal tiene que decir a qué da derecho. Lo usan
+   el PDF y la vista web: la vista llevaba un pie fijo de «comprobante
+   fiscal emitido conforme a las normas de la DGII», también en los
+   recibos (auditoría 2026-10). */
+const LEGALES = {
+  recibo: 'Este documento no constituye comprobante fiscal. Si requiere factura con valor '
+    + 'fiscal, escríbanos a facturacion@mercamaquinarias.com. Se emite como constancia del '
+    + 'pago recibido y del servicio contratado.',
+  factura_consumo: 'Comprobante fiscal emitido conforme a las normas de la Dirección General '
+    + 'de Impuestos Internos (DGII). Es válido como comprobante fiscal únicamente con su '
+    + 'Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento.',
+  factura_credito_fiscal: 'Comprobante fiscal con derecho a crédito fiscal, emitido conforme a '
+    + 'las normas de la Dirección General de Impuestos Internos (DGII). Es válido únicamente '
+    + 'con su Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento. '
+    + 'Consérvelo para sus registros contables.',
+  nota_credito: 'Nota de crédito emitida conforme a las normas de la Dirección General de '
+    + 'Impuestos Internos (DGII) para anular total o parcialmente el comprobante que se indica. '
+    + 'No sustituye a la devolución del importe, que se tramita por separado.',
+  anulacion_recibo: 'Anulación interna del recibo que se indica, que no constituye comprobante '
+    + 'fiscal. Este documento tampoco lo es: no lleva Número de Comprobante Fiscal (NCF). '
+    + 'No sustituye a la devolución del importe, que se tramita por separado.',
+};
+const legalDe = (f) => (anulacionDeRecibo(f) ? LEGALES.anulacion_recibo : LEGALES[f.tipo]) || '';
+
+const CIERRE_LEGAL = 'Los servicios facturados corresponden a capacidad de publicación en la plataforma '
+  + 'MercaMaquinarias y no son reembolsables una vez iniciada su vigencia, conforme a las Condiciones '
+  + 'de Contratación publicadas en mercamaquinarias.com/legal.html#contratacion. Cualquier reclamación '
+  + 'sobre este comprobante debe dirigirse a facturacion@mercamaquinarias.com dentro de los treinta (30) '
+  + 'días de su emisión.';
+
 const pesos = (n) => `RD$ ${Number(n || 0).toLocaleString('en-US', {
   minimumFractionDigits: 2, maximumFractionDigits: 2,
 })}`;
@@ -173,7 +211,7 @@ function dibujar(f, { emisor }) {
 
   const metas = [
     f.ncf_vencimiento ? `Válido hasta ${fechaCorta(f.ncf_vencimiento)}` : null,
-    f.ncf_modificado ? `Modifica ${f.ncf_modificado}` : null,
+    f.ncf_modificado ? `${anulacionDeRecibo(f) ? 'Anula el recibo' : 'Modifica'} ${f.ncf_modificado}` : null,
     `No. interno ${f.numero}`,
     `Emitida el ${fechaCorta(f.fecha)}`,
   ].filter(Boolean);
@@ -182,7 +220,7 @@ function dibujar(f, { emisor }) {
   d.marco(xCaja, yCaja, anchoCaja, altoCaja, { grosor: 1.2, color: TINTA });
 
   const derecha = { alinear: 'derecha', ancho: anchoCaja - padCaja * 2 };
-  d.texto((TITULOS[f.tipo] || 'COMPROBANTE').toUpperCase(), xCaja + padCaja, yCaja + 17, {
+  d.texto(tituloDe(f).toUpperCase(), xCaja + padCaja, yCaja + 17, {
     tamano: 9, tipo: 'negrita', color: TINTA, ...derecha,
   });
   d.texto(f.ncf || 'SIN VALOR FISCAL', xCaja + padCaja, yCaja + 37, {
@@ -329,40 +367,15 @@ function dibujar(f, { emisor }) {
 
   /* ── Pie legal ────────────────────────────────────────── */
 
-  /* Lo que hay que advertir cambia con el tipo: un recibo no fiscal
-     tiene que decir que no lo es, con todas las letras, y una factura
-     de crédito fiscal tiene que decir a qué da derecho. */
-  const legales = {
-    recibo: 'Este documento no constituye comprobante fiscal. Si requiere factura con valor '
-      + 'fiscal, escríbanos a facturacion@mercamaquinarias.com. Se emite como constancia del '
-      + 'pago recibido y del servicio contratado.',
-    factura_consumo: 'Comprobante fiscal emitido conforme a las normas de la Dirección General '
-      + 'de Impuestos Internos (DGII). Es válido como comprobante fiscal únicamente con su '
-      + 'Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento.',
-    factura_credito_fiscal: 'Comprobante fiscal con derecho a crédito fiscal, emitido conforme a '
-      + 'las normas de la Dirección General de Impuestos Internos (DGII). Es válido únicamente '
-      + 'con su Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento. '
-      + 'Consérvelo para sus registros contables.',
-    nota_credito: 'Nota de crédito emitida conforme a las normas de la Dirección General de '
-      + 'Impuestos Internos (DGII) para anular total o parcialmente el comprobante que se indica. '
-      + 'No sustituye a la devolución del importe, que se tramita por separado.',
-  };
-
-  const cierre = 'Los servicios facturados corresponden a capacidad de publicación en la plataforma '
-    + 'MercaMaquinarias y no son reembolsables una vez iniciada su vigencia, conforme a las Condiciones '
-    + 'de Contratación publicadas en mercamaquinarias.com/legal.html#contratacion. Cualquier reclamación '
-    + 'sobre este comprobante debe dirigirse a facturacion@mercamaquinarias.com dentro de los treinta (30) '
-    + 'días de su emisión.';
-
   /* El pie va anclado abajo, no a continuación del detalle: así todos
      los comprobantes terminan a la misma altura, lleven una línea o
-     cinco. */
+     cinco. El texto lo eligen LEGALES y legalDe, arriba. */
   const yPie = d.ALTO - 108;
   d.linea(M, yPie - 14, d.ANCHO - M, yPie - 14, { color: LINEA });
-  const finLegal = d.parrafo(legales[f.tipo] || '', M, yPie, ANCHO_UTIL, {
+  const finLegal = d.parrafo(legalDe(f), M, yPie, ANCHO_UTIL, {
     tamano: 8, color: GRIS, interlinea: 1.55,
   });
-  d.parrafo(cierre, M, finLegal + 4, ANCHO_UTIL, { tamano: 8, color: GRIS_SUAVE, interlinea: 1.55 });
+  d.parrafo(CIERRE_LEGAL, M, finLegal + 4, ANCHO_UTIL, { tamano: 8, color: GRIS_SUAVE, interlinea: 1.55 });
 
   d.texto('Documento generado electrónicamente. No requiere firma ni sello.',
     M, d.ALTO - 32, { tamano: 8, color: GRIS_SUAVE });
@@ -413,7 +426,7 @@ function variablesDe(f, { emisor = correo.EMPRESA } = {}) {
   }).join('\n');
 
   return {
-    TIPO_DOCUMENTO: TITULOS[f.tipo] || 'COMPROBANTE',
+    TIPO_DOCUMENTO: tituloDe(f),
     NCF: f.ncf || 'SIN VALOR FISCAL',
     NCF_VENCIMIENTO: f.ncf_vencimiento ? fechaCorta(f.ncf_vencimiento) : '',
     NCF_MODIFICADO: f.ncf_modificado || '',
@@ -440,6 +453,9 @@ function variablesDe(f, { emisor = correo.EMPRESA } = {}) {
     EMISOR_RNC: emisor.rnc,
     EMISOR_DOMICILIO: emisor.domicilioFiscal,
     EMISOR_CORREO: emisor.correoFacturacion || correo.BUZONES.facturacion,
+    PIE_LEGAL: legalDe(f),
+    PIE_CIERRE: CIERRE_LEGAL,
+    MODIFICA_TEXTO: anulacionDeRecibo(f) ? 'Anula el recibo' : 'Modifica NCF',
   };
 }
 
@@ -499,6 +515,36 @@ const leerPdf = (relativa) => {
 };
 
 /* ── Emisión ────────────────────────────────────────────── */
+
+/* El documento fiscal del cliente de una B01: RNC de 9 dígitos o cédula
+ * de 11 (una persona física factura con su cédula). Devuelve solo los
+ * dígitos, o null.
+ *
+ * Auditoría 2026-10 (FISCAL-5): antes bastaban 9 dígitos cualesquiera, y
+ * un tecleo daba una B01 irreversible que el cliente no podía usar y que
+ * el 607 reportaba con un RNC inexistente; la cédula se rechazaba. Ahora
+ * se exige el dígito verificador: el del RNC es el módulo 11 de la DGII
+ * (pesos 7, 9, 8, 6, 5, 4, 3, 2) y el de la cédula, Luhn (pesos 1 y 2).
+ * El alta de dealer sigue con su propio `rncValido` en api.js. */
+function documentoFiscal(valor) {
+  const d = String(valor == null ? '' : valor).replace(/[\s-]/g, '');
+  if (!/^\d+$/.test(d)) return null;
+  if (d.length === 9) {
+    const pesos = [7, 9, 8, 6, 5, 4, 3, 2];
+    const resto = pesos.reduce((s, p, i) => s + p * Number(d[i]), 0) % 11;
+    const verificador = resto === 0 ? 2 : resto === 1 ? 1 : 11 - resto;
+    return verificador === Number(d[8]) ? d : null;
+  }
+  if (d.length === 11) {
+    let suma = 0;
+    for (let i = 0; i < 10; i++) {
+      const producto = Number(d[i]) * (i % 2 === 0 ? 1 : 2);
+      suma += producto > 9 ? producto - 9 : producto;
+    }
+    return (10 - (suma % 10)) % 10 === Number(d[10]) ? d : null;
+  }
+  return null;
+}
 
 /* Qué tipo de comprobante corresponde, y con qué NCF.
  *
@@ -653,7 +699,36 @@ function emitirPorPago(pago, { concepto, detalle = {}, cliente = {}, emisor = co
     console.error(`facturas: ${numero} quedó emitida sin PDF · ${e.message}`);
   }
 
+  if (decision.agotada) avisarSinB01(db.facturaPorId(idFactura), pago);
   return { ...db.facturaPorId(idFactura), agotada: decision.agotada };
+}
+
+/* Auditoría 2026-10 (FISCAL-4): una empresa pidió comprobante con RNC y,
+   porque la B01 se acabó o venció entre el pedido y la confirmación,
+   recibió un recibo. La compra ya se niega antes de cobrar si no hay B01
+   (`clienteDeCompra` en api.js); esto cubre la carrera. Antes solo lo
+   decía el aviso diario a facturación, y nadie sabía a quién regularizar.
+   Va a gerencia (quien pide el rango a la DGII) con copia aparte a
+   facturación, sin esperar: un correo que falla no deshace el cobro. */
+function avisarSinB01(recibo, pago) {
+  try {
+    const envio = correo.avisarInternamente({
+      buzon: 'gerencia',
+      copia: 'facturacion',
+      asunto: `URGENTE: sin B01, ${recibo.numero} salió como recibo a ${recibo.razon_social || 'una empresa'}`,
+      texto: [
+        `El cliente pidió comprobante con RNC ${recibo.rnc || ''} y no quedaba ninguna B01 vigente con números.`,
+        `Se emitió el recibo ${recibo.numero} (sin valor fiscal) por el cobro ${pago.referencia || pago.id}.`,
+        '',
+        'Hay que cargar el rango nuevo de B01 y regularizar a este cliente.',
+      ].join('\n'),
+    });
+    if (envio && typeof envio.catch === 'function') {
+      envio.catch((e) => console.error(`facturas: no salió el aviso de B01 agotada · ${e.message}`));
+    }
+  } catch (e) {
+    console.error(`facturas: no salió el aviso de B01 agotada · ${e.message}`);
+  }
 }
 
 /* Vuelve a dibujar los comprobantes que quedaron sin papel.
@@ -733,7 +808,15 @@ function emitirNotaCredito(original, { motivo, emisor = correo.EMPRESA } = {}) {
 /* Lo que va dentro de la transacción de `emitirNotaCredito`. Aparte solo
    para que se lea; no se llama desde ningún otro sitio. */
 function emitirNotaEnTransaccion(original, { motivo, emisor }) {
-  const ncf = db.tomarNcf('B04');
+  /* Un recibo sin NCF no se anula con un B04 (auditoría 2026-10,
+   * FISCAL-2). Mientras no haya B02 todo particular recibe recibo, y cada
+   * devolución gastaba uno de los diez B04 en «modificar» un documento sin
+   * NCF: la norma no lo admite y el 607 lo deja fuera, así que quedaba un
+   * NCF emitido y nunca declarado. El recibo se anula con una anulación
+   * interna, también sin NCF, que hace lo mismo en la base (recibo
+   * anulado, pago devuelto) y cuyo papel no presume de nada. */
+  const fiscal = !!original.ncf;
+  const ncf = fiscal ? db.tomarNcf('B04') : null;
 
   /* Sin B04 no hay nota de crédito que valga.
    *
@@ -748,7 +831,7 @@ function emitirNotaEnTransaccion(original, { motivo, emisor }) {
    * Vale más un error claro en pantalla —«pida el rango»— que un
    * documento que aparenta lo que no es. Se lanza antes de tocar nada,
    * así que el comprobante original queda intacto. */
-  if (!ncf) {
+  if (fiscal && !ncf) {
     const e = new Error('No quedan notas de crédito autorizadas (B04). '
       + 'Solicite un rango nuevo a la DGII antes de anular este comprobante.');
     e.codigo = 409;
@@ -759,8 +842,8 @@ function emitirNotaEnTransaccion(original, { motivo, emisor }) {
     pagoId: original.pago_id,
     organizacionId: original.organizacion_id,
     tipo: 'nota_credito',
-    ncf: ncf.ncf,
-    ncfVencimiento: ncf.vence,
+    ncf: ncf ? ncf.ncf : null,
+    ncfVencimiento: ncf ? ncf.vence : null,
     /* En el papel va el NCF del comprobante que se modifica, que es lo
        que pide la DGII. Si el original fue un recibo sin NCF, va su
        número interno: es lo único que lo identifica. */
@@ -822,7 +905,7 @@ async function enviar(factura, { correoCliente } = {}) {
 
   const adjunto = [{ content: pdfBytes.toString('base64'), name: `${factura.numero}.pdf` }];
 
-  const titulo = TITULOS[factura.tipo] || 'Comprobante';
+  const titulo = tituloDe(factura);
 
   /* El asunto se busca, no se lee.
    *
@@ -899,6 +982,7 @@ async function enviar(factura, { correoCliente } = {}) {
  * correo tiene que llegar a una bandeja donde signifique algo. */
 /* La fecha de hoy y la de dentro de N días, como las guarda la base. */
 const enDias = (n) => new Date(Date.now() + n * 24 * 3600 * 1000).toISOString().slice(0, 10);
+const TIPOS_DEL_SITIO = ['B01', 'B04'];
 
 function secuenciasBajas() {
   /* Treinta días de margen para el vencimiento: pedir una autorización
@@ -906,8 +990,21 @@ function secuenciasBajas() {
      enterarse tarde. */
   const hoy = enDias(0);
   const dentroDeUnMes = enDias(30);
+  const todas = db.secuenciasNcf();
 
-  return db.secuenciasNcf()
+  /* Auditoría 2026-10 (FISCAL-6): el sitio emite siempre B01 (empresas)
+     y B04 (anulaciones). Si de alguno no queda ninguna secuencia activa
+     que use el sitio, el aviso es crítico; antes solo se miraban las filas
+     del sitio, y sin ninguna se respondía «todas con margen». La B02 no
+     está: que falte es lo sabido desde el lanzamiento. */
+  const sinSecuencia = TIPOS_DEL_SITIO
+    .filter((tipo) => !todas.some((s) => s.tipo === tipo && s.activa && s.usa_sitio))
+    .map((tipo) => ({
+      tipo, nombre: tipo, quedan: 0, umbral: AVISAR_BAJO,
+      porAgotarse: true, porVencer: false, vencida: false, critica: true, sinSecuencia: true,
+    }));
+
+  return todas
     .filter((s) => s.activa && s.usa_sitio)
     .map((s) => {
       /* Se avisa por dos motivos distintos y conviene saber cuál: que
@@ -928,7 +1025,8 @@ function secuenciasBajas() {
         critica: s.quedan <= AVISAR_CRITICO || vencida,
       };
     })
-    .filter((s) => s.porAgotarse || s.porVencer);
+    .filter((s) => s.porAgotarse || s.porVencer)
+    .concat(sinSecuencia);
 }
 
 /* Comprobantes emitidos sin NCF, a la espera de que llegue la secuencia
@@ -946,7 +1044,7 @@ module.exports = {
   CARPETA, TITULOS, FECHA_HORA_RD, fechaCorta,
   dibujar, comoHtml, guardarPdf, leerPdf, rutaAbsoluta,
   emitirPorPago, emitirNotaCredito, enviar, secuenciasBajas, pendientesDeRegularizar, decidirTipo,
-  reponerPdfsDe, regenerarPdfsPendientes,
+  reponerPdfsDe, regenerarPdfsPendientes, documentoFiscal,
 };
 
 /* ── Línea de comandos ──────────────────────────────────── */

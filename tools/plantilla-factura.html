@@ -41,6 +41,11 @@
   PIE
     {{NOTAS}}            texto libre opcional. Vacío => bloque oculto
     {{PERIODO_SERVICIO}} "23/09/2026 al 23/10/2026". Vacío => oculto
+    {{PIE_LEGAL}}        lo que advierte cada tipo (LEGALES de facturas.js, el mismo del PDF).
+                         Antes era un texto fijo de «comprobante fiscal», también en los recibos.
+    {{PIE_CIERRE}}       reembolsos y reclamaciones, igual en todos
+    {{MODIFICA_TEXTO}}   "Modifica NCF" en una nota de crédito; "Anula el recibo" en la anulación
+                         interna de un recibo sin NCF
 
   PLANTILLA DE FILA (repetir por ítem):
     <tr>
@@ -165,8 +170,8 @@
     <div class="comprobante">
       <p class="comprobante__tipo">{{TIPO_DOCUMENTO}}</p>
       <p class="comprobante__ncf">{{NCF}}</p>
-      <p class="comprobante__meta">Válido hasta {{NCF_VENCIMIENTO}}</p>
-      <p class="comprobante__meta" data-opcional="NCF_MODIFICADO">Modifica NCF {{NCF_MODIFICADO}}</p>
+      <p class="comprobante__meta" data-opcional="NCF_VENCIMIENTO">Válido hasta {{NCF_VENCIMIENTO}}</p>
+      <p class="comprobante__meta" data-opcional="NCF_MODIFICADO">{{MODIFICA_TEXTO}} {{NCF_MODIFICADO}}</p>
       <p class="comprobante__meta">No. interno {{NUMERO_INTERNO}}</p>
       <p class="comprobante__meta">Emitida el {{FECHA_EMISION}}</p>
     </div>
@@ -225,11 +230,8 @@
   </div>
 
   <footer class="legal">
-    <strong>Comprobante fiscal emitido conforme a las normas de la Dirección General de Impuestos Internos (DGII).</strong>
-    Este documento es válido como comprobante fiscal únicamente con su Número de Comprobante Fiscal (NCF) impreso y dentro de su fecha de vencimiento.
-    Los servicios facturados corresponden a capacidad de publicación en la plataforma MercaMaquinarias y no son reembolsables una vez iniciada su vigencia,
-    conforme a las Condiciones de Contratación publicadas en mercamaquinarias.com/legal.html#contratacion.
-    Cualquier reclamación sobre esta factura debe dirigirse a facturacion@mercamaquinarias.com dentro de los treinta (30) días de su emisión.
+    <strong>{{PIE_LEGAL}}</strong>
+    {{PIE_CIERRE}}
     <div class="firma">
       <span>Documento generado electrónicamente. No requiere firma ni sello.</span>
       <span>{{NUMERO_INTERNO}} · {{FECHA_EMISION}}</span>

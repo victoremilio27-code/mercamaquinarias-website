@@ -694,6 +694,68 @@ async function bloqueEliminar() {
   comprobar(r.codigo === 403, 'y al propietario ya solo le falta su contraseña (403 con una mala)');
 }
 
+/* ── 8. Reenviar no es una puerta sin contraseña (auditoría 2026-10) ── */
+/* SEG-PERMISOS-03: /api/cuenta/reenviar emitía a cualquier cuenta un
+   código «acceso» (o «verificacion», también a una ya verificada) SIN
+   pedir la contraseña, y /api/cuenta/verificar abría sesión con él. Entrar
+   quedaba en «solo el correo» y en silencio: sin el aviso de contraseña
+   cambiada ni el «no fui yo» del camino de restablecer. Y encadenando las
+   dos rutas se sabía qué correos tienen cuenta. Ahora el de acceso solo se
+   reenvía si hay uno vivo (se dio la contraseña hace minutos) y el de
+   verificación solo a una cuenta sin verificar. */
+async function bloqueReenviar() {
+  console.log('\nReenviar un código no abre sesión sin la contraseña');
+  const vera = cuenta('vera@ejemplo.test', 'Vera Prueba');
+  const codigosVivos = (tipo) => fila(
+    'SELECT COUNT(*) AS n FROM codigos WHERE correo = ? AND tipo = ? AND consumido = 0', vera.correo, tipo).n;
+
+  let r = await post('/api/cuenta/reenviar', { correo: vera.correo, tipo: 'acceso' }, como(null));
+  comprobar(r.codigo === 202 && codigosVivos('acceso') === 0,
+    `sin contraseña, reenviar {tipo: acceso} no emite nada (202, códigos vivos: ${codigosVivos('acceso')})`);
+  r = await post('/api/cuenta/reenviar', { correo: vera.correo, tipo: 'verificacion' }, como(null));
+  comprobar(r.codigo === 202 && codigosVivos('verificacion') === 0,
+    'a una cuenta ya verificada, reenviar {tipo: verificacion} tampoco');
+
+  const existe = await post('/api/cuenta/verificar', { correo: vera.correo, tipo: 'acceso', codigo: '000000' }, como(null));
+  const noExiste = await post('/api/cuenta/verificar', { correo: 'nadie-aqui@ejemplo.test', tipo: 'acceso', codigo: '000000' }, como(null));
+  comprobar(existe.codigo === 400 && noExiste.codigo === 400 && existe.datos.error === noExiste.datos.error,
+    `verificar no distingue una cuenta de un correo sin cuenta («${existe.datos && existe.datos.error}»)`);
+
+  nuevos();
+  r = await post('/api/cuenta/entrar', { correo: vera.correo, clave: CLAVE }, como(null));
+  comprobar(r.codigo === 200 && r.datos.verificacion === 'acceso', 'con la contraseña, entrar pide el código de acceso');
+  r = await post('/api/cuenta/reenviar', { correo: vera.correo, tipo: 'acceso' }, como(null));
+  const correos = paraDe(nuevos(), vera.correo);
+  comprobar(r.codigo === 202 && correos.length === 2 && codigosVivos('acceso') === 1,
+    `y con uno vivo, reenviarlo sí manda otro (correos: ${correos.length})`);
+  r = await post('/api/cuenta/verificar', { correo: vera.correo, tipo: 'acceso', codigo: codigoDe(correos[1]) }, como(null));
+  comprobar(r.codigo === 200, 'el reenviado abre la sesión');
+}
+
+/* ── 9. Un atacante no deja fuera al dueño (auditoría 2026-10) ── */
+/* Diez contraseñas falsas desde diez IP agotaban el tope por cuenta y el
+   dueño, con su contraseña, su equipo de confianza y su propia IP,
+   recibía 429 «Demasiados intentos desde esta conexión». Desde su equipo
+   de confianza ese tope no le aplica; el de su IP, sí. */
+async function bloqueBloqueoAjeno() {
+  console.log('\nUn atacante no deja fuera al dueño desde su equipo de confianza');
+  const lola = cuenta('lola@ejemplo.test', 'Lola Prueba');
+  const equipo = db.recordarDispositivo(lola.idUsuario, 'Prueba de equipo');
+  for (let i = 0; i < 12; i++) {
+    await post('/api/cuenta/entrar', { correo: lola.correo, clave: `mala-${i}-xxxxxxxx` }, como(null));
+  }
+  let r = await post('/api/cuenta/entrar', { correo: lola.correo, clave: CLAVE }, como(null));
+  comprobar(r.codigo === 429 && !/conexión/.test(r.datos.error),
+    `desde un equipo nuevo sigue el tope de la cuenta, sin culpar a la conexión (${r.codigo} «${r.datos && r.datos.error}»)`);
+  r = await post('/api/cuenta/entrar', { correo: lola.correo, clave: CLAVE },
+    { cookie: `te_equipo=${equipo}`, 'cf-connecting-ip': nuevaIp() });
+  comprobar(r.codigo === 200 && r.datos.usuario && r.datos.usuario.correo === lola.correo,
+    `desde su equipo de confianza el dueño entra (${r.codigo})`);
+  r = await post('/api/cuenta/entrar', { correo: lola.correo, clave: 'mala-otra-xxxxxxx' },
+    { cookie: `te_equipo=${equipo}`, 'cf-connecting-ip': nuevaIp() });
+  comprobar(r.codigo === 401, 'y con una contraseña mala desde ese equipo sigue siendo 401');
+}
+
 async function principal() {
   await bloqueCambioCorreo();
   await bloqueDealer();
@@ -702,6 +764,8 @@ async function principal() {
   await bloqueRecuperacion();
   await bloqueAdmin();
   await bloqueEliminar();
+  await bloqueReenviar();
+  await bloqueBloqueoAjeno();
 
   console.log(`\n${bien} ok, ${mal} MAL`);
   process.exit(mal ? 1 : 0);

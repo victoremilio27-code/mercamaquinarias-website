@@ -359,16 +359,31 @@ const MOTIVO_NO_APLICABLE = {
    todo sigue como antes. Con CardNet activo: `cardnet` primero, la
    transferencia detrás si está encendida, y nunca `demo`.
    `cardnet.activo()` se lee en cada llamada, como el interruptor de la
-   transferencia. */
+   transferencia.
+
+   En producción `demo` no entra NUNCA (auditoría 2026-10, FISCAL-1).
+   Antes, con CardNet apagado, bastaba MERCA_TRANSFERENCIA=0 o un tecleo
+   en una de sus cinco variables para que el sitio volviera a `demo`:
+   cualquiera publicaba sin pagar y cada compra con RNC gastaba un B01
+   real. Sin un cobro de verdad la lista queda vacía y la compra
+   responde 503: vender nada es reversible, un NCF gastado no.
+   NODE_ENV lo fijan las unidades de systemd; se lee en cada llamada. */
 function metodosDeCobro() {
   if (cardnet.activo()) return transferenciaActiva() ? ['cardnet', 'transferencia'] : ['cardnet'];
-  return transferenciaActiva() ? ['transferencia'] : ['demo'];
+  if (transferenciaActiva()) return ['transferencia'];
+  return process.env.NODE_ENV === 'production' ? [] : ['demo'];
 }
 
 /* El procesador de un cobro nuevo. Lo que pida el navegador se valida
-   contra la lista del servidor; sin pedido, el primero. */
+   contra la lista del servidor; sin pedido, el primero. Sin ningún
+   método (producción sin transferencia ni CardNet) es un 503 antes de
+   anotar nada: no es culpa del comprador. */
 function procesadorDeCobro(pedido) {
   const metodos = metodosDeCobro();
+  if (!metodos.length) {
+    throw Object.assign(new Error('El pago no está disponible en este momento. Inténtelo más tarde o escríbanos por correo.'),
+      { codigo: 503 });
+  }
   if (pedido === undefined || pedido === null || pedido === '') return metodos[0];
   if (typeof pedido === 'string' && metodos.includes(pedido)) return pedido;
   throw Object.assign(new Error('Ese método de pago no está disponible.'), { codigo: 400 });

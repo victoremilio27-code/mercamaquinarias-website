@@ -1718,7 +1718,7 @@ function montarBloqueFiscalPublicar() {
     if (!campos.hidden) $('#pub-razon').focus();
   });
   const rnc = $('#pub-rnc');
-  if (rnc) rnc.addEventListener('input', () => { rnc.value = rnc.value.replace(/\D/g, '').slice(0, 9); });
+  if (rnc) rnc.addEventListener('input', () => { rnc.value = rnc.value.replace(/\D/g, '').slice(0, 11); });
 }
 
 /* Lo que manda /api/borradores y PUT /api/borradores/:id: la misma

@@ -181,15 +181,15 @@
         <label class="campo-v"><span>Razón social *</span>
           <input type="text" id="fac-razon" autocomplete="organization" placeholder="Ej. Constructora del Este, SRL">
         </label>
-        <label class="campo-v"><span>RNC *</span>
-          <!-- maxlength 9 y no 11: con 11, quien escribiera el RNC en su
-               formato oficial con guiones —1-31-27975-9, doce
-               caracteres— lo veía truncado a «1-31-27975-», ocho
-               dígitos, y el servidor se lo rechazaba sin que pudiera
-               entender por qué. planes.js le quita los no-dígitos
-               mientras escribe, igual que ya hacía la pantalla de la
-               cuenta, así que pegarlo con guiones funciona. -->
-          <input type="text" id="fac-rnc" inputmode="numeric" maxlength="9" placeholder="9 dígitos">
+        <label class="campo-v"><span>RNC o cédula *</span>
+          <!-- maxlength 13: lo justo para pegar una cédula con guiones
+               (001-0000001-7) o un RNC con guiones (1-31-27975-9, doce
+               caracteres). Con menos, el navegador cortaba lo pegado ANTES
+               de que planes.js quitara los guiones, y el servidor lo
+               rechazaba. La máscara deja solo los dígitos, hasta once. La
+               cédula se admite desde la auditoría de 2026-10: una persona
+               física factura con ella. -->
+          <input type="text" id="fac-rnc" inputmode="numeric" maxlength="13" placeholder="RNC (9 dígitos) o cédula (11)">
         </label>
         <label class="campo-v"><span>Dirección fiscal *</span>
           <input type="text" id="fac-direccion" autocomplete="street-address" placeholder="Calle, número, sector, ciudad">

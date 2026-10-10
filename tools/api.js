@@ -68,6 +68,15 @@ if (Object.keys(process.env).some((k) => k.startsWith('MERCA_TRANSFERENCIA_') &&
   console.warn(`transferencia: apagada; faltan o no validan ${transferencia.faltantes().join(', ')}`);
 }
 
+/* En producción sin ningún cobro de verdad, toda compra con importe
+   responde 503 (`pagos.metodosDeCobro`, FISCAL-1 de la auditoría
+   2026-10). Es lo seguro, pero el sitio deja de vender: que se lea en
+   el registro al arrancar, también cuando se apagó con
+   MERCA_TRANSFERENCIA=0, que el aviso de arriba no cubre. */
+if (process.env.NODE_ENV === 'production' && !pagos.metodosDeCobro().length) {
+  console.warn('pagos: no hay ningún método de cobro (ni transferencia ni CardNet); las compras con importe responden 503.');
+}
+
 const { ITBIS } = precios;
 const COOKIE = 'te_sesion';
 const COOKIE_EQUIPO = 'te_equipo';
@@ -208,6 +217,29 @@ const origen = (req) => {
   return cadena[cadena.length - 1] || req.socket.remoteAddress || 'desconocido';
 };
 
+/* La clave de los TOPES por origen (auditoría 2026-10, SEG-PERMISOS-08).
+   Una IPv4 cuenta por sí sola; una IPv6, por su /64: todo proveedor da
+   un /64 entero a cada cliente (2^64 direcciones), y con la dirección
+   completa como clave cada petición estrenaba contador. Así salieron 100
+   altas y 100 correos de verificación a direcciones ajenas en 5 s, que
+   es la cuota de Brevo y con ella los códigos de todo el sitio. Solo
+   para `db.permitir`: lo que se guarda (aceptaciones, bitácora) sigue
+   siendo `origen(req)`, la dirección entera. */
+function claveDeIp(direccion) {
+  const ip = String(direccion || '').toLowerCase().split('%')[0];
+  const mapeada = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+  if (mapeada) return mapeada[1];
+  if (!ip.includes(':')) return ip;
+  const [izquierda, derecha] = ip.split('::');
+  const izq = izquierda ? izquierda.split(':') : [];
+  const der = derecha === undefined ? [] : (derecha ? derecha.split(':') : []);
+  const faltan = 8 - izq.length - der.length;
+  if (derecha === undefined ? izq.length !== 8 : faltan < 0) return ip;
+  const grupos = [...izq, ...Array(derecha === undefined ? 0 : faltan).fill('0'), ...der];
+  return `${grupos.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+const claveDeOrigen = (req) => claveDeIp(origen(req));
+
 const equipoDescrito = (req) => String(req.headers['user-agent'] || '').slice(0, 200);
 
 /* ── Sesión y permisos ──────────────────────────────────── */
@@ -276,6 +308,8 @@ const verEstadoDelSistema = conSesion((req, res, ctx) => {
     archivoBase: process.env.MERCA_DB || path.join(raiz, 'db', 'mercamaquinarias.db'),
     carpetaRespaldos,
     carpetas,
+    metodosPago: pagos.metodosDeCobro(),
+    produccion: process.env.NODE_ENV === 'production',
   });
   return responder(res, 200, { ...estado, generado: new Date().toISOString() },
     { 'Cache-Control': 'no-store' });
@@ -409,7 +443,7 @@ async function registro(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
 
-  if (!db.permitir(`registro:${ip}`, LIMITES.registro.tope, LIMITES.registro.minutos)) {
+  if (!db.permitir(`registro:${claveDeOrigen(req)}`, LIMITES.registro.tope, LIMITES.registro.minutos)) {
     return fallo(res, 429, 'Demasiadas cuentas creadas desde esta conexión. Inténtelo más tarde.');
   }
 
@@ -537,16 +571,28 @@ async function entrar(req, res) {
   const ip = origen(req);
   const correoNormalizado = String(c.correo || '').trim().toLowerCase();
 
-  if (!db.permitir(`acceso:${ip}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
-    return fallo(res, 429, 'Demasiados intentos desde esta conexión. Espere unos minutos.');
+  /* Un solo mensaje para los dos topes (IP y cuenta): si fueran distintos,
+     comparar las respuestas diría qué tope saltó y, con él, algo de la
+     cuenta. Y ya no culpa a «esta conexión», que no siempre era la causa. */
+  const DEMASIADOS = 'Demasiados intentos. Espere unos minutos o recupere su contraseña.';
+  if (!db.permitir(`acceso:${claveDeOrigen(req)}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
+    return fallo(res, 429, DEMASIADOS);
   }
-  /* Limpiar el tope por IP al acertar permitía que cualquier otra cuenta
-     reiniciara también los intentos acumulados contra este correo. */
-  if (!db.permitir(`acceso-correo:${correoNormalizado}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
-    return fallo(res, 429, 'Demasiados intentos desde esta conexión. Espere unos minutos.');
-  }
-
   const u = db.usuarioPorCorreo(correoNormalizado);
+
+  /* Limpiar el tope por IP al acertar permitía que cualquier otra cuenta
+     reiniciara también los intentos acumulados contra este correo.
+
+     Auditoría 2026-10: ese tope por cuenta lo agota cualquiera con diez
+     contraseñas falsas desde diez IP, y dejaba fuera al dueño aunque
+     viniera con la correcta, desde su equipo de confianza y desde su IP.
+     Desde un equipo recordado de ESA cuenta (`te_equipo`, que no se puede
+     inventar) no se aplica; el de la IP, sí. */
+  const equipoConocido = !!u && db.dispositivoDeConfianza(leerCookies(req)[COOKIE_EQUIPO], u.id);
+  if (!equipoConocido
+    && !db.permitir(`acceso-correo:${correoNormalizado}`, LIMITES.acceso.tope, LIMITES.acceso.minutos)) {
+    return fallo(res, 429, DEMASIADOS);
+  }
   const claveValida = await db.verificarClave(
     String(c.clave || ''), u && u.clave_hash, u && u.clave_sal);
 
@@ -622,7 +668,7 @@ async function verificar(req, res) {
   const tipo = ['verificacion', 'acceso'].includes(c.tipo) ? c.tipo : 'verificacion';
   const destino = String(c.correo || '').trim().toLowerCase();
 
-  if (!db.permitir(`verificar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`verificar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -686,14 +732,24 @@ async function reenviar(req, res) {
      cinco por cuenta y cuarto de hora, un guion manda veinte avisos por
      hora a cada anunciante y de paso agota la cuota del proveedor, con
      lo que dejan de salir los códigos legítimos y los comprobantes. */
-  if (!db.permitir(`reenviar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`reenviar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
   }
 
   const tipo = ['verificacion', 'acceso', 'restablecer'].includes(c.tipo) ? c.tipo : 'verificacion';
   const u = db.usuarioPorCorreo(c.correo);
 
-  if (u) emitirCodigo({ correo: u.correo, tipo, idUsuario: u.id, nombre: u.nombre });
+  /* Auditoría 2026-10 (SEG-PERMISOS-03): con los códigos de «acceso» y de
+     «verificacion», `verificar` abre sesión. Reenviarlos a cualquiera
+     dejaba entrar con solo el correo, sin contraseña y en silencio (sin el
+     aviso ni el «no fui yo» de restablecer), y encadenado con `verificar`
+     decía qué correos tienen cuenta. El de acceso solo se reenvía si hay
+     uno vivo: alguien dio la contraseña hace minutos. El de verificación,
+     solo a una cuenta que aún no lo está. La respuesta es la misma. */
+  const procede = u && (tipo === 'restablecer'
+    || (tipo === 'verificacion' && !u.correo_verificado)
+    || (tipo === 'acceso' && db.hayCodigoVivo(u.correo, 'acceso')));
+  if (procede) emitirCodigo({ correo: u.correo, tipo, idUsuario: u.id, nombre: u.nombre });
 
   return responder(res, 202, { mensaje: 'Si esa cuenta existe, le enviamos un código nuevo.' });
 }
@@ -706,7 +762,7 @@ async function recuperar(req, res) {
   /* El mismo tope por IP que su vecina, y por el mismo motivo: sin él,
      esta ruta sirve para mandarle a medio directorio un «alguien quiere
      cambiar su contraseña» cada quince minutos. */
-  if (!db.permitir(`recuperar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`recuperar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiadas peticiones. Espere unos minutos.');
   }
 
@@ -730,7 +786,7 @@ async function restablecer(req, res) {
   const c = await leerCuerpo(req);
   const destino = String(c.correo || '').trim().toLowerCase();
 
-  if (!db.permitir(`restablecer:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`restablecer:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -837,7 +893,7 @@ const confirmarCambioCorreo = conSesion(async (req, res, ctx) => {
 async function revertirCorreo(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
-  if (!db.permitir(`revertir:${ip}`, 10, 15)) {
+  if (!db.permitir(`revertir:${claveDeOrigen(req)}`, 10, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -883,7 +939,7 @@ const enlaceNoFuiYoClave = (testigo) => `${correo.SITIO}/cuenta.html?revertir-cl
 async function revertirClave(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
-  if (!db.permitir(`revertir-clave:${ip}`, 10, 15)) {
+  if (!db.permitir(`revertir-clave:${claveDeOrigen(req)}`, 10, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -1053,7 +1109,7 @@ const borrarBusquedaApi = conSesion((req, res, ctx, idBusqueda) => {
 
 const darDeBajaBusquedaApi = async (req, res) => {
   const ip = origen(req);
-  if (!db.permitir(`baja-busqueda:${ip}`, 20, 15)) {
+  if (!db.permitir(`baja-busqueda:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere un rato.');
   }
   const cuerpo = await leerCuerpo(req);
@@ -1116,7 +1172,7 @@ function topesSms({ numero, ip, idUsuario }) {
   if (!db.permitir(`sms-num-d:${numero}`, 10, 1440)) {
     return 'Ese número ya recibió demasiados SMS hoy. Use el correo o inténtelo mañana.';
   }
-  if (!db.permitir(`sms-ip:${ip}`, 10, 60)) {
+  if (!db.permitir(`sms-ip:${claveDeIp(ip)}`, 10, 60)) {
     return 'Demasiadas peticiones desde esta conexión. Espere una hora y vuelva a intentarlo.';
   }
   if (idUsuario && !db.permitir(`sms-cuenta:${idUsuario}`, 5, 60)) {
@@ -1237,7 +1293,7 @@ const verificarTelefono = conSesion(async (req, res, ctx) => {
 const confirmarTelefono = conSesion(async (req, res, ctx) => {
   if (!correo.smsActivo()) return fallo(res, 400, MENSAJE_SMS_APAGADO);
   const c = await leerCuerpo(req);
-  if (!db.permitir(`telefono-confirmar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`telefono-confirmar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
   const proposito = c.proposito;
@@ -1284,7 +1340,7 @@ const MENSAJE_RECUPERACION = 'Recibimos su solicitud. Si los datos corresponden 
 async function pedirRecuperacion(req, res) {
   const c = await leerCuerpo(req);
   const ip = origen(req);
-  if (!db.permitir(`recuperacion:${ip}`, 3, 60)) {
+  if (!db.permitir(`recuperacion:${claveDeOrigen(req)}`, 3, 60)) {
     return fallo(res, 429, 'Demasiadas solicitudes desde esta conexión. Inténtelo más tarde.');
   }
 
@@ -1768,7 +1824,7 @@ async function crearSolicitudServicio(req, res) {
 
   // El mismo tope que el registro: un humano no manda seis cotizaciones
   // en una hora, un guion sí.
-  if (!db.permitir(`servicio:${ip}`, 6, 60)) {
+  if (!db.permitir(`servicio:${claveDeOrigen(req)}`, 6, 60)) {
     return fallo(res, 429, 'Demasiadas solicitudes desde esta conexión. Inténtelo más tarde.');
   }
 
@@ -1845,7 +1901,7 @@ async function crearSolicitudServicio(req, res) {
  * en cada petición. */
 async function conversarConSoporte(req, res) {
   const ip = origen(req);
-  if (!db.permitir(`chat:${ip}`, LIMITES.chat.tope, LIMITES.chat.minutos)) {
+  if (!db.permitir(`chat:${claveDeOrigen(req)}`, LIMITES.chat.tope, LIMITES.chat.minutos)) {
     return fallo(res, 429, 'Ha hecho muchas consultas seguidas. Espere unos minutos '
       + `o escríbanos a ${chat.CORREO_GENERAL}.`);
   }
@@ -2230,7 +2286,10 @@ const listarFacturas = conAdmin((req, res, ctx, consulta) => {
   return responder(res, 200, {
     mes,
     secuencias: db.secuenciasNcf(),
-    bajas: facturas.secuenciasBajas().map((s) => ({ tipo: s.tipo, quedan: s.quedan })),
+    bajas: facturas.secuenciasBajas().map((s) => ({
+      tipo: s.tipo, quedan: s.quedan, vence: s.vence || null,
+      porVencer: !!s.porVencer, vencida: !!s.vencida, sinSecuencia: !!s.sinSecuencia,
+    })),
     /* Los pendientes NO se filtran por mes: son trabajo acumulado que
        hay que ver entero, no un corte del periodo que se esté mirando. */
     pendientes: facturas.pendientesDeRegularizar().map((f) => ({
@@ -2346,7 +2405,13 @@ const reenviarFactura = conAdmin(async (req, res, ctx, idFactura) => {
 
   const dueno = f.organizacion_id && db.propietarioDe(f.organizacion_id);
   await facturas.enviar(f, { correoCliente: dueno && dueno.correo });
-  return responder(res, 200, { factura: db.facturaPorId(idFactura) });
+  const despues = db.facturaPorId(idFactura);
+  /* Qué salió en ESTA pulsación: `enviar` no repite lo ya entregado y la
+     consola tiene que poder decirlo (auditoría 2026-10). */
+  return responder(res, 200, {
+    factura: despues,
+    reenvio: { cliente: !f.enviada_cliente && !!despues.enviada_cliente, interna: !f.enviada_interna && !!despues.enviada_interna },
+  });
 });
 
 /* Nota de crédito. Es lo único que anula un comprobante: el original
@@ -3576,14 +3641,27 @@ function avisarTransferenciaPedida(ctx, { referencia, total, concepto }) {
  *
  * Se validan ANTES de cobrar: descubrir que el RNC está mal después
  * de haber cobrado obliga a emitir una nota de crédito por un error
- * de tecleo. El RNC se comprueba con la misma función que el alta de
- * dealer, que es la que sabe cuántos dígitos tiene. La comparten la
- * compra de capacidad y el pago de la publicación del particular: dos
- * copias acabarían aceptando en una un RNC que la otra rechaza. */
-function clienteDeCompra(c, ctx) {
+ * de tecleo. La comparten la compra de capacidad y el pago de la
+ * publicación del particular: dos copias acabarían aceptando en una un
+ * RNC que la otra rechaza.
+ *
+ * Auditoría 2026-10: el documento se comprueba con su dígito verificador
+ * y se admite la cédula de una persona física (FISCAL-5,
+ * `facturas.documentoFiscal`); y si hoy no hay B01 que dar, se dice
+ * ANTES de cobrar con un 409 (FISCAL-4): antes la empresa pagaba y
+ * recibía un recibo sin crédito fiscal. Con importe cero no se emite
+ * nada que pueda quedarse sin número, así que no se mira. */
+function clienteDeCompra(c, ctx, total = 1) {
   if (!c.conRnc) return { cliente: { razonSocial: ctx.usuario.nombre, correo: ctx.usuario.correo } };
-  const rnc = rncValido(c.rnc);
-  if (!rnc) return { error: 'El RNC tiene 9 dígitos' };
+  const rnc = facturas.documentoFiscal(c.rnc);
+  if (!rnc) return { error: 'Revise el RNC (9 dígitos) o la cédula (11 dígitos): el número no es válido.' };
+  if (total > 0 && !db.ncfDisponible('B01')) {
+    return {
+      codigo: 409,
+      error: 'Ahora mismo no podemos emitir comprobante con RNC. Puede pagar sin RNC '
+        + `o escribirnos a ${correo.BUZONES.facturacion}.`,
+    };
+  }
   if (!texto(c.razonSocial, 160)) return { error: 'Escriba la razón social para la factura' };
   if (!texto(c.direccionFiscal, 200) || String(c.direccionFiscal).trim().length < 8) {
     return { error: 'Escriba la dirección fiscal para la factura' };
@@ -3781,8 +3859,8 @@ const comprarMembresia = conSesion(async (req, res, ctx) => {
   const tarjeta = tarjetaPedida(res, c, org, cobro);
   if (tarjeta === false) return undefined;
 
-  const fiscal = clienteDeCompra(c, ctx);
-  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  const fiscal = clienteDeCompra(c, ctx, cobro.total);
+  if (fiscal.error) return fallo(res, fiscal.codigo || 400, fiscal.error);
   const { cliente } = fiscal;
 
   /* Sin importe no hay nada que esperar ni que declarar: se otorga al
@@ -4706,8 +4784,8 @@ const pagarBorrador = conSesion(async (req, res, ctx, idAnuncio) => {
     referencia: pagos.referenciaCobro(),
   };
 
-  const fiscal = clienteDeCompra(c, ctx);
-  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  const fiscal = clienteDeCompra(c, ctx, cobro.total);
+  if (fiscal.error) return fallo(res, fiscal.codigo || 400, fiscal.error);
   const { cliente } = fiscal;
 
   /* Importe cero (la promoción del Estándar, D-11): aprobado al
@@ -4888,7 +4966,7 @@ async function pedirRenovacion(req, res, ctx, { s, idAnuncio }) {
      número de días que mande el navegador no se mira, ni para
      rechazarlo. */
   const fiscal = clienteDeCompra(c, ctx);
-  if (fiscal.error) return fallo(res, 400, fiscal.error);
+  if (fiscal.error) return fallo(res, fiscal.codigo || 400, fiscal.error);
   const { cliente } = fiscal;
   /* Renovar a mano y renovar solo cobran lo mismo porque salen de la
      misma función (R-04): `pagos.cobroDeRenovacion`. */
@@ -5672,7 +5750,7 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
   const idOrg = ctx.organizacion.id;
   if (!db.permitir(`contacto-codigo:${idOrg}:${numero}`, 5, 60)
     || !db.permitir(`contacto-org:${idOrg}`, 20, 60)
-    || !db.permitir(`contacto-ip:${origen(req)}`, 30, 60)) {
+    || !db.permitir(`contacto-ip:${claveDeOrigen(req)}`, 30, 60)) {
     return fallo(res, 429, 'Ha pedido demasiados códigos. Espere una hora y vuelva a intentarlo.');
   }
 
@@ -5734,7 +5812,7 @@ const pedirCodigoContacto = conSesion(async (req, res, ctx) => {
 const confirmarContacto = conSesion(async (req, res, ctx) => {
   if (!ctx.organizacion) return fallo(res, 403, 'Su cuenta no tiene una organización');
   const c = await leerCuerpo(req);
-  if (!db.permitir(`contacto-confirmar:${origen(req)}`, 20, 15)) {
+  if (!db.permitir(`contacto-confirmar:${claveDeOrigen(req)}`, 20, 15)) {
     return fallo(res, 429, 'Demasiados intentos. Espere unos minutos.');
   }
 
@@ -5770,7 +5848,7 @@ async function evento(req, res, ctx) {
      valor es siempre 127.0.0.1, así que la huella del visitante
      colapsaba y cincuenta personas distintas contaban como una. */
   const ip = origen(req);
-  if (!db.permitir(`evento:${ip}`, LIMITES.eventos.tope, LIMITES.eventos.minutos)) {
+  if (!db.permitir(`evento:${claveDeOrigen(req)}`, LIMITES.eventos.tope, LIMITES.eventos.minutos)) {
     return fallo(res, 429, 'Demasiadas peticiones desde esta conexión');
   }
 
@@ -5787,7 +5865,17 @@ async function evento(req, res, ctx) {
      trescientos correos y la cuota del proveedor agotada.
 
      Las vistas no avisan; serían decenas de correos diarios. */
-  if (resultado === 'contado' && (tipo === 'telefono' || tipo === 'whatsapp')) {
+  /* Auditoría 2026-10 (SEG-PERMISOS-01): la huella es IP + navegador, así
+     que cambiar el User-Agent en cada petición contaba como persona nueva
+     y, sin sesión, un guion mandaba un correo por evento al anunciante
+     (cientos por hora desde una IP) hasta agotar la cuota de Brevo, y con
+     ella los códigos y comprobantes de todo el sitio. El contacto se sigue
+     contando igual; el CORREO, como mucho uno por origen (/64 en IPv6) y
+     anuncio al día, y diez por anuncio al día. */
+  const avisar = resultado === 'contado' && (tipo === 'telefono' || tipo === 'whatsapp')
+    && db.permitir(`aviso-contacto:${idAnuncio}:${claveDeOrigen(req)}`, 1, 1440)
+    && db.permitir(`aviso-contacto:${idAnuncio}`, 10, 1440);
+  if (avisar) {
     const dueno = db.duenoDeAnuncio(idAnuncio);
     if (dueno) {
       correo.enviarContactoRecibido({
@@ -6035,7 +6123,37 @@ const RUTAS = [
   ['POST', /^\/api\/admin\/solicitudes\/([\w-]+)$/,     resolverSolicitud],
 ];
 
+/* Escrituras que vienen de otro sitio (auditoría 2026-10).
+ *
+ * La cookie SameSite=Lax ya frena el CSRF CON sesión, pero no el de inicio
+ * de sesión: un formulario de otro sitio (text/plain con forma de JSON)
+ * mandaba a /api/cuenta/verificar la cuenta y el código del atacante, y el
+ * navegador de la víctima quedaba dentro de la cuenta del atacante, donde
+ * después publicaría sus propios datos. Todo navegador manda Origin en una
+ * escritura de otro sitio; si su host no es el de la petición (nginx pasa
+ * `Host $host`), no se atiende. Sin Origin (servidores, pruebas, curl)
+ * sigue como siempre. «null» es un iframe aislado o una redirección
+ * ajena: tampoco es el sitio.
+ *
+ * La notificación de CardNet llega de su servidor y queda fuera a
+ * propósito: tiene su propia verificación. */
+const SIN_GUARDA_DE_ORIGEN = new Set(['/api/pagos/cardnet/notificacion']);
+function escrituraDeOtroSitio(req, ruta) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || SIN_GUARDA_DE_ORIGEN.has(ruta)) return false;
+  const origin = req.headers.origin;
+  if (origin === undefined) return false;
+  try {
+    return new URL(origin).host !== String(req.headers.host || '');
+  } catch {
+    return true;
+  }
+}
+
 async function manejar(req, res, ruta) {
+  if (escrituraDeOtroSitio(req, ruta)) {
+    return fallo(res, 403, 'Esta petición no viene de mercamaquinarias.com.');
+  }
+
   // Los parámetros de consulta llegan al manejador después de lo que
   // capture su patrón, así que una ruta sin capturas los recibe en el
   // cuarto argumento y una con una captura, en el quinto.

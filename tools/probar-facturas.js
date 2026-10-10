@@ -477,6 +477,180 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
     d0.close();
   }
 
+  /* Auditoría 2026-10 (FISCAL-2). Mientras no haya B02, todo particular
+     recibe un recibo sin NCF, y anularlo gastaba un B04 (quedan diez) que
+     «modificaba» un documento sin NCF: la norma no lo admite y el 607 lo
+     deja fuera, así que quedaba un NCF emitido y nunca declarado. Ahora
+     un recibo se anula con una anulación interna, también sin NCF: no
+     toca la B04, deja el recibo anulado (sin reescribirlo) y el pago
+     devuelto, y su papel no presume de nada ante la DGII. */
+  console.log('\n── Anular un recibo sin NCF no gasta un B04 (auditoría 2026-10) ──');
+  {
+    const d0 = conexion();
+    const siguienteB04 = () => {
+      const fila = d0.prepare("SELECT siguiente FROM secuencias_ncf WHERE tipo = 'B04' AND activa = 1").get();
+      return fila ? fila.siguiente : null;
+    };
+    d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 0 WHERE tipo = 'B02'").run();
+    const pRec = pago({ subtotal: 3296, itbis: 593, total: 3889, referencia: 'PRUEBA-AUD-RECIBO' });
+    const rec = facturas.emitirPorPago(pRec, { concepto: 'Publicación Destacado · 30 días', cliente: { razonSocial: 'Julio Pérez' } });
+    d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 1 WHERE tipo = 'B02'").run();
+    ok(rec.tipo === 'recibo' && !rec.ncf, `de partida, un recibo sin NCF (${rec.numero})`);
+
+    const htmlRecibo = facturas.comoHtml(db.facturaPorId(rec.id));
+    ok(!/Comprobante fiscal emitido conforme/.test(htmlRecibo) && /no constituye comprobante fiscal/.test(htmlRecibo),
+      'la vista web de un recibo no dice que sea comprobante fiscal');
+    const htmlB01 = facturas.comoHtml(db.facturaPorId(f2.id));
+    ok(/crédito fiscal/.test(htmlB01) && !/no constituye comprobante fiscal/.test(htmlB01),
+      'la de una B01 sigue diciendo a qué da derecho');
+
+    const b04Antes = siguienteB04();
+    const r = await enviarPost(`/api/admin/facturas/${rec.id}/anular`, cabeceras, { motivo: 'Devolución al particular' });
+    const anulacion = r.json && r.json.nota ? db.facturaPorId(r.json.nota.id) : null;
+    ok(r.codigo === 201, `la anulación de un recibo responde 201 (respondió ${r.codigo}${r.json && r.json.error ? `: ${r.json.error}` : ''})`);
+    ok(siguienteB04() === b04Antes, `no gasta B04 (${b04Antes} → ${siguienteB04()})`);
+    ok(!!anulacion && anulacion.tipo === 'nota_credito' && !anulacion.ncf && !anulacion.ncf_vencimiento,
+      `la anulación es interna, sin NCF (${anulacion ? `${anulacion.numero} ncf=${anulacion.ncf}` : 'ninguna'})`);
+    ok(!!anulacion && anulacion.ncf_modificado === rec.numero && anulacion.total === rec.total,
+      'cita el número del recibo y su importe');
+    const recDespues = db.facturaPorId(rec.id);
+    ok(!!anulacion && recDespues.anulado_por === anulacion.id && recDespues.total === rec.total && !recDespues.ncf,
+      'el recibo queda anulado por ella, sin reescribirse');
+    ok(d0.prepare('SELECT estado FROM pagos WHERE id = ?').get(pRec.id).estado === 'devuelto', 'el pago queda devuelto');
+    if (anulacion) {
+      const htmlAnulacion = facturas.comoHtml(anulacion);
+      ok(!/DGII/.test(htmlAnulacion) && /ANULACIÓN DE RECIBO/.test(htmlAnulacion) && /SIN VALOR FISCAL/.test(htmlAnulacion),
+        'su papel dice «Anulación de recibo», sin valor fiscal y sin nombrar a la DGII');
+    }
+
+    /* Una B01 sigue anulándose con su B04, como siempre. */
+    const pB01 = pago({ subtotal: 7000, itbis: 1260, total: 8260, referencia: 'PRUEBA-AUD-B01' });
+    const fB01 = facturas.emitirPorPago(pB01, {
+      concepto: 'Plan Destacado · 2 cupos · 30 días',
+      cliente: { razonSocial: 'Constructora del Este, S.R.L.', rnc: '130123456' },
+    });
+    const nB01 = facturas.emitirNotaCredito(db.facturaPorId(fB01.id), { motivo: 'Prueba' });
+    ok(/^B04/.test(nB01.ncf || '') && siguienteB04() === b04Antes + 1, `una B01 se anula con B04 (${nB01.ncf})`);
+    d0.close();
+  }
+
+  /* Auditoría 2026-10 (FISCAL-5): el documento del cliente de una B01. */
+  console.log('\n── RNC y cédula con su dígito verificador (auditoría 2026-10) ──');
+  {
+    const casos = [
+      ['131279759', '131279759'], ['1-31-27975-9', '131279759'], ['131279750', null],
+      ['00100000017', '00100000017'], ['001-0000001-7', '00100000017'], ['00100000018', null],
+      ['13127975', null], ['1312797590', null], ['13127975A', null], ['', null], [null, null],
+    ];
+    for (const [entrada, esperado] of casos) {
+      const r = facturas.documentoFiscal(entrada);
+      ok(r === esperado, `documentoFiscal(${JSON.stringify(entrada)}) = ${JSON.stringify(r)}`);
+    }
+  }
+
+  /* Auditoría 2026-10 (FISCAL-4): si la B01 se acaba entre el pedido y la
+     confirmación, el cliente con RNC recibe un recibo. Eso no puede
+     enterarse nadie a fin de mes: gerencia y facturación lo saben al
+     momento, con la referencia, para regularizarlo. */
+  console.log('\n── Una empresa que se queda sin B01 avisa al momento (auditoría 2026-10) ──');
+  {
+    const correoMod = require('./correo');
+    const real = correoMod.avisarInternamente;
+    const avisos = [];
+    correoMod.avisarInternamente = (aviso) => { avisos.push(aviso); return Promise.resolve({ entregado: true }); };
+    const d0 = conexion();
+    try {
+      ok(db.ncfDisponible('B01') === true, 'con B01 cargada, ncfDisponible dice que sí');
+      d0.prepare("UPDATE secuencias_ncf SET siguiente = hasta + 1 WHERE tipo = 'B01'").run();
+      ok(db.ncfDisponible('B01') === false, 'agotada, ncfDisponible dice que no y no gasta nada');
+      const p = pago({ subtotal: 3296, itbis: 593, total: 3889, referencia: 'PRUEBA-AUD-SINB01' });
+      const f = facturas.emitirPorPago(p, {
+        concepto: 'Publicación Destacado · 30 días',
+        cliente: { razonSocial: 'Constructora del Este, S.R.L.', rnc: '131279759' },
+      });
+      ok(f.tipo === 'recibo' && !f.ncf && f.agotada === 'B01', `sale el recibo (tipo=${f.tipo})`);
+      const aviso = avisos[0];
+      ok(avisos.length === 1 && aviso.buzon === 'gerencia' && aviso.copia === 'facturacion',
+        `un aviso a gerencia con copia aparte a facturación (${avisos.map((a) => `${a.buzon}+${a.copia}`).join(', ')})`);
+      ok(!!aviso && aviso.texto.includes(f.numero) && aviso.texto.includes('PRUEBA-AUD-SINB01') && /B01/.test(aviso.asunto),
+        'el aviso cita el recibo, la referencia y la B01');
+      d0.prepare("UPDATE secuencias_ncf SET siguiente = desde WHERE tipo = 'B01' AND activa = 1").run();
+    } finally {
+      correoMod.avisarInternamente = real;
+      d0.close();
+    }
+  }
+
+  /* Auditoría 2026-10 (FISCAL-6 y FISCAL-9). Cargar el rango que sustituirá
+     al que vence el 2026-11-30 sin marcar «la usa el sitio» desactivaba la
+     B01 que funcionaba (solo hay un rango activo por tipo), todas las
+     empresas pasaban a recibir recibo y el aviso diario decía «todas las
+     secuencias con margen», porque solo miraba filas del sitio. Y ese aviso
+     iba solo a facturación, nunca a quien pide el rango a la DGII. */
+  console.log('\n── Cargar el rango nuevo no apaga la B01 y el aviso llega a gerencia (auditoría 2026-10) ──');
+  {
+    const correoMod = require('./correo');
+    const tareas = require('./tareas');
+    const real = correoMod.avisarInternamente;
+    const avisos = [];
+    const d0 = conexion();
+    const filaSitio = (tipo) => d0.prepare(
+      'SELECT * FROM secuencias_ncf WHERE tipo = ? AND activa = 1 AND usa_sitio = 1').get(tipo);
+    try {
+      const antes = filaSitio('B01');
+      let e = null;
+      try {
+        db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, vence: '2027-12-31', usaSitio: false });
+      } catch (x) { e = x; }
+      ok(!!e && e.codigo === 400 && /usa el sitio/.test(e.message), `un rango de B01 sin «la usa el sitio» se rechaza (${e ? e.message : 'se cargó'})`);
+      ok(!!antes && !!filaSitio('B01') && filaSitio('B01').id === antes.id, 'y la B01 del sitio sigue activa');
+      const nueva = db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, vence: '2027-12-31', usaSitio: true });
+      ok(nueva.nueva && !!filaSitio('B01') && filaSitio('B01').id === nueva.id, 'marcado, el rango nuevo sustituye al anterior');
+      const b13 = db.cargarSecuencia({ tipo: 'B13', nombre: 'Gastos menores', desde: 500, hasta: 600, usaSitio: false });
+      ok(b13.usa_sitio === 0, 'un tipo que el sitio no usa se sigue cargando «solo contabilidad»');
+
+      d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 0 WHERE tipo = 'B04' AND activa = 1").run();
+      const b04 = facturas.secuenciasBajas().find((s) => s.tipo === 'B04');
+      ok(!!b04 && b04.critica && b04.sinSecuencia, 'sin ninguna B04 del sitio, el aviso diario lo marca como crítico');
+
+      correoMod.avisarInternamente = (aviso) => { avisos.push(aviso); return Promise.resolve({ entregado: true }); };
+      await tareas.TAREAS.ncf();
+      const aviso = avisos[0];
+      ok(avisos.length === 1 && aviso.buzon === 'gerencia' && aviso.copia === 'facturacion',
+        `el aviso de NCF va a gerencia con copia aparte a facturación (${avisos.map((a) => `${a.buzon}+${a.copia}`).join(', ') || 'ninguno'})`);
+      ok(!!aviso && /URGENTE/.test(aviso.asunto) && /vencida o agotada/.test(aviso.asunto) && /B04/.test(aviso.texto)
+        && /ninguna secuencia/.test(aviso.texto), `asunto: ${aviso ? aviso.asunto : '—'}`);
+      d0.prepare("UPDATE secuencias_ncf SET usa_sitio = 1 WHERE tipo = 'B04' AND activa = 1").run();
+    } finally {
+      correoMod.avisarInternamente = real;
+      d0.close();
+    }
+  }
+
+  /* Auditoría 2026-10 (E2E-NEGOCIO-2): recargar desde la consola un rango
+     ya cargado sin escribir la fecha le BORRABA el vencimiento (y con él la
+     guarda de tomarNcf contra emitir pasado el plazo), y recargar un rango
+     viejo lo dejaba activo junto al nuevo: dos B01 activas, y tomarNcf
+     elegía una cualquiera. */
+  console.log('\n── Recargar un rango no le quita la fecha ni deja dos activos (auditoría 2026-10) ──');
+  {
+    const d0 = conexion();
+    const activos = (tipo) => d0.prepare('SELECT desde, vence FROM secuencias_ncf WHERE tipo = ? AND activa = 1').all(tipo);
+    try {
+      db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, usaSitio: true });
+      const ahora = activos('B01');
+      ok(ahora.length === 1 && ahora[0].desde === 131 && ahora[0].vence === '2027-12-31',
+        `recargar sin fecha conserva el vencimiento (${JSON.stringify(ahora)})`);
+      db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 16, hasta: 30, vence: '2026-11-30', usaSitio: true });
+      const tras = activos('B01');
+      ok(tras.length === 1 && tras[0].desde === 16, `recargar el rango viejo como activo deja uno solo (${JSON.stringify(tras)})`);
+      db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, usaSitio: true });
+      ok(activos('B01').length === 1 && activos('B01')[0].desde === 131, 'y volver al nuevo, también');
+    } finally {
+      d0.close();
+    }
+  }
+
   console.log();
   console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
   console.log();

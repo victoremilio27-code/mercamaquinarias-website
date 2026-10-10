@@ -113,9 +113,21 @@ async function ejecutar() {
     const respuesta = await estado('/api/anuncios');
     try { JSON.parse(respuesta.cuerpo); } catch { throw new Error('no devolvió JSON válido'); }
   });
-  for (const ruta of ['/api/taxonomia', '/api/planes']) {
-    await comprobar(`GET ${ruta} responde 200`, () => estado(ruta));
-  }
+  await comprobar('GET /api/taxonomia responde 200', () => estado('/api/taxonomia'));
+
+  /* Auditoría 2026-10 (FISCAL-1): en producción el procesador `demo`
+     aprueba sin dinero y gasta NCF reales. Contra el sitio público
+     (https) se exige un cobro de verdad y nunca `demo`; en local, con la
+     base de demostración, `demo` es lo normal y no se mira. */
+  await comprobar('GET /api/planes responde 200 y, en producción, cobra de verdad', async () => {
+    const respuesta = await estado('/api/planes');
+    if (base.protocol !== 'https:') return;
+    let datos;
+    try { datos = JSON.parse(respuesta.cuerpo); } catch { throw new Error('no devolvió JSON válido'); }
+    const metodos = Array.isArray(datos.metodosPago) ? datos.metodosPago : [];
+    exigir(!metodos.includes('demo'), 'ofrece el cobro de demostración: se aprueba sin dinero');
+    exigir(metodos.length > 0, 'no ofrece ningún método de cobro');
+  });
 
   await comprobar('GET /sitemap.xml devuelve XML', async () => {
     const respuesta = await estado('/sitemap.xml');
