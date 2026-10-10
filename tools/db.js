@@ -5031,6 +5031,20 @@ function filtrosCatalogo(f = {}) {
 const soloUsados = (sql, p) =>
   Object.fromEntries(Object.entries(p).filter(([clave]) => new RegExp(`:${clave}\\b`).test(sql)));
 
+/* Los anuncios del sitemap: el mismo filtro público y el mismo orden del
+   catálogo, pero solo id y fechas. El sitemap recorría el catálogo con
+   buscarAnuncios, de 60 en 60 y con sus subconsultas de fotos y su
+   recuento: con 5.000 anuncios eran 2 s con el único hilo de Node parado
+   mientras un buscador lo pedía (auditoría 2026-10). */
+function anunciosDelSitemap() {
+  const { donde, parametros } = filtrosCatalogo({});
+  parametros.ahora = ahora();
+  parametros.tasa = tasaUsd().tasa;
+  const sql = `SELECT a.id, a.actualizado, a.publicado FROM anuncios a WHERE ${donde}
+    ORDER BY ${ORDENES_SQL[ORDEN_POR_DEFECTO]}`;
+  return abrir().prepare(sql).all(soloUsados(sql, parametros));
+}
+
 function buscarAnuncios(f = {}) {
   const d = abrir();
   const { donde, parametros } = filtrosCatalogo(f);
@@ -7315,7 +7329,7 @@ module.exports = {
   anunciosPublicadosDesde, anotarAlertaEnviada, avanzarRevisionBusqueda, TOPE_BUSQUEDAS,
   registrarAceptacion, aceptacionesDe, historialAceptaciones, rutasEnUso,
   eliminarCuenta, bloqueoEliminarCuenta,
-  tomarNcf, ncfDisponible, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, enTransaccionInmediata, facturaPorId, facturaDePago, ultimosDatosFiscales,
+  anunciosDelSitemap, tomarNcf, ncfDisponible, secuenciasNcf, cargarSecuencia, siguienteNumero, crearFactura, enTransaccionInmediata, facturaPorId, facturaDePago, ultimosDatosFiscales,
   pagoPorReferencia, pagoPorId, propietarioDe, marcarPagoDevuelto,
   clienteProcesador, guardarClienteProcesador, guardarMetodoPago, metodosPagoDe, metodoPagoDe, activarMetodoPago,
   borrarMetodoPago, enlazarMetodoPago, anotarResultadoTarjeta, anotarRespuestaProcesador, anotarEventoPago,
