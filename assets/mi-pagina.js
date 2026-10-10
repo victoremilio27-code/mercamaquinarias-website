@@ -152,6 +152,7 @@
   function pintarCabecera() {
     const p = estado.pagina;
     const publicada = p.estado_pagina === 'publicada';
+    const publicadaSinVista = publicada && estado.visible === false;
 
     if (SOPORTE) {
       /* El personal no publica ni despublica: las rutas ni existen. */
@@ -161,9 +162,16 @@
       el('btnPublicar').hidden = true;
       el('btnDespublicar').hidden = true;
     } else {
-      el('estadoPagina').textContent = publicada
-        ? 'Su página está publicada y cualquiera puede verla.'
-        : 'Su página está en borrador. Solo la ve usted hasta que la publique.';
+      if (publicadaSinVista) {
+        const reglaIncumplida = estado.reglas.find((r) => !r.cumple);
+        el('estadoPagina').textContent = reglaIncumplida && reglaIncumplida.falta
+          ? `Su página está publicada pero ahora no la ve nadie: ${reglaIncumplida.falta}`
+          : 'Su página está publicada pero ahora no la ve nadie: la página propia va incluida en el nivel Premium.';
+      } else {
+        el('estadoPagina').textContent = publicada
+          ? 'Su página está publicada y cualquiera puede verla.'
+          : 'Su página está en borrador. Solo la ve usted hasta que la publique.';
+      }
 
       el('btnPublicar').hidden = publicada;
       el('btnDespublicar').hidden = !publicada;
@@ -184,7 +192,7 @@
     }
 
     const verla = el('btnVerla');
-    if (publicada && estado.direccion) {
+    if (publicada && !publicadaSinVista && estado.direccion) {
       verla.href = estado.direccion;
       verla.hidden = false;
     } else {
@@ -371,19 +379,29 @@
 
     /* Imágenes. */
     el('campoLogo').addEventListener('change', async (e) => {
-      const archivo = e.target.files[0];
-      if (!archivo) return;
-      const ruta = await subir(archivo, 600, true);
-      if (ruta && await guardar({ logo: ruta })) { pintarPrevia('logo', ruta); avisar('Logotipo guardado', true); }
-      e.target.value = '';
+      try {
+        const archivo = e.target.files[0];
+        if (!archivo) return;
+        const ruta = await subir(archivo, 600, true);
+        if (ruta && await guardar({ logo: ruta })) { pintarPrevia('logo', ruta); avisar('Logotipo guardado', true); }
+      } catch (err) {
+        avisar(err.message, false);
+      } finally {
+        e.target.value = '';
+      }
     });
 
     el('campoBanner').addEventListener('change', async (e) => {
-      const archivo = e.target.files[0];
-      if (!archivo) return;
-      const ruta = await subir(archivo, 1920, false);
-      if (ruta && await guardar({ banner: ruta })) { pintarPrevia('banner', ruta); avisar('Portada guardada', true); }
-      e.target.value = '';
+      try {
+        const archivo = e.target.files[0];
+        if (!archivo) return;
+        const ruta = await subir(archivo, 1920, false);
+        if (ruta && await guardar({ banner: ruta })) { pintarPrevia('banner', ruta); avisar('Portada guardada', true); }
+      } catch (err) {
+        avisar(err.message, false);
+      } finally {
+        e.target.value = '';
+      }
     });
 
     el('quitarLogo').addEventListener('click', async () => {
@@ -407,13 +425,18 @@
 
     /* Galería. */
     el('campoGaleria').addEventListener('change', async (e) => {
-      const archivo = e.target.files[0];
-      if (!archivo) return;
-      const ruta = await subir(archivo, 1600, false);
-      if (!ruta) return;
-      const r = await llamar(`${BASE}/galeria`, { metodo: 'POST', cuerpo: { url: ruta } });
-      if (r) { estado.pagina.galeria = r.galeria; pintarGaleria(); avisar('Fotografía añadida', true); }
-      e.target.value = '';
+      try {
+        const archivo = e.target.files[0];
+        if (!archivo) return;
+        const ruta = await subir(archivo, 1600, false);
+        if (!ruta) return;
+        const r = await llamar(`${BASE}/galeria`, { metodo: 'POST', cuerpo: { url: ruta } });
+        if (r) { estado.pagina.galeria = r.galeria; pintarGaleria(); avisar('Fotografía añadida', true); }
+      } catch (err) {
+        avisar(err.message, false);
+      } finally {
+        e.target.value = '';
+      }
     });
 
     el('galeriaEditor').addEventListener('click', async (e) => {
