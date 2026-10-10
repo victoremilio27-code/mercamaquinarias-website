@@ -2286,7 +2286,10 @@ const listarFacturas = conAdmin((req, res, ctx, consulta) => {
   return responder(res, 200, {
     mes,
     secuencias: db.secuenciasNcf(),
-    bajas: facturas.secuenciasBajas().map((s) => ({ tipo: s.tipo, quedan: s.quedan })),
+    bajas: facturas.secuenciasBajas().map((s) => ({
+      tipo: s.tipo, quedan: s.quedan, vence: s.vence || null,
+      porVencer: !!s.porVencer, vencida: !!s.vencida, sinSecuencia: !!s.sinSecuencia,
+    })),
     /* Los pendientes NO se filtran por mes: son trabajo acumulado que
        hay que ver entero, no un corte del periodo que se esté mirando. */
     pendientes: facturas.pendientesDeRegularizar().map((f) => ({
@@ -2402,7 +2405,13 @@ const reenviarFactura = conAdmin(async (req, res, ctx, idFactura) => {
 
   const dueno = f.organizacion_id && db.propietarioDe(f.organizacion_id);
   await facturas.enviar(f, { correoCliente: dueno && dueno.correo });
-  return responder(res, 200, { factura: db.facturaPorId(idFactura) });
+  const despues = db.facturaPorId(idFactura);
+  /* Qué salió en ESTA pulsación: `enviar` no repite lo ya entregado y la
+     consola tiene que poder decirlo (auditoría 2026-10). */
+  return responder(res, 200, {
+    factura: despues,
+    reenvio: { cliente: !f.enviada_cliente && !!despues.enviada_cliente, interna: !f.enviada_interna && !!despues.enviada_interna },
+  });
 });
 
 /* Nota de crédito. Es lo único que anula un comprobante: el original

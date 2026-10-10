@@ -2204,6 +2204,8 @@ function pintarFacturasAdmin(datos) {
       <td class="num">${esc(s.prefijo)}${String(s.desde).padStart(8, '0')} – ${String(s.hasta).padStart(8, '0')}</td>
       <td class="num">${String(s.siguiente).padStart(8, '0')}</td>
       <td class="num">${s.quedan}</td>
+      <td class="num">${s.vence ? esc(s.vence) : 'sin fecha'}</td>
+      <td>${s.activa ? 'sí' : 'no'}</td>
       <td>${s.usa_sitio ? 'la usa el sitio' : 'solo contabilidad'}</td>
     </tr>`).join('');
 
@@ -2226,14 +2228,34 @@ function pintarFacturasAdmin(datos) {
     }).join('');
   }
 
+  /* El motivo de cada una, como en el correo diario: quedarse sin números
+     y que venza el plazo piden lo mismo, pero con distinta prisa
+     (auditoría 2026-10: antes solo decía cuántos quedaban). */
+  const motivoNcf = (b) => {
+    if (b.sinSecuencia) return 'no hay ninguna activa que use el sitio';
+    if (b.vencida) return `vencida el ${b.vence}`;
+    if (b.porVencer) return `vence el ${b.vence}`;
+    return `quedan ${b.quedan}`;
+  };
   const bajas = datos.bajas || [];
   $('#avisoNcf').innerHTML = bajas.length
     ? `<div class="aviso-legal">
          <p class="aviso-legal__titulo">Se están acabando los comprobantes</p>
-         <p class="aviso-legal__texto">Quedan pocos en ${bajas.map((b) => `<b>${esc(b.tipo)}</b> (${b.quedan})`).join(' y ')}.
+         <p class="aviso-legal__texto">${bajas.map((b) => `<b>${esc(b.tipo)}</b>: ${esc(motivoNcf(b))}`).join(' · ')}.
            Sin NCF disponible no se puede emitir una factura fiscal: pida un rango nuevo a la DGII antes de que se agote.</p>
        </div>`
     : '';
+}
+
+/* Faltaba: «Anular» y «Reenviar» llamaban a un `aviso` que en esta
+   sección no existe, así que «Reenviar» se quedaba en «Enviando…» y
+   «Anular» emitía la nota sin decir nada (auditoría 2026-10). */
+function avisarFacturas(mensaje, bien = false) {
+  const aviso = $('#avisoFacturas');
+  if (!aviso) return;
+  aviso.hidden = !mensaje;
+  aviso.className = `acceso__aviso${bien ? ' acceso__aviso--bien' : ''}`;
+  aviso.textContent = mensaje || '';
 }
 
 async function cargarFacturasAdmin() {
@@ -2314,9 +2336,9 @@ async function montarFacturasAdmin() {
           metodo: 'POST', cuerpo: { motivo },
         });
         if (!r) throw new Error('No hay conexión con el servidor.');
-        aviso(`${r.nota.ncf ? 'Nota de crédito' : 'Anulación'} ${r.nota.numero} emitida.`, true);
+        avisarFacturas(`${r.nota.ncf ? `Nota de crédito ${r.nota.ncf}` : 'Anulación'} ${r.nota.numero} emitida.`, true);
         cargarFacturasAdmin();
-      } catch (e) { aviso(e.message); boton.disabled = false; }
+      } catch (e) { avisarFacturas(e.message); boton.disabled = false; }
       return;
     }
 
@@ -2325,9 +2347,17 @@ async function montarFacturasAdmin() {
     try {
       const r = await api(`/admin/facturas/${factura}/reenviar`, { metodo: 'POST' });
       if (!r) throw new Error('No hay conexión con el servidor.');
-      aviso('Reenviado.', true);
+      /* `enviar` no repite lo que ya consta entregado: decirlo, para que
+         nadie crea que salió otra vez. */
+      const r2 = r.reenvio || {};
+      avisarFacturas(r2.cliente || r2.interna
+        ? `Enviado${r2.cliente ? ' al cliente' : ''}${r2.cliente && r2.interna ? ' y' : ''}${r2.interna ? ' a facturación' : ''}.`
+        : (r.factura && r.factura.enviada_cliente && r.factura.enviada_interna
+          ? 'Ya constaba enviado al cliente y a facturación: no se volvió a mandar. Descargue el PDF si se lo piden.'
+          : 'No salió. Revise el correo del cliente o el registro del servidor.'),
+      !!(r2.cliente || r2.interna));
       cargarFacturasAdmin();
-    } catch (e) { aviso(e.message); boton.disabled = false; boton.textContent = 'Reenviar'; }
+    } catch (e) { avisarFacturas(e.message); boton.disabled = false; boton.textContent = 'Reenviar'; }
   });
 }
 

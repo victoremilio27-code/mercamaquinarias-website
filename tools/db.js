@@ -6790,9 +6790,15 @@ function cargarSecuencia({ tipo, nombre, desde, hasta, vence = null, activa = tr
 
   const yaEsta = d.prepare('SELECT * FROM secuencias_ncf WHERE tipo = ? AND desde = ?').get(t, a);
   if (yaEsta) {
+    /* Auditoría 2026-10 (E2E-NEGOCIO-2): recargar desde la consola sin
+       escribir la fecha le borraba el vencimiento, y con él la guarda de
+       tomarNcf contra emitir fuera de plazo: sin fecha nueva se conserva
+       la que tenía. Y reactivar un rango viejo lo dejaba activo junto al
+       nuevo; como en la carga de uno nuevo, el resto se desactiva. */
+    if (activa) d.prepare('UPDATE secuencias_ncf SET activa = 0 WHERE tipo = ? AND activa = 1 AND id <> ?').run(t, yaEsta.id);
     d.prepare(`UPDATE secuencias_ncf SET vence = ?, activa = ?, usa_sitio = ?, nombre = ?
                 WHERE id = ?`)
-      .run(vence, activa ? 1 : 0, usaSitio ? 1 : 0, nombre || yaEsta.nombre, yaEsta.id);
+      .run(vence || yaEsta.vence, activa ? 1 : 0, usaSitio ? 1 : 0, nombre || yaEsta.nombre, yaEsta.id);
     return { ...d.prepare('SELECT * FROM secuencias_ncf WHERE id = ?').get(yaEsta.id), nueva: false };
   }
 

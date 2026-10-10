@@ -627,6 +627,30 @@ console.log('10. El asunto del correo lleva la etiqueta y los dos códigos');
     }
   }
 
+  /* Auditoría 2026-10 (E2E-NEGOCIO-2): recargar desde la consola un rango
+     ya cargado sin escribir la fecha le BORRABA el vencimiento (y con él la
+     guarda de tomarNcf contra emitir pasado el plazo), y recargar un rango
+     viejo lo dejaba activo junto al nuevo: dos B01 activas, y tomarNcf
+     elegía una cualquiera. */
+  console.log('\n── Recargar un rango no le quita la fecha ni deja dos activos (auditoría 2026-10) ──');
+  {
+    const d0 = conexion();
+    const activos = (tipo) => d0.prepare('SELECT desde, vence FROM secuencias_ncf WHERE tipo = ? AND activa = 1').all(tipo);
+    try {
+      db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, usaSitio: true });
+      const ahora = activos('B01');
+      ok(ahora.length === 1 && ahora[0].desde === 131 && ahora[0].vence === '2027-12-31',
+        `recargar sin fecha conserva el vencimiento (${JSON.stringify(ahora)})`);
+      db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 16, hasta: 30, vence: '2026-11-30', usaSitio: true });
+      const tras = activos('B01');
+      ok(tras.length === 1 && tras[0].desde === 16, `recargar el rango viejo como activo deja uno solo (${JSON.stringify(tras)})`);
+      db.cargarSecuencia({ tipo: 'B01', nombre: 'Crédito fiscal', desde: 131, hasta: 230, usaSitio: true });
+      ok(activos('B01').length === 1 && activos('B01')[0].desde === 131, 'y volver al nuevo, también');
+    } finally {
+      d0.close();
+    }
+  }
+
   console.log();
   console.log(`PDF de muestra en ${path.relative(process.cwd(), process.env.MERCA_FACTURAS)}`);
   console.log();
