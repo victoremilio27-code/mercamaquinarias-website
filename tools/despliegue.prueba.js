@@ -168,6 +168,26 @@ test('nginx incluye Cloudflare y declara el dominio vigente', () => {
     `${relativo(archivo)}:${numeroDeLinea(texto, /^\s*server_name/m)}: falta mercamaquinarias.com en server_name`);
 });
 
+/* El video (PR #9) se fusionó el 18-09 y nginx se quedó en 12M, con un
+   comentario que mandaba subirlo «el día que se fusione»: un video de más
+   de unos 9 MB llegaba en base64 por encima del límite y nginx lo cortaba
+   con un 413 en HTML. El tope se lee del texto de tools/videos.js para no
+   cargar el módulo (abre carpetas). */
+test('nginx admite el video más grande que acepta el servidor', () => {
+  const archivo = path.join(CARPETA_DESPLIEGUE, 'nginx.conf');
+  const texto = leer(archivo);
+  const limite = texto.match(/^\s*client_max_body_size\s+(\d+)M;$/m);
+  assert.ok(limite, `${relativo(archivo)}: falta client_max_body_size en megas`);
+  const tope = leer(path.join(RAIZ, 'tools', 'videos.js')).match(/const TOPE_BYTES = (\d+) \* 1024 \* 1024;/);
+  assert.ok(tope, 'tools/videos.js: no se encuentra TOPE_BYTES');
+  const MB = 1024 * 1024;
+  // base64 crece un tercio, y el JSON de alrededor pide algo de margen.
+  const necesario = Math.ceil((Number(tope[1]) * MB * 4) / 3) + MB;
+  assert.ok(Number(limite[1]) * MB >= necesario,
+    `${relativo(archivo)}:${numeroDeLinea(texto, /client_max_body_size/)}: ${limite[1]}M no deja pasar un video de ${tope[1]} MB `
+    + `en base64 (hacen falta ${Math.ceil(necesario / MB)} MB)`);
+});
+
 /* Era un «todo» mientras vivía la redirección del dominio viejo; #193 borró
    ese .conf, así que ahora la comprobación es de verdad. */
 test('ningún bloque server nombra un dominio ajeno', () => {

@@ -32,8 +32,9 @@ léelo al empezar una sesión nueva, antes de explorar a ciegas.
   decir "Listo para revisión si quieres".
 - Commits pequeños, en español, con `git add` de rutas explícitas; nunca `git add .`,
   `stash` sin etiqueta, `--force` ni push a `main`.
-- **El video en anuncios (PR #9) está en pausa a propósito:** terminado pero sin
-  fusionar, porque falta una prueba manual que el navegador sin pantalla no puede hacer.
+- **El video en anuncios (PR #9) está fusionado desde el 2026-09-18.** La reducción a
+  720p en el navegador sigue sin poder probarse en Chrome sin pantalla: se comprueba a
+  mano en un navegador de verdad.
 
 ## En la nube (claude.ai/code)
 
