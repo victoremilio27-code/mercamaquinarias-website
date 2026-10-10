@@ -190,6 +190,26 @@ async function probar() {
   comprobar(r.codigo === 200 && documentos.archivoDe(rutaParaBorrar) === null,
     'borrar el anuncio borra también sus documentos');
 
+  /* SEG-PERMISOS-02: un anuncio pausado, retirado, vendido o vencido se
+     veía entero por su enlace, con teléfonos y documentos. Ahora, como un
+     borrador, no existe para nadie más que su dueño. */
+  console.log('\nUn anuncio no activo solo existe para su dueño');
+  for (const estado of ['pausado', 'retirado', 'vendido', 'vencido']) {
+    const id = anuncioDe(ana, estado);
+    await pedir({ metodo: 'POST', url: `/api/anuncios/${id}/documentos`, testigo: ana.testigo, cuerpo: {
+      nombre: 'Historial.pdf', archivo: dataUrl('application/pdf', PDF),
+    } });
+    const visitante = await pedir({ url: `/api/anuncios/${id}` });
+    const otra = await pedir({ url: `/api/anuncios/${id}`, testigo: bia.testigo });
+    const duena = await pedir({ url: `/api/anuncios/${id}`, testigo: ana.testigo });
+    comprobar(visitante.codigo === 404 && otra.codigo === 404 && duena.codigo === 200,
+      `${estado}: visitante ${visitante.codigo}, otra cuenta ${otra.codigo}, dueña ${duena.codigo}`);
+    const docsVisitante = await pedir({ url: `/api/anuncios/${id}/documentos` });
+    const docsDuena = await pedir({ url: `/api/anuncios/${id}/documentos`, testigo: ana.testigo });
+    comprobar(docsVisitante.codigo === 404 && docsDuena.codigo === 200 && docsDuena.datos.documentos.length === 1,
+      `${estado}: sus documentos tampoco (visitante ${docsVisitante.codigo}, dueña ${docsDuena.codigo})`);
+  }
+
   console.log(`\n${bien} comprobaciones bien; ${mal} mal.`);
   if (mal) process.exitCode = 1;
 }

@@ -424,6 +424,9 @@ function emitirCodigo({ correo: destino, tipo, idUsuario, nombre }) {
   return { limitado: false, minutos };
 }
 
+const MENSAJE_CODIGOS_LIMITADOS = 'Ya le enviamos varios códigos en los últimos 15 minutos. '
+  + 'Use el último que recibió o espere unos minutos.';
+
 /* Qué se le dice a quien falla un código. Lo comparten `verificar` y la
    confirmación del cambio de correo: los mismos motivos, las mismas frases. */
 function mensajeDeCodigo(r) {
@@ -555,7 +558,8 @@ async function registro(req, res) {
   if (esDealer) avisarSolicitudDealer(idOrg);
 
   // La cuenta existe pero todavía no hay sesión: primero el código.
-  emitirCodigo({ correo: c.correo, tipo: 'verificacion', idUsuario, nombre: texto(c.nombre, 120) });
+  const emitido = emitirCodigo({ correo: c.correo, tipo: 'verificacion', idUsuario, nombre: texto(c.nombre, 120) });
+  if (emitido.limitado) return fallo(res, 429, MENSAJE_CODIGOS_LIMITADOS);
 
   return responder(res, 201, {
     verificacion: 'verificacion',
@@ -608,7 +612,8 @@ async function entrar(req, res) {
 
   // Correo sin confirmar: se retoma la verificación pendiente.
   if (!u.correo_verificado) {
-    emitirCodigo({ correo: u.correo, tipo: 'verificacion', idUsuario: u.id, nombre: u.nombre });
+    const emitido = emitirCodigo({ correo: u.correo, tipo: 'verificacion', idUsuario: u.id, nombre: u.nombre });
+    if (emitido.limitado) return fallo(res, 429, MENSAJE_CODIGOS_LIMITADOS);
     return responder(res, 200, {
       verificacion: 'verificacion',
       correo: u.correo,
@@ -653,7 +658,8 @@ async function entrar(req, res) {
     });
   }
 
-  emitirCodigo({ correo: u.correo, tipo: 'acceso', idUsuario: u.id, nombre: u.nombre });
+  const emitido = emitirCodigo({ correo: u.correo, tipo: 'acceso', idUsuario: u.id, nombre: u.nombre });
+  if (emitido.limitado) return fallo(res, 429, MENSAJE_CODIGOS_LIMITADOS);
   return responder(res, 200, {
     verificacion: 'acceso',
     correo: u.correo,
@@ -749,6 +755,8 @@ async function reenviar(req, res) {
   const procede = u && (tipo === 'restablecer'
     || (tipo === 'verificacion' && !u.correo_verificado)
     || (tipo === 'acceso' && db.hayCodigoVivo(u.correo, 'acceso')));
+  // Sin 429 aunque se llegue al tope de códigos: aquí solo podría salir si
+  // la cuenta existe, y probándolo se averiguaría qué correos hay registrados.
   if (procede) emitirCodigo({ correo: u.correo, tipo, idUsuario: u.id, nombre: u.nombre });
 
   return responder(res, 202, { mensaje: 'Si esa cuenta existe, le enviamos un código nuevo.' });
@@ -848,7 +856,7 @@ const pedirCambioCorreo = conSesion(async (req, res, ctx) => {
   if (db.usuarioPorCorreo(nuevo)) return fallo(res, 409, 'Ese correo ya tiene una cuenta');
 
   const e = emitirCodigo({ correo: nuevo, tipo: 'cambio_correo', idUsuario: u.id, nombre: u.nombre });
-  if (e.limitado) return fallo(res, 429, 'Ya pidió varios códigos para ese correo. Espere unos minutos.');
+  if (e.limitado) return fallo(res, 429, MENSAJE_CODIGOS_LIMITADOS);
 
   return responder(res, 202, {
     correo: nuevo,
@@ -1135,7 +1143,7 @@ const pedirCodigoClave = conSesion(async (req, res, ctx) => {
 
   if (via === 'correo') {
     const e = emitirCodigo({ correo: u.correo, tipo: 'restablecer', idUsuario: u.id, nombre: u.nombre });
-    if (e.limitado) return fallo(res, 429, 'Ya pidió varios códigos para ese correo. Espere unos minutos.');
+    if (e.limitado) return fallo(res, 429, MENSAJE_CODIGOS_LIMITADOS);
     return responder(res, 202, { via: 'correo', destino: ocultarCorreo(u.correo), minutos: e.minutos });
   }
 
@@ -1852,13 +1860,17 @@ async function crearSolicitudServicio(req, res) {
   const nombre = texto(c.nombre, 120);
   if (!nombre || nombre.length < 3) return fallo(res, 400, 'Escriba su nombre o el de su empresa');
 
-  const telefono = String(c.telefono || '').replace(/\D/g, '');
-  if (telefono.length !== 10) return fallo(res, 400, 'Indique un teléfono de 10 dígitos');
-
-  // El correo es opcional, pero si viene tiene que ser válido: uno mal
-  // escrito es peor que ninguno, porque se cuenta como vía de respuesta.
   const correoCliente = texto(c.correo, 160);
   if (correoCliente && !correoValido(correoCliente)) return fallo(res, 400, 'Escriba un correo válido o déjelo vacío');
+  const telefono = String(c.telefono || '').replace(/\D/g, '');
+  if (telefono && telefono.length !== 10) return fallo(res, 400, 'Indique un teléfono de 10 dígitos');
+  if (servicio === 'contacto') {
+    if (!correoValido(correoCliente) && telefono.length !== 10) {
+      return fallo(res, 400, 'Déjenos un correo o un teléfono para responderle');
+    }
+  } else if (telefono.length !== 10) {
+    return fallo(res, 400, 'Indique un teléfono de 10 dígitos');
+  }
 
   /* El detalle llega como pares rótulo/valor de la propia pantalla. Se
      recorta y se limita: es texto libre que acaba en un correo. */
@@ -2851,7 +2863,7 @@ function verDealer(req, res, ctx, slug) {
   return responder(res, 200, {
     dealer: { ...d, verificada: !!d.verificada },
     sucursales: db.sucursalesDe(d.id),
-    anuncios: db.anunciosPublicos({ organizacion: d.id, porPagina: 500 }),
+    anuncios: db.anunciosPublicos({ organizacion: d.id, porPagina: 500 }, { sinTope: true }),
     enlaces: pagina.enlaces,
     galeria: pagina.galeria,
     secciones: pagina.secciones,
@@ -3099,6 +3111,10 @@ function vistaDePagina(org) {
     /* La dirección donde se verá, para que pueda copiarla y
        comprobarla antes de publicar. */
     direccion: pagina.slug ? `/dealer.html?d=${pagina.slug}` : null,
+    /* «Publicada» no basta: si la cuenta deja de cumplir (revisión, perfil
+       público) la ruta pública da 404 y el dealer creía que se veía
+       (E2E-NEGOCIO-4). Es la misma consulta que usa `verDealer`. */
+    visible: !!(pagina.slug && db.dealerPorSlug(pagina.slug)),
   };
 }
 
@@ -3571,8 +3587,8 @@ const EN_PROCESO = 'Su pago está en proceso. Lo contratado y el comprobante apa
 
 /* Sin plazo prometido: lo confirma una persona mirando el banco, y un
    «en 24 horas» que no se cumple un viernes por la tarde es un reclamo. */
-const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicada. Lo contratado y el '
-  + 'comprobante fiscal llegan cuando confirmemos el ingreso.';
+const EN_ESPERA_TRANSFERENCIA = 'Transfiera el importe con la referencia indicada. Lo contratado y '
+  + 'su comprobante llegan cuando confirmemos el ingreso.';
 
 const pagoPublico = (pago) => (pago ? { id: pago.id, estado: pago.estado } : null);
 
@@ -4189,14 +4205,18 @@ function validarCamposAnuncio(c, plan, { completo = true, actual = null } = {}) 
   // Precio: obligatorio al publicar, opcional mientras se rellena el borrador.
   if (completo) {
     const precio = entero(c.precio);
-    if (!precio || precio <= 0) return { error: 'Indique el precio solicitado' };
+    if (!precio || precio < 1 || precio > 10000000000) {
+      return { error: 'El precio debe estar entre 1 y 10,000,000,000' };
+    }
     datos.precio = precio;
   } else if (presente(c.precio)) {
     if (String(c.precio).trim() === '') {
       datos.precio = null;
     } else {
       const precio = entero(c.precio);
-      if (!precio || precio <= 0) return { error: 'Indique el precio solicitado' };
+      if (!precio || precio < 1 || precio > 10000000000) {
+        return { error: 'El precio debe estar entre 1 y 10,000,000,000' };
+      }
       datos.precio = precio;
     }
   }
@@ -4259,15 +4279,30 @@ function validarCamposAnuncio(c, plan, { completo = true, actual = null } = {}) 
 
   if (completo || Array.isArray(c.telefonos)) {
     const telefonos = (Array.isArray(c.telefonos) ? c.telefonos : [])
+      .filter((t) => t && typeof t === 'object' && !Array.isArray(t))
       .filter((t) => String(t.numero || '').replace(/\D/g, '').length === 10)
       .slice(0, 5);
     if (completo && !telefonos.length) return { error: 'Registre al menos un teléfono de 10 dígitos' };
-    datos.telefonos = telefonos.map((t) => ({ numero: t.numero, tipo: t.tipo, nota: t.nota }));
+    datos.telefonos = telefonos.map((t) => ({
+      numero: texto(t.numero, 20),
+      tipo: ['ambos', 'llamadas', 'whatsapp'].includes(t.tipo) ? t.tipo : 'ambos',
+      nota: texto(t.nota, 120),
+    }));
   }
 
   // El resto: se normaliza si llega, sin mínimos que exigir.
   if (completo || presente(c.condicion)) datos.condicion = texto(c.condicion, 40);
-  if (completo || presente(c.usoValor)) datos.usoValor = entero(c.usoValor);
+  if (completo || presente(c.usoValor)) {
+    if (c.usoValor === null || String(c.usoValor ?? '').trim() === '') {
+      datos.usoValor = null;
+    } else {
+      const uso = entero(c.usoValor);
+      if (uso === null || uso < 0 || uso > 1000000) {
+        return { error: 'El uso debe estar entre 0 y 1,000,000' };
+      }
+      datos.usoValor = uso;
+    }
+  }
   if (completo || presente(c.usoUnidad)) datos.usoUnidad = c.usoUnidad === 'km' ? 'km' : 'h';
   if (completo || presente(c.serie)) datos.serie = texto(c.serie, 60);
   if (completo || presente(c.potencia)) datos.potencia = texto(c.potencia, 40);
@@ -4304,7 +4339,18 @@ function validarCamposAnuncio(c, plan, { completo = true, actual = null } = {}) 
   if (completo || presente(c.provincia)) datos.provincia = texto(c.provincia, 60);
   if (completo || presente(c.municipio)) datos.municipio = texto(c.municipio, 60);
   if (completo || presente(c.moneda)) datos.moneda = c.moneda === 'USD' ? 'USD' : 'DOP';
-  if (completo || presente(c.precioMinimo)) datos.precioMinimo = entero(c.precioMinimo);
+  if (completo || presente(c.precioMinimo)) {
+    if (c.precioMinimo === null || String(c.precioMinimo ?? '').trim() === '') {
+      datos.precioMinimo = null;
+    } else {
+      const minimo = entero(c.precioMinimo);
+      const precio = datos.precio !== undefined ? datos.precio : (actual && actual.precio);
+      if (!minimo || minimo < 1 || (precio && minimo > precio)) {
+        return { error: 'El precio mínimo debe estar entre 1 y el precio solicitado' };
+      }
+      datos.precioMinimo = minimo;
+    }
+  }
   if (completo || presente(c.itbisIncluido)) datos.itbisIncluido = !!c.itbisIncluido;
   if (completo || presente(c.permuta)) datos.permuta = !!c.permuta;
   if (completo || presente(c.financiamiento)) datos.financiamiento = !!c.financiamiento;
@@ -4411,6 +4457,7 @@ function borradorPublico(b) {
 
   return {
     id: b.id,
+    actualizado: b.actualizado,
     estado: 'borrador',
     plan: plan && {
       id: plan.id, nombre: plan.nombre, fotos_maximas: plan.fotos_maximas,
@@ -4522,6 +4569,7 @@ const publicar = conSesion(async (req, res, ctx) => {
     idAnuncio,
     vence: publicado.vence,
     plan: plan.nombre,
+    telefonoVerificado: (publicado.telefonos || []).some((t) => t.verificado),
   });
 
   return responder(res, 201, {
@@ -4642,6 +4690,16 @@ const guardarBorradorApi = conSesion(async (req, res, ctx, idAnuncio) => {
 
   const c = await leerCuerpo(req);
 
+  /* Dos pestañas sobre el mismo borrador se pisaban en silencio
+     (E2E-NEGOCIO-8). Se relee DESPUÉS de leer el cuerpo: mientras este
+     esperaba, otra petición pudo guardar. Sin `siActualizado`, como antes. */
+  if (c.siActualizado !== undefined) {
+    const fresco = db.borradorDe(idAnuncio, org.id);
+    if (!fresco || c.siActualizado !== fresco.actualizado) {
+      return fallo(res, 409, 'Este borrador cambió en otra pestaña o en otro equipo. Recárguelo para no perder cambios.');
+    }
+  }
+
   let plan = db.planPorId(b.plan_elegido);
   if (c.plan !== undefined) {
     plan = db.planPorId(String(c.plan));
@@ -4694,7 +4752,7 @@ const NO_APROBADO_PUBLICACION = 'El pago no fue aprobado. No se le cobró nada, 
   + 'guardado como borrador y no se emitió comprobante.';
 const EN_PROCESO_PUBLICACION = 'Su pago está en proceso. Su anuncio se publica cuando se confirme.';
 const EN_ESPERA_PUBLICACION = 'Transfiera el importe con la referencia indicada. Su anuncio se publica '
-  + 'y el comprobante fiscal llega cuando confirmemos el ingreso.';
+  + 'y su comprobante llega cuando confirmemos el ingreso.';
 
 /* Un pago que ya está esperando (D-12): se devuelve ese, sin crear otro
    ni volver a avisar a facturación. Pulsar «Pagar» dos veces, o volver
@@ -5457,6 +5515,7 @@ const ESTADO_DOCUMENTO = {
   'tope-archivo': [413, `El archivo pasa de ${db.TOPES_DOCUMENTOS.bytesPorArchivo / 1024 / 1024} MB.`],
   'tope-cantidad': [409, `Cada anuncio admite hasta ${db.TOPES_DOCUMENTOS.porAnuncio} documentos.`],
   'tope-anuncio': [409, `Los documentos del anuncio pasan de ${db.TOPES_DOCUMENTOS.bytesPorAnuncio / 1024 / 1024} MB.`],
+  'tope-organizacion': [409, `Su cuenta llegó al tope de documentos adjuntos (${db.TOPES_DOCUMENTOS.bytesPorOrganizacion / 1024 / 1024} MB). Quite alguno que ya no use.`],
   'tope-total': [507, `No queda espacio para documentos (tope de ${db.TOPES_DOCUMENTOS.bytesTotal / 1024 / 1024} MB).`],
 };
 
@@ -5695,7 +5754,8 @@ function verAnuncio(req, res, ctx, idAnuncio) {
   /* T-05.2-06, hallazgo 4 de la auditoría §1.8 (D-14): un borrador no
      existe para quien no es su dueño. Mismo texto que un id inexistente,
      para no confirmar que hay algo ahí. */
-  if (a.estado === 'borrador' && !esSuyo) return fallo(res, 404, 'Ese anuncio no existe');
+  const esAdmin = !!ctx && !!ctx.usuario && ctx.usuario.esAdmin;
+  if (a.estado !== 'activo' && !esSuyo && !esAdmin) return fallo(res, 404, 'Ese anuncio no existe');
   if (!esSuyo) {
     PRIVADOS_DEL_ANUNCIO.forEach((campo) => { delete a[campo]; });
     /* CONF-03: a quien no es el dueño, solo los teléfonos verificados.

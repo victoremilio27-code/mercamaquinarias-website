@@ -569,7 +569,7 @@ db.cargarSecuencia({
       && t.tipoCuenta === 'corriente' && t.cuenta === '000-000000-0' && t.moneda === 'DOP',
     `transferencia=${JSON.stringify(d.transferencia)}`);
     ok(t.correo === 'facturacion@mercamaquinarias.com', `correo para el comprobante de la transferencia: ${t.correo}`);
-    ok(typeof d.aviso === 'string' && /referencia/i.test(d.aviso) && /comprobante fiscal/i.test(d.aviso),
+    ok(typeof d.aviso === 'string' && /referencia/i.test(d.aviso) && /comprobante/i.test(d.aviso),
       `aviso: ${d.aviso}`);
     const fila = d.pago ? db.pagoPorId(d.pago.id) : null;
     ok(!!fila && !!d.cobro && fila.referencia === d.cobro.referencia && fila.total === d.cobro.total && d.cobro.total > 0,

@@ -335,12 +335,39 @@ async function bloqueCondiciones() {
   comprobar(t.permuta === 1 && t.itbis_incluido === 1, 'el listado devuelve permuta e itbis_incluido');
 }
 
+/* ── SEG-PERMISOS-06 y -10 · la paginación ───────────────── */
+
+async function bloquePaginacion() {
+  /* `porPagina=1.5` daba 500 y `porPagina=-1` devolvía el catálogo entero. */
+  console.log('\nLa paginación no se sale de 1-60');
+  for (const valor of ['1.5', '-1', '0', 'abc', '1e9']) {
+    const r = await pedir({ url: `/api/anuncios?porPagina=${valor}&pagina=${valor}` });
+    const d = r.datos || {};
+    comprobar(r.codigo === 200 && d.porPagina >= 1 && d.porPagina <= 60
+      && Number.isInteger(d.porPagina) && Number.isInteger(d.pagina) && d.anuncios.length <= d.porPagina,
+    `porPagina=${valor} → ${r.codigo}, ${d.porPagina} por página, página ${d.pagina}`);
+  }
+
+  /* La página del dealer enseñaba como mucho 60 equipos aunque su
+     capacidad llegue a 100. El tope de 500 es solo para ella: la consulta
+     HTTP no puede pedirlo. */
+  console.log('\nEl escaparate del dealer pasa de 60; el catálogo no');
+  const flota = cuenta('flota@ejemplo.test', 'Flota Grande');
+  for (let i = 0; i < 65; i++) anuncio(flota.org, { modelo: `Flota${i}`, precio: 100000 + i });
+  comprobar(db.anunciosPublicos({ organizacion: flota.org.id, porPagina: 500 }, { sinTope: true }).length === 65,
+    'con sinTope salen los 65');
+  comprobar(db.anunciosPublicos({ organizacion: flota.org.id, porPagina: 500 }).length === 60, 'sin él, 60');
+  const r = await pedir({ url: `/api/anuncios?porPagina=500&sinTope=1&sinTope=true&organizacion=${flota.org.id}` });
+  comprobar(r.codigo === 200 && r.datos.porPagina === 60, `por HTTP no se puede pedir (${r.datos && r.datos.porPagina})`);
+}
+
 (async () => {
   console.log('\nMercaMaquinarias · comprobaciones del catálogo\n');
   sembrar();
   await bloqueMoneda();
   await bloqueDisponibilidad();
   await bloqueCondiciones();
+  await bloquePaginacion();
 
   console.log(`\n${bien} bien, ${mal} mal`);
   process.exit(mal ? 1 : 0);

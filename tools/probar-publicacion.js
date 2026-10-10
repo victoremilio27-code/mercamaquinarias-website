@@ -1210,6 +1210,63 @@ db.cargarSecuencia({
       `segunda pasada: salida ${otra.status}, no borra nada más`);
   }
 
+  console.log('\n14. Lo que el borrador ya no admite y lo que dice el correo (auditoría 2026-10)');
+  {
+    const quien = cuentaCon({ correo: `auditoria-${SELLO}@prueba.invalid` });
+    const { id } = await borradorPorApi(quien, { plan: 'destacado' });
+    const guardar = (cuerpo) => pedir({ metodo: 'PUT', url: `/api/borradores/${id}`, cuerpo, cabeceras: quien.cabeceras });
+    const leer = async () => ((await pedir({ url: `/api/borradores/${id}`, cabeceras: quien.cabeceras })).datos || {}).borrador || {};
+
+    /* SEG-PERMISOS-05: `[null]` y un `tipo` objeto daban 500, y una nota de
+       5 MB hacía una ficha pública de 6 MB. */
+    let r = await guardar({ telefonos: [null, 7, ['x'], { numero: '8095550001', tipo: { malo: 1 }, nota: 'n'.repeat(5000) }] });
+    const tels = ((((await leer()).datos || {}).contacto || {}).telefonos || []).filter((t) => t.numero);
+    ok(r.codigo === 200 && tels.length === 1 && tels[0].tipo === 'ambos' && String(tels[0].nota || '').length <= 120,
+      `teléfonos basura: ${r.codigo}, ${tels.length} guardado(s), tipo=${tels[0] && tels[0].tipo}, nota=${tels[0] && String(tels[0].nota || '').length}`);
+
+    // SEG-PERMISOS-07: precio, uso y precio mínimo con límites.
+    for (const [cuerpo, que] of [
+      [{ precio: 0 }, 'precio 0'],
+      [{ precio: 10000000001 }, 'precio de más de diez mil millones'],
+      [{ usoValor: 1000001 }, 'uso de más de un millón'],
+      [{ usoValor: -5 }, 'uso negativo'],
+      [{ precio: 1000000, precioMinimo: 2000000 }, 'precio mínimo por encima del precio'],
+    ]) {
+      r = await guardar(cuerpo);
+      ok(r.codigo === 400 && !!errorDe(r), `${que}: ${r.codigo} «${errorDe(r)}»`);
+    }
+    r = await guardar({ precio: 1000000, precioMinimo: 900000, usoValor: 0 });
+    ok(r.codigo === 200, `precio, mínimo y uso dentro de los límites: ${r.codigo} «${errorDe(r)}»`);
+
+    /* E2E-NEGOCIO-8: dos pestañas sobre el mismo borrador. */
+    const actual = (await leer()).actualizado;
+    ok(!!actual, `el GET devuelve actualizado (${actual})`);
+    r = await guardar({ modelo: 'Pestaña A', siActualizado: actual });
+    const tras = (r.datos || {}).borrador || {};
+    ok(r.codigo === 200 && !!tras.actualizado, `guardar con el actualizado vigente: ${r.codigo}, devuelve el nuevo`);
+    ejecuta('UPDATE anuncios SET actualizado = ? WHERE id = ?', '2000-01-01T00:00:00.000Z', id);
+    r = await guardar({ modelo: 'Pestaña B', siActualizado: tras.actualizado });
+    ok(r.codigo === 409 && /otra pestaña/.test(errorDe(r)) && (await leer()).datos.equipo.modelo === 'Pestaña A',
+      `con uno viejo: ${r.codigo} «${errorDe(r)}» y no pisa`);
+    r = await guardar({ modelo: 'Sin control' });
+    ok(r.codigo === 200, `sin siActualizado, como antes: ${r.codigo}`);
+
+    /* E2E-CLIENTE-02 y -04: el correo de publicado avisa si no hay teléfono
+       verificado y ya no promete «editarlo». */
+    const sinVerificar = await borradorPorApi(quien, { plan: 'destacado' });
+    await pedirPago(sinVerificar.id, quien);
+    const [c1] = correosCon(sinVerificar.modelo).filter((t) => /ya está publicado/.test(t));
+    ok(!!c1 && /no muestra ningún teléfono hasta que lo verifique/.test(c1) && /panel\.html#panelContactos/.test(c1),
+      'sin teléfono verificado: el correo lo dice y enlaza a Contactos');
+    ok(!!c1 && !/editarlo/.test(c1), 'el correo ya no promete editarlo');
+
+    db.marcarContactoVerificado(quien.org.id, '8095551234');
+    const verificado = await borradorPorApi(quien, { plan: 'destacado' });
+    await pedirPago(verificado.id, quien);
+    const [c2] = correosCon(verificado.modelo).filter((t) => /ya está publicado/.test(t));
+    ok(!!c2 && !/no muestra ningún teléfono/.test(c2), 'con el teléfono verificado no hay aviso');
+  }
+
   console.log(`\n${comprobaciones} comprobaciones, ${fallos} fallos`);
   process.exitCode = fallos ? 1 : 0;
 })().catch((e) => {

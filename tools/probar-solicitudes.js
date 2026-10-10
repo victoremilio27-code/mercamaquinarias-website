@@ -116,6 +116,23 @@ async function probar() {
   comprobar(cantidadCorreos() === correosAntes + 2,
     'un cliente antiguo también manda sus correos');
 
+  /* E2E-CLIENTE-05 y E2E-NEGOCIO-6: el formulario de contacto pedía un
+     teléfono aunque el cliente solo quisiera dejar su correo. */
+  console.log('\nContacto: basta un correo o un teléfono');
+  const contacto = (extra, ip) => pedir(cuerpoValido({
+    servicio: 'contacto', empresa: '', detalle: { Mensaje: 'Una consulta' }, ...extra,
+  }), ip);
+  let r = await contacto({ telefono: '', correo: 'solo-correo@ejemplo.test' }, '201.8.7.11');
+  comprobar(r.codigo === 201, `solo con correo: ${r.codigo}`);
+  r = await contacto({ telefono: '8095550183', correo: '' }, '201.8.7.12');
+  comprobar(r.codigo === 201, `solo con teléfono: ${r.codigo}`);
+  r = await contacto({ telefono: '', correo: '' }, '201.8.7.13');
+  comprobar(r.codigo === 400 && /un correo o un teléfono/.test(r.datos.error), `sin ninguno: ${r.codigo} «${r.datos.error}»`);
+  r = await contacto({ telefono: '80955', correo: 'tel-corto@ejemplo.test' }, '201.8.7.14');
+  comprobar(r.codigo === 400 && /10 dígitos/.test(r.datos.error), `teléfono corto aunque haya correo: ${r.codigo}`);
+  r = await pedir(cuerpoValido({ telefono: '', correo: 'alquila@ejemplo.test' }), '201.8.7.15');
+  comprobar(r.codigo === 400 && /10 dígitos/.test(r.datos.error), `alquiler sigue exigiendo teléfono: ${r.codigo}`);
+
   console.log(`\n${bien} comprobaciones bien; ${mal} mal.`);
   if (mal) process.exitCode = 1;
 }
