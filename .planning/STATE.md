@@ -42,6 +42,20 @@ se cuadra después). Cada chat hace UNA vuelta del ciclo con Victor de por medio
    `codex` listos (etiqueta `en-curso`), y escribir issues `codex` nuevos si quedan menos de ~6.
 5. **Relevo:** actualizar esta sección y decirle a Victor qué esperar.
 
+**TANDA 11 RECOGIDA (2026-10-10, PR #208, rama `claude/tender-shannon-c6dseh`):** entran #203-#207. #207, #206,
+#205 y #204 aplicaron limpios; el parche de #203 llegó recortado (trozos sin contexto) y se aplicó a mano con un
+script de colocación difusa (busca cada bloque viejo y lo cambia). Arreglos de Claude encima: reenviar/recuperar sin
+429 (delataría cuentas), el 409 de dos pestañas relee tras leer el cuerpo, **cola de guardados en `publicar.js`**
+(dos PUT en vuelo con el mismo sello se daban 409 a sí mismos y bloqueaban el pago), `visible` por el slug de la
+página, FISCAL-8 (devoluciones por fecha de la nota; Codex no lo hizo) y todas las pruebas que pedía #203.
+`renovacion:probar` y `recordatorios:probar` fallaban entre las 00:00 y las 04:00 RD (también en `main`): arreglado.
+Batería 70/70, las cuatro auditorías del navegador en verde y panel/mi-página mirados a 390 y 1280, claro y oscuro.
+**Lección:** pedir a Codex el parche con `git format-patch` *sin recortar*; si vuelve a llegar abreviado, aplicar a
+mano es más rápido que otra vuelta.
+**Siguiente (Claude, antes del 14):** relanzar la auditoría visual completa y la de operación que no terminaron.
+No quedan issues `codex` para el lanzamiento: #152/#153 (fase 14) esperan sus bases #148/#149 y van después del 14.
+Las preguntas de la auditoría (abajo e informe) siguen pendientes de Victor.
+
 **AUDITORÍA FINAL (2026-10-09/10) — informe completo en `.planning/AUDITORIA-2026-10.md`.** Batería de CI 70/70 y
 auditorías del navegador en verde antes de empezar; siete auditorías en paralelo (la visual y la de operación NO
 terminaron por el tope de uso: relanzarlas). Arreglos de Claude, cada uno con su prueba escrita antes, en el **PR #202**
