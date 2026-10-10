@@ -136,6 +136,7 @@ tail -n 50 /var/log/nginx/error.log
 curl -sI https://mercamaquinarias.com/ | head -n 15
 curl -sI https://www.mercamaquinarias.com/ | head -n 5     # debe mandar al dominio sin www
 curl -s  https://mercamaquinarias.com/api/salud
+curl -s  https://mercamaquinarias.com/api/planes | grep -o '"metodosPago":\[[^]]*\]'   # debe dar ["transferencia"], nunca "demo" ni [] (auditoría 2026-10)
 curl -sI https://mercamaquinarias.com/robots.txt
 curl -sI https://mercamaquinarias.com/sitemap.xml
 curl -sI https://mercamaquinarias.com/transporte.html      # apagado: debe redirigir a la portada
