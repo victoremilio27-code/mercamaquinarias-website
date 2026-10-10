@@ -2194,10 +2194,12 @@ function montarPromo() {
 }
 
 /* La portada anuncia el ahorro de contratar 60 días; sale del mismo
-   cálculo que se aplica al cobrar. */
+   cálculo que se aplica al cobrar. De usted, como el resto de la portada
+   (decía «ahorras»), y dentro de un <span> en el HTML: suelto en el <li>
+   flexible, el texto se partía en tres columnas a 390 px. */
 function montarAhorroPortada() {
   const el = $('#ahorroPortada');
-  if (el) el.textContent = `ahorras ${ahorro60()} %`;
+  if (el) el.textContent = `ahorra un ${ahorro60()} %`;
 }
 
 /* ── Transporte y seguimiento GPS ───────────────────────── */
