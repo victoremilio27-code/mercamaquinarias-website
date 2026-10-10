@@ -195,6 +195,8 @@ function estadoInicial() {
 }
 
 let estado = estadoInicial();
+let borradorActualizado = null;
+let ultimoErrorGuardadoServidor = '';
 
 /* El borrador sobrevive a un cierre de pestaña. Las fotos van dentro:
    ya están reducidas, y el navegador avisa por excepción si el cupo
@@ -202,10 +204,14 @@ let estado = estadoInicial();
    que perder todo lo escrito. */
 function guardarBorrador({ servidor = true } = {}) {
   try {
-    localStorage.setItem(CLAVE_BORRADOR, JSON.stringify(estado));
+    localStorage.setItem(CLAVE_BORRADOR, JSON.stringify({
+      ...estado, propietarioId: (SESION.usuario && SESION.usuario.id) || null,
+    }));
   } catch (_) {
     try {
-      localStorage.setItem(CLAVE_BORRADOR, JSON.stringify({ ...estado, fotos: [] }));
+      localStorage.setItem(CLAVE_BORRADOR, JSON.stringify({
+        ...estado, fotos: [], propietarioId: (SESION.usuario && SESION.usuario.id) || null,
+      }));
     } catch (__) { /* almacenamiento no disponible: se sigue en memoria */ }
   }
 
@@ -225,6 +231,11 @@ function leerBorrador() {
     const crudo = localStorage.getItem(CLAVE_BORRADOR);
     if (!crudo) return null;
     const datos = JSON.parse(crudo);
+    const usuarioId = (SESION.usuario && SESION.usuario.id) || null;
+    if (datos.propietarioId && datos.propietarioId !== usuarioId) {
+      localStorage.removeItem(CLAVE_BORRADOR);
+      return null;
+    }
     const base = estadoInicial();
     // Fusión superficial por bloque: un borrador viejo al que le falte
     // un campo nuevo se completa con el valor por defecto.
@@ -550,6 +561,16 @@ function validarEquipo(seccion) {
   ok = exigir($('#e-descripcion'), $('#e-descripcion').value.trim().length >= 40,
     'Describa el estado en al menos 40 caracteres: mantenimientos, trabajos pendientes y uso que se le dio.') && ok;
 
+  const camposEspecificacion = $$('#camposEspecificaciones [data-especificacion]');
+  const valores = Object.fromEntries(camposEspecificacion.map((campo) => [campo.dataset.especificacion, campo.value]));
+  const { errores } = validarEspecificaciones($('#e-categoria').value, $('#e-subcategoria').value, valores);
+  camposEspecificacion.forEach((campo) => {
+    const especificacion = especificacionesDe($('#e-categoria').value, $('#e-subcategoria').value)
+      .find((item) => item.id === campo.dataset.especificacion);
+    const error = especificacion && errores.find((mensaje) => mensaje.startsWith(`${especificacion.nombre} `));
+    ok = exigir(campo, !error, error || '') && ok;
+  });
+
   return ok;
 }
 
@@ -822,6 +843,25 @@ async function procesarVideo(archivo, alProgreso) {
   const { video: v, url } = await leerVideo(archivo);
 
   try {
+    if (!Number.isFinite(v.duration)) {
+      await new Promise((resolver) => {
+        const terminar = () => { limpiar(); resolver(); };
+        const limpiar = () => {
+          v.removeEventListener('durationchange', terminar);
+          v.removeEventListener('timeupdate', terminar);
+          clearTimeout(espera);
+        };
+        v.addEventListener('durationchange', terminar, { once: true });
+        v.addEventListener('timeupdate', terminar, { once: true });
+        const espera = setTimeout(terminar, 1500);
+        try { v.currentTime = 1e101; } catch (_) { terminar(); }
+      });
+      try { v.currentTime = 0; } catch (_) { /* el archivo sigue siendo inválido */ }
+    }
+    if (!Number.isFinite(v.duration)) {
+      throw new Error('No se pudo determinar cuánto dura el video. Pruebe recortándolo o guardándolo de nuevo antes de subirlo.');
+    }
+
     // Medio segundo de margen: los teléfonos declaran 30,04 s para un
     // video de 30, y rechazarlo por eso seria incomprensible.
     if (v.duration > SEGUNDOS_MAXIMOS_VIDEO + 0.5) {
@@ -1739,6 +1779,7 @@ function cuerpoParaBorrador() {
      los guardaría como 0, y al retomar el borrador el campo diría «0». */
   const cuerpo = {
     ...resto,
+    ...(borradorActualizado ? { siActualizado: borradorActualizado } : {}),
     anio: String(e.anio || ''),
     precio: soloDigitos(estado.precio.monto),
     plan: estado.planElegido,
@@ -1808,9 +1849,14 @@ async function guardarEnServidor(inmediato) {
     if (r) {
       borradorPlanServidor = estado.planElegido;
       borradorDiasServidor = estado.diasElegidos;
+      borradorActualizado = (r.borrador && r.borrador.actualizado) || r.actualizado || borradorActualizado;
+      ultimoErrorGuardadoServidor = '';
     }
   } catch (e) {
-    if (e.codigo === 409) {
+    ultimoErrorGuardadoServidor = e.message || 'No se pudo guardar en su cuenta.';
+    if (e.codigo === 409 && /actualiz|otra pestaña|cambi[oó]/i.test(e.message || '')) {
+      avisoGuardadoDiscreto(e.message);
+    } else if (e.codigo === 409) {
       // Pago en espera: se enseña la espera y se deja de ofrecer el
       // formulario editable (el servidor tampoco lo aceptaría).
       const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}`, { silencioso: true });
@@ -1818,6 +1864,8 @@ async function guardarEnServidor(inmediato) {
     } else if (e.codigo === 404) {
       estado.idBorrador = null;
       avisoGuardadoDiscreto('Ese borrador ya no existe o no es suyo.');
+    } else if (e.codigo === 400) {
+      avisoGuardadoDiscreto(e.message);
     } else {
       avisoGuardadoDiscreto('No se pudo guardar en su cuenta; sigue guardado en este navegador.');
     }
@@ -1855,6 +1903,7 @@ async function asegurarBorrador() {
       const r = await api('/borradores', { metodo: 'POST', cuerpo: cuerpoParaBorrador() });
       if (!r) { avisoPaso(seccion, 'No hay conexión con el servidor. Vuelva a intentarlo.'); return false; }
       estado.idBorrador = r.borrador.id;
+      borradorActualizado = r.borrador.actualizado || null;
       borradorPlanServidor = estado.planElegido;
       borradorDiasServidor = estado.diasElegidos;
       history.replaceState(null, '', `publicar.html?borrador=${encodeURIComponent(estado.idBorrador)}`);
@@ -2236,6 +2285,7 @@ function esperaDesdeBorrador(b) {
   const pago = b.pago || {};
   return {
     cobro: { referencia: pago.referencia, total: pago.total },
+    telefonos: ((((b.datos || {}).contacto || {}).telefonos) || []),
     aviso: 'Su anuncio se publica cuando confirmemos el ingreso.',
   };
 }
@@ -2248,6 +2298,16 @@ function pintarEspera(r) {
   const cobro = r.cobro || {};
   const total = Number(cobro.total) || 0;
   const t = r.transferencia;
+  const telefonos = ((r.telefonos || estado.contacto.telefonos) || [])
+    .map((telefono) => typeof telefono === 'string' ? telefono : telefono.numero)
+    .filter(telefonoValido);
+  const algunoVerificado = telefonos.some((numero) => {
+    const contacto = CONTACTOS && CONTACTOS.get(soloDigitos(numero));
+    return !!(contacto && contacto.verificado);
+  });
+  const avisoTelefonos = telefonos.length && !algunoVerificado
+    ? `<p class="realce">${icono('i-aviso')} <span>Ningún teléfono de este anuncio está verificado y no se mostrará. Verifíquelos desde <a href="panel.html#panelContactos">su panel</a>: tarda un minuto y aparecen al momento.</span></p>`
+    : '';
 
   $('#publicar').hidden = true;
   const caja = $('#publicado');
@@ -2287,6 +2347,7 @@ function pintarEspera(r) {
       <div><dt>Total</dt><dd class="num">${total === 0 ? 'Sin costo' : `${pesos(total)} — ITBIS incluido`}</dd></div>
     </dl>
     ${datosBanco}
+    ${avisoTelefonos}
     <p class="publicado__nota">Su anuncio se publica cuando confirmemos el ingreso. Puede cerrar esta página: lo encontrará en <a href="panel.html">su panel</a>.</p>`;
   caja.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -2507,6 +2568,11 @@ async function actualizarResumenPublicacion() {
 
   caja.innerHTML = '<p class="pedido__vacio">Calculando el precio…</p>';
   await guardarEnServidor(true);
+  if (ultimoErrorGuardadoServidor) {
+    caja.innerHTML = `<p class="pedido__vacio">${esc(ultimoErrorGuardadoServidor)}</p>`;
+    if ($('#btnPublicar')) $('#btnPublicar').disabled = true;
+    return;
+  }
 
   let r = null;
   try {
@@ -2518,6 +2584,7 @@ async function actualizarResumenPublicacion() {
     caja.innerHTML = '<p class="pedido__vacio">No se pudo calcular el precio. Revise su conexión.</p>';
     return;
   }
+  borradorActualizado = r.borrador.actualizado || borradorActualizado;
   pintarResumenPublicacionServidor(r.borrador);
 }
 
@@ -2581,6 +2648,15 @@ async function pagarPublicacion() {
   }
 
   try {
+    const aceptado = (SESION.legales && SESION.legales.aceptado) || {};
+    if (!aceptado.contratacion) {
+      const nueva = await api('/legales/aceptar', {
+        metodo: 'POST', cuerpo: { documentos: ['contratacion'] },
+      });
+      if (!nueva) return restaurar('No hay conexión con el servidor. Su borrador sigue guardado.');
+      SESION.legales = nueva.legales || SESION.legales;
+      document.dispatchEvent(new CustomEvent('legales-aceptadas'));
+    }
     const r = await api(`/borradores/${encodeURIComponent(estado.idBorrador)}/pago`, { metodo: 'POST', cuerpo });
     if (!r) return restaurar('No hay conexión con el servidor. Su borrador sigue guardado.');
 
@@ -2642,7 +2718,7 @@ function pintarVistaPrevia() {
   if (!caja) return;
 
   const e = estado.equipo;
-  const titulo = [e.anio, e.marca, e.modelo].filter(Boolean).join(' ') || 'Su equipo';
+  const titulo = [e.anio, nombreMarca(e.marca), e.modelo].filter(Boolean).join(' ') || 'Su equipo';
   const uso = soloDigitos(e.uso) ? `${miles(Number(soloDigitos(e.uso)))} ${e.unidad}` : 'Uso pendiente';
   // El distintivo depende del nivel: el del plan elegido en modo
   // publicación, el del cupo que vaya a ocupar en modo capacidad.
@@ -2665,7 +2741,7 @@ function pintarVistaPrevia() {
       ${estado.precio.modalidad === 'ofertas' ? '<span class="pastilla pastilla--ambar">Acepta ofertas</span>' : ''}
       ${e.disponibilidad === 'bajo-pedido' ? '<span class="pastilla pastilla--ambar">Bajo pedido</span>' : ''}
     </div>
-    ${e.subcategoria ? `<p class="vista-previa__nota">${esc(nombreCategoria(e.categoria))} · ${esc(e.subcategoria)}</p>` : ''}`;
+    ${e.subcategoria ? `<p class="vista-previa__nota">${esc(nombreCategoria(e.categoria))} · ${esc(nombreSubcategoria(e.subcategoria))}</p>` : ''}`;
 }
 
 function pintarResumenPedido() {
@@ -2931,6 +3007,7 @@ async function montarPublicador() {
      el asistente: quien esté a medio escribir un anuncio puede seguir.
      Lo que no va a poder es publicarlo, y eso lo impide el servidor. */
   montarAvisoLegal('publicar');
+  await cargarContactosVerificados();
 
   const previo = leerBorrador();
   const idDuplicar = params().get('duplicar');
@@ -2981,12 +3058,14 @@ async function montarPublicador() {
       if (!r || !r.borrador) {
         avisoPlan = 'No hay conexión con el servidor. Se muestra lo guardado en este navegador.';
       } else if (r.borrador.pendientePago) {
+        borradorActualizado = r.borrador.actualizado || null;
         // D-13: con un pago esperando no se ofrece el formulario, que el
         // servidor tampoco aceptaría (409): se enseña la espera.
         pintarEspera(esperaDesdeBorrador(r.borrador));
         esperaPago = true;
       } else {
         retomado = r.borrador;
+        borradorActualizado = r.borrador.actualizado || null;
       }
     } catch (e) {
       avisoPlan = e.codigo === 404 ? 'Ese borrador ya no existe o no es suyo.' : e.message;
